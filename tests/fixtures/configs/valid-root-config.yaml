@@ -1,0 +1,19 @@
+vault_id: trade-agents
+language: en
+layout: per-project
+paths:
+  sources: _sources/
+  concepts: _concepts/
+  entities: _entities/
+  raw: _raw/
+  vault_index: 00-Vault-Index/
+lint:
+  required_frontmatter:
+    - type
+    - title
+    - date
+    - tags
+    - project
+transcript:
+  model: claude-sonnet-4-6
+  timeout_seconds: 600

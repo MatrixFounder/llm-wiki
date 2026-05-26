@@ -1,0 +1,196 @@
+$schema: 'https://json-schema.org/draft/2020-12/schema'
+$id: 'https://github.com/sergey/obsidian-llm-wiki/config/wiki-config.schema.yaml'
+title: 'wiki-config'
+description: >
+  JSON Schema 2020-12 for the LLM Wiki MVP `wiki:` configuration. Two
+  top-level definitions: WikiRootConfig (the root CLAUDE.md::wiki: block —
+  requires vault_id per ADR-002 §D1.1) and WikiProjectOverride (per-project
+  .wiki.yaml — all fields optional, no vault_id allowed at this scope).
+
+  Phase 3a stub: additionalProperties is permissive (true) for forward-compat
+  with future Phase 3b extensions (transcript, light_summary, wiki-ingest
+  config block). Tightening to additionalProperties:false is part of
+  task-001-13 once config_loader.py is wired.
+
+$defs:
+  # ----------------------------------------------------------------------------
+  # VaultId — letter-start kebab-case, length 3-32, no double/trailing hyphens.
+  # MUST round-trip with SQLite CHECK constraint in sql/wiki-index-v2.sql vaults
+  # table (M-1 architectural review fix).
+  # ----------------------------------------------------------------------------
+  VaultId:
+    type: string
+    description: >
+      Stable vault identity. REQUIRED explicit in WIKI_SCHEMA.md::vault_id
+      (ADR-002 §D1.1 — no hash fallback). Pattern matches SQLite CHECK exactly.
+      The '_global_' sentinel is reserved for cross-vault batch_runs (M-7).
+    oneOf:
+      - const: '_global_'
+        description: 'Sentinel for cross-vault operations. Auto-created by wiki-init.'
+      - allOf:
+          - type: string
+            pattern: '^[a-z][a-z0-9-]{1,30}[a-z0-9]$'
+            description: 'letter-start, kebab-case, alphanumeric end'
+          - not:
+              pattern: '--'
+            description: 'no double hyphens'
+          - minLength: 3
+          - maxLength: 32
+
+  # ----------------------------------------------------------------------------
+  # Layout — single-tier vs multi-course (promotion-spec).
+  # ----------------------------------------------------------------------------
+  Layout:
+    type: string
+    enum:
+      - flat
+      - per-project
+    description: >
+      'flat' — single-tier vault (all content at root, project='_vault_').
+      'per-project' — multi-course vault (Lessons/<Course>/...), project=
+      <course-slug>. Set on wiki-init; cannot change without reindex.
+
+  # ----------------------------------------------------------------------------
+  # Paths — vault-internal directory conventions.
+  # ----------------------------------------------------------------------------
+  Paths:
+    type: object
+    properties:
+      sources:
+        type: string
+        default: '_sources/'
+      concepts:
+        type: string
+        default: '_concepts/'
+      entities:
+        type: string
+        default: '_entities/'
+      raw:
+        type: string
+        default: '_raw/'
+      vault_index:
+        type: string
+        default: '00-Vault-Index/'
+    additionalProperties: true
+
+  # ----------------------------------------------------------------------------
+  # Lint — required frontmatter discipline (per layout).
+  # ----------------------------------------------------------------------------
+  Lint:
+    type: object
+    properties:
+      required_frontmatter:
+        type: array
+        items:
+          type: string
+        description: >
+          Frontmatter fields that EVERY page must declare. For 'flat' layout
+          typically [type, title, date, tags]; for 'per-project' add 'project'.
+    additionalProperties: true
+
+  # ----------------------------------------------------------------------------
+  # TranscriptConfig — Phase 3b (wiki-source-transcript wraps wiki-ingest).
+  # Stubbed here so the schema is forward-compatible; activation in 3b.
+  # ----------------------------------------------------------------------------
+  TranscriptConfig:
+    type: object
+    properties:
+      model:
+        type: string
+        default: 'claude-sonnet-4-6'
+      timeout_seconds:
+        type: integer
+        minimum: 60
+        maximum: 3600
+        default: 600
+    additionalProperties: true
+
+  # ----------------------------------------------------------------------------
+  # LightSummaryConfig — Phase 3b (R-24 wiki-light-summary).
+  # ----------------------------------------------------------------------------
+  LightSummaryConfig:
+    type: object
+    properties:
+      model:
+        type: string
+        default: 'claude-haiku-4-5'
+    additionalProperties: true
+
+  # ----------------------------------------------------------------------------
+  # WikiRootConfig — root CLAUDE.md::wiki: block.
+  # vault_id is REQUIRED (ADR-002 §D1.1 fail-fast — no hash fallback).
+  # ----------------------------------------------------------------------------
+  WikiRootConfig:
+    type: object
+    description: >
+      Root-level wiki configuration. Lives in CLAUDE.md as a YAML block under
+      the 'wiki:' key. Read by config_loader.load_config(cwd) on every skill
+      invocation.
+    required:
+      - vault_id
+      - language
+      - layout
+      - paths
+    properties:
+      vault_id:
+        $ref: '#/$defs/VaultId'
+      language:
+        type: string
+        enum: [ru, en, es, fr, de, it, pt, mixed]
+        description: 'Primary content language (for FTS5 tokenizer locale hint).'
+      layout:
+        $ref: '#/$defs/Layout'
+      paths:
+        $ref: '#/$defs/Paths'
+      lint:
+        $ref: '#/$defs/Lint'
+      transcript:
+        $ref: '#/$defs/TranscriptConfig'
+      light_summary:
+        $ref: '#/$defs/LightSummaryConfig'
+    additionalProperties: true
+
+  # ----------------------------------------------------------------------------
+  # WikiProjectOverride — .wiki.yaml at any subdirectory.
+  # All fields optional; merged onto WikiRootConfig via deep-merge in
+  # config_loader (task-001-13). vault_id NOT allowed at this scope (vault
+  # identity belongs to the root).
+  # ----------------------------------------------------------------------------
+  WikiProjectOverride:
+    type: object
+    description: >
+      Per-project (course-level) override layered on top of WikiRootConfig.
+      Lives in <vault>/Lessons/<Course>/.wiki.yaml or any subdir.
+    properties:
+      language:
+        type: string
+        enum: [ru, en, es, fr, de, it, pt, mixed]
+      paths:
+        $ref: '#/$defs/Paths'
+      lint:
+        $ref: '#/$defs/Lint'
+      transcript:
+        $ref: '#/$defs/TranscriptConfig'
+      light_summary:
+        $ref: '#/$defs/LightSummaryConfig'
+    # vault_id is intentionally NOT listed in properties; presence at this
+    # scope is a configuration error (caught in task-001-13 config_loader).
+    not:
+      required:
+        - vault_id
+    additionalProperties: true
+
+# Top-level: this document is a *library of definitions*, not a directly-
+# validatable schema. config_loader (task-001-13) picks the appropriate $defs
+# entry based on file scope:
+#   CLAUDE.md::wiki:  → validate against #/$defs/WikiRootConfig
+#   <subdir>/.wiki.yaml → validate against #/$defs/WikiProjectOverride
+#
+# Tests construct per-scope validators via:
+#   Draft202012Validator({**schema, "$ref": "#/$defs/WikiRootConfig"})
+#
+# Rationale: a top-level `oneOf` would silently accept root configs missing
+# vault_id by routing them to WikiProjectOverride (which forbids vault_id but
+# requires nothing). Scope must be resolved by the caller, not the schema.
+type: object
+description: 'Library of $defs. Use $ref to validate against a specific scope.'

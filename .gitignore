@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache
+
+# OS generated files
+.DS_Store
+.DS_Store?
+**.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.env
+.venv
+
+# Node / npm (universal — covers every skill)
+node_modules/
+npm-debug.log*
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project Specific
+.agent
+tmp*
+.claude/agents/analyst.md 
+.claude/agents/architect.md 
+.claude/agents/architecture-reviewer.md 
+.claude/agents/code-reviewer.md 
+.claude/agents/critic-logic.md 
+.claude/agents/critic-performance.md 
+.claude/agents/critic-security.md 
+.claude/agents/plan-reviewer.md 
+.claude/agents/developer.md 
+.claude/agents/planner.md 
+.claude/agents/product-analyst.md 
+.claude/agents/product-director.md 
+.claude/agents/security-auditor.md 
+.claude/agents/solution-architect.md 
+.claude/agents/task-reviewer.md 
+.claude/agents/strategic-analyst.md
+.claude/commands
+.claude/hooks
+.claude/skills
+.claude/agents
+System
+Reference
+
+# Test runner caches
+.pytest_cache/
+.hypothesis/
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+.claude/*.lock
