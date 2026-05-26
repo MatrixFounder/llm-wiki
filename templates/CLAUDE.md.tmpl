@@ -1,10 +1,236 @@
-# ${vault_id}
+# ${vault_id} — an LLM-Wiki vault
 
-LLM Wiki vault. See `WIKI_SCHEMA.md` for conventions.
+This repository is **one Obsidian vault** that follows the [Karpathy LLM-Wiki
+pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+It is not a RAG dump — it is a **persistent, compounding knowledge base**:
+every source we ingest is read once, distilled, cross-referenced into existing
+pages, and then *kept current* — so future questions answer from a synthesis
+that already exists, not from raw transcripts.
 
-```yaml
-wiki:
-  vault_id: ${vault_id}
-  language: ${language}
-  layout: ${layout}
+Claude is launched at the vault root. All paths below are relative to it.
+
+- **vault_id**: `${vault_id}` (REQUIRED, ADR-002 §D1.1; defined in `WIKI_SCHEMA.md`)
+- **language**: `${language}`
+- **layout**: `${layout}` (flat = single-tier; per-project = two-tier with `Lessons/<Course>/`)
+
+---
+
+## The three layers (Karpathy architecture)
+
+Keep them strictly separated:
+
+1. **Raw sources** — *immutable*. Original transcripts (`lesson.txt`), articles,
+   notes. Never edited after capture; the LLM may re-read them anytime.
+2. **The wiki** — *LLM-owned*. `_sources/`, `_concepts/`, `_entities/`,
+   `index.md`, `log.md`. Claude creates, updates, cross-links. Humans read and
+   browse via `[[wiki-links]]` in Obsidian.
+3. **The schema** — *co-evolved*. `WIKI_SCHEMA.md` governs conventions and
+   layout. This `CLAUDE.md` ties operations to schema. Both adjust as the
+   workflow matures.
+
+> Obsidian is the IDE. Claude is the programmer. The wiki is the codebase.
+
+---
+
+## Layout
+
 ```
+${vault_id}/                                    # ← Obsidian vault root
+├── CLAUDE.md                                   # ← you are here
+├── WIKI_SCHEMA.md                              # vault_id + schema conventions
+├── _sources/                                   # one page per ingested source (NEVER promoted)
+├── _concepts/                                  # canonical concept pages
+├── _entities/                                  # entities (people / orgs / products)
+├── _raw/                                       # raw imports + .locks/ + failed/
+├── 00-Vault-Index/
+│   ├── index.md                                # auto-generated catalog (read-only projection)
+│   └── log/YYYY-MM.md                          # append-only monthly journal
+└── Lessons/                                    # per-project ONLY: two-tier vaults
+    └── <Course-Name>/                          # each course has its own wiki
+        ├── WIKI_SCHEMA.md                      # course-local schema
+        ├── _sources/                           # one page per source for this course
+        ├── _concepts/                          # course-local concepts
+        └── _entities/                          # course-local entities
+```
+
+For `per-project` (two-tier) layout: each `Lessons/<Course>/` carries its own
+`_sources/`, `_concepts/`, `_entities/`. The **root** `_concepts/` /
+`_entities/` is a *shared* layer populated lazily when a concept appears in
+≥ 2 courses and an operator confirms they describe the same thing
+(promotion — see `WIKI_SCHEMA.md`).
+
+For `flat` (single-tier): only the root tier exists; no `Lessons/` directory.
+
+---
+
+## Operations
+
+Two layers of tooling, complementary:
+
+- **File layer (`/wiki-ingest`)** — LLM-driven synthesis: distill a source
+  into a summary, additively merge facts into concept/entity pages, append to
+  `log.md`. **Owns the markdown.** External skill (v1.1+); install globally.
+- **Index layer (`/wiki-*` from obsidian-llm-wiki)** — fast read paths:
+  FTS5 search across vaults, SQL-level lint, rebuildable cache. **Reads
+  what the file layer writes.**
+- **Bridge (`/wiki-enrich`)** — composes both: invoke `wiki-ingest` on a raw
+  source, then index the manifest into the SQLite DB in one shot.
+
+### Lookup priority
+
+When looking up domain facts, concepts, entities, or prior decisions:
+
+1. **First** — `/wiki-search "<query>" --vaults ${vault_id}` (FTS5, < 100 ms).
+2. **Then** — open the matched page(s) via `[[wiki-link]]` in Obsidian or
+   `Read` the file.
+3. **Only then** — fall back to `grep` / filesystem walk.
+
+This is what makes the wiki *compounding*: searches return synthesis pages,
+not raw transcripts.
+
+### 1. Ingest a new source
+
+End-to-end (recommended): use `/wiki-enrich` — runs wiki-ingest then indexes
+the manifest atomically.
+
+```bash
+/wiki-enrich --vault ${vault_id} \
+             --vault-root . \
+             --source ./path/to/source.md
+```
+
+Or two-step manually:
+
+```bash
+# A. wiki-ingest (file layer) — produces _sources/<slug>.md + updates
+# _concepts/, _entities/, log.md additively.
+/wiki-ingest ingest "./path/to/source.md"
+
+# B. Index the resulting changes into the SQLite DB.
+/wiki-reindex --delta --vault ${vault_id}
+```
+
+A single ingest typically touches **10–15 wiki pages**. Stay involved: read
+the generated summary, sanity-check what got merged into existing
+concept/entity pages, intervene when Claude over- or under-extracts.
+
+### 2. Query — answer from the wiki
+
+```bash
+# fast path — FTS5 hits + snippets
+/wiki-search "what is X" --vaults ${vault_id}
+
+# LLM synthesis with citations (when wiki-query lands; Epic 7)
+# /wiki-ingest query "compare X and Y"
+```
+
+Every claim in an answer should carry a `[^src-<slug>]` footnote that
+resolves to a `_sources/` page — so it traces back to the raw source.
+
+### 3. Lint — health-check
+
+```bash
+# SQL-level (drift, orphan links, hash mismatch, cross-vault dups)
+/wiki-lint --vault ${vault_id}
+
+# File-level (open contradictions, dangling [[links]], missing pages)
+/wiki-ingest lint
+```
+
+Run both periodically. SQL-level catches drift between markdown and DB;
+file-level catches semantic issues (operator-resolvable).
+
+### 4. Rebuild — when in doubt
+
+```bash
+# Rebuild the SQLite cache from canonical markdown.
+# Safe: ADR-002 §D8 makes the DB fully rebuildable from files.
+rm "$$HOME/Library/Application Support/wiki-index/global.db"
+/wiki-init --register-existing --vault .
+/wiki-reindex --full --vault ${vault_id}
+```
+
+### 5. Render — regenerate `index.md`
+
+```bash
+/wiki-index-render --vault ${vault_id}
+```
+
+Custom sections marked `<!-- BEGIN-CUSTOM:name -->` are preserved across
+re-renders.
+
+### 6. Promote / Demote (per-project layout only)
+
+When `lint` flags that the same canonical name exists in `_concepts/` of
+≥ 2 courses *and* you've confirmed they describe the same thing, run
+`/wiki-ingest promote "<Name>"`. Inverse: `/wiki-ingest demote "<Name>"
+--to "<Course>"`. See `WIKI_SCHEMA.md` for the promotion rules.
+
+---
+
+## Quick CLI helpers
+
+```bash
+# Search across this vault
+wiki-search "<query>" --vaults ${vault_id}
+
+# Open contradictions (course-local + root, per-project layout)
+grep -rn "## Contradictions" Lessons/*/_concepts Lessons/*/_entities \
+        _concepts _entities 2>/dev/null
+
+# Last 5 journal entries
+ls -t 00-Vault-Index/log/*.md | head -1 | xargs grep "^## \[" | tail -5
+
+# Cross-course duplicates (potential promotion candidates)
+find Lessons -mindepth 3 -path "*/_concepts/*.md" -printf "%f\n" 2>/dev/null \
+        | sort | uniq -d
+```
+
+---
+
+## Conventions (short reminder; full text in `WIKI_SCHEMA.md`)
+
+- **Concept vs Entity.** Concept = a generalisable idea (Sharpe Ratio,
+  Compound Interest). Entity = a proper noun (Acme Corp, Alice). When in
+  doubt → entity.
+- **File names** use canonical name verbatim (`Sharpe Ratio.md`).
+  `_sources/` slugs are kebab-case.
+- **Every fact** on a concept/entity page must end with a `[^src-<slug>]`
+  footnote. No footnote → don't add the fact. This is the audit trail.
+- **Additivity.** Ingest never silently overwrites prior facts. Conflict →
+  insert a `## Contradictions` block, escalate to the operator.
+- **One page, one place.** A given concept/entity lives in exactly one
+  layer (course-local OR root-shared). Maintained by promote/demote.
+- **`_sources/` is never promoted.** A source belongs to where it was
+  ingested.
+- **`log.md` is append-only.** Past entries are part of the audit trail —
+  never edit them retroactively.
+
+---
+
+## The human's job, the LLM's job
+
+Per the Karpathy pattern:
+
+- **You curate** which sources to ingest, **direct** the analysis, **ask
+  good questions**, **resolve contradictions**.
+- **Claude does** the bookkeeping — summarising, cross-referencing, filing,
+  updating 10–15 pages per ingest, maintaining `index.md` and `log.md`,
+  suggesting follow-up questions during `lint`.
+
+The LLM does not get bored, does not forget to update a cross-reference,
+and can touch 15 files in one pass. That is why a wiki of this size stays
+maintained.
+
+---
+
+## Useful pointers
+
+- **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, promotion rules.
+- **`00-Vault-Index/index.md`** — read-only catalog (auto-generated).
+- **`00-Vault-Index/log/`** — monthly append-only journal.
+- **obsidian-llm-wiki** — the index layer; provides `/wiki-search`,
+  `/wiki-lint`, `/wiki-reindex`, `/wiki-enrich`, etc. Install per its
+  `README.md`; ensure its `bin/` is on `PATH`.
+- **wiki-ingest** — the file-layer skill; must be on `PATH` (typically
+  `~/.claude/skills/wiki-ingest/`).
