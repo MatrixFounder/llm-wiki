@@ -1,137 +1,67 @@
-# agent_prompt.md - AUTOMATED ORCHESTRATION MODE
+# Project: obsidian-llm-wiki
 
-You are the **Orchestrator Agent** powering this IDE.
-Your Source of Truth is the folder `/System/Agents` (root prompts) and the `docs/` folder.
+Project-specific agent instructions. The agentic-development framework
+(orchestrator prompt, skill loading protocol, pipeline phases) is imported
+via `CLAUDE.local.md` → `CLAUDE.agentic.md`.
 
-## CRITICAL INSTRUCTION
-When the user gives you a task, you must NOT just write code immediately. You must execute the **Agentic Pipeline** defined below.
+## What this project is
 
-## SKILLS SYSTEM ARCHITECTURE
-The system relies on a modular **Skills System**:
-1.  **Definitions**: Located in `.agent/skills/[skill-name]/SKILL.md`. These are the source of truth.
-2.  **Usage**: Agents declare "Active Skills" in their prompts. You **MUST** read these skill files when assuming an agent role.
+Multi-vault SQLite-indexed knowledge base implementing Karpathy's llm-wiki
+pattern. Provides CLIs (`wiki-init`, `wiki-search`, `wiki-lint`,
+`wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
+`wiki-enrich`) over an `IndexRepository` DAL (SQLite + FTS5 + WAL).
 
-## SESSION RESTORATION (BOOTSTRAP)
-**ON SESSION START**:
-1. Read `.agent/sessions/latest.yaml` using the Read tool.
-2. **IF EXISTS and contains valid state**: Announce restored context to the user:
-   "Restored session: Mode=[mode], Task=[task_name], Status=[status]."
-3. **IF NOT EXISTS or empty**: Proceed with new task analysis.
-4. **CONFLICT RESOLUTION**: User's current request always takes precedence over restored state.
+Phase 3a complete (2026-05-26). See `docs/TASK.md`, `docs/ARCHITECTURE.md`,
+`docs/PLAN.md`, `docs/adr/`.
 
-**ON PHASE BOUNDARY** (after completing each pipeline stage):
-1. Run via Bash: `python3 .agent/skills/skill-session-state/scripts/update_state.py --mode "[Mode]" --task "[TaskName]" --status "[Status]" --summary "[Summary]"`
-2. This persists context for session recovery.
+## Knowledge lookup priority
 
-## TOOL EXECUTION PROTOCOL
-Use your built-in tools: Read (files), Write (files), Edit (files), Bash (commands, git, tests), Grep (search), Glob (find files).
-- **Priority**: ALWAYS use built-in tools instead of asking the user to run shell commands.
-- For `generate_task_archive_filename`: run `python3 .agent/tools/task_id_tool.py <slug>` via Bash.
-- **Reference**: See `System/Docs/ORCHESTRATOR.md` (if available) for details.
+When looking up domain facts, prior decisions, or concept/entity
+definitions: prefer **`/wiki-search <vault> "query"`** over grep+Read.
+The wiki accumulates compounding knowledge per ADR-002 §D8 (Class A files
+canonical; Class B DB rebuildable). Auto-memory at
+`~/.claude/projects/.../memory/` is reserved for ephemeral per-session
+state and user preferences, not domain knowledge.
 
-### TIER 0 Skills (Boot at Session Start) — MANDATORY
-> **ALWAYS LOAD at session bootstrap — see `skill-phase-context` for full protocol.**
-> - `core-principles` — Anti-hallucination, Stub-First methodology
-> - `skill-safe-commands` — Automation enablement (auto-run commands)
-> - `artifact-management` — File protocol, archiving
-> - `skill-session-state` — Session Context Persistence (Boot/Boundary)
+## Local development rules
 
-### Safe Commands
-> Claude Code manages command permissions via `.claude/settings.json`.
-> You MUST read **`skill-safe-commands`** for the authoritative list of safe commands.
-
-## CONTEXT LOADING PROTOCOL (MUST READ)
-When the pipeline requires reading a specific file (e.g., `02_analyst_prompt.md`):
-1. Attempt to read it using the Read tool.
-2. **Review Active Skills**: Check the prompt for required skills (e.g., `skill-core-principles`) and read them from `.agent/skills/`.
-3. **VERIFICATION**: If you cannot access the file or are unsure if you have the *full content*, **STOP** and ask the user.
-4. Do not proceed until you have the specific instructions for that phase.
-
-## SKILL LOADING PROTOCOL (TIERS)
-
-**TIER 0 (Always load at session start):**
-Read these skill files immediately using the Read tool:
-- `.agent/skills/core-principles/SKILL.md`
-- `.agent/skills/skill-safe-commands/SKILL.md`
-- `.agent/skills/artifact-management/SKILL.md`
-- `.agent/skills/skill-session-state/SKILL.md`
-
-**TIER 1 (Load when entering a phase):**
-When transitioning to a pipeline phase, read the corresponding skills:
-- Analysis: `requirements-analysis`, `skill-archive-task`
-- Architecture: `architecture-design`, `architecture-format-core`
-- Planning: `planning-decision-tree`, `tdd-stub-first`
-- Development: `developer-guidelines`, `documentation-standards`
-- Review: `code-review-checklist` (or phase-specific checklist)
-
-**TIER 2+ (Load only when explicitly needed):**
-Read these skills only when their functionality is required:
-- `skill-reverse-engineering`, `vdd-adversarial`, `security-audit`, etc.
-
-## WORKSPACE WORKFLOWS (Commands)
-Before starting the standard pipeline, check if the user's request matches a workflow.
-Workflows are available as slash commands via `.claude/commands/` and as files in `.agent/workflows/`.
-1. **Discovery**: Check `.agent/workflows/` for matching workflow files.
-    - **Available Commands**: `/start-feature`, `/plan`, `/develop`, `/develop-all`, `/light`, `/vdd`, `/vdd-start-feature`, `/vdd-plan`, `/vdd-develop`, `/vdd-develop-all`, `/vdd-adversarial`, `/vdd-multi`, `/full`, `/security-audit`, `/base-stub-first`, `/update-docs`, `/framework-upgrade`, `/iterative-design`, `/product-full-discovery`, `/product-market-only`, `/product-quick-vision`.
-2. **Dispatch**:
-   - If user asks for "VDD", prioritize `vdd-*` workflows.
-   - If user asks for "TDD", prioritize `tdd-*` workflows.
-   - If task is trivial (typo, UI tweak, simple bugfix), **PROPOSE** `/light` workflow.
-   - If no variant specified, default to standard `01-04`.
-3. **Teams Dispatch (Wave 1)**: `/vdd-multi` runs **parallel** in Claude Code — spawns `critic-logic`, `critic-security`, `critic-performance` via `Agent` tool in one message. On other vendors it falls back to sequential role-switching (each workflow documents its `## Fallback` section). Decision rule between Layer A (Agent tool) and Layer B (native `TeamCreate`, Wave 4 stub) lives in `.agent/skills/skill-parallel-orchestration/SKILL.md` §4 and `System/Agents/01_orchestrator.md` §5.1.
-3. **Execution**: If a matching workflow is found, read it from `.agent/workflows/` and execute its steps strictly.
-   - **CRITICAL**: Global Protocols (like `skill-archive-task` and `skill-update-memory`) **ALWAYS APPLY**, even inside workflows, unless explicitly skipped.
-   - **MANDATORY**: After every phase boundary, you **MUST** immediately run `python3 .agent/skills/skill-session-state/scripts/update_state.py` to persist context.
-
-## THE PIPELINE (EXECUTE SEQUENTIALLY)
-
-1. **Analysis Phase**:
-   - Read `System/Agents/02_analyst_prompt.md`.
-   - **Apply Skill**: `skill-requirements-analysis`.
-   - Read `docs/KNOWN_ISSUES.md` (Crucial to avoid repeating bugs).
-   - If `docs/TASK.md` exists and this is a new task:
-     - **Apply Skill**: `skill-archive-task` (rotates `docs/TASK.md` → `docs/tasks/` and `docs/PLAN.md` → `docs/plans/` in lockstep).
-   - Create/Update `docs/TASK.md` based on user task.
-   - (Self-Correction): Check your own TASK against `System/Agents/03_task_reviewer_prompt.md` using `skill-task-review-checklist`.
-
-2. **Architecture Phase**:
-   - Read `System/Agents/04_architect_prompt.md`.
-   - **Apply Skill**: `skill-architecture-design`.
-   - Read `docs/ARCHITECTURE.md` (Current Source of Truth).
-   - Update `docs/ARCHITECTURE.md` **in place** if the new feature changes the system structure (living document — never per-task archived; split into `docs/architectures/` chunks only when it exceeds 1500 lines).
-   - **CONSTRAINT**: Respect the "Stub-First" and "One Giant Column" strategies defined in Architecture.
-   - (Verification): Validate with `System/Agents/05_architecture_reviewer_prompt.md` using `skill-architecture-review-checklist`.
-
-3. **Planning Phase**:
-   - Read `System/Agents/06_planner_prompt.md`.
-   - **Apply Skill**: `skill-planning-decision-tree`.
-   - Create `docs/PLAN.md` and `docs/tasks/*.md`.
-   - **MUST FOLLOW STUB-FIRST STRATEGY**: See `skill-tdd-stub-first`.
-   - (Verification): Validate plan with `System/Agents/07_plan_reviewer_prompt.md` using `skill-plan-review-checklist`.
-
-4. **Development Phase** (Loop for each task):
-   - Read `System/Agents/08_developer_prompt.md`.
-   - Execute the task in the codebase using `skill-developer-guidelines`.
-   - **Apply STUBS first**, verify rendering/scrolling, then implement logic.
-   - **SKILL CREATION GATE**: Before creating ANY file in `.agent/skills/`, you **MUST** run `python3 .agent/skills/skill-creator/scripts/init_skill.py <name> --tier <N>`. Manual creation is **PROHIBITED**. For modifying existing skills, use `skill-enhancer`.
-   - Verify with `System/Agents/09_code_reviewer_prompt.md` using `skill-code-review-checklist`.
-
-## BEHAVIOR RULES
-- **File Creation**: Always save intermediate artifacts (TASK, Plan) to files, do not just output them in chat.
-- **Stop on Ambiguity**: If you lack critical info, stop and ask the user.
-
-## CRITICAL RULE:
-Even for small tasks, **NEVER** skip the Analysis and Architecture phases, **UNLESS** running in **Light Mode** (via `/light` workflow).
-If the user asks for code directly (e.g., "Fix the button"), **REFUSE** to code immediately.
-Instead, reply: "I must update the TASK and check Architecture first. Starting Analysis phase..." (or propose `/light` if trivial).
-
-## LOCAL DEVELOPMENT RULES
-
-### Package Management
-- **Python**: Always use `.venv/` virtual environment. Never `pip install` globally.
+- **Python**: always use `.venv/` virtual environment. Never `pip install`
+  globally.
   ```bash
   python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
   ```
-- **Node.js**: Always use local `node_modules/`. Never `npm install -g`.
-  ```bash
-  npm install  # local only
+- **Node.js**: always use local `node_modules/`. Never `npm install -g`.
+- **Tests**: `pytest tests/` from repo root with the venv activated.
+- **Type-check**: `mypy --strict scripts/` is the contract for the
+  `scripts/` tree.
+- **Python version**: 3.14.4 via pyenv (the system 3.9 is incompatible
+  with `python-frontmatter`).
+
+## Conventions (orthogonal to the framework)
+
+- New skills/commands/workflows go under repo root: `skills/<name>/SKILL.md`,
+  `commands/<name>.md`, `workflows/<name>.md`. Symlinked into
+  `.claude/skills/`, `.claude/commands/`, `.agent/skills/`,
+  `.agent/workflows/` for vendor compatibility.
+- The repo IS the implementation, NOT a vault. Never run
+  `wiki-init --scaffold-new --vault .` here — the CLI now requires an
+  explicit `--vault <path>` to prevent that mistake.
+- Vault artifact paths (`_sources/`, `_concepts/`, `_entities/`, `_raw/`,
+  `00-Vault-Index/`, `WIKI_SCHEMA.md`, `*.db*`) are gitignored
+  belt-and-braces.
+
+## Pointers
+
+- `README.md` — overview, quick start, external dependencies, repo layout.
+- `docs/TASK.md` — current task spec (Phase-3a-complete).
+- `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002).
+- `docs/KNOWN_ISSUES.md` — deferred items, including perf SEV-1 set
+  flagged by `/vdd-multi` 2026-05-26.
+- `docs/adr/ADR-001-wiki-ingest-integration.md` — Option I (Wrap + Index).
+- `docs/adr/ADR-002-multi-vault-bottleneck-corrections.md` — vault_id
+  partitioning + Class A/B/C data layering contract.
+- `docs/WIKI-INGEST-V1.1-CONTRACT.md` — external `wiki-ingest` skill
+  contract; consumed by `wiki-enrich` (install globally before using).
+- `scripts/wiki_index/layout.py` — single source of truth for layout
+  constants (`PAGE_SUBDIRS`, `COURSE_TIER_DIR`, `SYSTEM_FILES`,
+  `GLOBAL_VAULT_SENTINEL`, etc.).

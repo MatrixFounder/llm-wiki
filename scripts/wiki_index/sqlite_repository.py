@@ -522,7 +522,7 @@ class SQLiteRepository(IndexRepository):
         return sorted(missing)
 
     def check_drift(self, vault_id: str) -> DriftReport:
-        import hashlib
+        from scripts.wiki_source.parsing import compute_file_hash
 
         conn = self._connect()
         db_rows = {
@@ -544,27 +544,29 @@ class SQLiteRepository(IndexRepository):
         type_mismatch: list[tuple[str, str, str, str]] = []
         seen_on_disk: set[tuple[str, str]] = set()
 
-        for subdir in PAGE_SUBDIRS:
-            base = vault_root / subdir
-            if not base.is_dir():
+        # Two-tier walk — must mirror reindex.discover_pages so course-local
+        # pages aren't false-positived as missing-on-disk. Lazy-imported to
+        # avoid circular dependency (reindex itself uses SQLiteRepository).
+        from scripts.wiki_index.reindex import discover_pages
+        for f, slug, project in discover_pages(vault_root):
+            seen_on_disk.add((slug, project))
+            key = (slug, project)
+            if key not in db_rows:
+                missing_in_db.append(f)
                 continue
-            for f in base.rglob("*.md"):
-                slug = f.stem
-                project = "_vault_"
-                seen_on_disk.add((slug, project))
-                key = (slug, project)
-                if key not in db_rows:
-                    missing_in_db.append(f)
-                    continue
-                db_type, db_hash, _, db_fm = db_rows[key]
-                body = f.read_text(encoding="utf-8")
-                cur_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-                if cur_hash != db_hash:
-                    hash_mismatch.append((slug, project))
-                file_type = self._extract_frontmatter_type(body)
-                if file_type and file_type != db_type:
-                    if not self._is_intentional_mapping(file_type, db_type, db_fm or ""):
-                        type_mismatch.append((slug, project, file_type, db_type))
+            db_type, db_hash, _, db_fm = db_rows[key]
+            # Adapter convention: hash full file bytes (frontmatter + body).
+            # See manual.py for why frontmatter-aware hashing matters.
+            raw = f.read_bytes()
+            cur_hash = compute_file_hash(raw)
+            if cur_hash != db_hash:
+                hash_mismatch.append((slug, project))
+            file_type = self._extract_frontmatter_type(
+                raw.decode("utf-8", errors="replace")
+            )
+            if file_type and file_type != db_type:
+                if not self._is_intentional_mapping(file_type, db_type, db_fm or ""):
+                    type_mismatch.append((slug, project, file_type, db_type))
 
         missing_on_disk: list[tuple[str, str]] = [
             (slug, project) for (slug, project) in db_rows

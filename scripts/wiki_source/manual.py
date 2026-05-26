@@ -29,7 +29,10 @@ class ManualSourceAdapter(SourceAdapter):
         # R-26 path-traversal guard
         abs_source = validate_inside_vault(item.source_path, item.vault_root)
         frontmatter_dict, body_text = parse_frontmatter(abs_source)
-        file_hash = compute_file_hash(body_text)
+        # Hash full file bytes so frontmatter-only edits (added tags, fixed
+        # title, changed date) trigger re-index — see adversarial fix HIGH.
+        # Body-only hashing would short-circuit upsert_page as "unchanged".
+        file_hash = compute_file_hash(abs_source.read_bytes())
         slug, project = derive_slug(abs_source, item.vault_root.resolve(strict=True))
         links = extract_wiki_links(body_text)
         refs = [

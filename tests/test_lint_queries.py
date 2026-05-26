@@ -153,6 +153,46 @@ def test_unit_01_intentional_mapping_covers_three_rows():
     )
 
 
+def test_unit_06_check_drift_two_tier_walk(tmp_path):
+    """check_drift must walk BOTH vault-root tier AND Lessons/<course>/ tier.
+
+    Regression for dogfood finding: course-local pages were false-positived as
+    missing-on-disk because check_drift only walked root tier (PAGE_SUBDIRS
+    under vault_root, ignoring Lessons/*/PAGE_SUBDIRS).
+    """
+    from scripts.wiki_source.parsing import compute_file_hash
+    vault = tmp_path / "v"
+    vault.mkdir()
+    course_sources = vault / "Lessons" / "Course-A" / "_sources"
+    course_sources.mkdir(parents=True)
+    body = "course-local lesson body"
+    fm_body = f"---\ntype: summary\ntitle: L1\ndate: 2026-05-26\n---\n{body}\n"
+    (course_sources / "lesson-01.md").write_text(fm_body)
+    r = SQLiteRepository(tmp_path / "drift.db")
+    r.apply_schema()
+    r.register_vault(Vault(
+        vault_id="two-tier", name="t", root_path=vault,
+        schema_version="2.0", registered_at=datetime(2026, 5, 26),
+    ))
+    # Insert page with course project + the full-file hash convention.
+    r.upsert_page(Page(
+        vault_id="two-tier", slug="lesson-01", project="course-a",
+        type="summary", title="L1",
+        file_path="Lessons/Course-A/_sources/lesson-01.md",
+        date=date(2026, 5, 26), last_modified=datetime(2026, 5, 26),
+        file_hash=compute_file_hash(fm_body.encode("utf-8")),
+        frontmatter_json={}, body_excerpt=body, tags=[],
+    ))
+    drift = r.check_drift("two-tier")
+    assert drift.missing_on_disk == [], (
+        f"course-local page false-positived as missing-on-disk: {drift.missing_on_disk}"
+    )
+    assert drift.hash_mismatch == [], (
+        f"body-only hash convention broken: {drift.hash_mismatch}"
+    )
+    r.close()
+
+
 def test_unit_05_single_vault_no_duplicates(tmp_path):
     """No duplicates when only one vault has the concept."""
     r = SQLiteRepository(tmp_path / "t.db")

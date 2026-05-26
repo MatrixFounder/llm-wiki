@@ -74,6 +74,45 @@ def test_unit_07_unmapped_type_raises():
         normalize_frontmatter({"type": "lecture-notes"})
 
 
+def test_unit_08_path_aware_type_fallback_concepts(tmp_path):
+    """Files under `_concepts/` without explicit `type:` default to concept
+    (real-world wiki-ingest convention; uses `kind:` not `type:`)."""
+    p = tmp_path / "Lessons" / "Course-A" / "_concepts" / "tmux.md"
+    fm, db_type = normalize_frontmatter(
+        {"name": "Tmux Session", "kind": "concept"}, source_path=p,
+    )
+    assert db_type == "concept"
+
+
+def test_unit_09_path_aware_type_fallback_entities(tmp_path):
+    """Files under `_entities/` without `type:` default to external (maps
+    to db_type=concept + tag=external)."""
+    p = tmp_path / "_entities" / "Hermes Agent.md"
+    fm, db_type = normalize_frontmatter({"name": "Hermes Agent"}, source_path=p)
+    assert db_type == "concept"
+    assert "external" in fm.get("tags", [])
+
+
+def test_unit_10_entity_types_mapped(tmp_path):
+    """Expanded TYPE_MAPPING accepts wiki-ingest entity types
+    (external/person/company/product/group) — all map to db_type=concept."""
+    for raw in ("external", "person", "company", "product", "group"):
+        fm, db_type = normalize_frontmatter({"type": raw})
+        assert db_type == "concept", f"raw={raw}"
+        assert raw in fm.get("tags", []), f"raw={raw} tag missing"
+
+
+def test_unit_11_no_type_no_path_still_raises(tmp_path):
+    """Path fallback only fires when path is _concepts/_entities. A
+    _sources/ file without explicit type still raises."""
+    p = tmp_path / "_sources" / "x.md"
+    with pytest.raises(UnmappedTypeError):
+        normalize_frontmatter({}, source_path=p)
+    # Same without path
+    with pytest.raises(UnmappedTypeError):
+        normalize_frontmatter({})
+
+
 # =============================================================================
 # R-07.5 normalize_body_for_fts unit tests
 # =============================================================================

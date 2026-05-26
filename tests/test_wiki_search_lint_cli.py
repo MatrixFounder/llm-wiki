@@ -26,7 +26,7 @@ def populated_repo(tmp_path):
         vault_id="search-test", name="t", root_path=vault_root,
         schema_version="2.0", registered_at=datetime(2026, 5, 26),
     ))
-    import hashlib
+    from scripts.wiki_source.parsing import compute_file_hash
     body = "self-learning autonomous trading agent framework"
     (vault_root / "_concepts").mkdir()
     fm_body = (
@@ -34,8 +34,10 @@ def populated_repo(tmp_path):
         f"date: 2026-05-25\ntags: [agent]\n---\n{body}\n"
     )
     (vault_root / "_concepts" / "hermes.md").write_text(fm_body)
-    # file_hash MUST match what check_drift will compute (sha256 of the full file body)
-    file_hash = hashlib.sha256(fm_body.encode("utf-8")).hexdigest()
+    # Adapter/check_drift convention (post-adversarial fix): hash full file
+    # bytes so frontmatter-only edits trigger re-index. Mirrors
+    # ManualSourceAdapter.fetch which uses `abs_source.read_bytes()`.
+    file_hash = compute_file_hash(fm_body.encode("utf-8"))
     r.upsert_page(Page(
         vault_id="search-test", slug="hermes", project="_vault_",
         type="concept", title="Hermes Agent",

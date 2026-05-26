@@ -1,0 +1,1 @@
+../../commands/wiki-search.md

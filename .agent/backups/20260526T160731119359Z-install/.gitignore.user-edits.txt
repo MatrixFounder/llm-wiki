@@ -1,0 +1,49 @@
+# Managed by the agentic-development installer. Do not edit between the markers.
+
+# Framework content (symlink or local copy) and installer state.
+.agentic-development
+.agentic-installer-state.json
+
+# Framework components.
+.agent
+System
+/.claude/skills/*
+/.claude/commands/*
+/.claude/agents/*
+/.claude/hooks
+/.claude/settings.json
+/.claude/settings.local.json
+
+# Claude bridge files (gitignored — they import the framework).
+/CLAUDE.agentic.md
+/CLAUDE.local.md
+
+# .claude runtime locks.
+/.claude/*.lock
+
+# Project-local entries (kept in version control).
+!/.agent/skills/wiki-append-log
+!/.agent/skills/wiki-enrich
+!/.agent/skills/wiki-index-render
+!/.agent/skills/wiki-index-upsert
+!/.agent/skills/wiki-init
+!/.agent/skills/wiki-lint
+!/.agent/skills/wiki-reindex
+!/.agent/skills/wiki-search
+!/.agent/workflows/wiki-enrich.md
+!/.claude/commands/wiki-append-log.md
+!/.claude/commands/wiki-enrich.md
+!/.claude/commands/wiki-index-render.md
+!/.claude/commands/wiki-index-upsert.md
+!/.claude/commands/wiki-init.md
+!/.claude/commands/wiki-lint.md
+!/.claude/commands/wiki-reindex.md
+!/.claude/commands/wiki-search.md
+!/.claude/skills/wiki-append-log
+!/.claude/skills/wiki-enrich
+!/.claude/skills/wiki-index-render
+!/.claude/skills/wiki-index-upsert
+!/.claude/skills/wiki-init
+!/.claude/skills/wiki-lint
+!/.claude/skills/wiki-reindex
+!/.claude/skills/wiki-search

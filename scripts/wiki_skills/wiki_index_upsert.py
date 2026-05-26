@@ -66,7 +66,9 @@ def main(argv: list[str] | None = None) -> int:
                           vault_id=args.vault)
         out = adapter.fetch(item)
         try:
-            updated_fm, db_type = normalize_frontmatter(out.frontmatter)
+            updated_fm, db_type = normalize_frontmatter(
+                out.frontmatter, source_path=src,
+            )
             normalized_body = normalize_body_for_fts(out.body_text)
         except (UnmappedTypeError, BodyNormalizationError) as e:
             return emit({"error": type(e).__name__, "message": str(e),

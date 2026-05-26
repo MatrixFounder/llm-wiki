@@ -136,7 +136,9 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
                 out = adapter.fetch(item)
-                updated_fm, db_type = normalize_frontmatter(out.frontmatter)
+                updated_fm, db_type = normalize_frontmatter(
+                    out.frontmatter, source_path=path,
+                )
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
                 repo.upsert_page(page)
@@ -226,17 +228,35 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
                 out = adapter.fetch(item)
-                updated_fm, db_type = normalize_frontmatter(out.frontmatter)
+                updated_fm, db_type = normalize_frontmatter(
+                    out.frontmatter, source_path=path,
+                )
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
                 repo.upsert_page(page)
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   out.refs)
                 pages_count += 1
-                # Register entity row for _concepts/_entities files
+                # Register entity row for _concepts/_entities files.
+                # entities.type follows the frontmatter's `type:` field
+                # (concept | person | company | product | group | event |
+                # work | external). Path is just the bucket discriminator;
+                # the actual entity-kind comes from the file itself so
+                # wiki-ingest's typed entities (e.g. type=person) survive
+                # round-trip. Fall back: _concepts/* → concept, _entities/*
+                # → external when frontmatter has no `type:`.
                 rel_parts = path.relative_to(vault_root).parts
                 if any(p in ("_concepts", "_entities") for p in rel_parts):
-                    e_type = "concept" if "_concepts" in rel_parts else "external"
+                    fm_type = updated_fm.get("type")
+                    if fm_type in (
+                        "concept", "person", "company", "product",
+                        "group", "event", "work", "external",
+                    ):
+                        e_type = fm_type
+                    elif "_concepts" in rel_parts:
+                        e_type = "concept"
+                    else:
+                        e_type = "external"
                     ts_iso = datetime.now().isoformat()
                     conn.execute(
                         "INSERT OR IGNORE INTO entities (vault_id, slug, "

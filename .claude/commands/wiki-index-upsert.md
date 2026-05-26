@@ -1,0 +1,1 @@
+../../commands/wiki-index-upsert.md

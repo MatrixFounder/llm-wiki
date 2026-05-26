@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS pages (
     title             TEXT NOT NULL,
     file_path         TEXT NOT NULL,
     tldr              TEXT,
-    date              TEXT NOT NULL,
+    date              TEXT,                              -- nullable: real-world sources may be undated or carry unparseable placeholders ('⚠️ UNKNOWN' etc)
     last_modified     TEXT NOT NULL,
     file_hash         TEXT NOT NULL,
     frontmatter_json  TEXT NOT NULL,

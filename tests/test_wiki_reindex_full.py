@@ -128,6 +128,39 @@ def test_e2e_04_log_md_round_trip(minimal_vault, fresh_db):
     r.close()
 
 
+def test_unit_06_entity_type_from_frontmatter(tmp_path, fresh_db):
+    """Regression for adversarial MEDIUM issue: entities.type must follow
+    frontmatter `type:` field, not the directory (which is just the bucket).
+    wiki-ingest produces typed entities (person, company, product, group);
+    flattening everything to 'external' loses knowledge-graph fidelity.
+    """
+    vault = tmp_path / "tv"
+    (vault / "_entities").mkdir(parents=True)
+    (vault / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: test-typed\nschema_version: '2.0'\n---\n"
+    )
+    (vault / "_entities" / "Alice.md").write_text(
+        "---\ntype: person\ntitle: Alice\n---\nA person.\n"
+    )
+    (vault / "_entities" / "Acme.md").write_text(
+        "---\ntype: company\ntitle: Acme\n---\nA company.\n"
+    )
+    (vault / "_entities" / "Hermes.md").write_text(
+        "---\ntype: external\ntitle: Hermes\n---\nDefault external.\n"
+    )
+    r = SQLiteRepository(fresh_db)
+    r.apply_schema()
+    _register_vault(r, "test-typed", vault)
+    reindex_full(r, "test-typed")
+    rows = {row["slug"]: row["type"] for row in r._connect().execute(
+        "SELECT slug, type FROM entities WHERE vault_id='test-typed'"
+    ).fetchall()}
+    assert rows.get("Alice") == "person", f"got {rows.get('Alice')!r}"
+    assert rows.get("Acme") == "company", f"got {rows.get('Acme')!r}"
+    assert rows.get("Hermes") == "external", f"got {rows.get('Hermes')!r}"
+    r.close()
+
+
 def test_unit_05_mentions_count_recomputed(minimal_vault, fresh_db):
     """I-5 invariant: entities.mentions_count == COUNT(*) FROM page_entity_refs
     after reindex (regression guard for rebuildability)."""

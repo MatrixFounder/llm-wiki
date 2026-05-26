@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 from slugify import slugify
@@ -70,6 +71,16 @@ TYPE_MAPPING: dict[str, tuple[str, str | None]] = {
     "lesson-summary": ("summary", "lesson-summary"),
     "meeting-summary": ("summary", "meeting-summary"),
     "concept": ("concept", None),
+    # wiki-ingest convention: _entities/*.md carry `type: external` (per
+    # WIKI-INGEST-V1.1-CONTRACT). Page-display-wise these are concept-like
+    # (definition + properties); the entities table holds entity-specific
+    # metadata. So pages.type=concept, tag the page with `external` for
+    # downstream filters.
+    "external": ("concept", "external"),
+    "person": ("concept", "person"),
+    "company": ("concept", "company"),
+    "product": ("concept", "product"),
+    "group": ("concept", "group"),
     "query": ("query", None),
     "brief": ("brief", None),
     "research": ("research", None),
@@ -90,15 +101,46 @@ def _slugify_concept(c: str) -> str:
                    regex_pattern=r"[^a-z0-9\-]")
 
 
-def normalize_frontmatter(fm: dict[str, Any]) -> tuple[dict[str, Any], str]:
+_PATH_TYPE_FALLBACK: dict[str, str] = {
+    "_concepts": "concept",
+    "_entities": "external",
+}
+
+
+def _infer_type_from_path(source_path: Path | None) -> str | None:
+    """If ``source_path`` lives under ``_concepts/`` or ``_entities/`` and
+    frontmatter has no ``type:``, return the implied raw type. Real vaults
+    (esp. wiki-ingest output) often omit ``type:`` because the directory
+    convention is self-documenting.
+    """
+    if source_path is None:
+        return None
+    for part in source_path.parts:
+        if part in _PATH_TYPE_FALLBACK:
+            return _PATH_TYPE_FALLBACK[part]
+    return None
+
+
+def normalize_frontmatter(
+    fm: dict[str, Any], *, source_path: Path | None = None,
+) -> tuple[dict[str, Any], str]:
     """Translate frontmatter via §6.1 mapping table.
 
     Returns `(updated_fm, db_type)`. `updated_fm` has:
       - tags = original tags + marker (if mapped) + slugified concepts; dedup
         preserving order.
       - concepts[] preserved verbatim if present.
+
+    If ``type:`` is missing but ``source_path`` lives under ``_concepts/`` or
+    ``_entities/``, the type is inferred from the directory (path-aware
+    fallback for wiki-ingest-generated files that carry ``kind: concept``
+    rather than ``type: concept``).
     """
     raw_type = fm.get("type")
+    if not raw_type:
+        inferred = _infer_type_from_path(source_path)
+        if inferred:
+            raw_type = inferred
     if not raw_type or raw_type not in TYPE_MAPPING:
         raise UnmappedTypeError(
             f"frontmatter type={raw_type!r} not in TYPE_MAPPING. Valid: "

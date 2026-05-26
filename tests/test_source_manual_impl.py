@@ -73,6 +73,32 @@ def test_unit_02_compute_file_hash_deterministic():
     assert compute_file_hash("abc") != compute_file_hash("abd")
 
 
+def test_unit_02b_adapter_hashes_full_file_not_body(tmp_path):
+    """Regression for adversarial HIGH issue: adapter must hash FULL file
+    (frontmatter + body), not body-only. Otherwise frontmatter-only edits
+    (added tag, fixed title) produce same hash → upsert_page short-circuits
+    as 'unchanged' → DB never sees the edit."""
+    from scripts.wiki_source.base import SourceItem
+    from scripts.wiki_source.manual import ManualSourceAdapter
+
+    vault = tmp_path / "v"
+    (vault / "_sources").mkdir(parents=True)
+    body = "lesson body text"
+    src = vault / "_sources" / "x.md"
+
+    src.write_text(f"---\ntype: summary\ntitle: A\n---\n{body}\n")
+    item = SourceItem(kind="manual", source_path=src, vault_root=vault,
+                      vault_id="v")
+    out1 = ManualSourceAdapter().fetch(item)
+
+    # Edit ONLY frontmatter (different tag), keep body identical
+    src.write_text(f"---\ntype: summary\ntitle: B\n---\n{body}\n")
+    out2 = ManualSourceAdapter().fetch(item)
+    assert out1.file_hash != out2.file_hash, (
+        "frontmatter-only edit produced same hash → upsert would silently drop it"
+    )
+
+
 def test_unit_03_derive_slug_vault_root(tmp_path):
     vault = tmp_path / "v"
     (vault / "_sources").mkdir(parents=True)

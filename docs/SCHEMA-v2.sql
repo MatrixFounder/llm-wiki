@@ -187,7 +187,7 @@ CREATE TABLE IF NOT EXISTS pages (
     title             TEXT NOT NULL,
     file_path         TEXT NOT NULL,                   -- relative to vault_root
     tldr              TEXT,                            -- one-line for index render
-    date              TEXT NOT NULL,                   -- ISO-8601 (YYYY-MM-DD)
+    date              TEXT,                            -- ISO-8601 (YYYY-MM-DD); nullable — sources may be undated or carry unparseable placeholders
     last_modified     TEXT NOT NULL,                   -- file mtime, ISO-8601
     file_hash         TEXT NOT NULL,                   -- sha256 of body
     frontmatter_json  TEXT NOT NULL,                   -- full frontmatter as JSON
