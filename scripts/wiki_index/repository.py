@@ -71,6 +71,18 @@ class IndexRepository(abc.ABC):
         See ADR-002 §D8 reconciliation flow."""
         ...
 
+    @abc.abstractmethod
+    def get_vault_by_root_path(self, root_path: Path) -> Vault | None:
+        """Lookup by root_path (UNIQUE indexed). Used by wiki-init reconcile
+        to detect VAULT_RENAMED case per ADR-002 §D8."""
+        ...
+
+    def close(self) -> None:
+        """Close underlying resources (connection, locks). Default no-op for
+        backends without connection state; SQLite override closes the lazy
+        Connection. Idempotent."""
+        return None
+
     # =========================================================================
     # Pages CRUD (R-04 DAL, R-07 wiki-index-upsert)
     # =========================================================================

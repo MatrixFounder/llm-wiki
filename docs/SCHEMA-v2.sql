@@ -227,8 +227,10 @@ CREATE TABLE IF NOT EXISTS page_entity_refs (
     source_quote      TEXT,                            -- 10-50 word verbatim
     trust_level       TEXT NOT NULL DEFAULT 'medium' CHECK (trust_level IN ('high', 'medium', 'low')),
     PRIMARY KEY (vault_id, page_slug, page_project, entity_slug, ref_type),
-    FOREIGN KEY (vault_id, page_slug, page_project) REFERENCES pages(vault_id, slug, project) ON UPDATE CASCADE ON DELETE CASCADE,
-    FOREIGN KEY (vault_id, entity_slug) REFERENCES entities(vault_id, slug) ON UPDATE CASCADE ON DELETE CASCADE
+    FOREIGN KEY (vault_id, page_slug, page_project) REFERENCES pages(vault_id, slug, project) ON UPDATE CASCADE ON DELETE CASCADE
+    -- NOTE: No FK on entity_slug — refs may target unresolved wiki-link slugs
+    -- (orphan links). `find_orphan_links` (R-11) LEFT JOINs entities to detect
+    -- these. Discovered during task-001-25 Phase 3a impl.
 );
 
 CREATE INDEX IF NOT EXISTS idx_refs_entity   ON page_entity_refs(vault_id, entity_slug);

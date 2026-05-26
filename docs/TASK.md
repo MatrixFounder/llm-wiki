@@ -11,7 +11,7 @@
   - [docs/MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md) — план миграции (готов)
   - [docs/KNOWN_ISSUES.md](./KNOWN_ISSUES.md) — stub-файл создан (no known issues at start of project; entry format задан внутри).
 - **Mode:** Standard
-- **Status:** `PHASE-3A-READY` — DB-independent work green-lit for development; wiki-ingest-coupled work (Phase 3b) blocks on v1.1 release (see [docs/PLAN.md](./PLAN.md)).
+- **Status:** `PHASE-3A-COMPLETE` (2026-05-26) — all 34 atomic tasks landed; 274 tests pass; mypy --strict clean on 29 source files; rebuildability E2E gate green; VDD multi-adversarial review iteration 1 passed (no Critical/High open). Phase 3b still blocks on `wiki-ingest` v1.1 release (see [docs/PLAN.md](./PLAN.md)).
   - **Decision-1 (2026-05-25)**: pivot к **Option I (Wrap + Index)** — `wiki-ingest` v1.1+ becomes canonical file-layer; MVP wraps + indexes. См. [ADR-001](./adr/ADR-001-wiki-ingest-integration.md).
   - **Decision-2 (2026-05-26)**: **Single global DB + `vault_id` partitioning** — один SQLite-файл серверит multiple Obsidian vaults; schema partition by `vault_id`. Resolves empirical bottlenecks B1-B6 measured on `trade-agents/`. См. [ADR-002](./adr/ADR-002-multi-vault-bottleneck-corrections.md).
   - **Decision-3 (2026-05-26)**: **`vault_id` REQUIRED explicit** в `WIKI_SCHEMA.md` — no hash fallback. См. ADR-002 §D1.1.

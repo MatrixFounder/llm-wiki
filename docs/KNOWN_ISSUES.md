@@ -68,3 +68,62 @@ To be batched into a single cleanup PR before Phase 3a Exit. Tracked here per Pl
 - **Root cause**: Documentation accuracy check.
 - **Affected components**: ADR-002 §D8 anti-pattern table.
 - **Fix plan**: Add reviewer confirmation note inline ("Verified consistent with `page_entity_refs` design, 2026-05-26").
+
+---
+
+## Performance items deferred from `/vdd-multi` iteration 1 (2026-05-26)
+
+All flagged as SEV-1 by `critic-performance` but defer-justified: pass at N=100 in benchmark; 1k/10k SLO enforcement is not Phase 3a gate.
+
+## [2026-05-26] P-1 reindex_full per-page transactions [STATUS: open]
+
+- **Symptom**: `reindex_full` calls `repo.upsert_page` + `repo.replace_refs` once per page; each opens its own `BEGIN IMMEDIATE`/`COMMIT`. At 10k pages → ~20k commits + FTS5 trigger work per commit. Projected ~60–120 s; tight against the 3-min SLO.
+- **Root cause**: `upsert_page` invariant that it owns its own transaction (M-4 contract) prevents trivial wrapping in an outer BEGIN.
+- **Affected components**: `scripts/wiki_index/reindex.py:reindex_full`, `scripts/wiki_index/sqlite_repository.py:upsert_page`.
+- **Fix plan**: Introduce `repo.bulk_upsert_pages(iter[Page])` with executemany inside one tx; defer FTS5 maintenance (drop+rebuild triggers + bulk INSERT into pages_fts at end). Acceptable only when `enforce_slos` testing at N=10k is wired into CI.
+
+## [2026-05-26] P-2 reindex_delta no-op walk cost [STATUS: open]
+
+- **Symptom**: `reindex_delta` calls `discover_pages` (rglob over `_sources/_concepts/_entities` × root + course tier) + `path.stat()` on every page + `SELECT slug, project FROM pages` + set membership. No-op delta at 10k pages risks blowing the 2 s SLO.
+- **Root cause**: `Path.rglob` allocates Path objects per entry; `stat()` invoked on every discovered file even if unmodified.
+- **Affected components**: `scripts/wiki_index/reindex.py:reindex_delta`, `discover_pages`.
+- **Fix plan**: Replace `Path.rglob` with `os.scandir`; persist mtime/size to avoid re-stat; pull `last_modified` from `pages` table for comparison. Profile after.
+
+## [2026-05-26] P-3 check_drift re-hashes every file [STATUS: open]
+
+- **Symptom**: `SQLiteRepository.check_drift` reads + sha256-hashes every page on disk, plus `yaml.safe_load` on each frontmatter for type-mismatch detection. At 10k pages → wiki-lint 30 s SLO at risk.
+- **Root cause**: No mtime/size short-circuit; PyYAML safe_load is slow.
+- **Affected components**: `scripts/wiki_index/sqlite_repository.py:check_drift`.
+- **Fix plan**: Compare `os.stat().st_mtime + st_size` against stored `last_modified` first; only re-hash on mismatch. Replace PyYAML with regex fast-path for `^type:\s*(\S+)`. Stream hashing via `hashlib.file_digest`.
+
+## [2026-05-26] P-4 benchmark suite default n=100 only [STATUS: open]
+
+- **Symptom**: `pytest tests/test_benchmark.py` and CLI default `--n 100` exercise only the smallest SLO bucket. The 1k/10k SLOs in `SLOS` dict are never automatically validated.
+- **Root cause**: Benchmark designed for fast smoke; no CI scale gate.
+- **Affected components**: `scripts/benchmark.py`, CI workflow (not yet created).
+- **Fix plan**: Add `--scale all` mode (loops 100/1000/10000 + `--enforce-slos`); wire `--n 1000 --enforce-slos` into CI; mark `--n 10000` as nightly/manual. Document expected runtime per bucket.
+
+## [2026-05-26] P-5 idx_pages_vault_tags is dead-weight functional index [STATUS: open]
+
+- **Symptom**: `idx_pages_vault_tags ON pages(vault_id, json_extract(frontmatter_json, '$.tags'))` is maintained on every upsert but indexes a JSON array (compared as string), which provides no useful query path. Tag queries should route through `pages_fts.tags`.
+- **Root cause**: Speculative index added during schema design; never used by any query.
+- **Affected components**: `sql/wiki-index-v2.sql`, `docs/SCHEMA-v2.sql`.
+- **Fix plan**: Drop the index. If tag selectivity becomes a real need, build a `pages_tags(vault_id, slug, tag)` join table populated by trigger.
+
+---
+
+## VDD-multi iteration 1 (2026-05-26) — accepted-and-noted lows
+
+## [2026-05-26] D-1 assert_no_symlink_escape limited on Unix [STATUS: documented]
+
+- **Symptom**: Function walks `Path.parent` lexically and checks `target.is_relative_to(p.anchor)`. On Unix `anchor = "/"` so the escape check can never trigger; loop detection unreachable (parent chain never revisits).
+- **Root cause**: Defensive primitive whose strong form would need an FD-based, kernel-mediated walk.
+- **Affected components**: `scripts/wiki_index/security.py`.
+- **Fix plan**: Documented as a sanity rail (called from `reindex_delta`); primary R-26 protection is `validate_inside_vault` in `manual.fetch`. No code change beyond docstring honesty.
+
+## [2026-05-26] D-2 R-26 not enforced on CLI output paths [STATUS: open]
+
+- **Symptom**: `wiki-lint --report` / `--json-sidecar`, `wiki-index-render --output` accept arbitrary destination paths. An operator can write report files outside the vault root.
+- **Root cause**: Outputs were considered operator-trusted; not gated by `validate_inside_vault`.
+- **Affected components**: `scripts/wiki_skills/wiki_lint.py`, `scripts/wiki_skills/wiki_index_render.py`.
+- **Fix plan**: Decide policy — either gate via `validate_inside_vault(arg, vault.root_path)` for R-26 compliance, or document explicit operator-trust scope in CLI `--help` text. Deferred pending Phase 3b threat-model review.

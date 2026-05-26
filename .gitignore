@@ -35,6 +35,20 @@ npm-debug.log*
 # Project Specific
 .agent
 tmp*
+
+# Wiki vault artifacts (must never be scaffolded into this repo root; the
+# repo IS the implementation, not a vault). Belt-and-braces guard in case
+# someone runs wiki-init with --vault pointing here. See also:
+# scripts/wiki_skills/wiki_init.py — scaffold_new now requires explicit --vault.
+/WIKI_SCHEMA.md
+/_sources/
+/_concepts/
+/_entities/
+/_raw/
+/00-Vault-Index/
+*.db
+*.db-shm
+*.db-wal
 .claude/agents/analyst.md 
 .claude/agents/architect.md 
 .claude/agents/architecture-reviewer.md 

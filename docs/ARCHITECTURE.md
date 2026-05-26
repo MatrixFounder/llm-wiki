@@ -1,10 +1,11 @@
 # ARCHITECTURE: LLM Wiki MVP
 
-> **Status**: DRAFT — pending architecture-reviewer verification.
+> **Status**: PHASE-3A-COMPLETE (2026-05-26) — all 34 atomic tasks implemented; 274 tests pass; mypy --strict clean; rebuildability E2E gate green. ADRs 001, 002 in effect.
 > **TASK**: [docs/TASK.md](./TASK.md) (Task 001 wiki-mvp)
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (full v2 specification, 1745 lines)
-> **Schema**: [docs/SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) — SQLite DDL (8 tables + 3 FTS5 + 3 views, with sentinel-PK fix)
+> **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
+> **Layout constants** consolidated in [scripts/wiki_index/layout.py](../scripts/wiki_index/layout.py) — single source of truth for `PAGE_SUBDIRS`, `COURSE_TIER_DIR`, `VAULT_INDEX_DIR`, `LOG_SUBDIR`, `SCAFFOLD_DIRS`, `SYSTEM_FILES`, `GLOBAL_VAULT_SENTINEL`.
 
 ---
 
