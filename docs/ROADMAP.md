@@ -14,7 +14,9 @@ Status legend:
 
 ## P0 — Active blockers
 
-### R-V1. wiki-ingest vendoring (Option 5 — Python-import vendor) 🟡 ACTIVE
+_(none — R-V1 closed 2026-05-27; see "Done since 2026-05-27".)_
+
+### R-V1. wiki-ingest vendoring (Option 5 — Python-import vendor) ✅ DONE 2026-05-27
 Promoted from P3 → P0 on 2026-05-27 after operator-confirmed target
 **self-contained product / publication** (PyPI / GitHub plugin / Claude
 Code plugin marketplace). External `wiki-ingest` dep blocks single-step
@@ -36,7 +38,12 @@ direct Python call; keep `--source` CLI flag for backward compat
 "simple wiki" users — operator-stated requirement. Both paths
 co-exist.
 
-**Tracking task**: TASK 004 `wiki-ingest-vendoring` (drafted next).
+**Tracking task**: TASK 004 `wiki-ingest-vendoring` — **COMPLETE** 2026-05-27.
+All 11 beads shipped + `/vdd-multi` adversarial sweep applied 6 hardening
+fixes inline (LICENSE-upstream rsync exclude, narrowed exception catch,
+truthy env-var parsing, full primary-path PARTIAL_INDEX_FAILURE envelope,
+absolute-path rejection, hex-case-insensitive regex). 328 pytest /
+mypy strict clean. Self-contained product publication path unblocked.
 
 **Why this is P0 now**: self-contained publication path cannot ship
 with subprocess + PATH dependency on a separate repo. Decision-9 from
@@ -289,6 +296,17 @@ the misleading docstring.
   regression tests)
 - VDD multi-adversarial + adversarial round 1 reviews (zero-slop)
 - README + Installation flow for any-target-project use
+- **R-V1 / TASK 004 closed 2026-05-27** — wiki-ingest Python-import-only
+  vendor (Option 5). `scripts/wiki_ingest/` snapshot from
+  `Universal-skills/skills/wiki-ingest/`; `scripts/wiki_skills/wiki_enrich.py`
+  refactored to in-process primary path + subprocess fallback (gated by
+  `WIKI_ENRICH_NO_VENDORED` env var, accepts case-insensitive
+  `{1, true, yes, on}` after `/vdd-multi` H-3 fix). `mypy.ini` package
+  override silences ~190 vendored typing errors per Decision-14 time-box.
+  `scripts/sync_wiki_ingest.sh` snapshot refresh with SHA256 divergence
+  check and `LICENSE-upstream` preservation (Apache 2.0 §4). 11 atomic
+  beads + 6 `/vdd-multi` hardening fixes + 33 new tests. Publication
+  path (PyPI / GitHub plugin / Claude Code marketplace) unblocked.
 - **R-1 closed 2026-05-27** (commit `81b7aff`) — UC-06/UC-07 marked
   `SUPERSEDED → /wiki-enrich` in [TASK.md](TASK.md); RTM rows R-06.3 and
   R-24 carry the status, Use Case bodies retain SUPERSEDED banners with

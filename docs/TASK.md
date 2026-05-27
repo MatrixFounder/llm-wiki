@@ -5,7 +5,7 @@
 - **Task ID:** 004
 - **Slug:** `wiki-ingest-vendoring`
 - **Mode:** Standard
-- **Status:** `DRAFT` (2026-05-27)
+- **Status:** `COMPLETE` (2026-05-27) — all 11 beads shipped via `/vdd-develop` (004-01, 004-03) + `/vdd-develop-all` chain (004-02, 004-04..11). `/vdd-multi` adversarial sweep applied 6 CRITICAL/HIGH fixes inline (LICENSE-upstream rsync exclude, narrowed exception catch, truthy env parsing, full primary-path PARTIAL_INDEX_FAILURE envelope, absolute-path rejection, hex-case-insensitive divergence regex) + 12 regression-guard tests. Final state: 328 pytest passed / 4 skipped (was 295 baseline; +33 net new tests across TASK 004), `mypy --strict scripts/` clean on 53 files (vendored excluded via mypy.ini per Decision-14), all R-56/R-57 invariants verified. Awaiting operator commit decision per `/vdd-develop-all` no-auto-commit policy.
 - **Predecessor:** [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) — PAUSED pending this task's ship
 - **Related artifacts:**
   - [docs/ROADMAP.md](./ROADMAP.md) §P0 R-V1 — decision write-up and scoring summary

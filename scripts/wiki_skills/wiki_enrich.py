@@ -40,6 +40,25 @@ from scripts.wiki_index.security import (
 )
 from scripts.wiki_skills._common import emit
 
+# ARCHITECTURE.md §1.5.2 path decision branch (TASK 004 R-47/R-48 / bead 004-05):
+# Try to import the vendored `wiki_ingest` Python module. When import succeeds
+# AND `WIKI_ENRICH_NO_VENDORED=1` is NOT set, `main()` calls `ingest()`
+# in-process (PRIMARY path — no subprocess, no `check_wiki_ingest_version()`
+# call, no PATH dependency). Otherwise falls back to the legacy subprocess
+# path via `wiki-ingest` CLI (preserves R-56: standalone wiki-ingest users
+# can keep using this script without installing the vendored copy).
+import os
+try:
+    from scripts.wiki_ingest.commands.ingest import (
+        IngestError as _VendoredIngestError,
+        ingest as _vendored_ingest,
+    )
+    _VENDORED_AVAILABLE = True
+except ImportError:
+    _vendored_ingest = None  # type: ignore[assignment]
+    _VendoredIngestError = None  # type: ignore[assignment,misc]
+    _VENDORED_AVAILABLE = False
+
 MIN_WIKI_INGEST_VERSION = (1, 1)
 
 
@@ -178,6 +197,17 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
         rel = entry["path"]
         # TODO: extend if promotion-spec introduces course-tier `Lessons/<C>/index.md`.
         rel_path = Path(rel)
+        # vdd-multi critic-logic M-1: defense-in-depth — reject absolute paths
+        # at the upsert boundary (_validate_manifest should have caught them,
+        # but if a future caller invokes index_from_manifest() directly
+        # without validation, the system-file skip would be bypassed for an
+        # absolute path like `/abs/index.md` and the upsert step would try
+        # to read OUTSIDE the vault).
+        if rel_path.is_absolute():
+            failed.append({"path": rel,
+                           "envelope": {"error": "ABSOLUTE_PATH_IN_MANIFEST",
+                                        "message": f"manifest written entry has absolute path: {rel}"}})
+            continue
         if rel_path.parent == Path(".") and rel_path.name in SYSTEM_FILES:
             continue
         abs_path = (vault_root / rel).resolve()
@@ -189,8 +219,12 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
         if db_path:
             argv.extend(["--db-path", db_path])
         # wiki_index_upsert.main writes a JSON envelope to stdout; capture it.
-        # It may also raise on FS-level errors (e.g. missing source) — catch
-        # broadly so a single bad path doesn't abort the whole pipeline.
+        # Catch only EXPECTED failure modes — `OSError` for FS errors,
+        # `ValueError` for frontmatter parse, `KeyError` for missing schema
+        # fields, `RuntimeError` for explicit raise-with-context. Programming
+        # errors (`MemoryError`, `RecursionError`, `AttributeError`, etc.)
+        # MUST propagate — silently routing them to `failed[]` masked refactor
+        # regressions per vdd-multi critic-logic C-1 + critic-security M-3.
         import io
         import contextlib
 
@@ -198,7 +232,7 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
         try:
             with contextlib.redirect_stdout(buf):
                 rc = upsert_main(argv)
-        except (OSError, ValueError, Exception) as e:
+        except (OSError, ValueError, KeyError, RuntimeError) as e:
             failed.append({"path": rel,
                            "envelope": {"error": type(e).__name__,
                                         "message": str(e)}})
@@ -274,13 +308,83 @@ def main(argv: list[str] | None = None) -> int:
     vault_root = args.vault_root.resolve(strict=True)
     source = args.source.resolve(strict=True)
 
+    # WIKI_ENRICH_NO_VENDORED accepts a truthy set (case-insensitive, stripped)
+    # rather than exact-match "1" — operators following standard env-var
+    # conventions ("true", "yes", "on") would otherwise silently get the
+    # in-process path despite explicit downgrade intent. vdd-multi
+    # critic-logic H-3 + critic-security M-2 (force-downgrade defense).
+    _no_vendored_env = os.environ.get("WIKI_ENRICH_NO_VENDORED", "").strip().lower()
+    _force_subprocess = _no_vendored_env in {"1", "true", "yes", "on"}
+    use_vendored = _VENDORED_AVAILABLE and not _force_subprocess
+
     try:
-        check_wiki_ingest_version(args.wiki_ingest_bin)
-        manifest = run_wiki_ingest(
-            args.wiki_ingest_bin, source, vault_root,
-            extra_args=list(args.ingest_arg),
-            timeout_seconds=args.timeout_seconds,
-        )
+        if use_vendored:
+            # PRIMARY PATH (post-TASK-004): in-process call into vendored
+            # ingest(). No subprocess. No check_wiki_ingest_version(). No
+            # PATH dependency on `wiki-ingest`.
+            assert _vendored_ingest is not None  # mypy: _VENDORED_AVAILABLE guard
+            try:
+                manifest = _vendored_ingest(
+                    source=source,
+                    vault=vault_root,
+                    vault_id=args.vault,
+                    source_hash=None,
+                    known_concepts=None,
+                    dry_run=False,
+                    timeout_seconds=args.timeout_seconds,
+                    quiet=True,
+                )
+            except Exception as e:
+                # Vendored `IngestError` is a content-level failure (not a
+                # transport failure); DO NOT fall back to subprocess. Emit
+                # structured error envelope and exit 6.
+                if (_VendoredIngestError is not None
+                        and isinstance(e, _VendoredIngestError)):
+                    # PARTIAL_INDEX_FAILURE carries `manifest_head` +
+                    # `cleanup_advice` as dynamic attrs (set by vendored
+                    # `ingest()`'s _PartialFailure catch block). Emit the
+                    # FULL envelope shape (incl. manifest_version, vault_id,
+                    # vault_root, course, source fields) to preserve R-56
+                    # byte-identical contract on the primary path. Pre-fix
+                    # this was truncated to {error, code, phase, written_so_far}
+                    # — vdd-multi critic-logic H-1.
+                    if getattr(e, "code", None) == "PARTIAL_INDEX_FAILURE":
+                        head = getattr(e, "manifest_head", {}) or {}
+                        return emit({
+                            **head,
+                            "status": "error",
+                            "phase": getattr(e, "phase", None),
+                            "code": "PARTIAL_INDEX_FAILURE",
+                            "child_exit_code": getattr(e, "child_exit_code", 0),
+                            "written_so_far": getattr(e, "written_so_far", []),
+                            "cleanup_advice": getattr(e, "cleanup_advice", str(e)),
+                        }, exit_code=6)
+                    return emit({
+                        "error": "WIKI_INGEST_FAILED",
+                        "code": getattr(e, "code", "UNKNOWN"),
+                        "phase": getattr(e, "phase", None),
+                        "written_so_far": getattr(e, "written_so_far", []),
+                        "message": str(e),
+                    }, exit_code=6)
+                raise
+        else:
+            # FALLBACK PATH: subprocess via `wiki-ingest` CLI on PATH.
+            # Used when (a) vendored import failed, OR (b)
+            # WIKI_ENRICH_NO_VENDORED=1 is set (escape hatch for debugging).
+            # Pre-TASK-004 behavior preserved byte-for-byte.
+            if shutil.which(args.wiki_ingest_bin) is None:
+                return emit({
+                    "error": "WIKI_INGEST_UNAVAILABLE",
+                    "hint": ("vendored module not importable AND "
+                             "wiki-ingest binary not on PATH. Install "
+                             "wiki-ingest or unset WIKI_ENRICH_NO_VENDORED."),
+                }, exit_code=6)
+            check_wiki_ingest_version(args.wiki_ingest_bin)
+            manifest = run_wiki_ingest(
+                args.wiki_ingest_bin, source, vault_root,
+                extra_args=list(args.ingest_arg),
+                timeout_seconds=args.timeout_seconds,
+            )
         _validate_manifest(manifest, args.vault, vault_root)
     except WikiIngestError as e:
         return emit({"error": "WIKI_INGEST_FAILED", "message": str(e)},

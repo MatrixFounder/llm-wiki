@@ -80,18 +80,41 @@ canonical files          rebuildable cache
 
 ---
 
-## External dependency: `wiki-ingest`
+## External dependency: `wiki-ingest` (now optional — vendored as of TASK 004)
 
 `/wiki-enrich` composes with the `wiki-ingest` skill (v1.1+), which
 owns the LLM-driven file layer — concept/entity page synthesis,
 additive merge, log.md append, contradiction detection.
 
-Install `wiki-ingest` globally so the binary is on `PATH` (typically
-under `~/.claude/skills/wiki-ingest/`) before invoking `/wiki-enrich`.
-Contract: [docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md).
+**Post-TASK-004 (2026-05-27)**: the `wiki-ingest` Python module is now
+**vendored** into `scripts/wiki_ingest/` (snapshot of
+`Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/`) and called
+in-process by default. **No external install required** for `/wiki-enrich`
+to work — the in-process primary path satisfies UC-V2 (single-step
+install).
+
+Two paths exist:
+- **PRIMARY (default)**: in-process call into vendored `scripts.wiki_ingest`
+  package. No subprocess, no PATH dependency. Activated when the vendored
+  import succeeds AND `WIKI_ENRICH_NO_VENDORED` env var is unset.
+- **FALLBACK (subprocess)**: legacy path via `wiki-ingest` CLI on `PATH`.
+  Activated when (a) vendored import fails for any reason, OR
+  (b) `WIKI_ENRICH_NO_VENDORED=1` is set (escape hatch for debugging,
+  comparison, or standalone wiki-ingest users who prefer the external
+  copy).
+
+To use the fallback, install upstream `wiki-ingest` globally (typically
+under `~/.claude/skills/wiki-ingest/` symlinked to your local clone of
+the Universal-skills repo) so the `wiki-ingest` binary lands on `PATH`.
+
+See [`scripts/wiki_ingest/VENDORED_FROM.md`](scripts/wiki_ingest/VENDORED_FROM.md)
+for snapshot provenance, sync workflow, and local-patches log. Contract:
+[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md).
+Refresh the vendored snapshot via
+`bash scripts/sync_wiki_ingest.sh [--dry-run]`.
 
 Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, etc.) are
-self-contained and do not need `wiki-ingest`.
+self-contained and do not need `wiki-ingest` (vendored or otherwise).
 
 ---
 
@@ -117,6 +140,10 @@ pip install -r requirements.txt
 
 # 3. Install wrappers, skills, and commands into user-global Claude Code dirs
 bash bin/install-globally.sh
+
+# That's it — /wiki-enrich works in-process via vendored wiki_ingest module.
+# (Optional: install upstream wiki-ingest to enable the subprocess fallback.
+# Not needed for normal operation.)
 ```
 
 What `bin/install-globally.sh` does (idempotent):
@@ -149,8 +176,9 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 293 passed, 4 skipped (~3s)
-mypy --strict scripts/  # clean on 30 source files
+pytest tests/           # 320+ passed, 4 skipped (post-TASK-004)
+mypy --strict scripts/  # clean on 53 source files (vendored package
+                        # excluded via mypy.ini override per Decision-14)
 ```
 
 Optionally also run `bin/install-globally.sh` so you can dogfood the

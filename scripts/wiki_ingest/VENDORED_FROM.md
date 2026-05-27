@@ -17,6 +17,8 @@ The initial sync (this bead) and the future `scripts/sync_wiki_ingest.sh` (I-V.2
   (e.g., `../../../../docs/tasks/task-015-...md`) that do not resolve in this repo. Keeping it
   would produce broken links and operator confusion. Excluded by deliberate choice, not by
   pattern; sync script must enforce.
+- `VENDORED_FROM.md` — provenance file itself (lives ONLY in the vendored copy, not upstream).
+  Without this exclude, `rsync --delete` would remove it on every sync. Critical safety guard.
 
 ## hashing convention
 
@@ -92,7 +94,24 @@ _(other paths identical to `file_hashes` table — omitted to avoid duplication)
    - **upstream_sha256**: `6e14184b350bc96ac34bd39ea7446fa1ea720463ad0c457817969e11622eeae3`
    - **current_sha256**: `392171dfdef6adc2eb13349c9cdc2e8ec2ce29ada0b96d77924f5afedcd77575`
 
-2. **path**: `commands/ingest.py`
+2. **path**: `*` (package-wide mypy override)
+   - **kind**: `mypy_strict_escape_hatch` (TASK 004 R-50, bead 004-04 / I-V.4)
+   - **reason**: Upstream wiki-ingest was not authored under `mypy --strict`;
+     initial scan surfaced ~190 errors across 21 files. Per Decision-14 +
+     task-reviewer time-box rule ("if cumulative type-fixup > 2h, switch to
+     `# type: ignore` wholesale"), the entire vendored package is excluded
+     from mypy via `[mypy-scripts.wiki_ingest.*]\nignore_errors = True` in
+     `mypy.ini`. Single config-entry equivalent to ~190 per-error markers.
+   - **delta**: `mypy.ini` created at repo root with package-level override.
+     No edits to vendored `*.py` files for this patch.
+   - **upstream_issue**: TBD — file against Universal-skills/wiki-ingest:
+     "Type annotation gaps surface under mypy --strict in vendored
+     consumers". When upstream is strict-clean, remove the override + sync.
+   - **discovered_in**: bead 004-04 initial mypy run.
+   - **scope**: WHOLE package (so no per-file hashes change vs upstream;
+     `file_hashes` table unaffected by this patch).
+
+3. **path**: `commands/ingest.py`
    - **kind**: `programmatic_api_extraction` (TASK 004 R-46, bead 004-03 / I-V.3)
    - **reason**: Extracted programmatic `ingest(source, vault, ...) -> dict`
      function and `IngestError` exception class from upstream's

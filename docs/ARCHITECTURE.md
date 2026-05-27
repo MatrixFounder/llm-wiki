@@ -74,7 +74,7 @@ SQLite ~/Library/Application Support/wiki-index/global.db   (multi-vault, FTS5)
 
 ```text
 wiki_enrich.py start:
-    if _VENDORED_AVAILABLE and os.environ.get("WIKI_ENRICH_NO_VENDORED") != "1":
+    if _VENDORED_AVAILABLE and not _force_subprocess:  # WIKI_ENRICH_NO_VENDORED truthy set
         → PRIMARY PATH (in-process, below)
     elif shutil.which("wiki-ingest"):
         → FALLBACK PATH (subprocess, below)
@@ -131,7 +131,7 @@ stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...
 
 #### FALLBACK PATH (subprocess — legacy / standalone wiki-ingest use case)
 
-Activated when: `WIKI_ENRICH_NO_VENDORED=1` is set **or** vendored import raises `ImportError` (with `wiki-ingest` on PATH). This is identical to the pre-TASK-004 flow and is preserved for: (a) operator debugging, (b) environments where vendored copy is not yet available, (c) standalone `wiki-ingest` CLI users who invoke `wiki-enrich` without vendoring.
+Activated when: `WIKI_ENRICH_NO_VENDORED` env-var is set to a truthy value (case-insensitive `{1, true, yes, on}`; whitespace-stripped — per `/vdd-multi` 2026-05-27 H-3 hardening) **or** vendored import raises `ImportError` (with `wiki-ingest` on PATH). This is identical to the pre-TASK-004 flow and is preserved for: (a) operator debugging, (b) environments where vendored copy is not yet available, (c) standalone `wiki-ingest` CLI users who invoke `wiki-enrich` without vendoring.
 
 ```text
 operator: WIKI_ENRICH_NO_VENDORED=1 wiki-enrich --source raw.md
