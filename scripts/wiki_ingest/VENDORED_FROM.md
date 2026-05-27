@@ -41,7 +41,7 @@ Path is repo-relative to `scripts/wiki_ingest/` (POSIX separator). I-V.2's
 | `commands/classify_folder.py` | `ff639549440bac27fd4712165ffd82e717ce98355e8bfaa5ccce49d788912520` | no |
 | `commands/demote.py` | `16b7b250608d4c9965928744ac660df93395ac9ed19483b7eee80c3ad1a61e16` | no |
 | `commands/find.py` | `dd4fe1260eb42bf99031ddbb732503c892fc6be694a002b2d6b9fed3c02845ec` | no |
-| `commands/ingest.py` | `d16026b9cbc820b4ab9117b52c11ebba66292e2f0d993d1030104d47d194f3b9` | no |
+| `commands/ingest.py` | `749b78a1a8b9ba68898d034323036b89e822d783641f8767423f28654944b108` | yes (local_patches[1]) |
 | `commands/init.py` | `271d4e105af6a0b739fb313d43df04c72d02e5aa62419540378e03fd1c36e78f` | no |
 | `commands/lint.py` | `79f872896bee52c680d3f3367239a858639e4d9f021d152bc5831b74e487a9ce` | no |
 | `commands/log_event.py` | `eab72464ff9aadee4f45285ebe99a698e9af321e2c3c1c6da4d6324993b47df7` | no |
@@ -61,6 +61,7 @@ corresponding `local_patches[]` entry).
 | path | sha256_upstream |
 |---|---|
 | `__init__.py` | `6e14184b350bc96ac34bd39ea7446fa1ea720463ad0c457817969e11622eeae3` |
+| `commands/ingest.py` | `d16026b9cbc820b4ab9117b52c11ebba66292e2f0d993d1030104d47d194f3b9` |
 
 _(other paths identical to `file_hashes` table — omitted to avoid duplication)_
 
@@ -90,3 +91,33 @@ _(other paths identical to `file_hashes` table — omitted to avoid duplication)
      `ModuleNotFoundError: wiki_ingest` until shim landed.
    - **upstream_sha256**: `6e14184b350bc96ac34bd39ea7446fa1ea720463ad0c457817969e11622eeae3`
    - **current_sha256**: `392171dfdef6adc2eb13349c9cdc2e8ec2ce29ada0b96d77924f5afedcd77575`
+
+2. **path**: `commands/ingest.py`
+   - **kind**: `programmatic_api_extraction` (TASK 004 R-46, bead 004-03 / I-V.3)
+   - **reason**: Extracted programmatic `ingest(source, vault, ...) -> dict`
+     function and `IngestError` exception class from upstream's
+     argparse-coupled `execute(args)`. `execute()` now wraps `ingest()`
+     so the CLI surface remains byte-identical (verified by
+     `test_execute_wraps_ingest_for_cli` + Smoke 4). No `sys.exit()` or
+     `_safety.die()` calls inside `ingest()`'s own body — sub-helpers
+     that call `_safety.die` are caught at the outer try/except boundary
+     and converted to `IngestError` via the `_EXIT_TO_CODE` reverse map.
+   - **delta**: top-of-file additions (IngestError class, `ingest()`
+     function, `_build_short_circuit_manifest` helper,
+     `_INGEST_ERROR_EXIT_MAP` + `_EXIT_TO_CODE` mappings); `execute()`
+     body replaced with thin wrapper. The pre-existing helpers
+     (`_resolve_vault_layout`, `_resolve_vault_id`,
+     `_resolve_source_hash`, `_run_pipeline`, `_emit*`, etc.) are
+     UNTOUCHED — they continue to live below and are called by
+     `ingest()` from above.
+   - **upstream_issue**: TBD. Upstream should adopt the
+     programmatic-API/CLI-wrapper split natively to obviate this patch.
+     Until then, every sync MUST preserve this divergence
+     (`--accept-local-divergence` required).
+   - **discovered_in**: bead 004-03 spec — operator-confirmed
+     Decision-13 from brainstorming session 2026-05-27.
+   - **upstream_sha256**: `d16026b9cbc820b4ab9117b52c11ebba66292e2f0d993d1030104d47d194f3b9`
+   - **current_sha256**: `749b78a1a8b9ba68898d034323036b89e822d783641f8767423f28654944b108`
+   - **tests**: `tests/test_vendored_ingest_api.py` (7 tests covering
+     import, IngestError attrs/defaults, source-not-found, source-not-summary,
+     execute wrapper, and the no-sys-exit-in-call-graph postcondition).

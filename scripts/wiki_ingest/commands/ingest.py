@@ -44,6 +44,272 @@ _SOURCE_HASH_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _READ_HASH_CHUNK = 1 << 20  # 1 MiB — bounded read, matches MAX_*_BYTES discipline
 
 
+# --------------------------------------------------------------------- #
+# VENDORED-PATCH (bead 004-03, R-46): programmatic in-process API       #
+# --------------------------------------------------------------------- #
+# Public surface for callers that need the orchestrator in-process
+# (wiki-enrich after I-V.5, wiki-extract-concepts in TASK 003 resume).
+# `execute()` (the argparse CLI entry below) wraps `ingest()` and
+# converts IngestError back to `_safety.die()` so the standalone CLI
+# behaviour is byte-identical to upstream.
+#
+# Phase 1 lands the stub + IngestError class; Phase 2 fills the body
+# by migrating `execute()` logic.
+
+class IngestError(Exception):
+    """Raised by `ingest()` on any failure (replaces `_safety.die()` /
+    `sys.exit()` inside the function call graph).
+
+    Attributes (Decision-13 / TASK 004 §5.3):
+        message:        human-readable failure description (positional Exception arg)
+        code:           semantic error code (e.g. "SOURCE_NEEDS_SUMMARIZATION",
+                        "MISSING_VAULT_ID", "PARTIAL_INDEX_FAILURE")
+        phase:          pipeline phase where the failure occurred
+                        ("register-summary", "upsert-page", etc.) or None
+                        if the failure is pre-pipeline (validation, vault discovery)
+        written_so_far: list of WrittenEntry dicts already committed before failure
+                        (mirrors `_PartialFailure.written_so_far`)
+        child_exit_code: original exit code from a dispatched atomic op
+                        (0 if not applicable — failure not from a child dispatch)
+    """
+
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        phase: str | None = None,
+        written_so_far: list[dict] | None = None,
+        child_exit_code: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.phase = phase
+        self.written_so_far = written_so_far or []
+        self.child_exit_code = child_exit_code
+
+
+def ingest(
+    source: Path,
+    vault: Path,
+    vault_id: str | None = None,
+    source_hash: str | None = None,
+    known_concepts: list[dict] | None = None,
+    dry_run: bool = False,
+    timeout_seconds: int = 600,
+    quiet: bool = True,
+) -> dict:
+    """Run the wiki-ingest orchestrator in-process. Returns a v1.1 manifest dict.
+
+    Args:
+        source:           Absolute path to the raw input. Must have
+                          frontmatter `type:` in {summary, lesson-summary,
+                          meeting-summary} (summary-passthrough scope).
+        vault:            Absolute path to a course root OR vault root.
+        vault_id:         Strict-mode validator (UC-3). When passed, frontmatter
+                          vault_id must match or `IngestError(code=...)` is raised.
+        source_hash:      Pre-computed sha256-hex of source bytes (UC-4 idempotency
+                          short-circuit). When matches `_sources/<slug>.md` footer,
+                          returns `action="unchanged"` manifest without re-running.
+        known_concepts:   Decorative in v1.1 (summary-passthrough scope; consumed
+                          when synthesiser-subagent integration lands).
+        dry_run:          Reserved; not enforced in summary-passthrough scope.
+        timeout_seconds:  Decorative in-process (no subprocess to bound).
+        quiet:            Suppress human-readable stdout. Default True for
+                          programmatic use; CLI `execute()` defaults to False.
+
+    Returns:
+        dict: v1.1 manifest with `status="ok"`, `written[]`, `log_event`, etc.
+              Idempotency short-circuit returns `status="ok"`, `action="unchanged"`,
+              `written=[]`.
+
+    Raises:
+        IngestError: on any failure. `code` carries the semantic label;
+            `execute()` wrapper maps it back to a process exit code.
+    """
+    # Resolve once at entry; pass `source_path` through the body.
+    # `execute()` callers should pass already-resolved Path; this resolve
+    # is idempotent for already-resolved input (no double-resolve cost).
+    source_path = Path(source) if Path(source).is_absolute() else Path(source).resolve()
+    try:
+        # 1. Source path validation
+        if not source_path.is_file():
+            raise IngestError(
+                f"source not found: {source_path}",
+                code="SOURCE_NOT_FOUND",
+                phase=None,
+            )
+
+        # 2. Vault discovery + 2.0/1.x disambiguation
+        course_root, vault_root = _resolve_vault_layout(Path(vault).resolve())
+
+        # 3. vault_id resolution + strict-mode routing (UC-3 → exit 23/24/25).
+        #    Sub-helper raises SystemExit via `_safety.die` — caught at the
+        #    outer try/except and converted to IngestError.
+        effective_vault_id = _resolve_vault_id(
+            vault_root_path=vault_root if vault_root else course_root,
+            flag=vault_id,
+        )
+
+        # 4. Source-hash format validation + idempotency short-circuit (UC-4)
+        effective_hash = _resolve_source_hash(source_hash, source_path)
+        course_for_writes = course_root or vault_root
+        if course_for_writes is not None:
+            slug = _safety.slugify(source_path.stem)
+            recorded = _read_source_footer_hash(slug, course_for_writes)
+            if recorded is not None and recorded == effective_hash:
+                return _build_short_circuit_manifest(
+                    source_path, slug, effective_hash,
+                    effective_vault_id, course_root, vault_root,
+                )
+
+        # 5. Phase-2 — summary-passthrough orchestration
+        head = _build_common_manifest_head(
+            None, source_path, effective_hash, effective_vault_id,
+            course_root, vault_root,
+        )
+        if course_for_writes is None:
+            raise IngestError(
+                "no course root to write into; pass --vault pointing to a "
+                "course-local schema root (1.x), not the vault root (2.0)",
+                code="NO_COURSE_ROOT",
+                phase=None,
+            )
+
+        # 5a. Summary-passthrough detection
+        src_fm, _ = split_frontmatter(_safety.read_text(source_path))
+        src_type = src_fm.get("type") if isinstance(src_fm, dict) else None
+        if src_type not in {"summary", "lesson-summary", "meeting-summary"}:
+            raise IngestError(
+                _json_error_envelope({
+                    "status": "error",
+                    "phase": "needs-pre-summarization",
+                    "code": "SOURCE_NEEDS_SUMMARIZATION",
+                    "source_type": src_type,
+                    "hint": (
+                        "wiki-ingest v1.1 supports summary-passthrough only. "
+                        "Pre-summarise the source via the `summarizing-meetings` "
+                        "skill, then re-invoke with --source pointing at the "
+                        "resulting summary file."
+                    ),
+                }),
+                code="SOURCE_NEEDS_SUMMARIZATION",
+                phase="needs-pre-summarization",
+            )
+
+        # 5b. Pipeline dispatch — `_run_pipeline` raises `_PartialFailure`
+        # on mid-pipeline atomic op failure. Caught below and converted.
+        try:
+            written, log_event = _run_pipeline(
+                None, source_path, src_fm, course_for_writes, course_root, vault_root,
+                effective_hash,
+            )
+        except _PartialFailure as exc:
+            err = IngestError(
+                f"partial failure at phase {exc.phase!r}: {exc.cleanup_advice}",
+                code="PARTIAL_INDEX_FAILURE",
+                phase=exc.phase,
+                written_so_far=exc.written_so_far,
+                child_exit_code=exc.child_exit_code,
+            )
+            # Attach manifest head so `execute()` can emit the full
+            # PARTIAL_INDEX_FAILURE envelope (manifest_version, vault_id,
+            # vault_root, course, source) — preserves byte-identical
+            # behavior on the CLI path (R-56 invariant; mirrors
+            # pre-refactor `_emit_partial(head, exc)` output shape).
+            err.manifest_head = head  # type: ignore[attr-defined]
+            err.cleanup_advice = exc.cleanup_advice  # type: ignore[attr-defined]
+            raise err
+
+        # 5c. Full success manifest
+        slug = _safety.slugify(source_path.stem)
+        sources_path = course_for_writes / "_sources" / f"{slug}.md"
+        return {
+            **head,
+            "status": "ok",
+            "written": written,
+            "created": [w["path"] for w in written if w["action"] == "created"],
+            "touched": [w["path"] for w in written if w["action"] == "updated"],
+            "contradictions": 0,
+            "summary_path": str(sources_path.relative_to(course_for_writes)),
+            "log_event": log_event,
+            "llm_tokens_used": {"input": 0, "output": 0, "model": None},
+        }
+
+    except SystemExit as exc:
+        # Sub-helpers (`_resolve_vault_id`, `_resolve_source_hash`,
+        # `validate_vault_id_pattern`, etc.) still call `_safety.die`
+        # which `sys.exit()`s. Catch at the boundary and convert to
+        # IngestError, mapping the int exit code to a semantic label.
+        # `_safety.die` already printed the error envelope to stderr;
+        # operators see structured diagnostics there regardless.
+        code_int = int(exc.code) if isinstance(exc.code, int) else 1
+        semantic = _EXIT_TO_CODE.get(code_int, "GENERIC")
+        raise IngestError(
+            f"wiki-ingest validation error (exit {code_int}; see stderr for details)",
+            code=semantic,
+            phase=None,
+        )
+
+
+def _build_short_circuit_manifest(
+    source: Path, slug: str, effective_hash: str,
+    effective_vault_id: str | None,
+    course_root: Path | None, vault_root: Path | None,
+) -> dict:
+    """UC-4 short-circuit manifest builder (emission-free; ingest() returns
+    this directly when recorded source_hash matches)."""
+    head = _build_common_manifest_head(
+        None, source, effective_hash, effective_vault_id, course_root, vault_root,
+    )
+    head["source"]["slug"] = slug
+    write_root = course_root or vault_root
+    return {
+        **head,
+        "status": "ok",
+        "action": "unchanged",
+        "written": [],
+        "created": [],
+        "touched": [],
+        "contradictions": 0,
+        "summary_path": (
+            str(write_root / "_sources" / f"{slug}.md") if write_root is not None else None
+        ),
+        "log_event": None,
+        "llm_tokens_used": {"input": 0, "output": 0, "model": None},
+    }
+
+
+# Semantic-code → process-exit-code mapping. `execute()` wrapper uses this
+# to convert IngestError back to a meaningful CLI exit. Living at module
+# level as single source of truth (mirrors `_safety.EXIT_*` constants).
+#
+# Order matters for `_EXIT_TO_CODE` reverse map below: "GENERIC" is listed
+# FIRST so its insertion wins as the fallback when multiple semantic codes
+# share an int (e.g., SOURCE_NOT_FOUND/INVALID_TITLE/etc. all → EXIT_GENERIC).
+_INGEST_ERROR_EXIT_MAP: dict[str, int] = {
+    "GENERIC": _safety.EXIT_GENERIC,                          # 1 — fallback
+    "SOURCE_NOT_FOUND": _safety.EXIT_GENERIC,                 # 1
+    "NO_COURSE_ROOT": _safety.EXIT_USAGE,                     # 2
+    "INVALID_SOURCE_HASH": _safety.EXIT_USAGE,                # 2
+    "INVALID_TITLE": _safety.EXIT_USAGE,                      # 2
+    "SOURCE_NEEDS_SUMMARIZATION": _safety.EXIT_SUBPROCESS,    # 21
+    "MISSING_VAULT_ID": _safety.EXIT_MISSING_VAULT_ID,        # 23
+    "INVALID_VAULT_ID": _safety.EXIT_INVALID_VAULT_ID,        # 24
+    "VAULT_ID_FLAG_MISMATCH": _safety.EXIT_VAULT_ID_MISMATCH, # 25
+    "PARTIAL_INDEX_FAILURE": _safety.EXIT_PARTIAL,            # 20
+}
+
+# Reverse map (int exit code → first matching semantic code) — used by the
+# `SystemExit` catch path in `ingest()` when a sub-helper called `_safety.die`
+# directly and structured semantic context is lost. `setdefault` keeps the
+# FIRST insertion (Python 3.7+ dict ordering), so "GENERIC" wins as the
+# catch-all for ambiguous exit-1 cases instead of mis-attributing them as
+# "SOURCE_NOT_FOUND".
+_EXIT_TO_CODE: dict[int, str] = {}
+for _sem, _exit in _INGEST_ERROR_EXIT_MAP.items():
+    _EXIT_TO_CODE.setdefault(_exit, _sem)
+
+
 def register(sub: argparse._SubParsersAction) -> None:
     """Wire the `ingest` subparser. Called once from `wiki_ops.py`."""
     p = sub.add_parser(
@@ -87,95 +353,59 @@ def register(sub: argparse._SubParsersAction) -> None:
 
 
 def execute(args: argparse.Namespace) -> int:
-    """Phase 1 orchestrator entry point. Phase 2 (017-06) extends below."""
-    # 1. Source path validation
-    source = Path(args.source).resolve()
-    if not source.is_file():
-        _safety.die(f"source not found: {source}", code=_safety.EXIT_GENERIC)
+    """CLI entry point — thin wrapper around the programmatic `ingest()`
+    function. Builds keyword arguments from argparse Namespace, calls
+    `ingest()`, converts `IngestError` back to `_safety.die()` (preserving
+    upstream CLI behavior byte-for-byte), and emits the manifest via
+    `_emit()` for the JSON/human output formats.
 
-    # 2. Vault discovery + 2.0/1.x disambiguation
-    course_root, vault_root = _resolve_vault_layout(Path(args.vault).resolve())
-
-    # 3. vault_id resolution + strict-mode routing (UC-3 → exit 23/24/25)
-    effective_vault_id = _resolve_vault_id(
-        vault_root_path=vault_root if vault_root else course_root,
-        flag=args.vault_id,
-    )
-
-    # 4. Source-hash format validation + idempotency short-circuit (UC-4)
-    effective_hash = _resolve_source_hash(args.source_hash, source)
-    course_for_writes = course_root or vault_root
-    if course_for_writes is not None:
-        slug = _safety.slugify(source.stem)
-        recorded = _read_source_footer_hash(slug, course_for_writes)
-        if recorded is not None and recorded == effective_hash:
-            return _emit_short_circuit(
-                args, source, slug, effective_hash,
-                effective_vault_id, course_root, vault_root,
-            )
-
-    # 5. Phase-2 — summary-passthrough orchestration (TASK 017 bead 017-06)
-    head = _build_common_manifest_head(
-        args, source, effective_hash, effective_vault_id, course_root, vault_root,
-    )
-    course_for_writes = course_root or vault_root
-    if course_for_writes is None:
-        _safety.die(
-            "no course root to write into; pass --vault pointing to a "
-            "course-local schema root (1.x), not the vault root (2.0)",
-            code=_safety.EXIT_USAGE,
-        )
-
-    # 5a. Summary-passthrough detection (synthesis-via-subagent is FUTURE,
-    # see references for the `claude -p --skill summarizing-meetings` pattern).
-    src_fm, _ = split_frontmatter(_safety.read_text(source))
-    src_type = src_fm.get("type") if isinstance(src_fm, dict) else None
-    if src_type not in {"summary", "lesson-summary", "meeting-summary"}:
-        _safety.die(
-            _json_error_envelope({
-                "status": "error",
-                "phase": "needs-pre-summarization",
-                "code": "SOURCE_NEEDS_SUMMARIZATION",
-                "source_type": src_type,
-                "hint": (
-                    "wiki-ingest v1.1 supports summary-passthrough only. "
-                    "Pre-summarise the source via the `summarizing-meetings` "
-                    "skill (operator-side: `claude -p` headless, or the "
-                    "/wiki-enrich bridge's pre-summarise pass), then re-invoke "
-                    "with --source pointing at the resulting summary file."
-                ),
-            }),
-            code=_safety.EXIT_SUBPROCESS,
-        )
-
-    # 5b. Pipeline dispatch loop. Per-step rollback (Q-1): each atomic op
-    # commits independently; mid-pipeline failure leaves `written_so_far[]`
-    # populated and routes to exit 20 via _emit_partial.
+    Refactored in bead 004-03 / I-V.3. The pipeline logic now lives in
+    `ingest()` (in-process, importable); this function is the CLI shim.
+    """
     try:
-        written, log_event = _run_pipeline(
-            args, source, src_fm, course_for_writes, course_root, vault_root,
-            effective_hash,
+        manifest = ingest(
+            source=Path(args.source).resolve(),
+            vault=Path(args.vault).resolve(),
+            vault_id=getattr(args, "vault_id", None),
+            source_hash=getattr(args, "source_hash", None),
+            known_concepts=None,  # CLI doesn't expose this in v1.1 (decorative)
+            dry_run=getattr(args, "dry_run", False),
+            timeout_seconds=getattr(args, "timeout_seconds", 600),
+            quiet=getattr(args, "quiet", False),
         )
-    except _PartialFailure as exc:
-        return _emit_partial(head, exc)
+    except IngestError as exc:
+        # PARTIAL_INDEX_FAILURE has a special envelope shape — emit the FULL
+        # head (manifest_version, vault_id, vault_root, course, source) + the
+        # partial state to stdout, then exit 20. Byte-identical to pre-refactor
+        # `_emit_partial(head, exc)`. `ingest()` attaches `manifest_head` and
+        # `cleanup_advice` to the IngestError instance for this purpose.
+        if exc.code == "PARTIAL_INDEX_FAILURE":
+            head = getattr(exc, "manifest_head", {}) or {}
+            envelope = {
+                **head,
+                "status": "error",
+                "phase": exc.phase,
+                "code": "PARTIAL_INDEX_FAILURE",
+                "child_exit_code": exc.child_exit_code,
+                "written_so_far": exc.written_so_far,
+                "cleanup_advice": getattr(exc, "cleanup_advice", str(exc)),
+            }
+            json.dump(_safety._safe_for_json(envelope), sys.stdout)
+            sys.stdout.write("\n")
+            return _safety.EXIT_PARTIAL
+        # Generic error path: map semantic code → int exit, then die().
+        # `_safety.die` calls `sys.exit(code)` and never returns, so the
+        # `return` below is unreachable — but mypy needs the function to
+        # have a return statement on every path; an `assert False` after
+        # `die()` is the standard Python idiom for "unreachable".
+        exit_int = _INGEST_ERROR_EXIT_MAP.get(exc.code, _safety.EXIT_GENERIC)
+        _safety.die(str(exc), code=exit_int)
+        raise AssertionError("unreachable: _safety.die() always sys.exits")  # pragma: no cover
 
-    # 5c. Full success manifest
-    slug = _safety.slugify(source.stem)
-    sources_path = course_for_writes / "_sources" / f"{slug}.md"
-    manifest = {
-        **head,
-        "status": "ok",
-        "written": written,
-        "created": [w["path"] for w in written if w["action"] == "created"],
-        "touched": [w["path"] for w in written if w["action"] == "updated"],
-        "contradictions": 0,
-        "summary_path": str(sources_path.relative_to(course_for_writes)),
-        "log_event": log_event,
-        "llm_tokens_used": {"input": 0, "output": 0, "model": None},
-    }
+    # Success path: emit the manifest dict via the existing _emit helper.
     return _emit(args, manifest, human_summary_lines=[
-        f"Ingested: {source}",
-        f"Wrote {len(written)} files into {course_for_writes}.",
+        f"Ingested: {args.source}",
+        f"Wrote {len(manifest.get('written', []))} files.",
     ])
 
 
@@ -584,7 +814,7 @@ def _run_pipeline(
     return written, log_event
 
 
-def _emit_partial(head: dict, exc: _PartialFailure) -> int:
+def _emit_partial(head: dict, exc: _PartialFailure) -> int:  # noqa: F841  # kept for upstream parity (unused in this repo's execute() path post-bead-004-03; see local_patches[1])
     """Q-1 partial-success envelope (exit 20).
 
     `child_exit_code` carries the dispatched atomic op's original exit
@@ -676,7 +906,7 @@ def _find_appended_heading_offset(log_path: Path, size_before: int,
     return size_before + idx if idx >= 0 else size_before
 
 
-def _emit_short_circuit(
+def _emit_short_circuit(  # noqa: F841  # kept for upstream parity (unused in this repo's execute() path post-bead-004-03; ingest() returns the dict via _build_short_circuit_manifest directly)
     args, source, slug, effective_hash, effective_vault_id, course_root, vault_root,
 ) -> int:
     """UC-4 short-circuit — recorded footer hash matches; no LLM, no writes."""
