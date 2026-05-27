@@ -20,18 +20,7 @@ _(none — R-0 closed 2026-05-27, see "Done since 2026-05-27".)_
 
 ## P0 — Cleanup (small, do when convenient)
 
-### R-1. Mark UC-06 / UC-07 as superseded by `/wiki-enrich` ✅ DECIDED 2026-05-27
-The original Phase 3b plan had `wiki-light-summary` (UC-06, R-24) and
-`wiki-source-transcript` (UC-07, R-06.3) as separate code paths.
-`/wiki-enrich` (Bridge skill, built 2026-05-25) covers the same surface
-via the wiki-ingest manifest pipeline — end-to-end ingestion for
-transcripts AND any markdown source.
-
-**Action**: Update [TASK.md](TASK.md) RTM rows R-06.3 and R-24 to status
-`SUPERSEDED → wiki-enrich` and trim Use Cases 06 / 07 to a one-line
-pointer at the new skill.
-
-Effort: ~30 min documentation update.
+_(R-1 done in commit `81b7aff`; R-2 superseded by R-X4.)_
 
 ### R-2. Subagent prompt hook (memory 4b leftover) — SUPERSEDED → R-X4
 Inject "before editing concepts or introducing new names, call
@@ -256,6 +245,10 @@ the misleading docstring.
   regression tests)
 - VDD multi-adversarial + adversarial round 1 reviews (zero-slop)
 - README + Installation flow for any-target-project use
+- **R-1 closed 2026-05-27** (commit `81b7aff`) — UC-06/UC-07 marked
+  `SUPERSEDED → /wiki-enrich` in [TASK.md](TASK.md); RTM rows R-06.3 and
+  R-24 carry the status, Use Case bodies retain SUPERSEDED banners with
+  historical spec preserved.
 - **R-0 closed 2026-05-27** — wiki-ingest v1.1 contract alignment.
   Universal-skills shipped `wiki-ingest 1.1.0`; bridge smoke against a
   clean temp vault returns `{"action":"enriched", "index":{"upserted":[1
