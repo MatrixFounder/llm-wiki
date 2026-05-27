@@ -14,7 +14,43 @@ Status legend:
 
 ## P0 — Active blockers
 
-_(none — R-0 closed 2026-05-27, see "Done since 2026-05-27".)_
+### R-V1. wiki-ingest vendoring (Option 5 — Python-import vendor) 🟡 ACTIVE
+Promoted from P3 → P0 on 2026-05-27 after operator-confirmed target
+**self-contained product / publication** (PyPI / GitHub plugin / Claude
+Code plugin marketplace). External `wiki-ingest` dep blocks single-step
+install for end-users.
+
+**Chosen approach** (from brainstorming 2026-05-27 — operator owns both
+repos, no licensing concerns): **Option 5 Python-import-only vendor**.
+Copy `Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/` Python
+module into `obsidian-llm-wiki/scripts/wiki_ingest/`; refactor
+`wiki_ops.py` `ingest` subcommand to expose a programmatic
+`ingest(source, vault_root, vault_id, …) → manifest_dict` function;
+replace `subprocess.run(["wiki-ingest", …])` in `wiki_enrich.py` with
+direct Python call; keep `--source` CLI flag for backward compat
+(external `wiki-ingest` continues to work if installed); drop
+`check_wiki_ingest_version` from the in-process path; add
+`scripts/sync_wiki_ingest.sh` for periodic snapshot refresh.
+
+**Standalone `wiki-ingest` preserved** in `Universal-skills` for
+"simple wiki" users — operator-stated requirement. Both paths
+co-exist.
+
+**Tracking task**: TASK 004 `wiki-ingest-vendoring` (drafted next).
+
+**Why this is P0 now**: self-contained publication path cannot ship
+with subprocess + PATH dependency on a separate repo. Decision-9 from
+TASK 003 (`--manifest-stdin` flag on `wiki-enrich`) also becomes
+simpler when implemented on a vendored foundation (in-process function
+call, no JSON round-trip in the primary path).
+
+**Why not just keep external dep**: operator stated 1-3 month target
+of self-contained product / publication. Two-step install (clone two
+repos + symlink `wiki-ingest` to `~/.local/bin`) is unfriendly for
+end-users via PyPI or plugin marketplaces.
+
+**Effort**: ~1 week focused work (well-bounded refactor: copy module +
+extract programmatic API + update one consumer + tests).
 
 ---
 
@@ -41,11 +77,20 @@ The Karpathy compounding-artifact promise lives here. Currently a single
 ingest touches one source page + index + log (~3 pages); Karpathy says
 10–15. Closing that gap requires the entity layer.
 
-### R-3. `wiki-extract-concepts` skill (R-18, partial)
+### R-3. `wiki-extract-concepts` skill (R-18, partial) 🟡 PAUSED
+**Status (2026-05-27)**: TASK 003 drafted, reviewed, and committed
+(commit `c7e44f6`), then **paused** pending TASK 004 vendoring ship
+(see R-V1 above). After vendoring, TASK 003 will be resumed with a
+mini-revision: Decision-9 (`--manifest-stdin`) and I-7.11
+(`dispatch_to_wiki_enrich`) restated as in-process function calls
+rather than subprocess hops. RTM rows R-30..R-44 and Use Cases UC-08,
+UC-09 remain valid. Archived at
+[docs/tasks/task-003-wiki-extract-concepts.md](tasks/task-003-wiki-extract-concepts.md).
+
 LLM-driven pass over a summary page → emits candidate concept slugs,
 de-dups against existing `entities` rows, proposes new `_concepts/<slug>.md`
-files via `wiki-ingest` upserts. Output schema mirrors the wiki-ingest
-manifest so `wiki-enrich` can consume it.
+files. After vendoring, calls vendored `wiki_ingest` Python API
+in-process rather than wiki-ingest CLI via subprocess.
 
 ### R-4. Confirmed / candidate entity resolution (R-18, cybos pattern)
 `entities.is_candidate = 1` for LLM-proposed entities; promotion to
@@ -213,8 +258,7 @@ the misleading docstring.
 
 ## P3 — Operational polish
 
-- **wiki-ingest vendoring** — current external dep works. Vendor into
-  `skills/wiki-ingest/` when publishing as a self-contained product.
+- ~~**wiki-ingest vendoring**~~ — **promoted to P0 as R-V1** on 2026-05-27.
 - **Postgres backend** — `IndexRepository` ABC was designed for this.
   Trigger: corpus > 100k pages, or multi-writer concurrency.
 - **wiki-graph** export — emit graphviz / mermaid of entity links for

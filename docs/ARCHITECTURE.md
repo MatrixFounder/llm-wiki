@@ -1,7 +1,8 @@
 # ARCHITECTURE: LLM Wiki MVP
 
-> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B ARCHITECTURE STAGED (2026-05-27) — Phase 3a: all 34 atomic tasks implemented; 295 tests pass; mypy --strict clean; rebuildability E2E gate green. ADRs 001, 002 in effect. Phase 3b (Epic 7 R-3, wiki-extract-concepts): architecture captured below; implementation pending Planning Phase.
-> **TASK**: [docs/TASK.md](./TASK.md) (Task 003 wiki-extract-concepts)
+> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B IN FLIGHT (2026-05-27) — Phase 3a: all 34 atomic tasks implemented; 295 tests pass; mypy --strict clean; rebuildability E2E gate green. ADRs 001, 002 in effect. Phase 3b sequence: TASK 004 (wiki-ingest-vendoring) is current; TASK 003 (wiki-extract-concepts) resumes after TASK 004 ships.
+> **TASK**: [docs/TASK.md](./TASK.md) (Task 004 wiki-ingest-vendoring — current)
+> **Paused TASK**: [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (resumes after TASK 004 ship)
 > **Previous TASK**: [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) (archived 2026-05-27)
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (full v2 specification, 1745 lines)
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
@@ -65,14 +66,78 @@ SQLite ~/Library/Application Support/wiki-index/global.db   (multi-vault, FTS5)
 
 **The 4 in-repo dirs** (`commands/`, `skills/`, `bin/`, `scripts/wiki_skills/`) must stay in lockstep — adding a new skill means 4 new files of matching name. The installer (`bin/install-globally.sh`) discovers each set via globs.
 
-### 1.5.2. Anatomy of cross-process flow (`/wiki-enrich → wiki-ingest`)
+### 1.5.2. Anatomy of cross-process / in-process flow (`/wiki-enrich → wiki-ingest`)
 
-`/wiki-enrich` is the **only** in-repo skill that spawns an external subprocess (`wiki-ingest`, lives in a separate repo — see §1.5.3). The contract between processes is JSON manifest v1.1 ([WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md)).
+`/wiki-enrich` is the **only** in-repo skill that integrates with `wiki-ingest`. As of TASK 004 (vendoring), there are **two paths**: a primary in-process path (default, post-vendoring) and a subprocess fallback path (Decision-14). The manifest contract (v1.1, [WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md)) is identical for both — only the transport changes.
+
+#### Path decision branch
+
+```text
+wiki_enrich.py start:
+    if _VENDORED_AVAILABLE and os.environ.get("WIKI_ENRICH_NO_VENDORED") != "1":
+        → PRIMARY PATH (in-process, below)
+    elif shutil.which("wiki-ingest"):
+        → FALLBACK PATH (subprocess, below)
+    else:
+        → emit {"error":"WIKI_INGEST_UNAVAILABLE"}, exit 6
+```
+
+#### PRIMARY PATH (in-process, default post-TASK-004)
 
 ```text
 operator: /wiki-enrich --source raw.md
     │
     ▼ standard 4-file path resolves to scripts/wiki_skills/wiki_enrich.py
+    │
+    ├── 1. from scripts.wiki_ingest.commands.ingest import ingest as _vendored_ingest
+    │       (lazy import at module level; _VENDORED_AVAILABLE = True on success)
+    │       NO check_wiki_ingest_version() call on this path.
+    │
+    ├── 2. _vendored_ingest(source=source, vault=vault_root, vault_id=args.vault, ...)
+    │       │   In-process call — no subprocess, no JSON round-trip.
+    │       │   ── R-26 invariant preserved: vendored `ingest()` retains
+    │       │      `_safety.validate_inside_vault(source, vault)` from upstream
+    │       │      (see §1.5.7 file `_safety.py`); confirmed post-sync by
+    │       │      content-hash check in `scripts/sync_wiki_ingest.sh` (R-49(b))
+    │       │      and verified at runtime by Smoke 1 in TASK 004 §7.
+    │       ▼
+    │   scripts/wiki_ingest/commands/ingest.ingest()   [vendored copy — see §1.5.7]
+    │       │   (runs full wiki-ingest pipeline in-process: register-summary →
+    │       │    upsert-page × N → update-index → append-log → log-event)
+    │       ├─ filesystem writes under operator's vault:
+    │       │   _sources/<slug>.md, _concepts/*, _entities/*, index.md, log.md
+    │       └─ returns: manifest dict (v1.1, NOT a JSON string)
+    │
+    ├── 3. _validate_manifest()  — path-traversal guard, vault_id match, status=ok
+    │       (unchanged — same function regardless of path taken)
+    │
+    ├── 4. index_from_manifest()  — loop manifest["written"]
+    │       │   (top-level system files skipped — R-0 fix in commit 156325d)
+    │       ▼ in-process call for each non-system written entry
+    │   scripts/wiki_skills/wiki_index_upsert.main(argv)
+    │       │
+    │       ▼
+    │   scripts/wiki_index/sqlite_repository.SQLiteRepository.upsert_page()
+    │       │
+    │       ▼
+    │   SQLite global.db
+    │
+    └── 5. append_log_event()  — mirror manifest["log_event"] → log_events table
+
+stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...], "log_event_id":N}}
+```
+
+**Primary path summary**: no subprocess spawned; `wiki-ingest` binary NOT required on PATH; `check_wiki_ingest_version()` NOT called. `IngestError` raised by vendored `ingest()` → emitted as `{"error":"WIKI_INGEST_FAILED", "code":"<code>", ...}`, exit 6 (content error, no fallback attempted).
+
+#### FALLBACK PATH (subprocess — legacy / standalone wiki-ingest use case)
+
+Activated when: `WIKI_ENRICH_NO_VENDORED=1` is set **or** vendored import raises `ImportError` (with `wiki-ingest` on PATH). This is identical to the pre-TASK-004 flow and is preserved for: (a) operator debugging, (b) environments where vendored copy is not yet available, (c) standalone `wiki-ingest` CLI users who invoke `wiki-enrich` without vendoring.
+
+```text
+operator: WIKI_ENRICH_NO_VENDORED=1 wiki-enrich --source raw.md
+    │         (or: vendored import raised ImportError, wiki-ingest found on PATH)
+    │
+    ▼ scripts/wiki_skills/wiki_enrich.py (subprocess branch)
     │
     ├── 1. check_wiki_ingest_version()  — shutil.which("wiki-ingest"); semver guard ≥ 1.1
     │
@@ -93,9 +158,9 @@ operator: /wiki-enrich --source raw.md
     │
     ├── 3. _validate_manifest()  — path-traversal guard, vault_id match, status=ok
     │
-    ├── 4. index_from_manifest()  — loop manifest.written[]
+    ├── 4. index_from_manifest()  — loop manifest["written"]
     │       │   (top-level system files skipped — R-0 fix in commit 156325d)
-    │       ▼ in-process call (NOT subprocess) for each non-system written entry
+    │       ▼ in-process call for each non-system written entry
     │   scripts/wiki_skills/wiki_index_upsert.main(argv)
     │       │
     │       ▼
@@ -109,7 +174,9 @@ operator: /wiki-enrich --source raw.md
 stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...], "log_event_id":N}}
 ```
 
-**Phase 3b extension (R-44, I-7.15):** when `--manifest-file PATH` / `--manifest-stdin` is passed, steps 1+2 are skipped (no `wiki-ingest` subprocess, no version check) — `wiki-enrich` jumps straight to step 3 with the operator-supplied manifest. Enables `/wiki-extract-concepts → /wiki-enrich --manifest-stdin` dispatch without re-running synthesis on the source page.
+**Fallback path summary**: requires `wiki-ingest` on PATH; `check_wiki_ingest_version()` active; JSON round-trip via subprocess stdout. Silent activation (no user-visible warning unless `--verbose` or DEBUG log). Steps 3-5 are identical between both paths.
+
+**Phase 3b extension (R-44, I-7.15 — TASK 003 PAUSED):** when `--manifest-file PATH` / `--manifest-stdin` is passed, both steps 1+2 are skipped in either path — `wiki-enrich` jumps straight to step 3 with the operator-supplied manifest. This flag is TASK 003's responsibility; NOT touched by TASK 004 (R-56).
 
 ### 1.5.3. External dependency: `wiki-ingest` anatomy (different pattern)
 
@@ -145,9 +212,13 @@ Universal-skills/skills/wiki-ingest/
 
 **Neither pattern is wrong**; they reflect that this repo splits operations into composable units (DAL-thin CLIs), while `wiki-ingest` keeps related operations under one cohesive synthesis tool. The bridge (`/wiki-enrich`) is the seam.
 
+> **Post-TASK-004 dual existence note:** After TASK 004 ships, `wiki-ingest` exists in two forms simultaneously. The copy in `Universal-skills` remains the standalone CLI for "simple wiki" users who install `wiki-ingest` independently. The vendored copy at `scripts/wiki_ingest/` in this repo is for in-process use only — it is a snapshot of the upstream, not a live link, and is not intended as a user-facing CLI (though it remains usable as one via `python -m scripts.wiki_ingest.commands.ingest` per R-57). The two copies may diverge over time; the sync policy in §1.5.7 governs how drift is detected and resolved. For the external `wiki-ingest` binary: it is no longer required for standard `wiki-enrich` operation — the vendored copy at `scripts/wiki_ingest/` is the primary path. The binary remains optional (enables subprocess fallback for debugging or environments without the vendored copy). Cross-reference: §1.5.7 (vendored module anatomy).
+
 ### 1.5.4. Shared DAL layer (`scripts/wiki_index/`)
 
 All 8 in-repo skills converge on the DAL. **No skill talks to SQLite directly; everything goes through `IndexRepository`.**
+
+> **TASK 004 DAL invariant (confirmed):** The vendored `scripts/wiki_ingest/` module does NOT use the DAL — it writes vault files only (Class A canonical per ADR-002 §D8). Index upsert of those files still flows through `IndexRepository` via `index_from_manifest()` in `wiki_enrich.py` (steps 4-5 of the §1.5.2 diagram — unchanged for both primary and fallback paths). No new DAL methods are added by TASK 004. The multi-vault invariant is preserved: vendored `ingest()` accepts `vault_id` as an explicit parameter (Decision-13 signature); all DB writes in the indexing step still carry `vault_id=?` predicates via `repo.upsert_page()`.
 
 ```text
 scripts/wiki_index/
@@ -192,6 +263,92 @@ Generated by `bin/install-globally.sh` (idempotent, `ln -sfn`):
 | Add a DAL method | `scripts/wiki_index/repository.py` (ABC) + `scripts/wiki_index/sqlite_repository.py` (concrete) + every test fixture that mocks `IndexRepository` (otherwise import-time `TypeError`) |
 | Touch SQL schema | `docs/SCHEMA-v2.sql` (DDL) + `scripts/wiki_index/sqlite_repository.py` (queries) + migration story in `docs/MIGRATION-*.md` if breaking |
 | Add a workflow file | `workflows/<name>.md` (e.g. `wiki-enrich.md`) + symlink into `.agent/workflows/` |
+| Sync vendored wiki-ingest | `bash scripts/sync_wiki_ingest.sh` (rsync snapshot refresh with hash-divergence guard) + commit updated `scripts/wiki_ingest/` tree and `scripts/wiki_ingest/VENDORED_FROM.md` |
+
+### 1.5.7. Vendored module anatomy (`scripts/wiki_ingest/`)
+
+Added in TASK 004 (2026-05-27). This subsection describes the provenance, sync policy, and public API surface of the vendored `wiki_ingest` Python package.
+
+**Path:** `obsidian-llm-wiki/scripts/wiki_ingest/`
+
+**Directory layout:**
+
+```text
+scripts/wiki_ingest/
+├── __init__.py               — package init; re-exports __version__ = "1.1.0" (snapshot version)
+├── VENDORED_FROM.md          — provenance metadata (not a Python module; gitignore-exempt)
+│                               Fields: source_commit, synced_at, source_path,
+│                                       file_hashes (SHA256 per *.py for divergence detection),
+│                                       local_patches (list of documented local divergences)
+├── _classify.py
+├── _dispatch.py
+├── _frontmatter.py
+├── _markdown.py
+├── _page_merge.py
+├── _safety.py
+├── _vault.py
+└── commands/
+    ├── __init__.py
+    ├── append_log.py
+    ├── classify_folder.py
+    ├── demote.py
+    ├── find.py
+    ├── ingest.py             — PRIMARY REFACTOR (I-V.3): adds IngestError + ingest() fn
+    ├── init.py
+    ├── lint.py
+    ├── log_event.py
+    ├── promote.py
+    ├── reindex.py
+    ├── register_summary.py
+    ├── scan.py
+    ├── update_index.py
+    └── upsert_page.py
+```
+
+**Provenance file (`VENDORED_FROM.md`):** Records `source_commit` (upstream `git rev-parse HEAD` SHA or `"non-git"` if source is not a git checkout), `synced_at` (ISO-8601 timestamp), `source_path` (resolved path used during sync), `file_hashes` (SHA256 content hash of each committed `*.py` file — used by the sync script to detect local divergence before overwriting), and `local_patches` (list of documented intentional divergences from upstream, e.g. type-annotation fixups for `mypy --strict` compliance). This file is committed alongside the vendored copy and is the authoritative record of snapshot state.
+
+**Sync script (`scripts/sync_wiki_ingest.sh`):** rsync-based snapshot refresh. Workflow: (1) read `VENDORED_FROM.md::file_hashes`; (2) recompute hashes of current vendored files; (3) abort with per-file diff if any hash diverges from the recorded value and neither `local_patches` entry covers it nor `--accept-local-divergence` is passed (prevents silent overwrite of local fixups); (4) rsync from source path excluding `__pycache__/` and `*.pyc`; (5) update `VENDORED_FROM.md` with new SHA and timestamp. Flags: `--source <path>` (default: `../../Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/`), `--dry-run` (print what would sync, no mutations), `--accept-local-divergence` (bypass hash abort, operator assumes responsibility).
+
+> **`--accept-local-divergence` use policy** (operator discipline; not enforced by CI today): every invocation MUST be followed by adding a `local_patches[]` entry to `VENDORED_FROM.md` in the same commit, explaining what diverged and why. If the entry is missing, the next sync will catch it and abort again. Future hardening (TASK 005+): a pre-commit hook can enforce the rule.
+
+**Public API surface (post-TASK-004 refactor):**
+
+```python
+from scripts.wiki_ingest.commands.ingest import ingest, IngestError
+
+# ingest() — programmatic entry point (Decision-13)
+manifest_dict: dict = ingest(
+    source=Path("/path/to/raw-summary.md"),
+    vault=Path("/path/to/vault-root"),
+    vault_id="my-vault",          # optional; if given, must match WIKI_SCHEMA.md
+    source_hash=None,              # optional pre-computed sha256-hex (idempotency)
+    known_concepts=None,           # decorative in v1.1; reserved for synthesiser integration
+    dry_run=False,
+    timeout_seconds=600,           # reserved; not enforced in-process
+    quiet=True,                    # suppress human-readable stdout lines
+)
+# Returns: v1.1 manifest dict (status="ok", written=[], log_event={...}, ...)
+# Raises: IngestError on all failure modes (no sys.exit() in the call graph)
+
+# IngestError attributes:
+#   message: str          — human-readable description
+#   code: str             — e.g. "SOURCE_NEEDS_SUMMARIZATION"
+#   phase: str | None     — pipeline phase where failure occurred
+#   written_so_far: list  — partial success state
+#   child_exit_code: int  — 0 if not applicable
+```
+
+The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to work by calling `ingest()` internally and converting `IngestError` to `_safety.die()`. This means `python -m scripts.wiki_ingest.commands.ingest --source X --vault Y --output-format json` still exits 0 and emits a valid v1.1 manifest (R-57 acceptance criterion).
+
+**Vendoring policy:**
+
+- The vendored copy is a **snapshot**, NOT a live link. It does not auto-update.
+- **Upstream-first fix policy (Decision-12):** All bug fixes and improvements go to `Universal-skills/skills/wiki-ingest` first. After upstream merge, run `bash scripts/sync_wiki_ingest.sh` to pull the fix down. Do not divergently fork the vendored copy — local modifications must be documented in `VENDORED_FROM.md::local_patches` and upstreamed promptly.
+- **Drift detection:** The sync script's hash-divergence guard (comparing `file_hashes` in `VENDORED_FROM.md` against current on-disk SHA256s) detects local edits before overwriting. Any `local_patches` entry exempts the corresponding file from the abort.
+- **Type annotation fixups (R-50):** If upstream is loose on type annotations, the vendored copy may carry `# VENDORED-PATCH:` comment blocks with local fixes. Each such fixup is listed in `local_patches`. If cumulative fixup effort exceeds 2 hours (I-V.4 time-box), add minimal `# type: ignore[<error>]` comments with `# UPSTREAM-ISSUE:` references instead of deep-fixing.
+- **Third-party notices:** `THIRD_PARTY_NOTICES.md` (repo root) is **always written** — credits upstream wiki-ingest: project name, upstream repo path (`Universal-skills/skills/wiki-ingest`), SPDX license identifier (or `"NOASSERTION — operator-owned, internal"` if upstream has no LICENSE), snapshot SHA, sync date. The `LICENSE-upstream` file copy (`scripts/wiki_ingest/LICENSE-upstream`) is **conditional**: created only if upstream carries a `LICENSE` file. Sync script detects upstream LICENSE presence and warns the operator if missing so the `NOASSERTION` fallback is a deliberate choice, not a silent omission (R-55).
+
+**Multi-vault invariant:** The vendored `ingest()` accepts `vault_id` as an explicit keyword argument (Decision-13 signature). Callers (`wiki_enrich.py`) pass `vault_id=args.vault` explicitly. The vendored module does not derive `vault_id` by hash fallback — the explicit-required invariant from ADR-002 §D1.1 is preserved in the API contract.
 
 ---
 
@@ -244,6 +401,8 @@ Generated by `bin/install-globally.sh` (idempotent, `ln -sfn`):
 **Purpose**: Pluggable extractors для разных типов входов. Унифицированный контракт `SourceAdapter`.
 
 **File-write ownership clarification (Decision-8, TASK 003):** wiki-ingest owns **raw-source** file synthesis (transcript → summary, source page normalization, additive merge with footnote citations, contradiction flagging, etc.). Downstream skills like `wiki-extract-concepts` may write **derivative pages** (concept pages derived from already-indexed source pages) provided they emit a wiki-ingest v1.1-compatible manifest for `/wiki-enrich` consumption. This preserves the single-indexer invariant (Index Layer is the only writer to SQLite) without forcing wiki-ingest to become a god-process for every file mutation. ADR-001 ("wiki-ingest owns the file layer") is **clarified**, not amended: it governs raw-source file synthesis; `_concepts/<slug>.md` pages generated by `wiki-extract-concepts` are derivative artifacts, not raw-source synthesis.
+
+**wiki-ingest integration transport (Decision-14, TASK 004):** As of TASK 004, `wiki-enrich` calls wiki-ingest via **in-process Python import** as the primary path (vendored module at `scripts/wiki_ingest/`). Subprocess invocation of the external `wiki-ingest` binary is retained as a fallback activated by `WIKI_ENRICH_NO_VENDORED=1` or by `ImportError` on the vendored import when the binary is on PATH. The integration contract (manifest dict in, index out via `index_from_manifest()`) is unchanged — only the transport mechanism differs. The `--source` flag surface of `wiki-enrich` is unchanged (`required=True`, no mutual-exclusion group — that is TASK 003's scope). See §1.5.2 for the full decision branch diagram and §1.5.7 for vendored module details.
 
 **MVP adapters:**
 1. **`wiki-source-manual`** — для уже-существующих markdown-файлов. Не модифицирует body. Validates path внутри vault_root. Ставит `trust_level='high'` для refs.
@@ -742,6 +901,8 @@ graph LR
 
 ### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b)
 
+> **NOTE (2026-05-27 — TASK 003 PAUSED):** This diagram reflects the TASK 003 design which is currently paused pending TASK 004 (wiki-ingest-vendoring) ship. The `--manifest-stdin` mechanism shown in step [9] (the `wiki-enrich --manifest-file <tempfile>` call) will be revised when TASK 003 resumes: in-process callers like `wiki-extract-concepts` will call the vendored `ingest()` function directly via Python import rather than piping a manifest through the CLI. Specifically, step [9] `dispatch_to_wiki_enrich` will be refactored to call `from scripts.wiki_ingest.commands.ingest import ingest as _vendored_ingest` directly for the file-synthesis step, then call `index_from_manifest()` in-process — eliminating the `wiki-enrich --manifest-file` subprocess hop. The RTM rows R-30..R-44 and Use Cases UC-08, UC-09 remain valid. Update this section when TASK 003 resumes.
+
 ```
 Operator
   │
@@ -1087,6 +1248,20 @@ erDiagram
 - Audit logs beyond `log.md`.
 - Encryption at rest (vault encryption — responsibility пользователя).
 
+### 7.4. Vendoring Policy (TASK 004 — cross-cutting concern)
+
+Snapshot-based vendoring is used for the `wiki_ingest` Python module to eliminate the external PATH dependency (Decision-11). Key policy points:
+
+**Rationale for snapshot over live link:** A snapshot copy (vs git-submodule or pip dependency) minimises install friction for end-users (target: single-step `pip install obsidian-llm-wiki`), avoids network fetches at runtime, and gives the repo a stable import surface. The trade-off is manual sync, which is bounded and operator-controlled.
+
+**Sync strategy:** `bash scripts/sync_wiki_ingest.sh` (rsync from configurable upstream path). The script is idempotent: re-running immediately produces "no changes". Supports `--dry-run` (no mutations) and `--accept-local-divergence` (bypass hash abort for documented patches).
+
+**Drift detection mechanism:** `VENDORED_FROM.md::file_hashes` records SHA256 content hashes of all committed `*.py` files at sync time. Pre-sync, the script recomputes hashes and aborts with a per-file diff if any hash diverges from the recorded value and is not covered by a `local_patches` entry. This mechanism works regardless of whether the operator commits between syncs and does not assume the source path is a git checkout. See §1.5.7 for full details.
+
+**Upstream-first fix policy (Decision-12):** All bug fixes go to `Universal-skills/skills/wiki-ingest` first, then sync down. Local divergences in the vendored copy are prohibited except for documented `local_patches` (primarily `mypy --strict` type-annotation fixups — R-50). Each local patch carries a `# VENDORED-PATCH:` comment and is listed in `VENDORED_FROM.md::local_patches` so the sync script can warn before overwriting.
+
+**Third-party notices:** Covered in `THIRD_PARTY_NOTICES.md` (R-55). Both repos are operator-owned; no open-source licensing friction today. The notices file is maintained for clean posture in anticipation of future publication (TASK 005 — PyPI).
+
 ---
 
 ## 8. Scalability and Performance
@@ -1317,14 +1492,35 @@ claude
 | R-43 (tests: unit + integration, mypy --strict) | §10.2 CI/test gate (295+ tests baseline); §2.1 Stub-First status | I-7.12 unit tests, I-7.13 integration tests, I-7.14 mypy --strict |
 | R-44 (`wiki-enrich --manifest-file` / `--manifest-stdin`, Decision-9) | §2.1 Skill Layer wiki-enrich note (R-44 reference); §2.1 `dispatch_to_wiki_enrich` | I-7.15 — mutually exclusive with --source; skips wiki-ingest subprocess; 3 new unit tests |
 
+### Phase 3b Requirements (TASK 004 — R-45..R-57, wiki-ingest-vendoring)
+
+> TASK 004 is a transport-layer change: it collapses the subprocess hop in §1.5.2 to an in-process call. No new DAL methods, no new DB tables, no new user-facing skills. All RTM rows trace to §1.5.2 (flow diagram), §1.5.7 (vendored module anatomy), §2.1 Source Adapters (transport note), §7.4 (vendoring policy), or §10.4 (deployment/install simplification).
+
+| TASK Requirement | Architecture coverage | Test/AC reference |
+|---|---|---|
+| R-45 (vendor copy: `scripts/wiki_ingest/` present and importable) | §1.5.7 vendored module anatomy (directory layout, `VENDORED_FROM.md`); §1.5.3 post-TASK-004 dual-existence note | I-V.1 — `from scripts.wiki_ingest.commands.ingest import ingest` succeeds; `VENDORED_FROM.md` fields present (Smoke 7) |
+| R-46 (programmatic `ingest()` function + `IngestError` exposed) | §1.5.7 Public API surface (function signature, `IngestError` attributes); §1.5.2 PRIMARY PATH step 2 | I-V.3 — `execute()` wraps `ingest()`; `IngestError` raises instead of `sys.exit()`; R-46(e) CLI path preserved |
+| R-47 (`wiki_enrich.py` primary path: in-process) | §1.5.2 PRIMARY PATH (full diagram); §2.1 Source Adapters transport note (Decision-14); §1.5.4 DAL invariant | I-V.5 — subprocess NOT called on primary path; `check_wiki_ingest_version()` NOT called; output JSON structure identical (Smoke 1) |
+| R-48 (subprocess fallback path retained) | §1.5.2 FALLBACK PATH (full diagram); §1.5.2 path decision branch (`WIKI_ENRICH_NO_VENDORED`, `ImportError`) | I-V.5 — three fallback test cases: env var, ImportError+PATH, ImportError+no-PATH; Smoke 2, Smoke 3 |
+| R-49 (`scripts/sync_wiki_ingest.sh` snapshot sync script) | §1.5.7 sync script description (divergence-check, rsync, `VENDORED_FROM.md` update, flags); §7.4 Vendoring Policy (drift detection) | I-V.2 — `--dry-run` no mutations; divergence-abort on local edit; Smoke 7 |
+| R-50 (`mypy --strict` clean for `scripts/wiki_ingest/`) | §1.5.7 vendoring policy (type fixups, `local_patches`, time-box); §7.4 Vendoring Policy | I-V.4 — zero mypy errors; fixups documented with `# VENDORED-PATCH:`; Smoke 5 |
+| R-51 (tests: vendored path + fallback coverage) | §1.5.2 path decision branch (three fallback scenarios); §10.2 CI/test gate | I-V.7 — patch `_vendored_ingest` instead of `subprocess.run`; three new test cases; Smoke 6 (298+ tests) |
+| R-52 (`bin/wiki-enrich` launcher no longer requires `wiki-ingest` on PATH) | §1.5.2 PRIMARY PATH ("wiki-ingest binary NOT required on PATH"); §1.5.5 symlink graph note (symlink optional post-TASK-004) | I-V.6 — no `which wiki-ingest || exit` guard in launcher; Smoke 1 (wiki-ingest absent, exit 0) |
+| R-53 (README and install docs simplified) | §10.4 Deployment Instructions (step 4 — `wiki-ingest` symlink no longer required step) | I-V.8 — README `## Installation` updated; `ln -s wiki-ingest` demoted to optional |
+| R-54 (ARCHITECTURE.md §1.5.2 updated — this document) | §1.5.2 full restructure (PRIMARY PATH + FALLBACK PATH + decision branch); §1.5.3 dual-existence note; §1.5.7 (new) | I-V.9 — this document (R-54 self-referential acceptance) |
+| R-55 (`THIRD_PARTY_NOTICES.md` credits upstream wiki-ingest) | §7.4 Vendoring Policy (third-party notices paragraph); §1.5.7 vendoring policy (notices file, LICENSE-upstream) | I-V.10 — file exists with required fields; LICENSE-upstream if upstream has LICENSE |
+| R-56 (TASK 003 interface contracts preserved, no surface breakage) | §1.5.2 FALLBACK PATH note ("Phase 3b extension — TASK 003 PAUSED"; R-56 explicit); §2.1 Source Adapters (`--source required=True` note); §3.4 paused-state note | I-V.11 — `--source` remains `required=True`; `index_from_manifest()` / `_validate_manifest()` signatures unchanged; all 295+ tests pass |
+| R-57 (standalone `wiki-ingest` CLI behavior unchanged) | §1.5.3 dual-existence note ("vendored copy usable as CLI via `python -m`"); §1.5.7 Public API ("CLI surface preserved: `execute()` continues to work") | I-V.11 Smoke 4 — `python -m scripts.wiki_ingest.commands.ingest --source X --vault Y --output-format json` exits 0; Universal-skills repo unmodified (`git status` clean) |
+
 ---
 
 ## Quality Checklist (VDD)
 
-- [x] **Data Model**: Defined entities + key attributes + relationships + indexes (§4 + SCHEMA-DRAFT.sql). TASK 003 write-path transition documented in §4.1 Entity Business Rules.
-- [x] **Traceability**: Verification Map covers Phase 3a (R-01..R-26) + Phase 3b (R-30..R-44). All 15 TASK 003 RTM rows trace to at least one architectural surface.
-- [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; Path-traversal + SQL-injection защиты explicit (§7.3). Phase 3b: `validate_inside_vault` applied to every `_concepts/` write path (R-40).
-- [x] **Multi-vault**: Every Phase 3b operation carries `vault_id` predicate (Concept Extractor component explicitly calls this out; R-40 covers it).
-- [x] **Stub-First**: Component: Concept Extractor "Stub-First status" paragraph states which functions start as stubs. `resolve_entity` remains stub (explicit H-instruction preserved).
-- [x] **ADR-001 clarification (Decision-8)**: Source Adapters component has in-line note preserving single-indexer invariant while allowing derivative page writes.
-- [x] **Template**: Extended template применён (Sections 1-11 покрыты + §3.4 Sequence Diagram added for Phase 3b).
+- [x] **Data Model**: Defined entities + key attributes + relationships + indexes (§4 + SCHEMA-DRAFT.sql). TASK 003 write-path transition documented in §4.1 Entity Business Rules. TASK 004: no schema changes (§5.1 confirmed).
+- [x] **Traceability**: Verification Map covers Phase 3a (R-01..R-26) + Phase 3b TASK 003 (R-30..R-44) + Phase 3b TASK 004 (R-45..R-57). All 13 TASK 004 RTM rows trace to at least one architectural surface.
+- [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; Path-traversal + SQL-injection защиты explicit (§7.3). Phase 3b: `validate_inside_vault` applied to every `_concepts/` write path (R-40). TASK 004: vendored module inherits Phase-3a A03 parameterized-statement invariant; no new attack surfaces introduced.
+- [x] **Multi-vault**: Every Phase 3b operation carries `vault_id` predicate (Concept Extractor component explicitly calls this out; R-40 covers it). TASK 004: vendored `ingest()` accepts `vault_id` as explicit kwarg (Decision-13; §1.5.7); no hash-fallback.
+- [x] **Stub-First**: Component: Concept Extractor "Stub-First status" paragraph states which functions start as stubs. `resolve_entity` remains stub (explicit H-instruction preserved). TASK 004 has no new stubs (transport-only change).
+- [x] **ADR-001 clarification (Decision-8)**: Source Adapters component has in-line note preserving single-indexer invariant while allowing derivative page writes. TASK 004 Decision-14 transport note added adjacently.
+- [x] **Backward compat**: Subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); TASK 003 resume path unbroken (R-56 explicit in RTM + §3.4 paused-state note + §2.1 `--source required=True` note).
+- [x] **Template**: Extended template применён (Sections 1-11 покрыты + §3.4 Sequence Diagram for Phase 3b + §1.5.7 new vendored module subsection + §7.4 new Vendoring Policy subsection).

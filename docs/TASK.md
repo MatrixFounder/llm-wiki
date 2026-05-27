@@ -1,34 +1,37 @@
-# TASK: wiki-extract-concepts — Epic 7 Entity Resolver Entry-Point
+# TASK: wiki-ingest-vendoring — Python-import-only vendor of wiki-ingest module
 
 ### 0. Meta Information
 
-- **Task ID:** 003
-- **Slug:** `wiki-extract-concepts`
+- **Task ID:** 004
+- **Slug:** `wiki-ingest-vendoring`
 - **Mode:** Standard
-- **Status:** `DRAFT`
-- **Epic:** Epic 7 — Entity Resolver (R-3 only; R-4/R-5 deferred)
-- **Predecessor:** [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) (Phase 3a complete, 2026-05-27)
+- **Status:** `DRAFT` (2026-05-27)
+- **Predecessor:** [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) — PAUSED pending this task's ship
 - **Related artifacts:**
-  - [docs/ROADMAP.md](./ROADMAP.md) — §P1 Epic 7 entry-point
-  - [docs/ARCHITECTURE.md](./ARCHITECTURE.md) — §2 Functional Components, §3 Data Model
-  - [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — entities / entity_aliases / page_entity_refs DDL
-  - [docs/WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md) — manifest schema, §2 known-concepts injection, §6 idempotency
-  - [docs/adr/ADR-001-wiki-ingest-integration.md](./adr/ADR-001-wiki-ingest-integration.md) — Option I (Wrap + Index)
-  - [docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](./adr/ADR-002-multi-vault-bottleneck-corrections.md) — vault_id partitioning, Class A/B/C layering
-  - [skills/wiki-enrich/SKILL.md](../skills/wiki-enrich/SKILL.md) — bridge skill (manifest consumer)
-  - [scripts/wiki_skills/wiki_enrich.py](../scripts/wiki_skills/wiki_enrich.py) — bridge implementation
-- **Decisions carried forward from Task 001/002:**
-  - **Decision-1 (2026-05-25)**: Option I (Wrap + Index) — `wiki-ingest` owns file synthesis; this repo owns SQLite index. See ADR-001.
-  - **Decision-2 (2026-05-26)**: Single global DB with `vault_id` partitioning. See ADR-002.
-  - **Decision-3 (2026-05-26)**: `vault_id` REQUIRED explicit in `WIKI_SCHEMA.md`. No hash fallback. See ADR-002 §D1.1.
-  - **Decision-4 (2026-05-26)**: Data Layering Contract — Class A (vault canonical) / B (rebuildable cache) / C (DB-only operational). See ADR-002 §D8.
-  - **Decision-5 (2026-05-27)**: UC-06/UC-07 superseded by `/wiki-enrich` bridge. R-06.3 and R-24 marked SUPERSEDED in Task 001 RTM.
-- **New decisions for this task:**
-  - **Decision-6 (2026-05-27)**: `wiki-extract-concepts` lives in **this repo** (`obsidian-llm-wiki`), not a separate package. Rationale: the `entities`, `entity_aliases`, and `page_entity_refs` schema is already fully implemented (Phase 3a); a separate repo would either duplicate the SQLite DAL or impose a wiki-ingest-style contract for no benefit. Closes the ROADMAP open question "Does Epic 7 happen here or in a separate repo?"
-  - **Decision-7 (2026-05-27)**: Ship R-3 only first. R-4 (candidate/confirmed promotion CLI `wiki-confirm`) and R-5 (alias CLI `wiki-alias` + search expansion + alias-collision lint) are deferred until R-3 real-world quality is observed. Rationale: designing dedup/alias heuristics blind to LLM extraction quality produces over-engineering; LLM extraction patterns on real vaults must be seen first.
-  - **Decision-8 (2026-05-27)**: File-write ownership for new `_concepts/<slug>.md` pages — **Option A** (operator-confirmed): `wiki-extract-concepts` writes the concept files itself (frontmatter + body, atomic write-and-rename), emits a manifest, and `/wiki-enrich` performs index-only upsert. Rationale: concept-page generation is trivial (frontmatter template + LLM-derived body), does not require wiki-ingest's raw-source synthesis pipeline, and avoids scope creep into the Universal-skills repo. ADR-001 ("wiki-ingest owns file layer") is **clarified**, not violated: it governs **raw-source** file synthesis. Downstream skills (e.g., `wiki-extract-concepts`) may write derivative pages **provided** they emit a wiki-ingest-compatible manifest for `/wiki-enrich` consumption.
-  - **Decision-9 (2026-05-27)**: `--manifest-file` / `--manifest-stdin` flag on `wiki-enrich` — **in scope for Task 003** (operator-confirmed). Required so `wiki-extract-concepts --ingest` auto-dispatch works without re-running `wiki-ingest` on the already-indexed source page. Implementation: small extension to `wiki-enrich` (~30 LoC) — two mutually exclusive input flags (`--source` XOR `--manifest-{file,stdin}`); when manifest is provided, skip the `wiki-ingest` subprocess and go straight to manifest validation + indexing. New RTM row R-44 and Issue I-7.15 track this scope.
-  - **Decision-10 (2026-05-27)**: LLM prompt format for `source_span` — **human-readable `"L12-L18"`** (operator-confirmed). Parsed on consumption to `line_start=12, line_end=18` for storage in `page_entity_refs.line_start` / `line_end` integer columns. Rationale: more robust to LLM output variance than nested JSON; one-line regex parse covers it.
+  - [docs/ROADMAP.md](./ROADMAP.md) §P0 R-V1 — decision write-up and scoring summary
+  - [docs/ARCHITECTURE.md](./ARCHITECTURE.md) — §1.5.2 (cross-process flow diagram to be updated), §1.5.3 (external wiki-ingest anatomy), §1.5.4 (DAL layer)
+  - [docs/WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md) — manifest JSON schema (unchanged by vendoring)
+  - [docs/adr/ADR-001-wiki-ingest-integration.md](./adr/ADR-001-wiki-ingest-integration.md) — Option I (Wrap + Index); vendoring collapses the transport, not the semantics
+  - [docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](./adr/ADR-002-multi-vault-bottleneck-corrections.md) — vault_id partitioning + Class A/B/C layering
+  - [scripts/wiki_skills/wiki_enrich.py](../scripts/wiki_skills/wiki_enrich.py) — only in-repo consumer of wiki-ingest; primary refactor target
+
+- **Decisions carried forward from Tasks 001/002/003:**
+  - **Decision-1 (2026-05-25)**: Option I (Wrap + Index) — `wiki-ingest` owns file synthesis; this repo owns SQLite index. ADR-001.
+  - **Decision-2 (2026-05-26)**: Single global DB with `vault_id` partitioning. ADR-002.
+  - **Decision-3 (2026-05-26)**: `vault_id` REQUIRED explicit. ADR-002 §D1.1.
+  - **Decision-4 (2026-05-26)**: Data Layering Contract — Class A / B / C. ADR-002 §D8.
+  - **Decision-5 (2026-05-27)**: UC-06/UC-07 superseded by `/wiki-enrich`. R-06.3 and R-24 SUPERSEDED.
+  - **Decision-6 (2026-05-27)**: `wiki-extract-concepts` lives in this repo (not a separate package).
+  - **Decision-7 (2026-05-27)**: Ship R-3 only for TASK 003; R-4/R-5 deferred.
+  - **Decision-8 (2026-05-27)**: `wiki-extract-concepts` writes concept files itself; emits manifest for `/wiki-enrich` index-only upsert. ADR-001 clarified.
+  - **Decision-9 (2026-05-27)**: `--manifest-file`/`--manifest-stdin` on `wiki-enrich` is in scope for TASK 003 (paused — I-7.15). NOT touched by TASK 004.
+  - **Decision-10 (2026-05-27)**: LLM `source_span` format is `"L12-L18"` (TASK 003).
+
+- **New decisions for TASK 004:**
+  - **Decision-11 (2026-05-27)**: Option 5 Python-import-only vendor chosen. Seven options were scored on five criteria (install friction, maintenance overhead, runtime performance, backward compat, publication readiness). Option 5 scored highest: it eliminates the PATH dependency for end-users (enabling PyPI/plugin publication), preserves the standalone `wiki-ingest` CLI for simple-wiki users, avoids subprocess JSON round-trips in the primary path, and keeps the maintenance surface minimal (snapshot copy + sync script). Options 1-4 (submodule, monorepo, package dep, pip-only) all introduce either install friction or coupling issues; Options 6-7 (rewrite or removal) violate the standalone-CLI preservation requirement.
+  - **Decision-12 (2026-05-27)**: Vendored copy is a **snapshot**, not auto-synced. Refresh policy: manual `scripts/sync_wiki_ingest.sh` invocation only (rsync + hash check). Fixes go upstream first (Universal-skills wiki-ingest), then sync down via the script. Divergent forks in the vendored copy are prohibited — the sync script must fail with a diff warning if local modifications are detected before overwriting.
+  - **Decision-13 (2026-05-27)**: Vendored module exposes a programmatic Python function `ingest(source: Path, vault: Path, vault_id: str | None = None, source_hash: str | None = None, known_concepts: list[dict] | None = None, dry_run: bool = False, timeout_seconds: int = 600) -> dict`. Returns a manifest dict (NOT a JSON string). The function raises `IngestError` (a new exception class in the vendored module's public surface) on failures rather than calling `sys.exit()`. CLI in standalone wiki-ingest continues to serialise the dict to JSON via the existing `_emit()` path; in-process callers consume the dict directly. Exact type signature to be finalised in Architecture Phase, but the parameter surface is stable enough for RTM and issue scoping.
+  - **Decision-14 (2026-05-27)**: `wiki-enrich --source` keeps subprocess fallback path. Primary path: `try: from scripts.wiki_ingest.commands.ingest import ingest as _vendored_ingest; call _vendored_ingest(...)`. Fallback path (if vendored import raises `ImportError` AND `shutil.which("wiki-ingest")` is not None): existing subprocess flow. Operator can force-disable in-process via `WIKI_ENRICH_NO_VENDORED=1` env var. Fallback is silent (no user-visible warning unless `--verbose` or DEBUG log level). `check_wiki_ingest_version()` is called only on the fallback subprocess path.
 
 ---
 
@@ -36,345 +39,407 @@
 
 #### 1.1 Goal
 
-Implement the first working piece of Epic 7 (entity resolver): an LLM-driven extraction pass that reads a summary page already in a vault, identifies candidate concept entities mentioned in it, de-duplicates against known entities already in the DB, and emits a wiki-ingest-compatible manifest listing proposed new `_concepts/<slug>.md` pages and entity rows. The manifest is then consumed by `/wiki-enrich`, which ingests the concept pages into the vault filesystem and SQLite index — no new code path is required in the consumer.
+Vendor the `wiki-ingest` Python module into this repository so that `obsidian-llm-wiki` becomes a **self-contained product** — no external `wiki-ingest` installation required. This unblocks the 1-3 month publication target (PyPI / GitHub plugin / Claude Code plugin marketplace), where two-repo installs are unacceptable for end-users.
 
-The Karpathy promise: each source ingest touches 1 source page + a handful of concept pages. Closing the gap to "10-15 pages per ingest" (Karpathy's compounding target) requires the entity layer to be activated. This task activates it, with candidate rows remaining in `is_candidate=1` quarantine until R-4 promotion logic is implemented.
+The approach (Decision-11) copies only the Python package (`wiki_ingest/` including `commands/`) from the upstream repo into `scripts/wiki_ingest/`, then extracts a programmatic `ingest()` function from the subcommand's `execute()` logic so that `wiki_enrich.py` can call it in-process. The external `wiki-ingest` CLI remains intact in Universal-skills for standalone ("simple wiki") users.
 
 #### 1.2 Scope
 
-- **In scope (R-3 only):**
-  - New skill `wiki-extract-concepts` (slash command `/wiki-extract-concepts`).
-  - New Python entry point `scripts/wiki_skills/wiki_extract_concepts.py`.
-  - LLM extraction pass (Claude Sonnet 4.6): reads a single source page body, returns candidate concept slugs + definitions + provenance spans.
-  - Pre-extraction de-duplication: query `entities` table for the vault before LLM call; pass canonical names to LLM as known-concepts, using the `--known-concepts-stdin` integration seam from wiki-ingest CONTRACT §2.
-  - Manifest emission: output a wiki-ingest v1.1-compatible JSON manifest for `/wiki-enrich` to consume.
-  - Idempotency: re-extraction on same source page (same `file_hash`) returns `status=unchanged`.
-  - All new entity rows written with `is_candidate=1`.
-  - All new `page_entity_refs` rows carry `trust_level='medium'`, `source_quote`, and `source_span` populated from LLM output.
-  - Multi-vault: `vault_id` required on every call; no cross-vault entity bleed.
+**In scope:**
 
-- **Out of scope (deferred):**
-  - R-4: `wiki-confirm <slug>` CLI for candidate→confirmed promotion.
-  - R-4: automatic promotion on N mentions threshold.
-  - R-5: `wiki-alias` CLI to register aliases.
-  - R-5: `wiki-search` alias expansion.
-  - R-5: `wiki-lint` alias-collision detection.
-  - Vector search / semantic de-duplication (Epic 8).
-  - Batch extraction across multiple source pages (can be scripted externally using the new skill).
+- Copy `Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/` (the Python package) into `obsidian-llm-wiki/scripts/wiki_ingest/`. Subdirectory `commands/` included. `__pycache__/` excluded.
+- Expose a programmatic `ingest()` function from the vendored module (Decision-13). This requires refactoring `execute()` in `commands/ingest.py` to separate the `sys.exit()` / argparse side-effects from the core pipeline logic.
+- Refactor `scripts/wiki_skills/wiki_enrich.py`: primary code path uses the vendored in-process import; subprocess fallback retained (Decision-14). `check_wiki_ingest_version()` demoted to fallback-only guard.
+- `bin/wiki-enrich` launcher: remove the hard requirement for `wiki-ingest` on PATH (the in-process path succeeds without it).
+- `scripts/sync_wiki_ingest.sh`: rsync-based snapshot refresh from configurable source path (default `../../Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/`). Writes `scripts/wiki_ingest/VENDORED_FROM.md` recording the source commit SHA and sync timestamp. Detects local divergence before overwriting.
+- Tests: replace subprocess mocks in `tests/test_wiki_enrich.py` with vendored-module function mocks; add test cases for `WIKI_ENRICH_NO_VENDORED=1` escape hatch and the subprocess fallback path.
+- `mypy --strict` compliance for `scripts/wiki_ingest/` after copy. Budget time for type-annotation cleanup if upstream is loose.
+- Documentation: README install steps simplified (no more `ln -s wiki-ingest`); ARCHITECTURE.md §1.5.2 cross-process diagram updated to in-process flow; `THIRD_PARTY_NOTICES.md` updated to credit upstream wiki-ingest.
 
-#### 1.3 Non-goals
+**Out of scope (explicit non-goals):**
 
-- This task does not introduce new DB tables. All required schema (`entities`, `entity_aliases`, `page_entity_refs`) is already present from Phase 3a.
-- This task does not change the `resolve_entity` stub in `IndexRepository` — that method will remain `NotImplementedError` until R-4 is implemented.
-- This task does not change `/wiki-enrich` internals — the existing manifest-consumer code handles the output of this task without modification.
+- Do NOT implement `wiki-enrich --manifest-stdin` / `--manifest-file` flag (R-44, I-7.15 — TASK 003 paused; that's TASK 003's work on resume).
+- Do NOT touch `summarizing-meetings` or `transcript-fetcher` skills (Universal-skills, out of scope).
+- Do NOT publish to PyPI (that is TASK 005 or later).
+- Do NOT refactor anything outside `wiki_enrich.py`, `tests/test_wiki_enrich.py`, and the vendored module itself.
+- Do NOT delete or modify `Universal-skills/skills/wiki-ingest/` in any way.
+- Do NOT introduce `--manifest-stdin` or `--manifest-file` flag changes to `wiki-enrich`'s argparse surface. The `--source` flag surface is unchanged; mutual-exclusion with manifest flags is TASK 003's responsibility.
+
+#### 1.3 Context: upstream ingest module anatomy
+
+The upstream `wiki_ingest/commands/ingest.py` has a fully implemented pipeline (Phase 2 complete as of 2026-05-27). Key points that affect the programmatic API design:
+
+- `execute(args: argparse.Namespace)` is the current entry point. It calls `_safety.die()` on errors, which calls `sys.exit()`. The programmatic API must refactor this so errors raise `IngestError` instead.
+- The pipeline supports "summary-passthrough" only (source must have `type: summary|lesson-summary|meeting-summary` in frontmatter). Raw transcripts without a pre-existing summary type cause exit with `SOURCE_NEEDS_SUMMARIZATION`. The vendored `ingest()` function must document this constraint.
+- `_run_pipeline()` composes `register-summary → upsert-page × N → update-index → append-log → log-event` via `_dispatch.dispatch()`. These are in-process calls to other command modules. This pipeline is usable as-is when imported.
+- The module uses only stdlib plus the `wiki_ingest` package itself (no external pip deps in the command layer). This simplifies vendoring.
 
 ---
 
 ### 2. Requirements Traceability Matrix (RTM)
 
-> Numbering continues after R-29 (last requirement in Phase 3a).
+> Numbering continues after R-44 (last requirement in TASK 003).
 
 | ID | Requirement | Status | Acceptance Bullets |
 |---|---|---|---|
-| **R-30** | New skill `wiki-extract-concepts` with slash command entry point | planned | (a) `skills/wiki-extract-concepts/SKILL.md` exists and follows existing skill template; (b) `.claude/commands/wiki-extract-concepts.md` symlinked; (c) `scripts/wiki_skills/wiki_extract_concepts.py` entry point with `main(argv)` signature consistent with other wiki skills |
-| **R-31** | `--vault` and `--source-page` required arguments; `--vault-root` required for vault filesystem operations | planned | (a) Missing `--vault` → argparse error + non-zero exit; (b) Missing `--source-page` → argparse error + non-zero exit; (c) `--source-page` validated inside vault root via `validate_inside_vault` (R-26 guard); (d) `--db-path` optional override mirrors `wiki-enrich` pattern |
-| **R-32** | Pre-extraction query: read known entities from DB before LLM call | planned | (a) `SELECT slug, name FROM entities WHERE vault_id = ?` (plus aliases JOIN) executes before any LLM API call; (b) Result serialised to JSON matching CONTRACT §2 known-concepts format `[{"slug": ..., "name": ..., "aliases": [...]}]`; (c) Empty vault (0 entities) handled gracefully — LLM call proceeds with empty list |
-| **R-33** | LLM extraction call: Claude Sonnet 4.6, deterministic temperature, structured output | planned | (a) Model = `claude-sonnet-4-6` (default; overridable via `--model`); (b) `temperature=0` on API call (reproducibility); (c) `max_tokens` ≤ 4096 for extraction response; (d) Prompt instructs LLM to return JSON array of candidate concepts with fields: `slug`, `name`, `definition` (1-3 sentences), `source_quote` (10-50 words from source body), `source_span` (`Lstart-Lend`), `entity_type` (from `entities.type` CHECK enum); (e) LLM response validated against expected schema before use — malformed JSON → `EXTRACTION_PARSE_ERROR` with raw response in error details |
-| **R-34** | De-duplication at extraction time: LLM receives known-concept list; returns exact existing slug where match | planned | (a) Known-concepts JSON passed in LLM prompt as "use exact slug/name where concept is already known"; (b) LLM response items whose `slug` matches an existing entity in the vault are classified as `action=mention` (ref only, no new concept page); (c) Items with novel slug are classified as `action=create`; (d) Classification logged in manifest `extraction_summary` field for operator visibility |
-| **R-35** | Manifest output: wiki-ingest v1.1-compatible JSON | planned | (a) Manifest `status` field is `"ok"` on success; (b) `vault_id` matches caller's `--vault`; (c) `written[]` array contains one entry per `action=create` concept, `kind="concept"`, `path="_concepts/<slug>.md"`, `action="created"`; (d) `source` object carries source page `slug` and `hash`; (e) `log_event` object present with `event_type="ingest"`, `subject=<source-page-title>`; (f) Manifest is emitted to stdout as JSON (same as wiki-ingest `--output-format json`); (g) No manifest emitted on failure — error envelope only |
-| **R-36** | Concept page generation: write `_concepts/<slug>.md` files into vault | planned | (a) Each new concept page written to `<vault_root>/_concepts/<slug>.md` before manifest emission; (b) Frontmatter includes: `type: concept`, `vault_id: <vault-id>` (ADR-002 §D1.1 invariant), `slug`, `name`, `date: <today>`, `tags: [concept, candidate]`, `is_candidate: true`, `source_page: <source-slug>`, `trust_level: medium`; (c) Body includes: `# <name>`, definition paragraph from LLM, `## Mentions`, provenance block referencing source page with `source_quote`; (d) File written atomically (write to tempfile, rename); (e) Existing file at target path → skip write, include in manifest with `action="unchanged"` |
-| **R-37** | Entity row upsert: `is_candidate=1` for all R-3 extracted entities | planned | (a) After concept page written, `repo.upsert_entity(...)` called with `is_candidate=1`; (b) Existing confirmed entity (`is_candidate=0`) for same `(vault_id, slug)` → no downgrade; `action` in manifest = `"mentioned"`, no page write; (c) `canonicalized_by` field set to `"llm:claude-sonnet-4-6@<date>"`; (d) `first_seen` and `last_updated` set to extraction timestamp |
-| **R-38** | `page_entity_refs` rows: `trust_level='medium'`, provenance populated | planned | (a) For each extracted entity (both `create` and `mention`), insert a `page_entity_refs` row linking source page to entity; (b) `trust_level='medium'`; (c) `source_quote` populated from LLM output (10-50 words); (d) `source_span` populated as `Lstart-Lend` from LLM output; (e) `ref_type='mentioned'`; (f) Uses `repo.replace_refs(...)` semantics for the source page's entity refs (atomic delete + insert for re-extraction idempotency) |
-| **R-39** | Idempotency: same source page (same file_hash) → `status=unchanged`, no LLM call | planned | (a) Before LLM call, compute `sha256(source_page_body)` and compare against `source_state` table entry `(vault_id, source_kind='extract-concepts', scope=<source_slug>, key='source_hash')`; (b) Match → return `{"status": "ok", "action": "unchanged", "manifest": null}`, exit 0, no LLM API call; (c) Mismatch or no prior record → proceed with extraction, update `source_state` row after success |
-| **R-40** | Multi-vault partitioning: `vault_id` enforced throughout | planned | (a) All DB queries include `vault_id = ?` predicate; (b) Concept pages written under `vault_root` provided by `--vault-root`; (c) No cross-vault entity lookup; (d) `validate_inside_vault` applied to every file path written |
-| **R-41** | Integration with `/wiki-enrich`: manifest emitted by this skill is consumed by `/wiki-enrich` without code changes | planned | (a) Running `/wiki-extract-concepts --vault V --vault-root P --source-page S` followed by piping its stdout manifest into `/wiki-enrich --manifest-stdin` (or saving to file and passing via `--manifest-file`) triggers full index upsert; (b) Alternatively: `wiki-extract-concepts` calls `wiki-enrich` as a subprocess after manifest generation (preferred — see §3 Integration Decision); (c) After full pipeline: `SELECT count(*) FROM entities WHERE vault_id=V AND is_candidate=1` increases by count of new concepts |
-| **R-42** | Error handling and exit codes | planned | (a) Exit 0 = full success or `unchanged`; (b) Exit 1 = argument/usage error; (c) Exit 2 = source page not found in vault or not indexed; (d) Exit 3 = LLM API unavailable or auth failed; (e) Exit 4 = `EXTRACTION_PARSE_ERROR` (LLM returned malformed JSON); (f) Exit 5 = partial write (some concept pages written, index upsert failed for some); (g) All failures emit JSON error envelope to stdout: `{"error": "<CODE>", "message": "...", "details": {...}}`; (h) Exit-5 envelope MUST include `"written_so_far": [<paths>]` and `"index_failed": [<paths>]` arrays so operator can manually roll back the on-disk files that did not reach the index (mirror wiki-ingest CONTRACT §3 partial-success contract) |
-| **R-43** | Tests: unit + integration coverage | planned | (a) Unit: LLM prompt construction tested with mock known-concepts list; (b) Unit: manifest schema validation (round-trip serialize/deserialize); (c) Unit: idempotency short-circuit (mock `source_state` hit); (d) Integration: extraction on a real-form fixture source page (`tests/fixtures/source_extract/`) → manifest contains ≥ 1 concept with correct fields; (e) Integration: re-run on same fixture → `status=unchanged`, 0 LLM calls; (f) `mypy --strict` clean for `scripts/wiki_skills/wiki_extract_concepts.py` |
-| **R-44** | `wiki-enrich` accepts a pre-built manifest via `--manifest-file PATH` or `--manifest-stdin`, skipping the `wiki-ingest` subprocess (Decision-9) | planned | (a) New flags `--manifest-file PATH` and `--manifest-stdin` added to `wiki-enrich` argparse; (b) Mutually exclusive with `--source`; argparse error if both passed; (c) When manifest input is used, `wiki-enrich` skips the `check_wiki_ingest_version` / `wiki-ingest` subprocess call; loads JSON directly; (d) `_validate_manifest` still applied (path traversal, vault_id match, status="ok"); (e) `index_from_manifest` and `log_event` mirror behave identically to the wiki-ingest-fed path; (f) Existing `--source` path remains the default and unchanged; (g) Regression: all current `tests/test_wiki_enrich.py` cases still pass; new test covers both manifest-input branches |
+| **R-45** | Vendor copy: `wiki_ingest/` Python package present at `scripts/wiki_ingest/` | planned | (a) `scripts/wiki_ingest/__init__.py` exists and is importable from the repo's Python path; (b) `scripts/wiki_ingest/commands/` subdirectory present with all subcommand modules; (c) No `__pycache__/` present in the committed copy; (d) `scripts/wiki_ingest/VENDORED_FROM.md` exists with `source_commit`, `synced_at`, and `source_path` fields; (e) `from scripts.wiki_ingest.commands.ingest import ingest` succeeds in the repo's `.venv` |
+| **R-46** | Programmatic `ingest()` function exposed from vendored module | planned | (a) `scripts/wiki_ingest/commands/ingest.py` exports a top-level `ingest(source, vault, ...)` function per Decision-13 signature; (b) Function returns a `dict` matching the v1.1 manifest schema on success; (c) Function raises `IngestError` (importable from `scripts.wiki_ingest.commands.ingest`) on all failure modes — no `sys.exit()` in the function call graph; (d) `IngestError` carries `code: str`, `phase: str | None`, `written_so_far: list[dict]` attributes for structured error handling; (e) `execute(args)` (the CLI entry point for the `register` / argparse path) continues to work by calling `ingest()` internally and converting `IngestError` to `_safety.die()` |
+| **R-47** | `wiki_enrich.py` primary path: in-process vendored import | planned | (a) On `--source` invocation with vendored module importable and `WIKI_ENRICH_NO_VENDORED` unset: `subprocess.run(["wiki-ingest", ...])` is NOT called; (b) `check_wiki_ingest_version()` is NOT called on the in-process path; (c) Manifest dict returned by vendored `ingest()` is consumed by the existing `_validate_manifest()` and `index_from_manifest()` without modification to those functions; (d) Combined output JSON `{"action":"enriched", ...}` is identical in structure to the existing subprocess-based output |
+| **R-48** | `wiki_enrich.py` subprocess fallback path retained | planned | (a) When `WIKI_ENRICH_NO_VENDORED=1` env var is set, the in-process path is skipped and the subprocess path is used; (b) When the vendored import raises `ImportError` AND `wiki-ingest` is on PATH, the subprocess fallback activates silently; (c) When the vendored import raises `ImportError` AND `wiki-ingest` is NOT on PATH, a clear error is emitted (`WIKI_INGEST_UNAVAILABLE`) with instructions; (d) `check_wiki_ingest_version()` is called on the subprocess path as before |
+| **R-49** | `scripts/sync_wiki_ingest.sh` snapshot sync script | planned | (a) Script accepts optional `--source <path>` flag (default: `../../Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/`); (b) **Divergence-check mechanism**: SHA256-content-hash of each vendored `*.py` file recorded in `VENDORED_FROM.md::file_hashes` block at sync time; pre-sync the script recomputes hashes and aborts with a per-file diff list if any vendored file's hash diverges from the recorded value (operator must have either explicitly added it to `local_patches` or run with `--accept-local-divergence`); chosen over git-diff because it works regardless of whether the operator commits between syncs and does not assume the source path is a git checkout; (c) After sync, updates `VENDORED_FROM.md` with current source `git rev-parse HEAD` SHA (if source is a git checkout, else "non-git"), ISO-8601 timestamp, and refreshed `file_hashes` block; (d) Excludes `__pycache__/` and `.pyc` files from rsync; (e) Script is executable and runnable with `bash scripts/sync_wiki_ingest.sh`; (f) Dry-run mode: `--dry-run` prints what would be synced without modifying any files |
+| **R-50** | `mypy --strict` clean for `scripts/wiki_ingest/` | planned | (a) `mypy --strict scripts/wiki_ingest/` exits 0 after vendoring; (b) Any type-annotation gaps found in the upstream module are fixed in the vendored copy (documented in a comment referencing the upstream source line); (c) Any such local fixups are tracked as divergent-patches and noted in `VENDORED_FROM.md` under a `local_patches` list so the sync script can warn before overwriting |
+| **R-51** | Tests: vendored path and fallback path coverage | planned | (a) `tests/test_wiki_enrich.py` uses `unittest.mock.patch('scripts.wiki_skills.wiki_enrich._vendored_ingest')` (or equivalent) instead of subprocess mocks for the primary-path tests; (b) New test: `WIKI_ENRICH_NO_VENDORED=1` forces subprocess path — assert `subprocess.run` is called and vendored function is NOT called; (c) New test: vendored import raises `ImportError` + `wiki-ingest` on PATH → subprocess fallback activates; (d) New test: vendored import raises `ImportError` + `wiki-ingest` NOT on PATH → `WIKI_INGEST_UNAVAILABLE` error emitted, exit 6; (e) All existing 295+ tests continue to pass |
+| **R-52** | `bin/wiki-enrich` launcher no longer requires `wiki-ingest` on PATH | planned | (a) Invoking `wiki-enrich --vault V --vault-root P --source S` with `wiki-ingest` absent from PATH succeeds (exit 0) when vendored path works; (b) `bin/wiki-enrich` does NOT perform a `which wiki-ingest` guard at the launcher level |
+| **R-53** | README and install documentation simplified | planned | (a) README `## Installation` section no longer lists `ln -s wiki-ingest` step as required; (b) README notes `wiki-ingest` on PATH is optional (enables subprocess fallback, useful for debugging); (c) Any quick-start recipe that used `wiki-ingest` as a required prerequisite is updated |
+| **R-54** | ARCHITECTURE.md §1.5.2 updated to reflect in-process flow | planned | (a) The cross-process ASCII diagram in §1.5.2 is replaced or supplemented with an in-process flow diagram showing vendored import path; (b) The subprocess path is shown as "fallback (disabled by default when vendored module present)"; (c) §1.5.3 note updated: "external `wiki-ingest` binary: no longer required for standard operation; vendored copy at `scripts/wiki_ingest/` is primary" |
+| **R-55** | `THIRD_PARTY_NOTICES.md` credits upstream wiki-ingest | planned | (a) File `THIRD_PARTY_NOTICES.md` created (or updated if exists) with: project name (`wiki-ingest`), upstream repo URL (`Universal-skills/skills/wiki-ingest`), **SPDX license identifier** copied verbatim from upstream `LICENSE` file (or `"NOASSERTION — operator-owned, internal"` if upstream has no LICENSE — Architect to confirm) so a future fork or open-source release has a clean license posture; operator-owner note (no licensing friction today); snapshot SHA and sync date; (b) If upstream `LICENSE` file exists, copy it verbatim to `scripts/wiki_ingest/LICENSE-upstream` for unambiguous provenance; (c) The notices file and any copied LICENSE are committed alongside the vendored copy |
+| **R-56** | TASK 003 interface contracts preserved; no surface breakage for TASK 003 resume | planned | (a) `wiki_enrich.py` `--source` flag remains `required=True` (no mutual-exclusion group introduced — that is I-7.15 / TASK 003 scope); (b) `index_from_manifest()` and `_validate_manifest()` signatures unchanged; (c) `WikiIngestError` exception class preserved (used by subprocess fallback path); (d) All existing `--ingest-arg` passthrough behavior preserved on the subprocess fallback path |
+| **R-57** | Standalone `wiki-ingest` CLI behavior unchanged (preserve "simple wiki" users per operator requirement) | planned | (a) `python -m scripts.wiki_ingest.commands.ingest --source <X> --vault <Y> [--output-format json]` (vendored copy, invoked as CLI module) exits 0 on the happy path and emits the v1.1 manifest to stdout, mirroring upstream `execute()` behavior — proves `execute()` wrapper around `ingest()` did not regress the CLI surface; (b) Upstream `Universal-skills/skills/wiki-ingest/scripts/wiki-ingest ingest --source X --vault Y` continues to work independently (no edits made to Universal-skills repo in this task — verifiable by `git status` in that repo); (c) Smoke 4 in §7 exercises (a) explicitly |
 
 ---
 
-### 3. Integration Choice: New Skill + `/wiki-enrich` Dispatch
+### 3. Issues (Atomic Implementation Units)
 
-**Decision**: Implement `wiki-extract-concepts` as a **standalone new skill** that emits a manifest, then optionally invokes `/wiki-enrich` as a subprocess to consume it.
+Prefix `I-V.x` denotes "vendoring" issues.
 
-**Rationale for standalone (not extending `/wiki-enrich`):**
-1. `/wiki-enrich` is an ADR-001 Option I bridge: its contract is "given a raw source, call `wiki-ingest` for synthesis, then index the manifest." `wiki-extract-concepts` does not call `wiki-ingest` — it IS the synthesis step (for concept extraction). The responsibilities do not compose cleanly under the existing `wiki-enrich` flag surface.
-2. A `--extract-concepts` flag on `/wiki-enrich` would conflate two distinct phases: (a) source summarisation (wiki-ingest's job) and (b) concept extraction from an already-ingested summary page. Mixing them violates the single-responsibility principle and makes the skill's mental model harder.
-3. A new skill is trivially composable in a workflow: `wiki-enrich` first (ingest), then `wiki-extract-concepts` (enrich entity layer). Each skill can be tested and run independently.
-4. The existing `/wiki-enrich` manifest-consumer code (lines ~100-200 of `wiki_enrich.py`) handles concept pages (`kind="concept"`) correctly already — no change needed.
+#### Epic EV: wiki-ingest vendoring
 
-**Invocation flow (operator perspective):**
-```
-# Step 1: ingest source page (existing flow, no change)
-/wiki-enrich --vault trade-agents --vault-root /path --source /raw/lesson.md
+- **I-V.1** Create `scripts/wiki_ingest/` directory structure by copying the upstream package. Run `scripts/sync_wiki_ingest.sh --source <path-to-upstream>` (or manually rsync for bootstrap). Verify `from scripts.wiki_ingest.commands.ingest import execute` succeeds. Create `scripts/wiki_ingest/VENDORED_FROM.md` stub. → R-45
 
-# Step 2: extract concepts from the indexed source page (new skill)
-/wiki-extract-concepts --vault trade-agents --vault-root /path \
-    --source-page self-improving-trading-agent-on-hermes
-# → emits manifest to stdout
-# → if --ingest flag passed, auto-calls /wiki-enrich to consume manifest
-```
+- **I-V.2** Write `scripts/sync_wiki_ingest.sh`. Implement: source-path resolution, divergence check (git diff against recorded commit SHA), rsync with exclude list, `VENDORED_FROM.md` update. Add `--dry-run` flag. Make executable. → R-49
 
-**Subprocess auto-dispatch option** (`--ingest` flag on the new skill): when passed, `wiki-extract-concepts` calls `wiki-enrich` as a subprocess with the manifest piped in, so the operator can do the full two-step in one command. This is ergonomic and does not change either skill's contract.
+- **I-V.3** Programmatic API extraction in vendored `scripts/wiki_ingest/commands/ingest.py`. Define `class IngestError(Exception)` with `code`, `phase`, `written_so_far` attributes. Refactor `execute(args)` to call a new top-level `ingest(source, vault, vault_id, source_hash, known_concepts, dry_run, timeout_seconds) -> dict` function. Inside `ingest()`: replace all `_safety.die(...)` calls with `raise IngestError(...)`. `execute()` wraps `ingest()` and catches `IngestError`, calling `_safety.die()` to preserve CLI behavior. Ensure `argparse.Namespace` is no longer passed into `ingest()` — all params are explicit keyword arguments. → R-46
 
----
+- **I-V.4** `mypy --strict scripts/wiki_ingest/` pass. Identify and fix all type annotation gaps in the vendored copy. Document each local patch in a comment block `# VENDORED-PATCH:` and list in `VENDORED_FROM.md::local_patches`. Goal: zero mypy errors. **Time-box**: if cumulative type-fixup exceeds 2 hours, switch strategy — add minimal `# type: ignore[<error>]` comments with an `UPSTREAM-ISSUE:` referee link and file an issue on the Universal-skills/wiki-ingest tracker rather than continuing to deep-fix in the vendored copy. Goal of the time-box: prevent vendoring task from being held hostage by upstream typing debt. → R-50
 
-### 4. Epics & Issues
+- **I-V.5** Refactor `scripts/wiki_skills/wiki_enrich.py` primary path. At module level (lazy import, inside the function): `try: from scripts.wiki_ingest.commands.ingest import ingest as _vendored_ingest, IngestError as _VendoredIngestError; _VENDORED_AVAILABLE = True` / `except ImportError: _VENDORED_AVAILABLE = False`. In `main()`: check `os.environ.get("WIKI_ENRICH_NO_VENDORED") != "1"` AND `_VENDORED_AVAILABLE` → call `_vendored_ingest(source=source, vault=vault_root, vault_id=args.vault, ...)`. On `IngestError`: emit structured error and exit 6. Subprocess path: existing flow (now guarded by `not _VENDORED_AVAILABLE or WIKI_ENRICH_NO_VENDORED`). → R-47, R-48
 
-#### Epic E7: wiki-extract-concepts (R-3)
+- **I-V.6** Update `bin/wiki-enrich` launcher. Remove any `which wiki-ingest || exit` guard if present. Confirm the launcher works without `wiki-ingest` on PATH when the vendored path is active. → R-52
 
-- **I-7.1** Python entry point `scripts/wiki_skills/wiki_extract_concepts.py`. Implement argparse surface: `--vault`, `--vault-root`, `--source-page` (slug or relative path), `--db-path` override, `--model` (default `claude-sonnet-4-6`), `--ingest` (auto-dispatch flag). Implement `main(argv)` consistent with other wiki skills. Stub all internal functions initially (Stub-First). → R-30, R-31, R-42
+- **I-V.7** Update tests in `tests/test_wiki_enrich.py`. Replace subprocess mocks (`subprocess.run`) with `unittest.mock.patch` on the vendored `ingest` import for primary-path tests. Add three new test cases: `WIKI_ENRICH_NO_VENDORED=1` triggers subprocess; `ImportError` on vendored import with `wiki-ingest` on PATH triggers subprocess; `ImportError` on vendored import with `wiki-ingest` absent triggers `WIKI_INGEST_UNAVAILABLE`. → R-51
 
-- **I-7.2** Skill wrapper `skills/wiki-extract-concepts/SKILL.md` and slash command `.claude/commands/wiki-extract-concepts.md`. Follow existing skill template (see `skills/wiki-enrich/SKILL.md`). Create symlinks into `.agent/skills/`. → R-30
+- **I-V.8** Update README installation section. Remove `wiki-ingest` symlink from required install steps; note optional PATH presence as a fallback/debug mechanism. → R-53
 
-- **I-7.3** Pre-extraction DB query: implement `load_known_entities(repo, vault_id) → list[dict]`. Query `entities` LEFT JOIN `entity_aliases` for the vault; serialize to CONTRACT §2 format. Handle empty result gracefully. → R-32
+- **I-V.9** Update ARCHITECTURE.md §1.5.2 and §1.5.3. Replace the cross-process flow diagram with an in-process flow diagram. Add a note in §1.5.3 about the vendored copy at `scripts/wiki_ingest/`. → R-54
 
-- **I-7.4** LLM extraction: implement `extract_concepts_llm(source_body, known_entities, model, max_tokens) → list[dict]`. Build prompt with source body + known-concepts JSON block. Call Anthropic API with `temperature=0`. Validate response JSON schema. Return structured list with `slug`, `name`, `definition`, `source_quote`, `source_span`, `entity_type`, `action` fields. → R-33, R-34
+- **I-V.10** Create `THIRD_PARTY_NOTICES.md`. Include: project name (`wiki-ingest`), upstream repo path (`Universal-skills/skills/wiki-ingest`), operator ownership note, snapshot commit SHA (from `VENDORED_FROM.md`), sync date. → R-55
 
-- **I-7.5** De-duplication classifier: implement `classify_candidates(llm_results, known_slugs) → tuple[list_create, list_mention]`. Items whose slug exists in vault entities → `mention` (ref only). Novel slugs → `create`. Log classification in extraction summary. → R-34
-
-- **I-7.6** Concept page writer: implement `write_concept_page(vault_root, candidate, source_slug, today) → Path`. Write `_concepts/<slug>.md` atomically. Frontmatter per R-36 spec. Body: `# <name>`, definition, `## Mentions` provenance block. Skip-and-return-unchanged if file exists. → R-36
-
-- **I-7.7a** DAL extension: add `upsert_entity(vault_id, slug, name, type, is_candidate, canonicalized_by, first_seen, last_updated) → None` to `IndexRepository` ABC (`scripts/wiki_index/repository.py`) and implement in `SQLiteRepository` (atomic INSERT … ON CONFLICT DO UPDATE; `is_candidate` downgrade-guard at SQL level: `is_candidate = MIN(excluded.is_candidate, pages.is_candidate)`). Add unit tests in `tests/test_sqlite_repository.py`. Phase 3a left this method out (only `resolve_entity` read-path exists per `repository.py:260`); confirmed absent by grep before scoping. → R-37
-
-- **I-7.7b** Call site in skill: implement `upsert_extracted_entity(repo, vault_id, candidate, source_slug, today) → str`. Call `repo.upsert_entity(...)` with `is_candidate=1`. Guard against downgrading confirmed entities (`is_candidate=0`) at the call layer too (defensive — SQL guard from I-7.7a is primary). → R-37
-
-- **I-7.8** `page_entity_refs` upsert: implement `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates)`. Collect `(entity_slug, ref_type='mentioned', source_quote, source_span, trust_level='medium')` for all extracted candidates (create + mention). Call `repo.replace_refs(...)` atomically. → R-38
-
-- **I-7.9** Idempotency gate: implement `check_idempotency(repo, vault_id, source_slug, current_hash) → bool`. Query `source_state` with `source_kind='extract-concepts'`. Return True if unchanged. After successful extraction, update `source_state` row. → R-39
-
-- **I-7.10** Manifest builder: implement `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event) → dict`. Output structure per R-35. Emit to stdout as JSON. → R-35
-
-- **I-7.11** Optional subprocess dispatch: implement `dispatch_to_wiki_enrich(manifest_dict, vault_id, vault_root, wiki_enrich_bin) → dict`. When `--ingest` flag passed, write manifest to tempfile and call `wiki-enrich --manifest-file <path>` (or pipe via stdin). Parse result. → R-41
-
-- **I-7.12** Unit tests: `tests/test_wiki_extract_concepts.py`. Cover: prompt construction, manifest schema round-trip, idempotency short-circuit, de-duplication classifier, concept page writer (existing file skip). Use in-memory `SQLiteRepository` fixture (same pattern as existing tests). → R-43
-
-- **I-7.13** Integration test: `tests/test_wiki_extract_concepts_integration.py`. Fixture: a small source page in `tests/fixtures/source_extract/source-page.md` with 3 mentionable concepts. Test: extraction → manifest has 3 items → re-run → `unchanged`. LLM call mocked via `pytest-mock` or `responses`. → R-43
-
-- **I-7.14** `mypy --strict` compliance and `wiki-enrich.py` regression: verify `wiki_enrich.py` still handles `kind="concept"` pages from the new manifest without modification. Run `pytest tests/` (295+ tests must stay green). → R-43, R-41
-
-- **I-7.15** Extend `wiki-enrich` with manifest-input flags (Decision-9): add `--manifest-file PATH` and `--manifest-stdin` to argparse; make mutually exclusive with `--source` (today `required=True` at `wiki_enrich.py:259`; relax to mutually-exclusive group); when manifest-input used, skip `check_wiki_ingest_version` + `wiki-ingest` subprocess and version check; load JSON, validate, index. Add 3 unit tests: (a) `--manifest-file` happy path against `registered_vault`; (b) mutual-exclusion argparse error (`--source` AND `--manifest-file` together → exit 1); (c) `--manifest-file` succeeds **with `wiki-ingest` absent from PATH** (mock `shutil.which → None`) — proves Decision-9 actually decouples the dependency. Update `skills/wiki-enrich/SKILL.md` with the new flags. → R-44, R-41
+- **I-V.11** Regression sweep: run `pytest tests/ -q` (all 295+ tests green); run `mypy --strict scripts/` (full tree, not just vendored subdirectory); manually verify smoke recipe from §7 (Smokes 1-4). → R-51, R-50, R-57, all RTM rows
 
 ---
 
-### 5. Use Cases
+### 4. Use Cases
 
-#### 5.1 UC-08: Extract concepts from a single source page
+#### UC-V1: Operator updates vendored snapshot via sync script
 
-**Actors:**
-- Operator (user or sub-agent)
-- System (`wiki-extract-concepts` skill)
-- LLM (Claude Sonnet 4.6 via Anthropic API)
-- SQLite (`IndexRepository`)
-- Filesystem (vault `_concepts/` directory)
+**Actors:** Operator (developer of this repo), `scripts/sync_wiki_ingest.sh`, git.
 
 **Preconditions:**
-- Vault is registered (`wiki-init --register-existing` run).
-- Source page is already indexed in `pages` table (either via `/wiki-enrich` or `/wiki-index-upsert`).
-- `ANTHROPIC_API_KEY` is set in environment.
-- `wiki-ingest` v1.1+ on PATH (required only if `--ingest` flag is used).
+- The upstream `Universal-skills/skills/wiki-ingest/` repo has received a bug fix or feature update.
+- The vendored `scripts/wiki_ingest/` exists with `VENDORED_FROM.md` recording the prior snapshot SHA.
+- No local divergent patches have been made to the vendored copy (or operator is aware of them).
 
 **Main Scenario:**
-1. Operator: `/wiki-extract-concepts --vault trade-agents --vault-root /path/to/vault --source-page self-improving-trading-agent-on-hermes`
-2. System: Resolves `--source-page` to absolute path; validates inside vault root (R-26 path guard).
-3. System: Reads source page body from filesystem; computes `sha256(body)`.
-4. System: Queries `source_state` for `(vault_id='trade-agents', source_kind='extract-concepts', scope='self-improving-trading-agent-on-hermes', key='source_hash')`. No prior record → proceed.
-5. System: Queries `entities` + `entity_aliases` for `vault_id='trade-agents'`; serialises known-concepts list.
-6. System: Calls Anthropic API (`claude-sonnet-4-6`, `temperature=0`): sends source body + known-concepts. Prompt instructs: "identify 3-10 key concepts; use exact slug/name for known concepts; for novel concepts provide slug, name, 1-3 sentence definition, source_quote (10-50 words), source_span (line numbers), entity_type."
-7. System: Validates LLM response JSON; classifies into `create` / `mention` lists.
-8. System: For each `create` item: writes `_concepts/<slug>.md` atomically; calls `repo.upsert_entity(is_candidate=1)`.
-9. System: Calls `repo.replace_refs(...)` for all extracted entities (create + mention) against the source page.
-10. System: Updates `source_state` with new `source_hash`.
-11. System: Builds manifest; emits JSON to stdout.
-12. Operator (optional): pipes stdout to `/wiki-enrich --manifest-stdin` or uses `--ingest` flag to auto-dispatch.
+1. Operator: runs `bash scripts/sync_wiki_ingest.sh` (optionally with `--dry-run` first).
+2. Script: reads `VENDORED_FROM.md` to get the prior `source_commit` SHA.
+3. Script: checks for local modifications in `scripts/wiki_ingest/` (git diff or content hash comparison) against the recorded SHA. No divergence found → proceed.
+4. Script: rsyncs `Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/` → `scripts/wiki_ingest/` excluding `__pycache__/` and `*.pyc`.
+5. Script: runs `git rev-parse HEAD` in the upstream source path and writes the new SHA + timestamp to `VENDORED_FROM.md`.
+6. Operator: runs `mypy --strict scripts/wiki_ingest/` to verify no new type errors introduced by the upstream delta.
+7. Operator: runs `pytest tests/ -q` to verify no regressions.
+8. Operator: commits the updated vendored copy and `VENDORED_FROM.md`.
 
 **Alternative Scenarios:**
-
-- **A1: Concept already exists as confirmed (`is_candidate=0`)**
-  1. De-duplication classifier identifies slug match.
-  2. No concept page written, no entity downgrade.
-  3. `page_entity_refs` row still created (`ref_type='mentioned'`).
-  4. Manifest lists concept with `action="mentioned"`.
-
-- **A2: LLM returns malformed JSON**
-  1. System: JSON parse fails.
-  2. System: Emits `{"error": "EXTRACTION_PARSE_ERROR", "message": "...", "details": {"raw_response": "<first 500 chars>"}}`.
-  3. System: Exits with code 4. No files written, no DB mutations.
-
-- **A3: Anthropic API unavailable**
-  1. System: API call raises connection error after 1 retry.
-  2. System: Emits `{"error": "LLM_API_UNAVAILABLE", ...}`, exits 3.
-
-- **A4: `_concepts/` directory does not exist in vault**
-  1. System: `mkdir -p <vault_root>/_concepts/` before first write.
-  2. Proceeds normally.
-
-- **A5: `--ingest` flag passed**
-  1. After manifest built and emitted to stdout, system calls `/wiki-enrich` subprocess with manifest.
-  2. wiki-enrich indexes concept pages and creates log_event row.
-  3. Combined result `{"extraction": <manifest>, "index": <enrich_result>}` emitted.
+- **A1: Local divergent patch detected** — Script prints diff of local changes vs upstream; exits non-zero with instructions to either discard local changes or move them upstream first. No rsync performed.
+- **A2: `--dry-run` flag** — Script prints what would be rsynced without modifying any files. Operator reviews and re-runs without flag.
+- **A3: Source path not found** — Script exits with "upstream source directory not found at `<path>`; pass `--source <path>` to override."
 
 **Postconditions:**
-- 0 or more `_concepts/<slug>.md` files written in vault.
-- `entities` table rows created with `is_candidate=1` for new concepts.
-- `page_entity_refs` rows created for all extracted entities (create + mention) referencing source page.
-- `source_state` row upserted with current `source_hash`.
-- Manifest emitted to stdout.
+- `scripts/wiki_ingest/` reflects the upstream state at the recorded commit SHA.
+- `VENDORED_FROM.md` updated with new SHA and timestamp.
+- All existing tests pass.
 
-**Acceptance Criteria:**
-- After running on `trade-agents` vault with a real source page: `SELECT count(*) FROM entities WHERE vault_id='trade-agents' AND is_candidate=1` >= N (where N = count of novel concepts in manifest).
-- `SELECT trust_level FROM page_entity_refs WHERE vault_id='trade-agents' AND page_slug='<source-slug>'` returns `'medium'` for all rows inserted by this skill.
-- `SELECT source_quote FROM page_entity_refs WHERE entity_slug='<slug>'` is non-NULL and 10-50 words.
-- Each written `_concepts/<slug>.md` has parseable YAML frontmatter with `is_candidate: true`.
-- RTM rows covered: R-30, R-31, R-32, R-33, R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42.
+**Acceptance Criteria (RTM rows: R-49, R-45):**
+- `VENDORED_FROM.md` contains `source_commit`, `synced_at`, `source_path` fields after sync.
+- Re-running the sync script immediately produces "no changes" (idempotent).
+- `--dry-run` produces no file mutations.
+- Injecting a local modification to a vendored file causes the script to print a diff and exit non-zero.
 
 ---
 
-#### 5.2 UC-09: Re-extract on source page change (idempotency)
+#### UC-V2: End-user installs via single command, no external wiki-ingest required
 
-**Actors:**
-- Operator (user or sub-agent)
-- System (`wiki-extract-concepts` skill)
-- SQLite (`source_state` table)
+**Actors:** End-user (new operator of obsidian-llm-wiki), Python package installer, shell.
 
 **Preconditions:**
-- UC-08 was run previously on the same source page (successful extraction recorded in `source_state`).
+- `obsidian-llm-wiki` is cloned or installed (future: via `pip install obsidian-llm-wiki` in TASK 005).
+- `wiki-ingest` is NOT installed and NOT on PATH.
+- A target vault exists with a valid `WIKI_SCHEMA.md` including `vault_id`.
 
-**Main Scenario A — Body unchanged:**
-1. Operator: runs `/wiki-extract-concepts --vault V --vault-root P --source-page S` again.
-2. System: Reads source page body; computes `sha256(body)`.
-3. System: Queries `source_state`; finds matching hash.
-4. System: Returns `{"status": "ok", "action": "unchanged", "manifest": null}`, exit 0.
-5. No LLM API call made. No DB mutations.
+**Main Scenario:**
+1. End-user: installs this repo per README (clone + `pip install -r requirements.txt` or future `pip install obsidian-llm-wiki`).
+2. End-user: runs `wiki-enrich --vault my-vault --vault-root /path/to/vault --source /path/to/raw-summary.md`.
+3. System: attempts vendored in-process import (`from scripts.wiki_ingest.commands.ingest import ingest`). Succeeds.
+4. System: calls `ingest(source=..., vault=..., vault_id='my-vault', ...)` in-process. Returns manifest dict.
+5. System: validates manifest; calls `index_from_manifest()`; appends log event.
+6. System: emits `{"action": "enriched", "vault_id": "my-vault", "ingest": {...}, "index": {...}}`.
+7. End-user: verifies `wiki-search --vault my-vault "keyword"` returns the ingested page.
 
-**Main Scenario B — Body changed (e.g., operator corrected transcript):**
-1. Operator: edits source page body (corrects typo, adds paragraph).
-2. Operator: runs `/wiki-extract-concepts --vault V --vault-root P --source-page S`.
-3. System: Reads body; computes new hash; mismatch with stored hash.
-4. System: Proceeds with full extraction (steps 5-11 of UC-08 main scenario).
-5. System: Calls `repo.replace_refs(...)` — atomically replaces all prior `page_entity_refs` for this source page with new extraction results.
-6. System: Updates `source_state` with new hash.
-7. New candidate entities created if LLM found novel concepts; existing ones not duplicated.
+**Alternative Scenarios:**
+- **A1: Vendored ingest raises `IngestError` (e.g., source type mismatch)** — `wiki-enrich` emits `{"error": "WIKI_INGEST_FAILED", "code": "SOURCE_NEEDS_SUMMARIZATION", ...}`, exit 6. No subprocess fallback attempted (the error is from the content, not from the import path).
+- **A2: `WIKI_ENRICH_NO_VENDORED=1` set for debugging** — subprocess path is attempted; fails with clear error since `wiki-ingest` is not on PATH; user is instructed to unset the env var.
 
-**Postconditions (Scenario A):**
-- No files written. No DB mutations. No LLM API call. Fast exit (< 50ms).
+**Postconditions:**
+- At least one page upserted in SQLite.
+- `log_events` table has a new row for this ingest.
+- End-user can find the ingested content via `wiki-search`.
 
-**Postconditions (Scenario B):**
-- Entity refs for source page reflect current body content.
-- New concept pages created for any concepts not previously extracted.
-- Previously extracted concepts not re-created (file exists → skip).
-
-**Acceptance Criteria:**
-- `SELECT count(*) FROM source_state WHERE vault_id=V AND source_kind='extract-concepts' AND scope=S` = 1 (single row, upserted).
-- Re-run with unchanged body: `llm_calls` in response = 0 (or absent field if 0).
-- Re-run with changed body: `SELECT count(*) FROM page_entity_refs WHERE vault_id=V AND page_slug=S` reflects updated extraction (no duplicate rows for same entity).
-- RTM rows covered: R-39.
+**Acceptance Criteria (RTM rows: R-45, R-46, R-47, R-52, R-53):**
+- With `wiki-ingest` absent from PATH: `wiki-enrich --vault V --vault-root P --source S` exits 0.
+- `shutil.which("wiki-ingest")` = None in the test environment.
+- `pytest tests/test_wiki_enrich.py -k "test_in_process_no_subprocess"` passes (new test validating this scenario).
 
 ---
 
-### 6. Schema and API Impact
+### 5. Schema and API Impact
 
-**No new tables.** All required schema is already in place from Phase 3a:
+#### 5.1 No DB schema changes
 
-| Table | Phase 3a status | R-3 usage |
-|---|---|---|
-| `entities` | Active; `is_candidate` field present (default 0) | New rows written with `is_candidate=1` |
-| `entity_aliases` | Active; schema exists | Not written by R-3; read for known-concept de-dup |
-| `page_entity_refs` | Active; `trust_level`, `source_quote`, `source_span` fields present | New rows with `trust_level='medium'`, provenance populated |
-| `source_state` | Active; used by transcript adapter for idempotency | New rows with `source_kind='extract-concepts'` (verified: `source_state.source_kind` is `TEXT NOT NULL`, no CHECK constraint — `SCHEMA-v2.sql:378`; new value is allowed without DDL change) |
-| `pages` | Active | Read-only (source page lookup); no new write |
+TASK 004 is entirely at the transport layer. No new tables, no column changes, no migration scripts required. The SQLite schema remains at the Phase 3a state (SCHEMA-v2.sql).
 
-**Possible schema clarification (not a change):** `page_entity_refs.source_span` column is in the `extracted_items` table DDL (line ~326 of SCHEMA-v2.sql) but NOT in `page_entity_refs` DDL (which has `line_start INTEGER` and `line_end INTEGER` separately). Resolution: R-3 uses `line_start` + `line_end` integer columns in `page_entity_refs`, not a combined `source_span` string. The LLM prompt will request separate start/end line numbers; the `source_span` field mentioned in the ROADMAP description refers to the conceptual span, not a literal DB column name.
+#### 5.2 New Python module: `scripts/wiki_ingest/`
 
-**`IndexRepository` extension:** The DAL may need a new method `upsert_entity(...)` if one does not already exist. Phase 3a's `resolve_entity` stub is not this — that method resolves an entity by name/alias; what R-3 needs is a write-path upsert for newly discovered candidate entities. Check existing DAL methods before implementing; if `upsert_entity` is absent, add it to `IndexRepository` ABC and `SQLiteRepository` concrete class as part of I-7.7.
+After vendoring, the directory layout is:
+
+```text
+scripts/wiki_ingest/
+├── __init__.py               — package init; re-exports __version__ = "1.1.0" (snapshot version)
+├── VENDORED_FROM.md          — provenance metadata (not a Python module; gitignore-exempt)
+├── _classify.py
+├── _dispatch.py
+├── _frontmatter.py
+├── _markdown.py
+├── _page_merge.py
+├── _safety.py
+├── _vault.py
+└── commands/
+    ├── __init__.py
+    ├── append_log.py
+    ├── classify_folder.py
+    ├── demote.py
+    ├── find.py
+    ├── ingest.py             — PRIMARY REFACTOR TARGET (I-V.3): adds IngestError + ingest() fn
+    ├── init.py
+    ├── lint.py
+    ├── log_event.py
+    ├── promote.py
+    ├── reindex.py
+    ├── register_summary.py
+    ├── scan.py
+    ├── update_index.py
+    └── upsert_page.py
+```
+
+#### 5.3 Programmatic API: proposed `ingest()` function signature
+
+```python
+# scripts/wiki_ingest/commands/ingest.py (vendored + refactored)
+
+class IngestError(Exception):
+    """Raised by ingest() on all failure modes (replaces _safety.die() calls).
+
+    Attributes:
+        message:        human-readable failure description (positional Exception arg)
+        code:           error code string (e.g. "SOURCE_NEEDS_SUMMARIZATION")
+        phase:          pipeline phase where failure occurred (e.g. "register-summary"),
+                        or None if failure was pre-pipeline (validation)
+        written_so_far: list of written-entry dicts (partial success state)
+        child_exit_code: original exit code from a dispatched atomic op (0 if not applicable)
+    """
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        phase: str | None = None,
+        written_so_far: list[dict] | None = None,
+        child_exit_code: int = 0,
+    ) -> None: ...
+
+def ingest(
+    source: Path,
+    vault: Path,
+    vault_id: str | None = None,
+    source_hash: str | None = None,
+    known_concepts: list[dict] | None = None,
+    dry_run: bool = False,
+    timeout_seconds: int = 600,
+    quiet: bool = True,
+) -> dict:
+    """Run the wiki-ingest pipeline in-process. Returns a v1.1 manifest dict.
+
+    Args:
+        source:           Absolute path to the raw input (must have type: summary|...).
+        vault:            Absolute path to vault root or course root.
+        vault_id:         Optional strict-mode vault ID; if given, must match WIKI_SCHEMA.md.
+        source_hash:      Optional pre-computed sha256-hex of source bytes (idempotency).
+        known_concepts:   Optional list of known-concept dicts [{slug, name, aliases}].
+                          Currently decorative (wiki-ingest v1.1 summary-passthrough scope);
+                          will be consumed when synthesiser-subagent integration lands.
+        dry_run:          If True, no filesystem writes; manifest reflects what would happen.
+        timeout_seconds:  Reserved; not enforced in-process (no subprocess to bound).
+        quiet:            Suppress human-readable stdout lines. Default True for programmatic use.
+
+    Returns:
+        dict: v1.1 manifest with status="ok", written[], log_event, etc.
+              If source was already ingested (idempotency short-circuit):
+              returns manifest with status="ok", action="unchanged", written=[].
+
+    Raises:
+        IngestError: on any failure (invalid source, vault not found, pipeline step failure).
+    """
+    ...
+```
+
+**Notes on the signature:**
+
+- `known_concepts` is marked decorative for v1.1 (upstream is summary-passthrough; LLM synthesis is not in the current `execute()` path). It is included in the signature now so callers (TASK 003 `wiki-extract-concepts`) do not need a breaking change when upstream adds synthesiser integration.
+- `timeout_seconds` is also decorative in the in-process path (no subprocess to bound). Retained for interface symmetry with the subprocess path.
+- The function is NOT async. The pipeline is synchronous filesystem I/O + in-process dispatches.
+
+---
+
+### 6. Architecture Impact
+
+TASK 004 collapses the cross-process hop in §1.5.2 to an in-process call. The Architecture Phase will update ARCHITECTURE.md §1.5.2 with the revised flow diagram. No new DAL methods, no new DB tables, no new skill manifests. The vendored module is an internal implementation detail of `wiki_enrich.py`, not a new user-facing skill.
+
+The symlink graph in §1.5.5 loses `~/.local/bin/wiki-ingest` as a required link. It becomes optional (enables subprocess fallback for operators who want it).
 
 ---
 
 ### 7. Acceptance Criteria (End-to-End Smoke Recipe)
 
-The following recipe constitutes the Phase-3b gate for this task. Run against the `trade-agents` vault (already dogfooded in Phase 3a):
+The following recipe constitutes the TASK 004 gate. Run against any registered vault (e.g., `trade-agents`):
 
 ```bash
-# Prerequisites
+# Prerequisites: inside obsidian-llm-wiki repo, .venv activated.
 source .venv/bin/activate
 export VAULT=trade-agents
 export VAULT_ROOT=/path/to/trade-agents
+export SOURCE=/path/to/a-prebuilt-summary.md   # type: summary or lesson-summary in frontmatter
 
-# 1. Confirm baseline: existing candidate count (should be 0 after Phase 3a)
-sqlite3 ~/.local/share/wiki-index/global.db \
-  "SELECT count(*) FROM entities WHERE vault_id='$VAULT' AND is_candidate=1;"
-# Expected: 0
+# --- Smoke 1: in-process path works WITHOUT wiki-ingest on PATH ---
+# Remove wiki-ingest from PATH for this test (or unset symlink temporarily)
+export PATH_SAVED="$PATH"
+export PATH="$(echo $PATH | tr ':' '\n' | grep -v wiki-ingest | tr '\n' ':')"
+which wiki-ingest 2>/dev/null && echo "FAIL: wiki-ingest still on PATH" || echo "OK: wiki-ingest absent"
 
-# 2. Pick a source page that's already indexed
-sqlite3 ~/.local/share/wiki-index/global.db \
-  "SELECT slug FROM pages WHERE vault_id='$VAULT' AND type='summary' LIMIT 1;"
-# Note the slug, e.g. SOURCE_SLUG=self-improving-trading-agent-on-hermes
-
-# 3. Run extraction
-python -m scripts.wiki_skills.wiki_extract_concepts \
-  --vault $VAULT \
-  --vault-root $VAULT_ROOT \
-  --source-page $SOURCE_SLUG \
-  > /tmp/extract-manifest.json
-echo "Exit code: $?"
-# Expected: 0
-
-# 4. Verify manifest structure
-python -c "
+wiki-enrich --vault "$VAULT" --vault-root "$VAULT_ROOT" --source "$SOURCE" \
+  | python -c "
 import json, sys
-m = json.load(open('/tmp/extract-manifest.json'))
-assert m['status'] == 'ok'
-assert m['vault_id'] == '$VAULT'
-assert isinstance(m['written'], list)
-print(f'Concepts in manifest: {len(m[\"written\"])}')
+result = json.load(sys.stdin)
+assert result['action'] == 'enriched', f'Expected enriched, got: {result}'
+assert result['vault_id'] == '$VAULT', f'vault_id mismatch: {result}'
+assert isinstance(result['index']['upserted'], list), 'upserted must be a list'
+print(f'Smoke 1 PASS: in-process path enriched {len(result[\"index\"][\"upserted\"])} pages')
 "
-# Expected: Concepts in manifest: N >= 1
+# Expected: Smoke 1 PASS: in-process path enriched N pages
+echo "wiki-enrich exit code: $?"
+# Expected: 0
 
-# 5. Verify entity rows created with is_candidate=1
-sqlite3 ~/.local/share/wiki-index/global.db \
-  "SELECT count(*) FROM entities WHERE vault_id='$VAULT' AND is_candidate=1;"
-# Expected: >= N
+# --- Smoke 2: subprocess fallback path works WITH wiki-ingest on PATH ---
+export PATH="$PATH_SAVED"
+which wiki-ingest  # confirm it's back
+WIKI_ENRICH_NO_VENDORED=1 wiki-enrich --vault "$VAULT" --vault-root "$VAULT_ROOT" \
+  --source "$SOURCE" \
+  | python -c "
+import json, sys
+result = json.load(sys.stdin)
+assert result['action'] in ('enriched', 'partial'), f'Unexpected: {result}'
+print('Smoke 2 PASS: subprocess fallback works')
+"
+# Expected: Smoke 2 PASS: subprocess fallback works
 
-# 6. Verify provenance on page_entity_refs
-sqlite3 ~/.local/share/wiki-index/global.db \
-  "SELECT count(*) FROM page_entity_refs
-   WHERE vault_id='$VAULT' AND page_slug='$SOURCE_SLUG'
-   AND trust_level='medium' AND source_quote IS NOT NULL;"
-# Expected: >= N
+# --- Smoke 3: ImportError path emits WIKI_INGEST_UNAVAILABLE ---
+# Temporarily break the vendored import by renaming the package
+trap 'mv scripts/wiki_ingest_bak scripts/wiki_ingest 2>/dev/null' EXIT
+mv scripts/wiki_ingest scripts/wiki_ingest_bak
+PATH_NO_INGEST="$(echo $PATH | tr ':' '\n' | grep -v wiki-ingest | tr '\n' ':')"
+PATH="$PATH_NO_INGEST" wiki-enrich --vault "$VAULT" --vault-root "$VAULT_ROOT" \
+  --source "$SOURCE" \
+  | python -c "
+import json, sys
+result = json.load(sys.stdin)
+assert 'error' in result, f'Expected error envelope, got: {result}'
+print(f'Smoke 3 PASS: error code = {result[\"error\"]}')
+"
+mv scripts/wiki_ingest_bak scripts/wiki_ingest
+trap - EXIT
+# Expected: Smoke 3 PASS: error code = WIKI_INGEST_UNAVAILABLE
 
-# 7. Idempotency: re-run → unchanged
-python -m scripts.wiki_skills.wiki_extract_concepts \
-  --vault $VAULT \
-  --vault-root $VAULT_ROOT \
-  --source-page $SOURCE_SLUG \
-  | python -c "import json,sys; m=json.load(sys.stdin); assert m['action']=='unchanged' and m.get('manifest') is None, m"
-# Expected: no exception (assertion passes — `manifest is None` distinguishes idempotency hit from a real extraction that found 0 concepts)
+# --- Smoke 4: standalone CLI surface preserved (R-57) ---
+# Vendored ingest, invoked as a CLI module, still works — proves execute() wrapper
+# around ingest() did not regress the CLI surface.
+python -m scripts.wiki_ingest.commands.ingest \
+  --source "$SOURCE" --vault "$VAULT_ROOT" --output-format json \
+  | python -c "
+import json, sys
+m = json.load(sys.stdin)
+assert m['status'] == 'ok', f'Unexpected: {m}'
+print('Smoke 4 PASS: standalone CLI surface intact')
+"
+# Expected: Smoke 4 PASS: standalone CLI surface intact
 
-# 8. Concept pages on disk
-ls $VAULT_ROOT/_concepts/*.md | head -5
-# Expected: N new files present
-
-# 9. Full test suite still green
-pytest tests/ -q
-# Expected: 295+ passed, 0 failed
-
-# 10. mypy strict
-mypy --strict scripts/wiki_skills/wiki_extract_concepts.py
+# --- Smoke 5: mypy --strict clean ---
+mypy --strict scripts/wiki_ingest/
 # Expected: Success: no issues found
+mypy --strict scripts/wiki_skills/wiki_enrich.py
+# Expected: Success: no issues found
+
+# --- Smoke 6: full test suite green ---
+pytest tests/ -q
+# Expected: 298+ passed (295 baseline + >=3 new tests), 0 failed
+
+# --- Smoke 7: sync script dry-run is non-destructive ---
+bash scripts/sync_wiki_ingest.sh --dry-run \
+  --source ../../Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/
+# Expected: prints list of would-be-synced files; no file mutations;
+#           "Dry run complete. Re-run without --dry-run to apply."
+
+# --- Smoke 7: VENDORED_FROM.md has required fields ---
+python -c "
+import re
+text = open('scripts/wiki_ingest/VENDORED_FROM.md').read()
+for field in ('source_commit', 'synced_at', 'source_path'):
+    assert field in text, f'Missing field: {field}'
+print('Smoke 7 PASS: VENDORED_FROM.md fields present')
+"
+# Expected: Smoke 7 PASS
 ```
 
 ---
 
-### 8. Resolved Decisions (closed 2026-05-27)
+### 8. Resolved Decisions (2026-05-27)
 
-All blocking questions raised during Analysis Phase have been resolved by the operator. Decisions encoded in Meta block §0:
+All blocking questions raised during operator brainstorming have been resolved. No blocking questions remain before Architecture Phase.
 
 | Q | Resolution | Encoded in |
 |---|---|---|
-| **Q1 — `upsert_entity` DAL method** | Add to `IndexRepository` ABC (no direct SQL bypass). Phase 3a `resolve_entity` is read-path only; no write-path entity method exists today. | I-7.7 (verified via `grep` against `scripts/wiki_index/repository.py` — confirmed absent) |
-| **Q2 — `--manifest-file` on `wiki-enrich`** | In scope for Task 003. ~30 LoC extension, two mutually exclusive input flags (`--source` XOR `--manifest-{file,stdin}`). | Decision-9, R-44, I-7.15 |
-| **Q3 — `source_span` LLM format** | Human-readable `"L12-L18"`; parser converts to `line_start=12, line_end=18` for `page_entity_refs` DB columns. | Decision-10, R-33 acceptance bullet (d), §6 Schema clarification |
-| **Q4 — concept page file-write ownership** | Option A: `wiki-extract-concepts` writes `_concepts/<slug>.md` itself; `/wiki-enrich` performs index-only upsert (no file writes). ADR-001 clarified, not violated. | Decision-8, R-36, I-7.6 |
+| **Q1 — Which of the 7 options?** | Option 5 Python-import-only vendor (Decision-11) | Decision-11, R-45..R-48 |
+| **Q2 — Standalone wiki-ingest preserved?** | Yes — Universal-skills repo unchanged (Decision-12) | Decision-12, R-49 scope (out) |
+| **Q3 — Programmatic API: exact signature** | `ingest(source, vault, vault_id, source_hash, known_concepts, dry_run, timeout_seconds, quiet) -> dict` + `IngestError` (Decision-13) | Decision-13, R-46, §5.3 |
+| **Q4 — Subprocess fallback preserved?** | Yes — guarded by `WIKI_ENRICH_NO_VENDORED=1` and ImportError detection (Decision-14) | Decision-14, R-47, R-48, I-V.5 |
+| **Q5 — TASK 003 surface preservation** | `--source` remains `required=True`; no mutual-exclusion group introduced (TASK 003's job) | Decision-9 (carried), R-56 |
+| **Q6 — `execute()` CLI path preserved?** | Yes — `execute()` wraps `ingest()` and converts `IngestError` to `_safety.die()` | R-46(e), I-V.3 |
 
-**Status**: Analysis Phase complete. Ready for `task-reviewer` gate before Architecture Phase.
+---
+
+### 9. Task-Review Self-Checklist
+
+- [x] Every RTM row (R-45..R-57) has at least one Issue (I-V.1..I-V.11) and at least one acceptance bullet.
+- [x] No RTM orphans: R-45→I-V.1, R-46→I-V.3, R-47→I-V.5, R-48→I-V.5, R-49→I-V.2, R-50→I-V.4, R-51→I-V.7, R-52→I-V.6, R-53→I-V.8, R-54→I-V.9, R-55→I-V.10, R-56→I-V.11, R-57→I-V.11 (Smoke 4 verification).
+- [x] UC-V1 cites R-49, R-45. UC-V2 cites R-45, R-46, R-47, R-52, R-53.
+- [x] Decisions 11-14 each have a corresponding RTM row: D-11→R-45/R-46/R-47, D-12→R-49, D-13→R-46, D-14→R-47/R-48.
+- [x] No contradiction with TASK 003 paused state: `--manifest-stdin`/`--manifest-file` (R-44, I-7.15) NOT touched; `--source` argparse surface NOT modified. R-56 explicitly enforces this boundary.
+- [x] Scope (out) section explicitly calls out `--manifest-stdin`/`--manifest-file` as TASK 003's work.
+- [x] `IngestError` attributes match the upstream `_PartialFailure` pattern so callers have structured error state.
+- [x] Smoke recipe covers: in-process path (wiki-ingest absent), subprocess fallback (NO_VENDORED env), unavailable-both error, mypy, pytest, sync script dry-run, VENDORED_FROM.md fields.
