@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.layout import SYSTEM_FILES
 from scripts.wiki_index.models import LogEvent
 from scripts.wiki_index.security import (
     PathTraversalError,
@@ -161,13 +162,24 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
                         vault_root: Path, db_path: str | None = None
                         ) -> dict[str, Any]:
     """For each manifest.written[].path → upsert into SQLite. Mirror
-    manifest.log_event into log_events. Returns summary stats."""
+    manifest.log_event into log_events. Returns summary stats.
+
+    Top-level system files (index.md, log.md, WIKI_SCHEMA.md, CLAUDE.md)
+    are skipped — Class B/C per ADR-002 §D8: index.md is projected by
+    wiki-index-render, log.md is mirrored via log_event below. Filter is
+    top-level-only so legitimate subdir pages like ``_concepts/index.md``
+    still reach upsert.
+    """
     from scripts.wiki_skills.wiki_index_upsert import main as upsert_main
 
     upserted: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     for entry in manifest["written"]:
         rel = entry["path"]
+        # TODO: extend if promotion-spec introduces course-tier `Lessons/<C>/index.md`.
+        rel_path = Path(rel)
+        if rel_path.parent == Path(".") and rel_path.name in SYSTEM_FILES:
+            continue
         abs_path = (vault_root / rel).resolve()
         argv = [
             "--vault", vault_id,

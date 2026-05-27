@@ -174,3 +174,61 @@ def test_index_from_manifest_partial_failure_skips_log_event(registered_vault):
                                   db_path=str(db))
     assert len(summary["failed"]) == 1
     assert summary["log_event_id"] is None
+
+
+def test_index_from_manifest_skips_top_level_system_files(registered_vault):
+    """Top-level index.md/log.md/WIKI_SCHEMA.md/CLAUDE.md MUST be skipped —
+    they are Class B/C (ADR-002 §D8), mirrored via other paths. The bridge
+    must NOT route them through page-upsert (would fail on missing `type:`)."""
+    vault_root, db = registered_vault
+    m = _build_manifest("minimal-test", vault_root, ["_sources/alpha.md"])
+    # Inject system-file entries that wiki-ingest emits in its written[].
+    m["written"].extend([
+        {"path": "index.md", "action": "updated", "kind": "index",
+         "scope": "vault"},
+        {"path": "log.md", "action": "appended", "kind": "log",
+         "scope": "vault"},
+        {"path": "WIKI_SCHEMA.md", "action": "updated", "kind": "schema",
+         "scope": "vault"},
+    ])
+    summary = index_from_manifest(m, "minimal-test", vault_root,
+                                  db_path=str(db))
+    assert summary["failed"] == []
+    # Only the content page was indexed; system files were silently skipped.
+    assert len(summary["upserted"]) == 1
+    assert summary["upserted"][0]["path"] == "_sources/alpha.md"
+    # log_event still mirrored (failed is empty).
+    assert summary["log_event_id"] is not None and summary["log_event_id"] > 0
+
+
+def test_index_from_manifest_does_not_skip_subdir_namesakes(registered_vault):
+    """False-positive guard: a concept page whose basename happens to match
+    a SYSTEM_FILES entry (e.g. ``_concepts/index.md``) MUST still be indexed.
+    The skip filter must be top-level-only."""
+    vault_root, db = registered_vault
+    # Create the subdir namesakes on disk so upsert can read them.
+    concept_index = vault_root / "_concepts" / "index.md"
+    concept_index.write_text(
+        "---\ntype: concept\ntitle: Index (a concept)\n"
+        "date: 2026-05-27\ntags: [test]\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    concept_log = vault_root / "_concepts" / "log.md"
+    concept_log.write_text(
+        "---\ntype: concept\ntitle: Log (a concept)\n"
+        "date: 2026-05-27\ntags: [test]\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    m = _build_manifest("minimal-test", vault_root, [])
+    m["written"] = [
+        {"path": "_concepts/index.md", "action": "created", "kind": "concept",
+         "scope": "vault"},
+        {"path": "_concepts/log.md", "action": "created", "kind": "concept",
+         "scope": "vault"},
+    ]
+    summary = index_from_manifest(m, "minimal-test", vault_root,
+                                  db_path=str(db))
+    assert summary["failed"] == [], summary["failed"]
+    assert len(summary["upserted"]) == 2
+    paths = {row["path"] for row in summary["upserted"]}
+    assert paths == {"_concepts/index.md", "_concepts/log.md"}

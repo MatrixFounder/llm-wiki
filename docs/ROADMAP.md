@@ -14,59 +14,7 @@ Status legend:
 
 ## P0 — Active blockers
 
-### R-0. wiki-ingest v1.1 contract alignment 🟡 IN FLIGHT
-The `/wiki-enrich` bridge is built and unit-tested against
-[docs/WIKI-INGEST-V1.1-CONTRACT.md](WIKI-INGEST-V1.1-CONTRACT.md) §1
-(JSON manifest from `ingest --output-format json`).
-
-**Tracking task**: Universal-skills TASK 017 —
-`wiki-ingest-v1.1-contract-alignment`
-([`Universal-skills/docs/TASK.md`](../../Universal-skills/docs/TASK.md),
-drafted 2026-05-27, 15 RTM rows, 5 use cases, 9 acceptance criteria).
-
-**Status timeline**:
-- 2026-05-26 — Phase 3a here completed; `/wiki-enrich` bridge ready
-  against mocked wiki-ingest manifest.
-- 2026-05-27 — Smoke check: bridge fails fast against installed v1.0
-  (graceful, expected).
-- 2026-05-27 — Universal-skills agents finished TASK 016 (promote /
-  demote, two-tier vault). Context divergence found: TASK 016 did not
-  cover the v1.1 orchestrator contract.
-- 2026-05-27 — TASK 017 drafted in Universal-skills with explicit pointer
-  back to this contract; archived TASK 016 master.
-- 2026-05-27 — `vault_id` semantics relaxed (see §5 of contract):
-  wiki-ingest emits, consumer enforces. No breaking change for standalone
-  wiki-ingest users.
-- TBD — `/vdd-plan` generates atomic beads.
-- TBD — `/vdd-develop-all` loops through beads + VDD reviews.
-- **TBD — Acceptance #6** (end-to-end smoke from `/wiki-enrich` exits 0
-  with non-empty `index.upserted[]`) → R-0 closes.
-
-**Smoke baseline** (regression guard — must keep passing while v1.1
-is in flight):
-```
-$ /Users/sergey/.local/bin/wiki-enrich --vault trade-agents \
-      --vault-root /Users/sergey/dev-projects/trade-agents \
-      --source <real-source.md>
-→ {"error":"WIKI_INGEST_FAILED",
-   "message":"wiki-ingest not found on PATH; install wiki-ingest v1.1+"}
-→ exit 6
-```
-Bridge code is correct; this is the documented degraded state.
-
-**Unblock criteria** (binary; mirror Acceptance Criteria §4 of TASK 017):
-- [ ] `wiki-ingest --version` returns `wiki-ingest 1.1.0` on operator's `PATH`.
-- [ ] `wiki-ingest ingest --output-format json` emits a manifest matching
-  CONTRACT §1 exactly (status, vault_id nullable, vault_root, course,
-  source, written[], log_event, …).
-- [ ] `/wiki-enrich --vault trade-agents --source <real>` returns
-  `{"action":"enriched", "index":{"upserted":[…non-empty…], "log_event_id":N}}`
-  with exit 0.
-- [ ] All `tests/test_wiki_enrich.py` tests still pass here; all TASK 015 /
-  016 tests still pass in Universal-skills (no regression).
-
-When the four boxes are ticked → R-0 moves to "Done since 2026-05-27"
-section + smoke is wired into local development checklist.
+_(none — R-0 closed 2026-05-27, see "Done since 2026-05-27".)_
 
 ---
 
@@ -308,3 +256,15 @@ the misleading docstring.
   regression tests)
 - VDD multi-adversarial + adversarial round 1 reviews (zero-slop)
 - README + Installation flow for any-target-project use
+- **R-0 closed 2026-05-27** — wiki-ingest v1.1 contract alignment.
+  Universal-skills shipped `wiki-ingest 1.1.0`; bridge smoke against a
+  clean temp vault returns `{"action":"enriched", "index":{"upserted":[1
+  source page], "log_event_id":N}}` exit 0. End-to-end smoke also
+  surfaced an integration bug in this repo (`wiki_enrich.index_from_manifest`
+  was routing top-level system files `index.md`/`log.md` through page-upsert
+  and tripping `UnmappedTypeError`); fixed by a top-level-only
+  `SYSTEM_FILES` filter (Class B/C per ADR-002 §D8 — `index.md` is a
+  `wiki-index-render` projection, `log.md` is mirrored via `log_event`).
+  Two regression tests guard the filter incl. false-positive subdir
+  namesakes (`_concepts/index.md` etc.). 295 pytest passed, mypy strict
+  clean.
