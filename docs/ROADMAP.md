@@ -14,24 +14,59 @@ Status legend:
 
 ## P0 — Active blockers
 
-### R-0. wiki-ingest v1.1 release ⏳ EXTERNAL DEPENDENCY
+### R-0. wiki-ingest v1.1 contract alignment 🟡 IN FLIGHT
 The `/wiki-enrich` bridge is built and unit-tested against
 [docs/WIKI-INGEST-V1.1-CONTRACT.md](WIKI-INGEST-V1.1-CONTRACT.md) §1
 (JSON manifest from `ingest --output-format json`).
 
-**Current state (2026-05-27 smoke check)**: installed wiki-ingest reports
-`version: 1.0` and provides only atomic operations (`upsert-page`,
-`register-summary`, `update-index`, `append-log`). The orchestrator
-`ingest` subcommand that emits a manifest is **not yet released**.
+**Tracking task**: Universal-skills TASK 017 —
+`wiki-ingest-v1.1-contract-alignment`
+([`Universal-skills/docs/TASK.md`](../../Universal-skills/docs/TASK.md),
+drafted 2026-05-27, 15 RTM rows, 5 use cases, 9 acceptance criteria).
 
-**Bridge behaviour**: wiki-enrich correctly fails fast with envelope
-`{"error":"WIKI_INGEST_FAILED", "message":"wiki-ingest not found on
-PATH; install wiki-ingest v1.1+"}` (exit 6) — graceful degradation
-already covered by `tests/test_wiki_enrich.py` mocks.
+**Status timeline**:
+- 2026-05-26 — Phase 3a here completed; `/wiki-enrich` bridge ready
+  against mocked wiki-ingest manifest.
+- 2026-05-27 — Smoke check: bridge fails fast against installed v1.0
+  (graceful, expected).
+- 2026-05-27 — Universal-skills agents finished TASK 016 (promote /
+  demote, two-tier vault). Context divergence found: TASK 016 did not
+  cover the v1.1 orchestrator contract.
+- 2026-05-27 — TASK 017 drafted in Universal-skills with explicit pointer
+  back to this contract; archived TASK 016 master.
+- 2026-05-27 — `vault_id` semantics relaxed (see §5 of contract):
+  wiki-ingest emits, consumer enforces. No breaking change for standalone
+  wiki-ingest users.
+- TBD — `/vdd-plan` generates atomic beads.
+- TBD — `/vdd-develop-all` loops through beads + VDD reviews.
+- **TBD — Acceptance #6** (end-to-end smoke from `/wiki-enrich` exits 0
+  with non-empty `index.upserted[]`) → R-0 closes.
 
-**Unblock path**: ship wiki-ingest v1.1 with `ingest` mode + `--version`
-flag + the manifest schema. Until then, operators use the atomic ops
-directly (or wait).
+**Smoke baseline** (regression guard — must keep passing while v1.1
+is in flight):
+```
+$ /Users/sergey/.local/bin/wiki-enrich --vault trade-agents \
+      --vault-root /Users/sergey/dev-projects/trade-agents \
+      --source <real-source.md>
+→ {"error":"WIKI_INGEST_FAILED",
+   "message":"wiki-ingest not found on PATH; install wiki-ingest v1.1+"}
+→ exit 6
+```
+Bridge code is correct; this is the documented degraded state.
+
+**Unblock criteria** (binary; mirror Acceptance Criteria §4 of TASK 017):
+- [ ] `wiki-ingest --version` returns `wiki-ingest 1.1.0` on operator's `PATH`.
+- [ ] `wiki-ingest ingest --output-format json` emits a manifest matching
+  CONTRACT §1 exactly (status, vault_id nullable, vault_root, course,
+  source, written[], log_event, …).
+- [ ] `/wiki-enrich --vault trade-agents --source <real>` returns
+  `{"action":"enriched", "index":{"upserted":[…non-empty…], "log_event_id":N}}`
+  with exit 0.
+- [ ] All `tests/test_wiki_enrich.py` tests still pass here; all TASK 015 /
+  016 tests still pass in Universal-skills (no regression).
+
+When the four boxes are ticked → R-0 moves to "Done since 2026-05-27"
+section + smoke is wired into local development checklist.
 
 ---
 

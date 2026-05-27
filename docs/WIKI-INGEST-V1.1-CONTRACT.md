@@ -205,43 +205,79 @@ Format: same YAML as MVP's CLAUDE.md `wiki:` block (just the relevant subset).
 
 Equivalent to `--dry-run` flag on all mutating commands. Useful for MVP's lint `--fix` mode preview.
 
-### REQUIRED — `vault_id` field MUST exist in root `WIKI_SCHEMA.md` (per ADR-002 §D1.1, fail-fast)
+### REQUIRED — `vault_id` field: wiki-ingest EMITS, consumer ENFORCES
 
-**Decision (2026-05-26)**: `vault_id` — REQUIRED explicit field в `WIKI_SCHEMA.md` frontmatter. **No hash fallback.** Hash-derivation отвергнут — приводит к silent drift при folder rename.
+**Decision (2026-05-26, clarified 2026-05-27)**: `vault_id` — explicit
+field in `WIKI_SCHEMA.md` frontmatter (ADR-002 §D1.1, no hash fallback).
+**wiki-ingest does NOT require it for its own operation** — it reads
+from frontmatter if present, emits in manifest, otherwise emits `null`.
+**Enforcement lives in the consumer** (this repo's `wiki-init
+--register-existing` already fails-fast on missing `vault_id`;
+`/wiki-enrich` validates the manifest).
 
-**Format constraint**: `^[a-z][a-z0-9-]{2,31}$` (kebab-case, letter-start, length 3-32).
+This relaxation keeps standalone wiki-ingest users (one vault, no DB
+indexer) on the v1.0 surface — they see no breaking change. Only callers
+that opt into strict mode get the new exit codes.
+
+**Format constraint** (when present): `^[a-z][a-z0-9-]{1,30}[a-z0-9]$`
+(kebab-case, letter-start, length 3–32, no `--`).
 
 **`init` command behaviour**:
-- При scaffolding нового vault'а → interactive prompt `vault_id` (default suggestion = `kebab(folder_basename)`). Записывает в `WIKI_SCHEMA.md` frontmatter автоматически. `--vault-id <slug>` flag отключает prompt.
-- При detection существующего `WIKI_SCHEMA.md` без `vault_id` field → **fail-fast** `MISSING_VAULT_ID` с `suggested_vault_id: <kebab(folder_basename)>` в error JSON. НЕ автогенерит — operator должен сам добавить (one-line edit).
-- При invalid format → fail-fast `INVALID_VAULT_ID` с указанием pattern.
+- Scaffolding (`init --root --vault-id <slug>`): writes `vault_id: <slug>`
+  to the new root `WIKI_SCHEMA.md`. Without the flag, no `vault_id` is
+  written (operator may add manually later).
+- No interactive prompt for vault_id at init time (keeps the skill
+  non-interactive — operator decides explicitly).
 
-**`--vault-id <slug>` flag (optional validation guard)**:
-- Если задан → must match `WIKI_SCHEMA.md::vault_id` exactly; mismatch → fail-fast `VAULT_ID_FLAG_MISMATCH`. Назначение: CI / multi-invocation pipelines где operator хочет explicit assertion на vault identity.
-- Если НЕ задан → wiki-ingest читает из `WIKI_SCHEMA.md::vault_id` (REQUIRED, fail-fast если отсутствует — см. выше).
+**Manifest emission** (across all subcommands, R6 from TASK 017):
+- Manifest field `vault_id` is `string` if the root schema has the
+  field, otherwise JSON `null`.
+- Consumers that require strict vault_id MUST validate themselves
+  (e.g., `/wiki-enrich._validate_manifest` already checks this).
+
+**`--vault-id <slug>` flag (opt-in strict mode, validator)**:
+- When **passed** to any v1.1 subcommand (`ingest`, `promote`, `demote`,
+  `lint`, `reindex`):
+  - Frontmatter present + matches → proceed normally.
+  - Frontmatter present + mismatch → fail-fast `VAULT_ID_FLAG_MISMATCH`
+    (exit 8).
+  - Frontmatter absent → fail-fast `MISSING_VAULT_ID` (exit 6).
+- When **omitted** → no enforcement; `vault_id` is whatever's in
+  frontmatter (or `null`). Default invocation is non-breaking for
+  v1.0 users.
+- Format violations (e.g., `vault_id: 1bad` in frontmatter) → fail-fast
+  `INVALID_VAULT_ID` (exit 7) **regardless of `--vault-id` flag** — a
+  malformed slug would corrupt downstream consumers.
 
 **Exit codes** (extend §3):
-- `6` — `MISSING_VAULT_ID`
-- `7` — `INVALID_VAULT_ID`
-- `8` — `VAULT_ID_FLAG_MISMATCH`
+- `6` — `MISSING_VAULT_ID` (caller passed `--vault-id` but frontmatter has none)
+- `7` — `INVALID_VAULT_ID` (frontmatter has malformed slug — always fires)
+- `8` — `VAULT_ID_FLAG_MISMATCH` (flag and frontmatter disagree)
 
-**Error JSON template** (MISSING_VAULT_ID):
+**Error JSON template** (MISSING_VAULT_ID, exit 6):
 
 ```json
 {
   "status": "error",
   "code": "MISSING_VAULT_ID",
-  "message": "WIKI_SCHEMA.md must declare 'vault_id' in frontmatter (no hash fallback per ADR-002).",
-  "wiki_schema_path": "/Users/sergey/dev-projects/trade-agents/WIKI_SCHEMA.md",
-  "suggested_vault_id": "trade-agents",
-  "fix": "Add 'vault_id: trade-agents' to the frontmatter block of WIKI_SCHEMA.md (after 'schema_version:'), then re-run."
+  "message": "Strict mode requested via --vault-id but WIKI_SCHEMA.md has no vault_id field.",
+  "wiki_schema_path": "/path/to/vault/WIKI_SCHEMA.md",
+  "suggested_vault_id": "<kebab(basename)>",
+  "fix": "Add 'vault_id: <slug>' to the frontmatter block of WIKI_SCHEMA.md (after 'schema_version:'), then re-run."
 }
 ```
 
-**Migration for existing vaults** (e.g., `trade-agents/` which has `schema_version: 2.0` но без `vault_id`):
-1. Operator manually adds `vault_id: <slug>` в frontmatter — one-line edit.
-2. First post-edit `wiki-ingest ingest` (или explicit `wiki-init --register-existing`) — registers `(vault_id, root_path, schema_version, ingest_count из existing log.md)` в MVP's `vaults` table.
-3. Backfill sweep — все historic `_sources/`/`_concepts/`/`_entities/` indexed с этим `vault_id`.
+**Migration for index-layer integration** (e.g., `trade-agents/` which
+has `schema_version: 2.0` but no `vault_id`):
+1. Operator adds `vault_id: <slug>` to root `WIKI_SCHEMA.md` — one-line
+   edit. **Only required if integrating with the obsidian-llm-wiki
+   index layer.** Standalone wiki-ingest usage continues without it.
+2. `obsidian-llm-wiki/wiki-init --register-existing --vault <path>` —
+   reads the field, registers `(vault_id, root_path, schema_version,
+   …)` in the consumer's `vaults` table. Already implemented; fails
+   fast on missing field.
+3. `obsidian-llm-wiki/wiki-reindex --full --vault <vault_id>` — backfill
+   sweep. Already implemented.
 
 ---
 
@@ -335,16 +371,18 @@ Today wiki-ingest treats all sources uniformly. MVP has distinct adapters (manua
 
 ### Multi-vault (Phase 2.5 — ADR-002)
 
-- [ ] `vault_id` field в JSON manifest всех modes (REQUIRED, §1)
+- [ ] `vault_id` field in JSON manifest of all modes (nullable: string if frontmatter has it, else `null`; §1 + §5)
 - [ ] `course` field в manifest для two-tier promotion-spec vaults (§1)
 - [ ] `written[].scope` field (`"course"` / `"vault"`) для tier discrimination (§1)
 - [ ] `log_event` структурированный объект в manifest (§1) — соответствует `log_events` table schema
-- [ ] `init` requires `vault_id` interactive (или `--vault-id <slug>` flag), записывает в `WIKI_SCHEMA.md` (§5)
-- [ ] Fail-fast `MISSING_VAULT_ID` (exit 6) на existing vault без `vault_id` field (§5)
-- [ ] Fail-fast `INVALID_VAULT_ID` (exit 7) на pattern violation (§5)
-- [ ] `--vault-id <slug>` validation guard (mismatch → exit 8) (§5)
+- [ ] `init --root --vault-id <slug>` writes `vault_id` to scaffold (no interactive prompt; opt-in via flag, §5)
+- [ ] `--vault-id <slug>` flag drives strict mode on `ingest`/`promote`/`demote`/`lint`/`reindex`:
+   - missing frontmatter `vault_id` + flag passed → exit 6 (§5)
+   - frontmatter vs flag mismatch → exit 8 (§5)
+- [ ] Malformed `vault_id` in frontmatter (any caller) → exit 7 (§5)
+- [ ] Standalone caller without `--vault-id` flag: no enforcement; manifest emits `vault_id: null` (§5)
 - [ ] `--known-concepts-stdin` accepts DB-piped JSON (resolves bottleneck B2 из ADR-002, §2/§5)
-- [ ] e2e migration test: existing `trade-agents/` vault без `vault_id` → fail-fast → operator-edit → re-run → register в MVP `vaults` table → backfill indexed
+- [ ] e2e migration test for index-layer integration: existing `trade-agents/` vault without `vault_id` → operator-edit adds field → `wiki-init --register-existing` registers in `vaults` table → `wiki-reindex --full` backfills. (wiki-ingest itself doesn't fail-fast here; the consumer does.)
 - [ ] Two-tier promotion-spec support (`promote`/`demote` commands) — отдельный roadmap, отслеживается в `trade-agents/docs/wiki-ingest-promotion-spec.md`
 
 When ALL items (Core + Multi-vault) green, MVP может начать Phase 3 (TASK.md coordinated rework + vendoring).
