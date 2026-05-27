@@ -34,10 +34,15 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
 - **DAL** (`scripts/wiki_index/`) — `IndexRepository` ABC + `SQLiteRepository`
   with multi-vault partitioning, FTS5, WAL, atomic upserts (M-4 contract),
   bi-directional `log.md ↔ log_events` sync, drift detection.
-- **CLIs** (`scripts/wiki_skills/`) — eight thin entry points wrapping the
+- **CLIs** (`scripts/wiki_skills/`) — nine thin entry points wrapping the
   DAL: `wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`,
-  `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`, plus
-  `wiki-enrich` (bridge to `wiki-ingest`, see [External dependency](#external-dependency-wiki-ingest)).
+  `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
+  `wiki-enrich` (bridge to `wiki-ingest`, see [External dependency](#external-dependency-wiki-ingest)),
+  and `wiki-extract-concepts` (Epic 7 entry-point — LLM-driven concept
+  extraction from an already-indexed source page; emits a wiki-ingest v1.1
+  manifest, optionally dispatches in-process to the indexer via `--ingest`).
+  Plus a neutral sub-layer module `_manifest_consumer.py` shared by
+  `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
 - **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —
   canonical definitions, symlinked into `.claude/` and `.agent/` for
   vendor compatibility.
@@ -115,6 +120,11 @@ Refresh the vendored snapshot via
 
 Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, etc.) are
 self-contained and do not need `wiki-ingest` (vendored or otherwise).
+`/wiki-extract-concepts` calls the Anthropic API directly (not via
+`wiki-ingest`); set `ANTHROPIC_API_KEY` in your environment before
+invoking. Its `--ingest` auto-dispatch path uses the neutral
+`_manifest_consumer` module in-process — also no PATH dependency on
+`wiki-ingest`.
 
 ---
 

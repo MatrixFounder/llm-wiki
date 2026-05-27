@@ -127,3 +127,30 @@ All flagged as SEV-1 by `critic-performance` but defer-justified: pass at N=100 
 - **Root cause**: Outputs were considered operator-trusted; not gated by `validate_inside_vault`.
 - **Affected components**: `scripts/wiki_skills/wiki_lint.py`, `scripts/wiki_skills/wiki_index_render.py`.
 - **Fix plan**: Decide policy — either gate via `validate_inside_vault(arg, vault.root_path)` for R-26 compliance, or document explicit operator-trust scope in CLI `--help` text. Deferred pending Phase 3b threat-model review.
+
+---
+
+## VDD-multi iteration 2 (2026-05-28, TASK 003 v2) — deferred LOW findings
+
+After the `/vdd-multi` adversarial sweep on TASK 003 v2 (`wiki-extract-concepts`), 6 must-fix items (1 CRITICAL + 3 HIGH + 2 MEDIUM) were patched inline and verified by `critic-logic` iteration-2 clean-pass. The 3 LOW findings below were explicitly deferred — recorded here so a future polish bead can sweep them.
+
+## [2026-05-28] L-V3.1 datetime import inside update_idempotency_state [STATUS: fixed 2026-05-28]
+
+- **Symptom**: `scripts/wiki_skills/wiki_extract_concepts.py::update_idempotency_state` did `from datetime import datetime as _dt, timezone as _tz` inside the function body instead of at module top.
+- **Root cause**: Style inconsistency carried over from an earlier draft; worked correctly because Python caches modules in `sys.modules`.
+- **Affected components**: `scripts/wiki_skills/wiki_extract_concepts.py`.
+- **Resolution**: Hoisted to module top with the other stdlib imports. `update_idempotency_state` now uses `datetime.now(timezone.utc).isoformat()` directly. No behavior change. No new test (cosmetic).
+
+## [2026-05-28] L-V3.2 check_idempotency missing defensive NULL check [STATUS: fixed 2026-05-28]
+
+- **Symptom**: `check_idempotency` compared `row["value"] == current_hash`. If a corrupt row existed with `value=NULL`, comparison was `False` (the right behavior) but no documentation surfaced the implicit reliance on the DB CHECK constraint.
+- **Root cause**: `source_state.value` is `TEXT NOT NULL` per schema, so this case shouldn't arise. Implicit reliance on DB constraint.
+- **Affected components**: `scripts/wiki_skills/wiki_extract_concepts.py::check_idempotency`.
+- **Resolution**: Added explicit `if row is None or row["value"] is None: return False` with docstring referencing L-V3.2. Regression test `test_check_idempotency_handles_null_row_value` mocks the cursor to simulate a NULL row and asserts the False return.
+
+## [2026-05-28] L-V3.3 Anthropic SDK exception-chain may leak metadata [STATUS: fixed 2026-05-28]
+
+- **Symptom**: `LLMUnavailableError(...) from e` preserved the SDK exception in `__cause__`. The operator-visible JSON envelope only emits `str(e)` of the wrapper (no leak today), but a future caller reaching for `__cause__.args` could surface `request_id` or partial headers from the SDK exception.
+- **Root cause**: Python's default exception-chaining behavior; not specific to this code.
+- **Affected components**: `scripts/wiki_skills/wiki_extract_concepts.py::extract_concepts_llm`.
+- **Resolution**: Changed `from e` → `from None` to suppress the chain. The wrapper exception now has `__cause__ is None`; any future consumer attempting to walk `__cause__.args` finds nothing to leak. Regression test `test_extract_concepts_llm_suppresses_sdk_exception_chain` pins the behavior. CWE-209 closed.

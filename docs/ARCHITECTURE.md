@@ -1,8 +1,8 @@
 # ARCHITECTURE: LLM Wiki MVP
 
-> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B IN FLIGHT (2026-05-27) — Phase 3a: all 34 atomic tasks implemented; 295 tests pass; mypy --strict clean; rebuildability E2E gate green. ADRs 001, 002 in effect. Phase 3b sequence: TASK 004 (wiki-ingest-vendoring) is current; TASK 003 (wiki-extract-concepts) resumes after TASK 004 ships.
-> **TASK**: [docs/TASK.md](./TASK.md) (Task 004 wiki-ingest-vendoring — current)
-> **Paused TASK**: [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (resumes after TASK 004 ship)
+> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B SHIPPING (2026-05-28) — Phase 3a: all 34 atomic tasks implemented; **394 tests pass post-TASK-003-v2** (+66 net new since baseline); mypy --strict clean on 55 files; rebuildability E2E gate green. ADRs 001, 002 in effect. Phase 3b sequence: TASK 004 (wiki-ingest-vendoring) **COMPLETE** (commit `c409fd8`, 2026-05-27); TASK 003 v2 (wiki-extract-concepts) **COMPLETE** (2026-05-28, awaiting operator commit) — Decisions 15 (in-process indexer dispatch supersedes v1 Decision-9 subprocess+CLI-flag approach) + 16 (neutral `_manifest_consumer` module — no skill depends on another skill) shipped; `/vdd-multi` adversarial sweep applied 6 hardenings inline (C-1 idempotency ordering, H-1 absolute path rejection, H-2 TOCTOU tuple-return, H-3 source_slug validation, M-1 LLM input-size + BadRequestError catch, M-2 schema slug regex).
+> **TASK**: [docs/TASK.md](./TASK.md) (TASK 003 v2 wiki-extract-concepts — COMPLETE, awaiting commit)
+> **Archived TASKs**: [docs/tasks/task-004-wiki-ingest-vendoring.md](./tasks/task-004-wiki-ingest-vendoring.md) (complete 2026-05-27) · [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (v1 paused snapshot — superseded by current TASK.md v2)
 > **Previous TASK**: [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) (archived 2026-05-27)
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (full v2 specification, 1745 lines)
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
@@ -176,7 +176,7 @@ stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...
 
 **Fallback path summary**: requires `wiki-ingest` on PATH; `check_wiki_ingest_version()` active; JSON round-trip via subprocess stdout. Silent activation (no user-visible warning unless `--verbose` or DEBUG log). Steps 3-5 are identical between both paths.
 
-**Phase 3b extension (R-44, I-7.15 — TASK 003 PAUSED):** when `--manifest-file PATH` / `--manifest-stdin` is passed, both steps 1+2 are skipped in either path — `wiki-enrich` jumps straight to step 3 with the operator-supplied manifest. This flag is TASK 003's responsibility; NOT touched by TASK 004 (R-56).
+**Phase 3b note (TASK 003 v2 / Decisions 15+16):** `wiki-enrich`'s `--source` flag remains the sole entry point. Manifest dispatch for downstream skills (`wiki_extract_concepts`) happens **in-process** via direct import of `validate_manifest` + `index_from_manifest` from the neutral module `scripts.wiki_skills._manifest_consumer` (created by TASK 003 v2 I-7.0). No `--manifest-file` / `--manifest-stdin` CLI flags are added (v1 R-44 / I-7.15 dropped — see TASK 003 v2 §0.1).
 
 ### 1.5.3. External dependency: `wiki-ingest` anatomy (different pattern)
 
@@ -426,7 +426,7 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 **MVP skills (Phase 3a):**
 - `wiki-init` (UC-01) — bootstrap.
 - `wiki-append-log` (UC-02 step 11) — chronological log + monthly rotation.
-- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls `wiki-ingest` for file synthesis, then indexes manifest into SQLite. As of TASK 003 (R-44), accepts `--manifest-file PATH` or `--manifest-stdin` as mutually exclusive alternatives to `--source`; when manifest input is used, the `wiki-ingest` subprocess and version check are bypassed entirely (Decision-9).
+- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls vendored `ingest()` in-process for file synthesis (TASK 004 / Decision-14; subprocess fallback retained), then indexes manifest into SQLite. `--source` remains the sole input flag. Manifest-consumer functions (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral module `scripts.wiki_skills._manifest_consumer` (TASK 003 v2 / Decision-16); `wiki_enrich.py` re-exports them for backward compat.
 - `wiki-extract-concepts` (UC-08, UC-09) — **Phase 3b (TASK 003)**. See dedicated Component section below.
 - `wiki-index-render` (UC-05 step 7) — projection из SQLite в `index.md`.
 - `wiki-index-upsert` (UC-02 step 7) — упрощённый wrapper над `Index Layer.upsert_page`.
@@ -455,7 +455,7 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 - `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates)` — collects `(entity_slug, ref_type='mentioned', source_quote, source_span, trust_level='medium')` for all candidates (create + mention); calls `repo.replace_refs(...)` atomically. (I-7.8, R-38)
 - `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — queries `source_state` with `source_kind='extract-concepts'`; returns `True` (unchanged) if hash matches; updates `source_state` after successful extraction. (I-7.9, R-39)
 - `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event) → dict` — produces wiki-ingest v1.1-compatible JSON manifest; emits to stdout. (I-7.10, R-35)
-- `dispatch_to_wiki_enrich(manifest_dict, vault_id, vault_root, wiki_enrich_bin) → dict` — when `--ingest` flag passed, writes manifest to tempfile and calls `wiki-enrich --manifest-file <path>` as subprocess; parses result. **Planner deferral candidate (YAGNI)**: this convenience flag duplicates operator-side glue (`wiki-extract-concepts ... | wiki-enrich --manifest-stdin`); if I-7.11 falls behind schedule, it may be cut from initial delivery without affecting R-41 acceptance (R-41 only requires the manifest be consumable, not auto-dispatched). (I-7.11, R-41)
+- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — when `--ingest` flag passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from the **neutral module** `scripts.wiki_skills._manifest_consumer` **in-process** (TASK 003 v2 / Decisions 15+16). No subprocess, no tempfile. Failure inside `validate_manifest` → exit 6 (`MANIFEST_INVALID`); failure inside `index_from_manifest` returns a `PARTIAL_INDEX_FAILURE` envelope mirroring `wiki-enrich`'s shape. The three imported symbols (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral consumer module — created by I-7.0 (the first bead of this task) — so no skill depends on another skill. `wiki_enrich.py` re-exports the same symbols for backward compat (one release cycle). (I-7.0, I-7.11, R-41)
 
 **Inputs:**
 - `--vault <vault_id>` (required, ADR-002 §D1.1 invariant — no hash fallback)
@@ -483,7 +483,27 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 
 **Related Use Cases:** UC-08 (primary extraction flow), UC-09 (idempotency re-extraction).
 
-**Dependencies:** Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, `repo.check_idempotency`-equivalent via `source_state`), Configuration Resolver, Anthropic API (Claude Sonnet 4.6 via `anthropic` SDK). Optionally calls `wiki-enrich` as subprocess when `--ingest` is passed.
+**Dependencies:** Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, `repo.check_idempotency`-equivalent via `source_state`), Configuration Resolver, Anthropic API (Claude Sonnet 4.6 via `anthropic` SDK). Optionally imports `validate_manifest` + `index_from_manifest` + `WikiIngestError` from the neutral module `scripts.wiki_skills._manifest_consumer` for in-process dispatch when `--ingest` is passed (TASK 003 v2 / Decisions 15+16 — no subprocess, no cross-skill coupling).
+
+**Exit-code envelope contract (R-42, post-vdd-multi 2026-05-28 hardening):**
+
+| Code | `error` field | Cause |
+|---|---|---|
+| 0 | — (manifest emitted) | Success; or idempotency short-circuit (`action="unchanged"`, `manifest=null`) |
+| 1 | — (argparse stderr) | Missing required flag |
+| 2 | `SOURCE_NOT_FOUND` | Page slug does not resolve inside vault |
+| 2 | `INVALID_SOURCE_PATH` | `--source-page` is an absolute path (H-1 fix — was conflated as SOURCE_NOT_FOUND in v2 first cut) |
+| 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug (H-3 fix — `Foo.Bar.md` rejected before any writes) |
+| 3 | `LLM_API_UNAVAILABLE` | Anthropic SDK connection/auth/rate-limit/bad-request/5xx failure (M-1 fix widened the catch; wrap uses `type(e).__name__` only — CWE-209 mitigation) |
+| 4 | `EXTRACTION_PARSE_ERROR` | LLM returned malformed JSON, schema-violating output, oversized source body (M-1 cap `_MAX_SOURCE_BODY_CHARS=100_000`), or slug failing `_SLUG_RE` (M-2 fix) |
+| 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; **source_state is NOT updated** so next run retries (C-1 fix) |
+| 6 | `MANIFEST_INVALID` | `validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
+
+**vdd-multi 2026-05-28 invariants** (codified in regression tests):
+
+- C-1: `update_idempotency_state` is called **only after** dispatch succeeds (or extraction succeeds in no-`--ingest` mode) — partial failures leave `source_state` row absent so operators can retry.
+- H-2: `write_concept_page` returns `tuple[Path, "created" | "unchanged"]` — TOCTOU race between caller's pre-check and function's internal check eliminated.
+- M-1: Input-size guard `len(source_body) > 100_000 chars` raises `ExtractionParseError` **before** instantiating the Anthropic SDK client.
 
 **RTM coverage:** R-30, R-31, R-32, R-33, R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42, R-43 (all primary TASK 003 requirements).
 
@@ -901,7 +921,7 @@ graph LR
 
 ### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b)
 
-> **NOTE (2026-05-27 — TASK 003 PAUSED):** This diagram reflects the TASK 003 design which is currently paused pending TASK 004 (wiki-ingest-vendoring) ship. The `--manifest-stdin` mechanism shown in step [9] (the `wiki-enrich --manifest-file <tempfile>` call) will be revised when TASK 003 resumes: in-process callers like `wiki-extract-concepts` will call the vendored `ingest()` function directly via Python import rather than piping a manifest through the CLI. Specifically, step [9] `dispatch_to_wiki_enrich` will be refactored to call `from scripts.wiki_ingest.commands.ingest import ingest as _vendored_ingest` directly for the file-synthesis step, then call `index_from_manifest()` in-process — eliminating the `wiki-enrich --manifest-file` subprocess hop. The RTM rows R-30..R-44 and Use Cases UC-08, UC-09 remain valid. Update this section when TASK 003 resumes.
+> **NOTE (2026-05-27 — TASK 003 v2 RESUMED):** This diagram reflects TASK 003 v2, the post-TASK-004 revision. Step [9] is an **in-process function call** into the neutral module `scripts.wiki_skills._manifest_consumer` (Decisions 15+16 supersede v1 Decision-9). The subprocess hop to `wiki-enrich --manifest-file` and the corresponding `--manifest-{file,stdin}` flag work (former v1 R-44 / I-7.15) have been **dropped** from this task. The cross-skill coupling Decision-15 alone would have created (`wiki_extract_concepts` importing private-prefix `_validate_manifest` from sibling `wiki_enrich`) is resolved by Decision-16 / I-7.0: both functions are extracted to `_manifest_consumer.py` as the FIRST bead of this task, so no skill depends on another skill. `wiki-extract-concepts` does NOT call the vendored `ingest()` function — `ingest()` is for raw-source synthesis (TASK 004 / wiki-enrich's primary path); concept-page derivation is this skill's responsibility (Decision-8). Active RTM = R-30..R-43; R-44 retired.
 
 ```
 Operator
@@ -932,20 +952,25 @@ wiki-extract-concepts (scripts/wiki_skills/wiki_extract_concepts.py)
   │             → repo.upsert_entity(is_candidate=1)             [Class B]
   │
   ├─ [6] upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates)
-  │      → repo.replace_refs(...)  [atomic delete+insert, trust_level='medium']
+  │      → repo.replace_refs(...)  [atomic delete+insert, trust_level='medium',
+  │                                  line_start/line_end parsed from "Lstart-Lend"]
   │
   ├─ [7] update source_state (source_kind='extract-concepts', hash=current_hash)
   │
   ├─ [8] build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event)
-  │      → manifest JSON to stdout
+  │      → manifest dict (held in memory; emitted to stdout if --ingest is NOT set)
   │
-  └─ [9] (if --ingest flag)
-         dispatch_to_wiki_enrich(manifest_dict, vault_id, vault_root, wiki_enrich_bin)
-           → wiki-enrich --manifest-file <tempfile>
-                 │
-                 ├─ _validate_manifest (path traversal, vault_id match, status="ok")
-                 ├─ index_from_manifest (page upsert for each written[] entry)
-                 └─ append_log_event → log_events table + log.md
+  └─ [9] (if --ingest flag — Decisions 15+16: IN-PROCESS, no subprocess, NEUTRAL module)
+         dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path)
+           │  (uses: from scripts.wiki_skills._manifest_consumer import
+           │         validate_manifest, index_from_manifest, WikiIngestError)
+           ├─ validate_manifest(manifest, vault_id, vault_root)
+           │       → on WikiIngestError → exit 6, MANIFEST_INVALID envelope
+           ├─ index_from_manifest(manifest, vault_id, vault_root, db_path=...)
+           │       → page upsert for each kind=concept written[] entry
+           │       → log_event mirrored to log_events table (Class C)
+           └─ emit {"extraction": <manifest>, "index": <summary>} to stdout
+                  → exit 0 on success, exit 5 on partial-index failure
 ```
 
 ---
@@ -1487,10 +1512,10 @@ claude
 | R-38 (`page_entity_refs`, `trust_level='medium'`, provenance) | §2.1 `upsert_entity_refs`; §4.1 PageEntityRef; §3.4 Sequence step [6] | I-7.8 — replace_refs atomic delete+insert |
 | R-39 (idempotency: same file_hash → `status=unchanged`) | §2.1 `check_idempotency`; §3.4 Sequence step [1]; UC-09 prose in §4.1 | I-7.9 — source_state query; fast exit < 50ms |
 | R-40 (multi-vault `vault_id` enforced throughout) | §2.1 Concept Extractor "Multi-vault invariant"; §2.1 Index Layer multi-vault ADR-002 | All DB calls include vault_id=? predicate; validate_inside_vault on every write |
-| R-41 (integration with `/wiki-enrich`, manifest consumed without code changes) | §2.1 `dispatch_to_wiki_enrich`; §2.1 Skill Layer wiki-enrich note (manifest-input mode); §3.4 Sequence step [9] | I-7.11, I-7.14 — existing wiki-enrich handles kind="concept" pages |
-| R-42 (error handling, exit codes 0-5) | §2.1 Concept Extractor purpose (fail-fast); §9.1 Error Handling; §5.2 error envelope | I-7.1 — argparse errors (exit 1); EXTRACTION_PARSE_ERROR (exit 4); partial-write envelope with written_so_far + index_failed |
-| R-43 (tests: unit + integration, mypy --strict) | §10.2 CI/test gate (295+ tests baseline); §2.1 Stub-First status | I-7.12 unit tests, I-7.13 integration tests, I-7.14 mypy --strict |
-| R-44 (`wiki-enrich --manifest-file` / `--manifest-stdin`, Decision-9) | §2.1 Skill Layer wiki-enrich note (R-44 reference); §2.1 `dispatch_to_wiki_enrich` | I-7.15 — mutually exclusive with --source; skips wiki-ingest subprocess; 3 new unit tests |
+| R-41 (in-process dispatch via neutral `_manifest_consumer` module — Decisions 15+16) | §2.1 `dispatch_to_indexer`; §3.4 Sequence step [9]; §6 Cross-module import note in TASK | **I-7.0 (refactor first)**, I-7.11 (dispatch), I-7.14 (regression) — neutral module created before any extract-concepts code; wiki_enrich re-exports for back-compat |
+| R-42 (error handling, exit codes 0-6) | §2.1 Concept Extractor purpose (fail-fast); §9.1 Error Handling; §5.2 error envelope | I-7.1 — argparse errors (exit 1); EXTRACTION_PARSE_ERROR (exit 4); partial-write envelope with written_so_far + index_failed; MANIFEST_INVALID (exit 6) |
+| R-43 (tests: unit + integration, mypy --strict) | §10.2 CI/test gate (332+ tests target post-I-7.0); §2.1 Stub-First status | I-7.0 (4 new test_manifest_consumer cases), I-7.12 unit tests, I-7.13 integration tests, I-7.14 mypy --strict |
+| ~~R-44~~ (`wiki-enrich --manifest-file` / `--manifest-stdin`) | **DROPPED** — Decision-15 supersedes v1 Decision-9; in-process dispatch obviates manifest-input CLI flags | ~~I-7.15~~ dropped |
 
 ### Phase 3b Requirements (TASK 004 — R-45..R-57, wiki-ingest-vendoring)
 

@@ -14,7 +14,7 @@ Status legend:
 
 ## P0 — Active blockers
 
-_(none — R-V1 closed 2026-05-27; see "Done since 2026-05-27".)_
+_(none — R-V1 closed 2026-05-27, R-3 closed 2026-05-28; see Done entries below.)_
 
 ### R-V1. wiki-ingest vendoring (Option 5 — Python-import vendor) ✅ DONE 2026-05-27
 Promoted from P3 → P0 on 2026-05-27 after operator-confirmed target
@@ -46,10 +46,12 @@ absolute-path rejection, hex-case-insensitive regex). 328 pytest /
 mypy strict clean. Self-contained product publication path unblocked.
 
 **Why this is P0 now**: self-contained publication path cannot ship
-with subprocess + PATH dependency on a separate repo. Decision-9 from
-TASK 003 (`--manifest-stdin` flag on `wiki-enrich`) also becomes
-simpler when implemented on a vendored foundation (in-process function
-call, no JSON round-trip in the primary path).
+with subprocess + PATH dependency on a separate repo. Downstream
+benefit: TASK 003's manifest-dispatch problem (originally Decision-9
+`--manifest-stdin` flag on `wiki-enrich`) is now solved by direct
+in-process Python function calls — see TASK 003 v2 / Decision-15
+(retracts Decision-9) and Decision-16 (neutral `_manifest_consumer`
+module).
 
 **Why not just keep external dep**: operator stated 1-3 month target
 of self-contained product / publication. Two-step install (clone two
@@ -84,15 +86,30 @@ The Karpathy compounding-artifact promise lives here. Currently a single
 ingest touches one source page + index + log (~3 pages); Karpathy says
 10–15. Closing that gap requires the entity layer.
 
-### R-3. `wiki-extract-concepts` skill (R-18, partial) 🟡 PAUSED
-**Status (2026-05-27)**: TASK 003 drafted, reviewed, and committed
-(commit `c7e44f6`), then **paused** pending TASK 004 vendoring ship
-(see R-V1 above). After vendoring, TASK 003 will be resumed with a
-mini-revision: Decision-9 (`--manifest-stdin`) and I-7.11
-(`dispatch_to_wiki_enrich`) restated as in-process function calls
-rather than subprocess hops. RTM rows R-30..R-44 and Use Cases UC-08,
-UC-09 remain valid. Archived at
+### R-3. `wiki-extract-concepts` skill (R-18, partial) ✅ DONE 2026-05-28
+**Status**: TASK 003 v2 **COMPLETE** (awaiting operator commit per
+`/vdd-develop-all` no-auto-commit policy). All 15 beads shipped
+(I-7.0..I-7.14) + `/vdd-multi` adversarial sweep applied 6 inline
+hardenings (C-1 idempotency ordering CRITICAL, H-1 absolute-path
+rejection, H-2 TOCTOU `write_concept_page` tuple-return, H-3 source_slug
+kebab validation, M-1 LLM input-size + `BadRequestError` catch, M-2
+schema slug regex) + 6 regression tests. **Final state**: 394 pytest /
+mypy --strict clean on 55 files. 3 LOW findings deferred (see
+`docs/KNOWN_ISSUES.md`).
+
+Architectural decisions shipped:
+- **Decision-15** retracts v1 Decision-9: `--manifest-stdin` /
+  `--manifest-file` flags on `wiki-enrich` NOT added — in-process Python
+  import replaces subprocess dispatch.
+- **Decision-16** + I-7.0: `validate_manifest` + `index_from_manifest`
+  + `WikiIngestError` extracted from `wiki_enrich.py` into neutral
+  sub-layer module `scripts/wiki_skills/_manifest_consumer.py` so no
+  skill depends on another skill. `wiki_enrich.py` re-exports for
+  back-compat (one release cycle).
+
+Active spec: [docs/TASK.md](TASK.md); v1 PAUSED snapshot archived at
 [docs/tasks/task-003-wiki-extract-concepts.md](tasks/task-003-wiki-extract-concepts.md).
+RTM R-30..R-43 shipped; R-44 retired; I-7.15 dropped.
 
 LLM-driven pass over a summary page → emits candidate concept slugs,
 de-dups against existing `entities` rows, proposes new `_concepts/<slug>.md`

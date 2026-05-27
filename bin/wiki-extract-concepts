@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Thin wrapper: cd into repo, activate venv, exec the CLI.
+# Lets `/wiki-extract-concepts` slash command (and global PATH use) work from any CWD.
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+cd "$REPO"
+# shellcheck disable=SC1091
+source .venv/bin/activate
+exec python -m scripts.wiki_skills.wiki_extract_concepts "$@"

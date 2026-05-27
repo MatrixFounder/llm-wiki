@@ -265,3 +265,35 @@ class IndexRepository(abc.ABC):
         Phase 3a code MUST NOT call this method.
         """
         raise NotImplementedError("entity resolution arrives in Epic 7")
+
+    @abc.abstractmethod
+    def upsert_entity(
+        self,
+        vault_id: str,
+        slug: str,
+        name: str,
+        type: str,
+        is_candidate: int,
+        canonicalized_by: str,
+        first_seen: str,
+        last_updated: str,
+        file_path: str,
+    ) -> None:
+        """Insert or update an entity row.
+
+        TASK 003 v2 / I-7.7a (R-37). Atomic ``INSERT … ON CONFLICT
+        (vault_id, slug) DO UPDATE``. **SQL-level downgrade guard**:
+        ``is_candidate = MIN(excluded.is_candidate, entities.is_candidate)``
+        — once an entity is confirmed (``is_candidate=0``), incoming
+        ``is_candidate=1`` does NOT overwrite. The guard lives at the SQL
+        layer (not just Python) so even a misconfigured caller cannot
+        demote a confirmed entity.
+
+        ``file_path`` is required by the schema's
+        ``UNIQUE(vault_id, file_path)`` constraint; callers pass the
+        relative-to-vault-root path of the concept page they just wrote.
+
+        Phase 3a stub `resolve_entity` is the read counterpart (still
+        ``NotImplementedError`` until R-4 ships).
+        """
+        ...

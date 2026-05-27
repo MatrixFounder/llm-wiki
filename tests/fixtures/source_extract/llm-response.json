@@ -1,0 +1,26 @@
+[
+  {
+    "slug": "hermes-api",
+    "name": "Hermes API",
+    "definition": "A tool for accessing real-time market data.",
+    "source_quote": "the Hermes API (a tool for accessing real-time market data)",
+    "source_span": "L7-L7",
+    "entity_type": "product"
+  },
+  {
+    "slug": "backtesting",
+    "name": "Backtesting",
+    "definition": "A methodology for evaluating trading strategies on historical data.",
+    "source_quote": "backtesting (a methodology for evaluating trading strategies on historical data)",
+    "source_span": "L8-L8",
+    "entity_type": "concept"
+  },
+  {
+    "slug": "reinforcement-learning",
+    "name": "Reinforcement Learning",
+    "definition": "A paradigm where agents learn from reward signals.",
+    "source_quote": "reinforcement learning (a paradigm where agents learn from reward signals)",
+    "source_span": "L9-L10",
+    "entity_type": "concept"
+  }
+]

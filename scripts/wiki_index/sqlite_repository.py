@@ -739,3 +739,46 @@ class SQLiteRepository(IndexRepository):
             status=row["status"],
             notes=row["notes"],
         )
+
+    # =========================================================================
+    # Entity write-path — TASK 003 v2 / I-7.7a (R-37)
+    # =========================================================================
+
+    def upsert_entity(
+        self,
+        vault_id: str,
+        slug: str,
+        name: str,
+        type: str,
+        is_candidate: int,
+        canonicalized_by: str,
+        first_seen: str,
+        last_updated: str,
+        file_path: str,
+    ) -> None:
+        """INSERT or UPDATE entity row; SQL-level downgrade guard.
+
+        ``ON CONFLICT(vault_id, slug) DO UPDATE SET is_candidate =
+        MIN(excluded.is_candidate, entities.is_candidate)`` — once an
+        entity is confirmed (``is_candidate=0``), incoming ``=1`` does
+        NOT overwrite. R-37(b) — see ABC docstring for full rationale.
+        """
+        conn = self._connect()
+        with conn:  # autocommit; rollback on exception
+            conn.execute(
+                """
+                INSERT INTO entities
+                    (vault_id, slug, name, type, is_candidate,
+                     canonicalized_by, first_seen, last_updated, file_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(vault_id, slug) DO UPDATE SET
+                    name = excluded.name,
+                    type = excluded.type,
+                    is_candidate = MIN(excluded.is_candidate, entities.is_candidate),
+                    canonicalized_by = excluded.canonicalized_by,
+                    last_updated = excluded.last_updated,
+                    file_path = excluded.file_path
+                """,
+                (vault_id, slug, name, type, is_candidate,
+                 canonicalized_by, first_seen, last_updated, file_path),
+            )
