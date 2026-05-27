@@ -12,28 +12,53 @@ Status legend:
 
 ---
 
-## P0 — Cleanup & policy decisions (small, do when convenient)
+## P0 — Active blockers
 
-### R-1. Decide fate of UC-06 / UC-07 vs `/wiki-enrich`
+### R-0. wiki-ingest v1.1 release ⏳ EXTERNAL DEPENDENCY
+The `/wiki-enrich` bridge is built and unit-tested against
+[docs/WIKI-INGEST-V1.1-CONTRACT.md](WIKI-INGEST-V1.1-CONTRACT.md) §1
+(JSON manifest from `ingest --output-format json`).
+
+**Current state (2026-05-27 smoke check)**: installed wiki-ingest reports
+`version: 1.0` and provides only atomic operations (`upsert-page`,
+`register-summary`, `update-index`, `append-log`). The orchestrator
+`ingest` subcommand that emits a manifest is **not yet released**.
+
+**Bridge behaviour**: wiki-enrich correctly fails fast with envelope
+`{"error":"WIKI_INGEST_FAILED", "message":"wiki-ingest not found on
+PATH; install wiki-ingest v1.1+"}` (exit 6) — graceful degradation
+already covered by `tests/test_wiki_enrich.py` mocks.
+
+**Unblock path**: ship wiki-ingest v1.1 with `ingest` mode + `--version`
+flag + the manifest schema. Until then, operators use the atomic ops
+directly (or wait).
+
+---
+
+## P0 — Cleanup (small, do when convenient)
+
+### R-1. Mark UC-06 / UC-07 as superseded by `/wiki-enrich` ✅ DECIDED 2026-05-27
 The original Phase 3b plan had `wiki-light-summary` (UC-06, R-24) and
 `wiki-source-transcript` (UC-07, R-06.3) as separate code paths.
-`/wiki-enrich` now covers the same surface via the wiki-ingest bridge.
+`/wiki-enrich` (Bridge skill, built 2026-05-25) covers the same surface
+via the wiki-ingest manifest pipeline — end-to-end ingestion for
+transcripts AND any markdown source.
 
-**Choice**:
-- Mark UC-06/UC-07 as **superseded** in [TASK.md](TASK.md) and trim
-  matching Acceptance Criteria, OR
-- Keep UC-06 as a no-LLM lightweight path (markdown-only, no
-  wiki-ingest dependency) for offline / no-API scenarios.
+**Action**: Update [TASK.md](TASK.md) RTM rows R-06.3 and R-24 to status
+`SUPERSEDED → wiki-enrich` and trim Use Cases 06 / 07 to a one-line
+pointer at the new skill.
 
-Effort: ~30 min documentation update either way.
+Effort: ~30 min documentation update.
 
-### R-2. Subagent prompt hook (memory 4b leftover)
+### R-2. Subagent prompt hook (memory 4b leftover) — DEFERRED
 Inject "before editing concepts or introducing new names, call
 `/wiki-search`" into `developer`, `architect`, `critic-*` agent prompts.
 The parent CLAUDE.md already carries the rule; this is a proactive cue
 for narrow-context subagents.
 
-Effort: ~15 min × 5 agent files.
+**Status**: Blocked — agent prompts live in the agentic-development
+framework which is being evolved in a separate project. Memory-strategy
+decision is pending there. Revisit once that work lands.
 
 ---
 

@@ -11,22 +11,18 @@
   - [docs/MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md) — план миграции (готов)
   - [docs/KNOWN_ISSUES.md](./KNOWN_ISSUES.md) — stub-файл создан (no known issues at start of project; entry format задан внутри).
 - **Mode:** Standard
-- **Status:** `PHASE-3A-COMPLETE` (2026-05-26) — all 34 atomic tasks landed; 274 tests pass; mypy --strict clean on 29 source files; rebuildability E2E gate green; VDD multi-adversarial review iteration 1 passed (no Critical/High open). Phase 3b still blocks on `wiki-ingest` v1.1 release (see [docs/PLAN.md](./PLAN.md)).
+- **Status:** `PHASE-3A-COMPLETE` (2026-05-26) — all 34 atomic tasks landed; 293 tests pass; mypy --strict clean; rebuildability E2E gate green; VDD multi-adversarial + adversarial reviews passed (no Critical/High open); dogfooded on trade-agents (5 production bugs caught + fixed).
   - **Decision-1 (2026-05-25)**: pivot к **Option I (Wrap + Index)** — `wiki-ingest` v1.1+ becomes canonical file-layer; MVP wraps + indexes. См. [ADR-001](./adr/ADR-001-wiki-ingest-integration.md).
   - **Decision-2 (2026-05-26)**: **Single global DB + `vault_id` partitioning** — один SQLite-файл серверит multiple Obsidian vaults; schema partition by `vault_id`. Resolves empirical bottlenecks B1-B6 measured on `trade-agents/`. См. [ADR-002](./adr/ADR-002-multi-vault-bottleneck-corrections.md).
   - **Decision-3 (2026-05-26)**: **`vault_id` REQUIRED explicit** в `WIKI_SCHEMA.md` — no hash fallback. См. ADR-002 §D1.1.
   - **Decision-4 (2026-05-26)**: **Data Layering Contract** — Class A (vault canonical) / B (cache, rebuildable) / C (DB-only operational, only `vaults.registered_at`). См. ADR-002 §D8.
+  - **Decision-5 (2026-05-27)**: **UC-06 / UC-07 superseded by `/wiki-enrich`** — the bridge skill (built 2026-05-25) covers transcript ingest AND arbitrary-markdown ingest through the wiki-ingest v1.1 manifest pipeline. R-06.3 and R-24 marked SUPERSEDED in the RTM below; original Use Case bodies retained for historical rationale but each carries a SUPERSEDED banner. Reasoning + onward plan: [docs/ROADMAP.md](./ROADMAP.md) §R-1.
   - **Current schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
-  - **Three new requirements staged** (для Phase 3 rework, не интегрированы в RTM ниже):
-    - **R-27**: Multi-vault partitioning (vaults registry, vault_id discriminator, composite PKs, FTS5 vault_id column, vault_id format CHECK)
-    - **R-28**: Structured log_events table (bi-directional sync log.md ↔ log_events row, event_type CHECK enum, log_md_byte_offset round-trip)
-    - **R-29**: Cross-vault search + overlap detection (--vaults flag, cross-vault duplicates lint)
-  - **Current state**: R-06.3, R-07.4, R-08, R-10, R-11, UC-07, §6.1 — `[PENDING-V1.1-REWORK]`. Содержимое валидно как direct-workflow integration, реорганизуется после `wiki-ingest` v1.1 release per [docs/WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md).
-  - **§6.1 "Karpathy-deviation (MVP intentional gap)"** становится obsolete после Phase 3 рефакторинга (Option I closes that gap).
-  - **Не приступать к Architecture phase / Plan phase**, пока:
-    1. `wiki-ingest` v1.1 release не пройдёт acceptance-checklist из CONTRACT §10
-    2. Phase 3 coordinated rework не будет выполнен
-    3. /vdd-adversarial pass не подтвердит Zero-Slop на reworked spec
+  - **Three new requirements staged in Phase 3a**:
+    - **R-27**: Multi-vault partitioning (vaults registry, vault_id discriminator, composite PKs, FTS5 vault_id column, vault_id format CHECK) ✅ DONE
+    - **R-28**: Structured log_events table (bi-directional sync log.md ↔ log_events row, event_type CHECK enum, log_md_byte_offset round-trip) ✅ DONE
+    - **R-29**: Cross-vault search + overlap detection (--vaults flag, cross-vault duplicates lint) ✅ DONE
+  - **Phase 3a delivered**: foundation, DAL, core ingest, search/lint, reindex, benchmark — all green; `/wiki-enrich` bridge integrating with wiki-ingest v1.1 manifests is the end-to-end ingestion path. Roadmap for Phase 3b+ in [docs/ROADMAP.md](./ROADMAP.md).
 
 ---
 
@@ -54,7 +50,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 1. Запустить `/wiki-init` в Obsidian-vault'е → получить рабочую структуру + SQLite-индекс (вне iCloud).
 2. Через `/ingest-source --kind manual --source <md-file>` индексировать существующий markdown в SQLite + log.
 3. Через `/ingest-source --kind transcript --source <transcript-path>` запустить **`/generate-detailed-meeting-summary` workflow** (который extends базовый `summarizing-meetings` skill educational-overlay'ем: расширенный frontmatter с `content_type/course/module/speaker/concepts/prerequisites`, three-level pyramid, Mermaid-диаграммы, `<!-- SECTION:* -->` anchors, RAG `Chunk Boundaries`) → получить summary в `Summaries/<slug>/body.md` + индексировать.
-4. Через `/wiki-light-summary <md-chunk>` (новый workflow) получить **простой summary** для произвольного куска текста (formatted markdown, ad-hoc заметка) — без полной pyramid-структуры. Output → `Summaries/light/<date>-<slug>.md`.
+4. Через `/wiki-enrich --source <path>` (bridge skill) выполнить end-to-end ingest произвольного markdown-источника — wiki-ingest синтезирует страницы → manifest → индексация в SQLite одним вызовом. Это покрывает и transcript-кейсы, и ad-hoc заметки. _(Прежние варианты UC-06 `wiki-light-summary` / UC-07 `wiki-source-transcript` superseded решением 2026-05-27.)_
 5. Через `/wiki-search "term"` искать по корпусу < 50ms.
 6. Через `/wiki-lint` получать health-report корпуса.
 7. Мигрировать существующие 16 `tmp2/` файлов в новую структуру скриптом.
@@ -70,7 +66,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 | **R-03** | iCloud-aware DB location | ✅ | (R-03.1) detect iCloud-путь vault'а; (R-03.2) force DB вне iCloud; (R-03.3) per-platform default path (macOS/Linux/Windows) |
 | **R-04** | DAL: `IndexRepository` interface + SQLite implementation | ✅ | (R-04.1) abstract base; (R-04.2) SQLiteRepository ~400 строк; (R-04.3) factory + config-driven instantiation |
 | **R-05** | `wiki-init` — bootstrap vault'а | ✅ | (R-05.1) детектит iCloud + interactive prompts; (R-05.2) создаёт SQLite + директории; (R-05.3) пишет initial CLAUDE.md из template |
-| **R-06** | Source Adapter контракт | ✅ | (R-06.1) abstract `SourceAdapter` interface; (R-06.2) `manual` adapter (existing markdown); (R-06.3) `transcript` adapter — wraps **`/generate-detailed-meeting-summary` workflow** (educational overlay поверх `summarizing-meetings` skill: расширенный YAML, Mermaid, SECTION-anchors, Chunk Boundaries) |
+| **R-06** | Source Adapter контракт | ✅ (partial) | (R-06.1) ✅ abstract `SourceAdapter` interface; (R-06.2) ✅ `manual` adapter (existing markdown); (R-06.3) **SUPERSEDED → `/wiki-enrich`** — transcript ingestion goes through the wiki-ingest v1.1 manifest pipeline (file synthesis owned by external skill, indexing owned by us). See [docs/WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md) and [skills/wiki-enrich/SKILL.md](../skills/wiki-enrich/SKILL.md). Original spec body retained in I-3.3 / UC-07 for historical rationale. |
 | **R-07** | `wiki-index-upsert` — DB upsert | ✅ | (R-07.1) parse frontmatter + body; (R-07.2) compute file_hash; (R-07.3) single-tx upsert + page_entity_refs; (R-07.4) **educational frontmatter handling**: `type: lesson-summary` нормализуется к `pages.type='summary'` + tag `lesson-summary` (см. §6.1 type-mapping rule); `concepts[]` копируются (a) в `pages.frontmatter_json.concepts[]` вербатим (preserves originals), (b) `slugify(c)` для каждого concept и merge в `tags` JSON-array через **`python-slugify`** library (`slugify(c, lowercase=True, separator='-', regex_pattern=r'[^a-z0-9\-]')`); duplicates dedup'аются; collision-cases (`"AI"` & `"a.i."` → `"ai"`) логируются как INFO в lint report (не error — Karpathy-vault допускает aliasing); entity-promotion ⇒ Epic 7; `prerequisites: [[wiki-link], ...]` остаются в `frontmatter_json` без промоушна в `page_entity_refs` (`ref_type='prerequisite'` отсутствует в CHECK constraint — расширение ⇒ Epic 7); Obsidian Graph View рендерит их сам из YAML; (R-07.5) **body normalization для FTS5/body_excerpt** — точные regex-патерны (compiled once, applied in order): (a) Mermaid: `re.compile(r"^```mermaid\s*\n.*?^```\s*$", re.DOTALL \| re.MULTILINE)` — strips fenced blocks; **sanity-check**: если файл содержит `^```mermaid` но НЕ matching closing fence — `raise BodyNormalizationError('unclosed mermaid fence')`, fail-fast (не tail-eat); (b) SECTION anchors: `re.compile(r"<!--\s*SECTION:[a-z0-9_-]+\s*-->")` — **whitelist** строго `SECTION:` prefix, generic `<!-- TODO -->` / `<!-- ... -->` НЕ трогаются; (c) оригинальный body на диске не модифицируется — stripping применяется только к in-memory copy для FTS5 + body_excerpt computation |
 | **R-08** | `wiki-index-render` — read-only `index.md` projection | ✅ | (R-08.1) query SQLite group_by category; (R-08.2) atomic markdown write; (R-08.3) auto-shard если pages > 200 |
 | **R-09** | `wiki-append-log` — chronological log с ротацией | ✅ | (R-09.1) monthly rotation `log/{YYYY-MM}.md`; (R-09.2) `log/index.md` router; (R-09.3) atomic append (`O_APPEND` или `flock`) |
@@ -80,7 +76,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 | **R-13** | Bulk-migration `tmp2/` → v2 layout | ✅ | (R-13.1) перенос flat файлов в subfolder pattern + `--dry-run` flag; (R-13.2) batch index-upsert (sequential, single-writer); (R-13.3) e2e check на 16 файлах |
 | **R-14** | Benchmark suite + SLO checker | ✅ | (R-14.1) synthetic vault generator (100/1000/10000 docs); (R-14.2) latency measurement per operation; (R-14.3) сравнение с §28 v2 SLOs |
 | **R-15** | Provenance model v1.1 | ✅ | (R-15.1) `source_quote / source_span / trust_level` поля в DDL; (R-15.2) обязательны для extracted_items; (R-15.3) `wiki-source-manual` ставит `trust_level='high'` (user-curated); transcript adapter — `trust_level='medium'` по default; configurable через frontmatter |
-| **R-24** | `wiki-light-summary` workflow для произвольного markdown-куска | ✅ | (R-24.1) принимает arbitrary md-text (без full transcript pyramid); (R-24.2) генерирует простой summary через single LLM-call (Claude Haiku/Sonnet); (R-24.3) output `Summaries/light/<date>-<slug>.md` с минимальным frontmatter (`type: summary-light`, `tldr`, `tags`, `source_excerpt`) + проиндексирован в SQLite |
+| **R-24** | `wiki-light-summary` workflow для произвольного markdown-куска | **SUPERSEDED → `/wiki-enrich`** | The bridge skill ingests any markdown source through the wiki-ingest v1.1 manifest pipeline. No separate "light" path needed — `wiki-ingest` handles arbitrary markdown the same way it handles transcripts. Original spec body retained in I-3.7 / UC-06 for historical rationale. |
 | **R-25** | `vault_metadata` table + vault_hash storage | ✅ | (R-25.1) key-value таблица для vault identity и schema versioning; (R-25.2) seeded `wiki-init` (`vault_hash`, `vault_root_path`, `schema_version`, `created_at`, `language`, `layout`); (R-25.3) используется UC-01 §A2 для re-init detection |
 | **R-26** | Path-traversal защита и schema PK fix | ✅ | (R-26.1) `pages.project NOT NULL DEFAULT '_vault_'` (sentinel вместо NULL для idempotency); (R-26.2) `wiki-source-manual` validates source path внутри vault_root; (R-26.3) AC-test для path-traversal attempt |
 | **R-16** | Multi-source ingestion (email/telegram/web) | ❌ | future Epic 6 — отдельный TASK после MVP |
@@ -119,7 +115,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 
 - **I-3.1** `SourceAdapter` abstract base + dataclasses `SourceItem`, `SourceOutput`. → R-06.1.
 - **I-3.2** `wiki-source-manual` — adapter для уже-существующих markdown файлов. Не модифицирует body, не перемещает файлы. Если требуется reshape (flat → subfolder), используется отдельный скрипт `wiki-migrate-flat-to-folders` (I-5.1) перед ingestion. Validates source path внутри vault_root (path-traversal защита). Sets `trust_level='high'` для refs (user-curated content). → R-06.2 + R-15.3 + R-26.2.
-- **I-3.3** `wiki-source-transcript` — wraps `/generate-detailed-meeting-summary` **workflow** (educational overlay поверх `summarizing-meetings` skill). Subprocess invocation contract (CRITICAL):
+- **I-3.3** `wiki-source-transcript` — **SUPERSEDED → `/wiki-enrich`** (Decision-5, 2026-05-27). The bridge skill `wiki-enrich` (in `skills/wiki-enrich/`) runs `wiki-ingest ingest --output-format json`, validates the v1.1 manifest against R-26 path containment + vault_id check, then upserts every `manifest.written[].path` into the SQLite index and mirrors the `log_event` into `log_events`. No separate subprocess-to-`/generate-detailed-meeting-summary` path — wiki-ingest owns transcript synthesis internally per ADR-001. Spec body below retained as historical rationale.<br><br>_Original spec (historical — subprocess invocation contract before Option I):_
   - **(a) Discovery**: проверяет (i) `~/.claude/skills/summarizing-meetings/SKILL.md` существует, (ii) `~/.claude/commands/generate-detailed-meeting-summary.md` существует, (iii) `shutil.which('claude')` returns non-None ИЛИ env var `WIKI_GENSUMMARY_CMD` задан (escape-hatch для non-Claude-CLI окружений: Cursor, IDE plugins). Если любой fail — `{error: 'WORKFLOW_NOT_FOUND', missing: [...], expected_paths: [...]}`, exit ≠ 0.
   - **(b) Idempotency-check (A4 short-circuit)**: применяет UC-07 A4 logic — `source_state` query на `source_hash`. Если hit — skip к (e), no subprocess spawn.
   - **(c) Spawn**: `subprocess.run([claude_cmd, '-p', f'/generate-detailed-meeting-summary on transcript {abs(source)} output to {abs(output)}/summary.md'], timeout=600, capture_output=True, check=False, env={**os.environ, 'CLAUDE_NONINTERACTIVE': '1'})`. По default 10 min; configurable через `wiki.transcript.timeout_seconds`.
@@ -133,7 +129,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 - **I-3.4** `wiki-index-upsert` — single-tx UPSERT в pages + page_entity_refs. Idempotent на основе `(slug, project)` PK с sentinel `'_vault_'` для NULL-replacement (см. §6.1). **Применяет R-07.4 (educational frontmatter mapping) и R-07.5 (body normalization)**: при `frontmatter.type == 'lesson-summary'` — записывает `pages.type='summary'`, добавляет tag `lesson-summary` в JSON-array tags, копирует `frontmatter.concepts[]` в `pages.frontmatter_json` + merge в tags (slugified) для FTS5; `frontmatter.prerequisites[]` остаются в `frontmatter_json` (не промотируются в `page_entity_refs` в MVP — `ref_type='prerequisite'` отсутствует в CHECK; см. R-07.4). Перед FTS5-индексацией body стрипит ` ```mermaid…``` ` и `<!-- SECTION:* -->` (regex-based; оригинальный body на диске не модифицируется). → R-07 + R-26.1.
 - **I-3.5** `wiki-index-render` — генерирует `index.md` projection из SQLite. Atomic write через tempfile. Auto-shard если > 200 pages. → R-08.
 - **I-3.6** `wiki-append-log` — monthly-rotated log (`log/{YYYY-MM}.md`) + `log/index.md` router. Atomic append. → R-09.
-- **I-3.7** `wiki-light-summary` workflow — отдельный skill+workflow для произвольного markdown-куска. Принимает: (a) `--text "..."` инлайн или (b) `--source <path>` к md-файлу-куску. Генерирует короткий summary через LLM (single-call, Claude Haiku/Sonnet). Output `Summaries/light/<date>-<slug>.md` с упрощённым frontmatter (`type: summary-light`, `tldr`, `tags`, `source_excerpt: <first 200 chars>`). Не делает full pyramid. Затем — стандартный `wiki-index-upsert`. → R-24.
+- **I-3.7** `wiki-light-summary` workflow — **SUPERSEDED → `/wiki-enrich`** (Decision-5, 2026-05-27). The bridge skill ingests any markdown source through the wiki-ingest v1.1 manifest pipeline. No separate "light" path needed — wiki-ingest handles arbitrary markdown the same way it handles transcripts; output frontmatter type is decided per file inside wiki-ingest. Spec body below retained as historical rationale.<br><br>_Original spec (historical):_ Standalone skill+workflow for arbitrary markdown chunks. Accepted `--text "..."` inline or `--source <path>` to a markdown file. Generated a short summary via single LLM call (Claude Haiku/Sonnet) and emitted `Summaries/light/<date>-<slug>.md` with `type: summary-light`. → R-24.
 
 #### Epic E4: Search & Health [MVP]
 > Read-side операции — то, ради чего пользователь работает с wiki.
@@ -435,6 +431,13 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 
 #### 4.6. UC-06: Light summary of arbitrary markdown chunk (NEW)
 
+> **SUPERSEDED → `/wiki-enrich`** (Decision-5, 2026-05-27). The bridge skill
+> ingests any markdown source through the wiki-ingest v1.1 manifest pipeline
+> — no separate "light summary" path is needed. New operators should use
+> `/wiki-enrich --vault <vid> --source <path>` instead.
+> Original Use Case retained below for design rationale (token-budget math,
+> input-size guard, single-LLM-call flow). See [docs/ROADMAP.md](./ROADMAP.md) §R-1.
+
 **Actors:** User, System, `wiki-light-summary` workflow, LLM (Claude Haiku/Sonnet via API).
 
 **Preconditions:**
@@ -498,6 +501,16 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 ---
 
 #### 4.7. UC-07: Ingest transcript via `/generate-detailed-meeting-summary` workflow (NEW)
+
+> **SUPERSEDED → `/wiki-enrich`** (Decision-5, 2026-05-27). Transcript
+> ingestion now flows through the wiki-ingest v1.1 manifest pipeline:
+> `/wiki-enrich` invokes `wiki-ingest ingest --output-format json`, validates
+> the manifest, and indexes every written file into the SQLite DB plus mirrors
+> the `log_event` row. wiki-ingest owns the LLM synthesis (which may itself
+> call `summarizing-meetings` internally — that's wiki-ingest's concern, not
+> ours). See ADR-001 + [skills/wiki-enrich/SKILL.md](../skills/wiki-enrich/SKILL.md).
+> Original Use Case retained below for design rationale (idempotency on
+> `source_hash`, anti-truncation validation, concurrent-ingest flock pattern).
 
 **Actors:**
 - User
@@ -653,8 +666,8 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
   | Frontmatter `type:` | DB `pages.type` | Tag-маркер (JSON-array `tags`) | Producer |
   |---|---|---|---|
   | `summary` | `summary` | — | `wiki-source-manual` (existing summaries) |
-  | `summary-light` | `summary` | `summary-light` | `wiki-light-summary` (R-24) |
-  | `lesson-summary` | `summary` | `lesson-summary` | `wiki-source-transcript` (R-06.3, via `/generate-detailed-meeting-summary` workflow) |
+  | `summary-light` | `summary` | `summary-light` | `/wiki-enrich` (R-24 superseded → wiki-ingest manifest) |
+  | `lesson-summary` | `summary` | `lesson-summary` | `/wiki-enrich` (R-06.3 superseded → wiki-ingest manifest) |
   | `meeting-summary` | `summary` | `meeting-summary` | future `wiki-source-meeting` (out of MVP, future Epic) |
   | `concept` | `concept` | — | future entity-resolver (Epic 7) |
   | `query` | `query` | — | future `/wiki-query` (Epic 7) |
@@ -726,6 +739,6 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 3. `wiki-lint` идентифицирует known orphans (`[[Школа менеджмента Стратоплан]]` и т. п.).
 4. Re-ingest того же файла → no-op (idempotency).
 5. iCloud detection: на `/tmp/fake-icloud/Mobile Documents/iCloud~md~obsidian/test/` → DB пишется в `~/Library/Application Support/wiki-index/` (НЕ внутрь fake-icloud).
-6. **Transcript ingestion (UC-07)**: `/ingest-source --kind transcript` на real lesson-transcript (e.g., `Lessons/ZeroOne Systems/Self-Improving Trading Agent on Hermes/lesson.txt`) → файл `summary.md` сгенерирован workflow, в SQLite появилась row с `type='summary'` + tag `lesson-summary`, Mermaid-блоки НЕ попали в FTS5, `wiki-search "Sharpe score"` находит этот summary.
+6. **Transcript ingestion (via `/wiki-enrich`)** (replaces former UC-07 verification): `/wiki-enrich --vault <vid> --source <transcript>` на real lesson-transcript (e.g., `Lessons/ZeroOne Systems/.../lesson.txt`) → wiki-ingest синтезирует `_sources/<slug>.md` + concept/entity pages, manifest валиден, `wiki-enrich` индексирует все `written[]` paths в SQLite одной операцией, `log_event` мирорится в `log_events`, Mermaid-блоки НЕ попали в FTS5, `wiki-search "Sharpe score" --vaults <vid>` находит результат с BM25 ranking.
 
 Если все 6 пунктов проходят — MVP готов, можно начинать Epic 6 (multi-source).
