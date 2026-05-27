@@ -1,6 +1,9 @@
 # Proposal — Indexing agentic-development artifacts with obsidian-llm-wiki
 
-> **Status:** PROPOSAL (2026-05-27). Not yet a TASK; not yet an ADR.
+> **Status:** PROPOSAL (2026-05-27) — tracked in
+> [ROADMAP §P2 "Cross-project indexing"](../ROADMAP.md) as R-X1..R-X5.
+> Not yet a TASK; promotion requires `/start-feature` invocation
+> after a real-world trigger fires (see §14).
 > **Author:** session 2026-05-27, after dogfood + TASK 017 alignment work.
 > **Audience:** future-me, future agentic-development sessions.
 > **Purpose:** Lay out how obsidian-llm-wiki could become the cross-project
@@ -653,20 +656,31 @@ C through E build up the daily-usage friction floor; F is the
 
 ## 9. Connection to existing ROADMAP
 
-Slots into the current `obsidian-llm-wiki/docs/ROADMAP.md` as follows:
+**Tracked in [`docs/ROADMAP.md`](../ROADMAP.md) §P2 "Cross-project
+indexing" as five entries**:
 
-- **P1 Epic 7 (entity resolver)** is the prerequisite for Phase F
-  above. Without it, dev-vault concepts can't be canonicalised across
-  projects (e.g., "ADR-002" in this repo vs `trade-agents` would not
-  resolve as the same node).
-- **P2 Epic 6 (source adapters)** is unrelated — this proposal adds
-  a `dev-project` adapter, not a streaming-source adapter.
-- **P0 R-2 (subagent prompt hook)** — Phase E here is the natural
-  follow-up once `agentic-development` is ready to evolve.
+| ROADMAP ID | Proposal section | Priority | Depends on |
+|---|---|---|---|
+| **R-X1** | §11 (PW-A..N + PW-Q — universal layout engine) | P2 | — |
+| **R-X2** | §§2,4,8 Phases A-C (dev-vault + obsidian-personal bootstrap + archive hook) | P2 | R-X1 |
+| **R-X3** | §Phase D (KNOWN_ISSUES → per-file migration) | P2 | R-X1, R-X2 |
+| **R-X4** | §Phase E (agent-prompt cue integration) — **supersedes ROADMAP R-2** | P3 | R-X2 + agentic-development memory work |
+| **R-X5** | §Phase F (entity-graph cross-project) | P3 | Epic 7 (ROADMAP R-3..R-5) + R-X2 |
 
-This proposal sits between P1 Epic 7 and a future "developer-experience
-indexing" epic. Approximate priority: **P2**, ahead of Epic 6's source
-adapters (because the personal payoff hits sooner).
+**Interactions with other ROADMAP entries**:
+
+- **P1 Epic 7 (entity resolver)** is the prerequisite for **R-X5 only**
+  (Phase F). R-X1..R-X4 are independent — they don't need entity
+  canonicalisation across projects.
+- **P2 Epic 6 (source adapters)** is orthogonal — this proposal does
+  not add a streaming-source adapter; it adds layouts to the existing
+  config-driven engine.
+- **ROADMAP R-2 (subagent prompt hook, currently DEFERRED)** is fully
+  superseded by R-X4. Update R-2's status to `SUPERSEDED → R-X4`.
+
+Priority slot: **P2**, ahead of Epic 6's source adapters (personal
+payoff arrives sooner). R-X1+R-X2+R-X3 form the deliverable bundle;
+R-X4 and R-X5 are P3 follow-ups gated on external work.
 
 ---
 

@@ -85,15 +85,16 @@ pointer at the new skill.
 
 Effort: ~30 min documentation update.
 
-### R-2. Subagent prompt hook (memory 4b leftover) — DEFERRED
+### R-2. Subagent prompt hook (memory 4b leftover) — SUPERSEDED → R-X4
 Inject "before editing concepts or introducing new names, call
 `/wiki-search`" into `developer`, `architect`, `critic-*` agent prompts.
 The parent CLAUDE.md already carries the rule; this is a proactive cue
 for narrow-context subagents.
 
-**Status**: Blocked — agent prompts live in the agentic-development
-framework which is being evolved in a separate project. Memory-strategy
-decision is pending there. Revisit once that work lands.
+**Status (2026-05-27)**: Superseded by **R-X4** (Phase E of the
+cross-project indexing proposal — see P2 section below). Same scope,
+broader context: R-X4 wires the prompt cue *and* the index it would
+query against. Track R-X4, retire R-2.
 
 ---
 
@@ -139,6 +140,84 @@ Web enrichment of concept pages. Off by default; opt-in per concept.
 4-critic ensemble (logic, security, performance, factual) for
 high-stakes query responses. Off by default. Pairs with `/vdd-multi`
 infrastructure already in this repo.
+
+---
+
+## P2 — Cross-project indexing
+
+Design doc: [`docs/proposals/indexing-agentic-dev-artifacts.md`](proposals/indexing-agentic-dev-artifacts.md)
+(2026-05-27, 1259 lines, /vdd-adversarial PASS).
+
+Total scope: ~815 source + ~1300 test = **~2115 LoC** across two repos,
+~2.5-3 week focused task. Tier-trimmed delivery available — see proposal
+§13 "Honest-scope tier".
+
+**Trigger to start** (per proposal §13 + §14): operator runs `git grep`
+across 3+ repos for the same concept twice in a session, OR wants to
+answer "where in my Obsidian vault did I write about X?" and Obsidian's
+search is too slow. Until then, status = PROPOSAL.
+
+### R-X1. Universalise layout engine (PW-A..N + PW-Q)
+Replace 15 hardcoded surfaces (`PAGE_SUBDIRS`, `TYPE_MAPPING`,
+`_PATH_TYPE_FALLBACK`, `_WIKILINK_RE`, slug regex, etc.) with a
+YAML-config-driven parser. Three built-in layouts ship:
+`karpathy.yaml` (current behaviour, byte-identical), `dev-project.yaml`
+(this proposal's primary use case), `obsidian-personal.yaml` (real
+iCloud vaults with numbered folders, MOC pattern, Cyrillic, `.base`
+files). ~755 src + ~1220 test LoC.
+
+**Acceptance**: all current tests pass unchanged after migration;
+`trade-agents` re-indexes byte-identically modulo timestamps; new
+Obsidian-personal fixture (Cyrillic, deep hierarchy, system folders)
+indexes without PK collisions.
+
+**See**: proposal §11 (full PW table, error policies, ReDoS guard).
+
+### R-X2. Dev-vault + obsidian-personal bootstrap (Phases A-C)
+Depends on R-X1. Extend `wiki-init` with `--layout {dev-project,
+obsidian-personal}` flag; bootstrap obsidian-llm-wiki itself + one
+peer project as first dev-vaults; wire `archive_protocol.py::archive_task()`
+in agentic-development to fire `wiki-index-upsert` with `pending.log`
+fallback observability. ~140 src + ~200 test LoC across two repos.
+
+**Acceptance**: `wiki-search "ADR-002" --vaults all` returns ranked
+hits with snippets; archival of a fake TASK appears in the index;
+forced upsert timeout writes to `~/.cache/wiki-index/pending.log`.
+
+**See**: proposal §§2,4,8 (Phases A-C) + §12 (Option C dependency strategy).
+
+### R-X3. KNOWN_ISSUES → per-file migration (Phase D)
+Depends on R-X1 + R-X2. One-shot splitter `scripts/migrate_known_issues_to_files.py`
+(~280 src + ~200 test LoC, fixture-driven, with partial-confidence
+report). After migration: `docs/issues/<id>-<slug>.md` are Class A
+canonical, `docs/KNOWN_ISSUES.md` becomes Class B auto-rendered
+(ADR-002 §D8 amendment required — see proposal §Phase D "Class A/B
+reclassification").
+
+**Acceptance**: `wiki-search "hash drift" --types known-issue --vaults all`
+returns one specific issue, not the whole ledger; delete + re-render
+produces byte-identical `docs/KNOWN_ISSUES.md`.
+
+**See**: proposal §Phase D + ADR-002 amendment (or new ADR-003).
+
+### R-X4. Agent-prompt cue integration (Phase E) — supersedes R-2
+Add proactive `/wiki-search` cue to `developer` / `architect` /
+`critic-*` subagent prompts in agentic-development. Same scope as
+the original R-2, but landed *after* R-X2 so the prompted index
+actually exists. **Priority: P3** — blocked on agentic-development
+memory-strategy decision (separate project).
+
+**See**: proposal §Phase E.
+
+### R-X5. Entity-graph cross-project (Phase F)
+Depends on **Epic 7 (R-3..R-5 entity resolver)** + R-X2. Concept /
+entity nodes for development artifacts become first-class; `wiki-graph`
+traversals across project artifacts; RAG-style synthesis ("meta-ROADMAP
+consolidating all P0 items across active projects"). Also closes the
+proposal §7.6 verification item (cross-vault `entity_slug` FK semantics).
+**Priority: P3** — multi-week, separate TASK, gated on Epic 7.
+
+**See**: proposal §Phase F + §7.6.
 
 ---
 
