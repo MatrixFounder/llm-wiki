@@ -23,6 +23,178 @@
 
 ---
 
+## 1.5. Project Anatomy
+
+This section maps **where things live** in the repository, the symlink graph through which Claude Code resolves a slash command into a Python entry point, and how this repo's anatomy compares to the external `wiki-ingest` skill it integrates with. Added in Phase 3b prep (2026-05-27) so subagents and operators don't have to reconstruct the layout from `ls` walks.
+
+### 1.5.1. Anatomy of one in-repo skill (template, shown via `/wiki-search`)
+
+Every skill in this repo follows a strict **4-file-of-same-name** convention plus a shared DAL. There are 8 such skills today (`wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`, `wiki-enrich`); a 9th (`wiki-extract-concepts`) ships in Phase 3b per TASK 003.
+
+```text
+operator: "/wiki-search 'query'"
+    │
+    ▼ Claude Code resolves slash command
+~/.claude/commands/wiki-search.md ──symlink──► obsidian-llm-wiki/commands/wiki-search.md
+    │                                          (slash-command registration; points to skill)
+    ▼
+~/.claude/skills/wiki-search/ ───symlink──► obsidian-llm-wiki/skills/wiki-search/SKILL.md
+    │                                       (skill manifest: tier, triggers, when/how)
+    ▼ SKILL.md delegates to bash CLI
+~/.local/bin/wiki-search ───symlink──► obsidian-llm-wiki/bin/wiki-search
+    │                                  (POSIX wrapper: cd repo + source .venv + exec python -m)
+    ▼
+obsidian-llm-wiki/scripts/wiki_skills/wiki_search.py
+    │                          (Python entry: argparse + main(argv) + JSON envelope to stdout)
+    ▼
+obsidian-llm-wiki/scripts/wiki_index/   (shared DAL — see §1.5.4)
+    │
+    ▼
+SQLite ~/Library/Application Support/wiki-index/global.db   (multi-vault, FTS5)
+```
+
+**Convention rules:**
+
+| Surface | Path pattern | Naming convention |
+|---|---|---|
+| Slash command | `commands/wiki-<name>.md` | dash-separated, mirrors CLI name |
+| Skill manifest | `skills/wiki-<name>/SKILL.md` | dash-separated dir |
+| Bash launcher | `bin/wiki-<name>` (executable) | dash-separated, no extension |
+| Python entry | `scripts/wiki_skills/wiki_<name>.py` | underscore-separated (Python module rules) |
+| Global symlinks | `~/.claude/{commands,skills}/`, `~/.local/bin/` | created by `bin/install-globally.sh` |
+
+**The 4 in-repo dirs** (`commands/`, `skills/`, `bin/`, `scripts/wiki_skills/`) must stay in lockstep — adding a new skill means 4 new files of matching name. The installer (`bin/install-globally.sh`) discovers each set via globs.
+
+### 1.5.2. Anatomy of cross-process flow (`/wiki-enrich → wiki-ingest`)
+
+`/wiki-enrich` is the **only** in-repo skill that spawns an external subprocess (`wiki-ingest`, lives in a separate repo — see §1.5.3). The contract between processes is JSON manifest v1.1 ([WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md)).
+
+```text
+operator: /wiki-enrich --source raw.md
+    │
+    ▼ standard 4-file path resolves to scripts/wiki_skills/wiki_enrich.py
+    │
+    ├── 1. check_wiki_ingest_version()  — shutil.which("wiki-ingest"); semver guard ≥ 1.1
+    │
+    ├── 2. subprocess.run(["wiki-ingest", "ingest", "--source", X, "--output-format", "json", ...])
+    │       │
+    │       ▼ separate venv, separate codebase
+    │   ~/.local/bin/wiki-ingest ─symlink─► Universal-skills/.../scripts/wiki-ingest
+    │       │                              (POSIX shell wrap; exec python3 wiki_ops.py "$@")
+    │       ▼
+    │   Universal-skills/skills/wiki-ingest/scripts/wiki_ops.py
+    │       │   (multi-subcommand argparse dispatcher)
+    │       ▼
+    │   wiki_ingest/_dispatch.py → wiki_ingest/commands/<X>.py
+    │       │
+    │       ├─ filesystem writes under operator's vault:
+    │       │   _sources/<slug>.md, _concepts/*, _entities/*, index.md, log.md
+    │       └─ stdout: JSON manifest v1.1 (CONTRACT §1)
+    │
+    ├── 3. _validate_manifest()  — path-traversal guard, vault_id match, status=ok
+    │
+    ├── 4. index_from_manifest()  — loop manifest.written[]
+    │       │   (top-level system files skipped — R-0 fix in commit 156325d)
+    │       ▼ in-process call (NOT subprocess) for each non-system written entry
+    │   scripts/wiki_skills/wiki_index_upsert.main(argv)
+    │       │
+    │       ▼
+    │   scripts/wiki_index/sqlite_repository.SQLiteRepository.upsert_page()
+    │       │
+    │       ▼
+    │   SQLite global.db
+    │
+    └── 5. append_log_event()  — mirror manifest.log_event → log_events table
+
+stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...], "log_event_id":N}}
+```
+
+**Phase 3b extension (R-44, I-7.15):** when `--manifest-file PATH` / `--manifest-stdin` is passed, steps 1+2 are skipped (no `wiki-ingest` subprocess, no version check) — `wiki-enrich` jumps straight to step 3 with the operator-supplied manifest. Enables `/wiki-extract-concepts → /wiki-enrich --manifest-stdin` dispatch without re-running synthesis on the source page.
+
+### 1.5.3. External dependency: `wiki-ingest` anatomy (different pattern)
+
+`wiki-ingest` lives in a **separate repo** (`Universal-skills`) and has a **different internal anatomy** from this project. This is not a contradiction — it reflects different evolution paths and is bridged via the v1.1 contract.
+
+```text
+Universal-skills/skills/wiki-ingest/
+├── SKILL.md                       (single skill manifest)
+├── scripts/
+│   ├── wiki-ingest                (POSIX shell launcher — single binary,
+│   │                               not 1-of-N like this repo's bin/)
+│   ├── wiki_ops.py                (multi-subcommand argparse dispatcher;
+│   │                               scan | init | ingest | register-summary | lint |
+│   │                               reindex | promote | demote | classify-folder | …)
+│   ├── wiki_ingest/               (Python package, internal modules)
+│   │   ├── _classify.py, _dispatch.py, _frontmatter.py, _markdown.py,
+│   │   ├── _page_merge.py, _safety.py, _vault.py
+│   │   └── commands/              (per-subcommand modules)
+│   └── tests/
+├── references/                    (manifest_schema.md, exit_codes.md, ingest_workflow.md, …)
+├── assets/, examples/, evals/
+```
+
+**Pattern contrast — single mega-CLI vs N small CLIs:**
+
+| | This repo (`obsidian-llm-wiki`) | External (`wiki-ingest`) |
+|---|---|---|
+| User-facing entry points | 8 separate CLIs (`wiki-search`, `wiki-lint`, …) | 1 CLI with N subcommands (`wiki-ingest <cmd>`) |
+| Bash launchers | 8 files in `bin/` | 1 file in `scripts/` |
+| Python entry style | 8 modules in `scripts/wiki_skills/` | 1 dispatcher `wiki_ops.py` + per-cmd modules under `wiki_ingest/commands/` |
+| Slash-command surface | 8 `/wiki-X` commands | None natively — invoked via subprocess by `/wiki-enrich`, or by operator from shell |
+| Skill manifest | Per-skill `SKILL.md` (8 files) | One `SKILL.md` for the whole tool |
+
+**Neither pattern is wrong**; they reflect that this repo splits operations into composable units (DAL-thin CLIs), while `wiki-ingest` keeps related operations under one cohesive synthesis tool. The bridge (`/wiki-enrich`) is the seam.
+
+### 1.5.4. Shared DAL layer (`scripts/wiki_index/`)
+
+All 8 in-repo skills converge on the DAL. **No skill talks to SQLite directly; everything goes through `IndexRepository`.**
+
+```text
+scripts/wiki_index/
+├── repository.py          — IndexRepository ABC (abstract methods)
+├── sqlite_repository.py   — concrete SQLite impl (WAL, FTS5, BEGIN IMMEDIATE)
+├── factory.py             — make_repo(WikiConfig) → backend instance
+├── models.py              — dataclasses: Page, Entity, Vault, LogEvent, PageRef, …
+├── layout.py              — constants: SYSTEM_FILES, PAGE_SUBDIRS, SCAFFOLD_DIRS,
+│                            COURSE_TIER_DIR, VAULT_INDEX_DIR, LOG_SUBDIR
+├── security.py            — validate_inside_vault (R-26 guard), assert_no_symlink_escape
+├── normalization.py       — body strip: Mermaid fences, SECTION anchors (R-07.5)
+├── lint.py                — SQL queries for orphans/dangling/drift/duplicates
+├── reindex.py             — full + delta reindex algorithms
+├── rendering.py           — index.md projection from pages table
+├── logfile.py             — monthly rotation, log_md_byte_offset for round-trip
+└── config_loader.py       — WikiConfig parser (CLAUDE.md::wiki: + .wiki.yaml merge)
+```
+
+**Stub-First invariant:** Phase 3a left `resolve_entity` as a stub (`NotImplementedError`); TASK 003 adds `upsert_entity` as a new abstract method (I-7.7a). See §2.1 Index Layer DAL for the planner-visible sequencing constraint that I-7.7a MUST land first.
+
+### 1.5.5. Symlink graph (installation footprint)
+
+Generated by `bin/install-globally.sh` (idempotent, `ln -sfn`):
+
+```text
+~/.local/bin/wiki-<name>           ──► obsidian-llm-wiki/bin/wiki-<name>            (CLI access)
+~/.local/bin/wiki-ingest           ──► Universal-skills/skills/wiki-ingest/scripts/wiki-ingest
+                                       (manually symlinked — separate repo)
+~/.claude/commands/wiki-<name>.md  ──► obsidian-llm-wiki/commands/wiki-<name>.md    (slash command)
+~/.claude/skills/wiki-<name>/      ──► obsidian-llm-wiki/skills/wiki-<name>/        (skill manifest)
+~/.claude/skills/wiki-ingest/      ──► Universal-skills/skills/wiki-ingest/         (external skill manifest)
+```
+
+**`.claude/` and `.agent/` in this repo are themselves symlink farms** pointing into `skills/`, `commands/`, `workflows/` — keeping a single source of truth while satisfying vendor-specific resolver paths (Claude Code, Gemini, ...).
+
+### 1.5.6. Quick reference: "I want to add a new skill / modify an existing one"
+
+| Goal | Touch these files |
+|---|---|
+| Add a new skill `wiki-foo` | `bin/wiki-foo` (executable) + `skills/wiki-foo/SKILL.md` + `commands/wiki-foo.md` + `scripts/wiki_skills/wiki_foo.py` + `tests/test_wiki_foo.py`; then `bin/install-globally.sh` to wire up symlinks |
+| Modify CLI surface of `wiki-X` | Argparse in `scripts/wiki_skills/wiki_X.py`; update `skills/wiki-X/SKILL.md` examples; update `commands/wiki-X.md` if slash-trigger changes |
+| Add a DAL method | `scripts/wiki_index/repository.py` (ABC) + `scripts/wiki_index/sqlite_repository.py` (concrete) + every test fixture that mocks `IndexRepository` (otherwise import-time `TypeError`) |
+| Touch SQL schema | `docs/SCHEMA-v2.sql` (DDL) + `scripts/wiki_index/sqlite_repository.py` (queries) + migration story in `docs/MIGRATION-*.md` if breaking |
+| Add a workflow file | `workflows/<name>.md` (e.g. `wiki-enrich.md`) + symlink into `.agent/workflows/` |
+
+---
+
 ## 2. Functional Architecture
 
 ### 2.1. Functional Components
