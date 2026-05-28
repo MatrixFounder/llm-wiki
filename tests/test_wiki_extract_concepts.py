@@ -7,7 +7,7 @@ helper's body fills in.
 """
 from __future__ import annotations
 
-import json
+import argparse
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -25,23 +25,319 @@ import scripts.wiki_skills.wiki_extract_concepts as wec
 # ============================================================================
 
 
-def test_argparse_missing_vault_returns_exit(capsys: pytest.CaptureFixture) -> None:
-    """Missing required --vault flag → argparse SystemExit with code 2."""
+def test_argparse_no_args_returns_exit_2() -> None:
+    """`main([])` → argparse SystemExit(2). Under v3.1 the cause is
+    "missing required subcommand" (was "missing required --vault" in v2);
+    the mechanical assertion is unchanged.
+    """
     with pytest.raises(SystemExit) as ei:
         wec.main([])
-    # argparse default for missing-required is exit code 2.
     assert ei.value.code == 2
 
 
-def test_argparse_help_text_contains_ingest_flag(capsys: pytest.CaptureFixture) -> None:
-    """`--help` mentions the --ingest flag (Decision-15 auto-dispatch)."""
+def test_argparse_no_subcommand_returns_helpful_error(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-4 BREAKING CHANGE smoke: invoking without `prepare` / `apply`
+    fails at argparse with stderr that names both subcommand choices, so
+    the operator can see the migration path.
+    """
+    with pytest.raises(SystemExit) as ei:
+        wec._build_parser_v3().parse_args([])
+    assert ei.value.code == 2
+    err = capsys.readouterr().err
+    assert "prepare" in err
+    assert "apply" in err
+
+
+def test_argparse_prepare_subparser_exists() -> None:
+    """`prepare` subparser accepts the recon flags and rejects v2-only ones."""
+    args = wec._build_parser_v3().parse_args([
+        "prepare",
+        "--vault", "X",
+        "--vault-root", "/tmp",
+        "--source-page", "sample-doc",
+    ])
+    assert args.cmd == "prepare"
+    assert args.vault == "X"
+    assert args.source_page == "sample-doc"
+
+
+def test_argparse_apply_subparser_exists() -> None:
+    """`apply` subparser accepts the write-path flags including --source-hash
+    (REQUIRED) and the candidates mutex group.
+    """
+    args = wec._build_parser_v3().parse_args([
+        "apply",
+        "--vault", "X",
+        "--vault-root", "/tmp",
+        "--source-page", "sample-doc",
+        "--source-hash", "deadbeef",
+        "--candidates-stdin",
+    ])
+    assert args.cmd == "apply"
+    assert args.source_hash == "deadbeef"
+    assert args.candidates_stdin is True
+    assert args.candidates_file is None
+
+
+# test_main_dispatches_to_prepare_stub REMOVED in 003-v3-01:
+# the prepare() stub was replaced with the real implementation, so the
+# NotImplementedError assertion no longer holds. Real prepare-surface tests
+# live below (test_prepare_*).
+
+
+def test_main_dispatches_to_apply_stub() -> None:
+    """`main(["apply", ...])` reaches the apply() stub which raises
+    NotImplementedError naming the bead that fills it in (003-v3-03).
+    """
+    with pytest.raises(NotImplementedError, match="task-003-v3-03"):
+        wec.main([
+            "apply",
+            "--vault", "X",
+            "--vault-root", "/tmp",
+            "--source-page", "sample-doc",
+            "--source-hash", "deadbeef",
+            "--candidates-stdin",
+        ])
+
+
+def test_argparse_top_level_help_shows_subcommands(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Replacement for the 003-v3-11a-deleted `test_argparse_help_text_contains_ingest_flag`.
+    Top-level --help now lists the {prepare,apply} subcommand choices instead of
+    the v2 monolithic flag set (--ingest, --vault, --source-page lived at the
+    top-level in v2; under v3.1 they live under `apply`).
+    """
     with pytest.raises(SystemExit) as ei:
         wec.main(["--help"])
     assert ei.value.code == 0
     out = capsys.readouterr().out
-    assert "--ingest" in out
-    assert "--vault" in out
-    assert "--source-page" in out
+    # Both subcommands must be visible in the usage line / choices.
+    assert "prepare" in out
+    assert "apply" in out
+
+
+# ============================================================================
+# 003-v3-01: prepare subcommand (R-31, R-32, R-39, R-42)
+# ============================================================================
+
+
+def _make_prepare_args(
+    vault: str, vault_root: Path, source_page: str,
+    db_path: str | None = None,
+) -> argparse.Namespace:
+    """Build an argparse.Namespace matching the `prepare` subparser surface."""
+    return argparse.Namespace(
+        cmd="prepare",
+        vault=vault, vault_root=vault_root,
+        source_page=source_page, db_path=db_path,
+    )
+
+
+def test_prepare_happy_path(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """prepare emits the canonical recon envelope on a fresh vault."""
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    src = sources_dir / "sample-doc.md"
+    src.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args("trade-agents", vault_root, "sample-doc", db_path)
+    rc = wec.prepare(args)
+    assert rc == 0
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["vault_id"] == "trade-agents"
+    assert payload["source_slug"] == "sample-doc"
+    assert payload["is_unchanged"] is False
+    assert len(payload["source_hash"]) == 64  # sha256 hex
+    assert payload["known_concepts"] == []
+    assert payload["missing_concept_files"] == []
+
+
+def test_prepare_source_not_found(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """SOURCE_NOT_FOUND when the file doesn't exist."""
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    args = _make_prepare_args("trade-agents", vault_root, "missing-page")
+    rc = wec.prepare(args)
+    assert rc == 2
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "SOURCE_NOT_FOUND"
+
+
+def test_prepare_invalid_slug(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-3 regression migration from 003-v3-11a: source-page with dots in
+    stem → INVALID_SOURCE_SLUG BEFORE any concept page write."""
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    bad = sources_dir / "Foo.Bar.md"
+    bad.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
+
+    args = _make_prepare_args("trade-agents", vault_root, "Foo.Bar")
+    rc = wec.prepare(args)
+    assert rc == 2
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_SOURCE_SLUG"
+    # Critically: no concept pages got written before the error
+    concepts = vault_root / "_concepts"
+    if concepts.exists():
+        assert list(concepts.glob("*.md")) == []
+
+
+def test_prepare_invalid_source_path_absolute(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-1 regression migration from 003-v3-11a: absolute --source-page →
+    INVALID_SOURCE_PATH (distinct envelope from SOURCE_NOT_FOUND)."""
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    args = _make_prepare_args("trade-agents", vault_root, "/etc/passwd")
+    rc = wec.prepare(args)
+    assert rc == 2
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_SOURCE_PATH"
+    # No concept pages written
+    concepts = vault_root / "_concepts"
+    if concepts.exists():
+        assert list(concepts.glob("*.md")) == []
+
+
+def test_prepare_idempotency_match_returns_unchanged_true(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """is_unchanged=true when source_state.source_hash matches the recomputed hash."""
+    import hashlib as _hashlib
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    src = sources_dir / "sample-doc.md"
+    body = "---\ntype: summary\n---\nidempotent body."
+    src.write_text(body, encoding="utf-8")
+    expected_hash = _hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    # Pre-insert source_state row matching the body hash (key/value schema)
+    bootstrap._connect().execute(  # type: ignore[attr-defined]
+        "INSERT INTO source_state(vault_id, source_kind, scope, key, value, "
+        "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ("trade-agents", "extract-concepts", "sample-doc",
+         "source_hash", expected_hash,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    bootstrap._connect().commit()  # type: ignore[attr-defined]
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args("trade-agents", vault_root, "sample-doc", db_path)
+    rc = wec.prepare(args)
+    assert rc == 0
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["is_unchanged"] is True
+    assert payload["source_hash"] == expected_hash
+
+
+def test_prepare_source_too_large_M3(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """M-3: file st_size > _MAX_SOURCE_BODY_BYTES → SOURCE_TOO_LARGE BEFORE
+    read_text. Envelope must NOT echo file content (CWE-117 guard)."""
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    big = sources_dir / "huge-doc.md"
+    # Write 10 MiB + 1 byte; content irrelevant — only size matters for the cap.
+    big.write_bytes(b"\x00" * (wec._MAX_SOURCE_BODY_BYTES + 1))
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args("trade-agents", vault_root, "huge-doc", db_path)
+    rc = wec.prepare(args)
+    assert rc == 2
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "SOURCE_TOO_LARGE"
+    # CWE-117: no content echo
+    assert "content" not in payload
+    assert "value" not in payload
+    assert "raw" not in payload
+
+
+def test_prepare_missing_concept_files_warns(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """M-1 / Q16: prepare lists known-entity slugs whose `_concepts/<slug>.md`
+    is missing on disk. Eager O(N) sweep in v3.1 (P-9 deferred)."""
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    src = sources_dir / "sample-doc.md"
+    src.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
+    concepts_dir = vault_root / "_concepts"
+    concepts_dir.mkdir()
+    # On-disk pages for 2 of 3 known entities; the 3rd is "missing".
+    (concepts_dir / "alpha.md").write_text("# Alpha\n", encoding="utf-8")
+    (concepts_dir / "beta.md").write_text("# Beta\n", encoding="utf-8")
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    for slug, name in [("alpha", "Alpha"), ("beta", "Beta"), ("gamma", "Gamma")]:
+        _insert_entity(bootstrap, "trade-agents", slug, name)
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args("trade-agents", vault_root, "sample-doc", db_path)
+    rc = wec.prepare(args)
+    assert rc == 0
+    import json as _json
+    payload = _json.loads(capsys.readouterr().out)
+    assert sorted(payload["missing_concept_files"]) == ["gamma"]
+    assert sorted(e["slug"] for e in payload["known_concepts"]) == ["alpha", "beta", "gamma"]
 
 
 # ============================================================================
@@ -455,135 +751,15 @@ def test_write_concept_page_rejects_path_outside_vault(tmp_path: Path) -> None:
 # ============================================================================
 
 
-def test_main_rejects_absolute_source_page_path(
-    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """H-1: absolute --source-page is rejected with INVALID_SOURCE_PATH, not
-    conflated as SOURCE_NOT_FOUND."""
-    vault_root = tmp_path / "vault"
-    vault_root.mkdir()
-    db_path = str(tmp_path / "test.db")
-    bootstrap = repo_factory()
-    bootstrap.apply_schema()  # type: ignore[attr-defined]
-    _register_vault(bootstrap, "trade-agents", tmp_path)
-    bootstrap.close()
-    import shutil as _sh
-    src_db = list(tmp_path.glob("wiki-*.db"))[0]
-    _sh.copy(src_db, db_path)
-
-    rc = wec.main([
-        "--vault", "trade-agents",
-        "--vault-root", str(vault_root),
-        "--source-page", "/etc/passwd",  # absolute → reject
-        "--db-path", db_path,
-    ])
-    assert rc == 2  # not the argparse 1, not SOURCE_NOT_FOUND
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error"] == "INVALID_SOURCE_PATH"
+# H-1 / H-3 migrations from 003-v3-11a landed in 003-v3-01 as
+# `test_prepare_invalid_source_path_absolute` and `test_prepare_invalid_slug`
+# (see top of file). The placeholder TODO markers were removed in 003-v3-01.
 
 
-def test_main_rejects_invalid_source_slug(
-    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """H-3: source-page filename with dots (e.g., Foo.Bar.md) → INVALID_SOURCE_SLUG
-    BEFORE any concept page is written."""
-    vault_root = tmp_path / "vault"
-    sources_dir = vault_root / "_sources"
-    sources_dir.mkdir(parents=True)
-    bad = sources_dir / "Foo.Bar.md"
-    bad.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
-
-    db_path = str(tmp_path / "test.db")
-    bootstrap = repo_factory()
-    bootstrap.apply_schema()  # type: ignore[attr-defined]
-    _register_vault(bootstrap, "trade-agents", tmp_path)
-    bootstrap.close()
-    import shutil as _sh
-    src_db = list(tmp_path.glob("wiki-*.db"))[0]
-    _sh.copy(src_db, db_path)
-
-    rc = wec.main([
-        "--vault", "trade-agents",
-        "--vault-root", str(vault_root),
-        "--source-page", "Foo.Bar",  # resolves to _sources/Foo.Bar.md → bad stem
-        "--db-path", db_path,
-    ])
-    assert rc == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["error"] == "INVALID_SOURCE_SLUG"
-    # Critically: no concept pages got written before the error
-    concepts = vault_root / "_concepts"
-    if concepts.exists():
-        assert list(concepts.glob("*.md")) == []
-
-
-def test_main_ingest_partial_failure_does_not_update_source_state(
-    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
-) -> None:
-    """C-1 CRITICAL: when --ingest dispatch returns failed[], source_state is
-    NOT marked → next run re-extracts (does not short-circuit on hash-match)."""
-    vault_root = tmp_path / "vault"
-    sources_dir = vault_root / "_sources"
-    sources_dir.mkdir(parents=True)
-    src = sources_dir / "hermes.md"
-    src.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
-
-    db_path = str(tmp_path / "test.db")
-    bootstrap = repo_factory()
-    bootstrap.apply_schema()  # type: ignore[attr-defined]
-    _register_vault(bootstrap, "trade-agents", tmp_path)
-    # Pre-seed the source page so page_entity_refs FK succeeds
-    bootstrap._connect().execute(  # type: ignore[attr-defined]
-        "INSERT INTO pages(vault_id, slug, project, type, title, file_path, "
-        "date, last_modified, file_hash, frontmatter_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("trade-agents", "hermes", "_vault_", "summary", "Hermes",
-         "_sources/hermes.md", "2026-05-27", "2026-05-27T12:00:00", "abc", "{}"),
-    )
-    bootstrap._connect().commit()  # type: ignore[attr-defined]
-    bootstrap.close()
-    import shutil as _sh
-    src_db = list(tmp_path.glob("wiki-*.db"))[0]
-    _sh.copy(src_db, db_path)
-
-    fake_llm_json = (
-        '[{"slug":"hermes-agent","name":"Hermes","definition":"x",'
-        '"source_quote":"q","source_span":"L1-L1","entity_type":"product"}]'
-    )
-    # First run: dispatch reports a FAILED upsert → exit 5, source_state UNTOUCHED
-    failing_summary = {"upserted": [], "failed": [{"path": "x.md"}],
-                       "log_event_id": None}
-    with mock.patch("anthropic.Anthropic") as MockClient, mock.patch(
-        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
-        return_value=failing_summary,
-    ):
-        MockClient.return_value.messages.create.return_value = _llm_response(
-            fake_llm_json
-        )
-        rc1 = wec.main([
-            "--vault", "trade-agents", "--vault-root", str(vault_root),
-            "--source-page", "hermes", "--db-path", db_path, "--ingest",
-        ])
-    assert rc1 == 5
-
-    # Verify source_state has NO row for this source — operator can retry.
-    import sqlite3
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        row = conn.execute(
-            "SELECT count(*) AS n FROM source_state "
-            "WHERE vault_id=? AND source_kind=? AND scope=?",
-            ("trade-agents", "extract-concepts", "hermes"),
-        ).fetchone()
-        assert row["n"] == 0, (
-            "C-1 fix broken: source_state was updated even though dispatch "
-            "returned failed[] — next run will short-circuit and never retry."
-        )
-    finally:
-        conn.close()
+# DELETED in 003-v3-11a (Option A green-throughout invariant).
+# Regression intent: C-1 CRITICAL — --ingest dispatch partial failure must NOT
+# update source_state so operator can retry without hash-short-circuit.
+# Migrated to: 003-v3-03 `test_apply_with_ingest_partial_failure_exits_5_C1`.
 
 
 def test_extract_concepts_llm_rejects_oversized_input() -> None:
@@ -1068,130 +1244,17 @@ def test_patch_target_lock_at_skill_module() -> None:
 # ============================================================================
 
 
-def test_main_with_ingest_calls_dispatch_and_emits_combined(
-    repo_factory: Callable[[], IndexRepository],
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """End-to-end via main(): --ingest path emits {"extraction":...,"index":...}.
+# DELETED in 003-v3-11a (Option A green-throughout invariant).
+# Regression intent: end-to-end via main([--ingest]) — mock LLM + dispatch,
+# exercise real argparse + source-page resolution + idempotency + try/except,
+# verify {extraction, index} envelope shape and log_event_id wiring.
+# Migrated to: 003-v3-03 `test_apply_with_ingest_end_to_end_mocked_dispatch`.
 
-    Mocks the LLM call + dispatch but exercises the real argparse, source-page
-    resolution, idempotency-gate, and main()'s try/except wiring."""
-    # Set up a registered vault + a source page on disk
-    vault_root = tmp_path / "vault"
-    sources_dir = vault_root / "_sources"
-    sources_dir.mkdir(parents=True)
-    src = sources_dir / "hermes.md"
-    src.write_text("---\ntype: summary\n---\n# Hermes\n\nbody.", encoding="utf-8")
-
-    # Register the vault in the global default DB? main() uses make_repo which
-    # honors --db-path; pass a tmp db path to avoid touching the real DB.
-    db_path = str(tmp_path / "test.db")
-    bootstrap = repo_factory()
-    bootstrap.apply_schema()  # type: ignore[attr-defined]
-    _register_vault(bootstrap, "trade-agents", tmp_path)
-    # Pre-seed the source page row so FK page_entity_refs → pages succeeds
-    bootstrap._connect().execute(  # type: ignore[attr-defined]
-        "INSERT INTO pages(vault_id, slug, project, type, title, file_path, "
-        "date, last_modified, file_hash, frontmatter_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("trade-agents", "hermes", "_vault_", "summary", "Hermes",
-         "_sources/hermes.md", "2026-05-27", "2026-05-27T12:00:00", "abc", "{}"),
-    )
-    bootstrap._connect().commit()  # type: ignore[attr-defined]
-    bootstrap.close()
-    import shutil as _sh
-    src_db = list(tmp_path.glob("wiki-*.db"))[0]
-    _sh.copy(src_db, db_path)
-
-    fake_llm_json = (
-        '[{"slug":"hermes-agent","name":"Hermes Agent",'
-        '"definition":"Trading framework.","source_quote":"Hermes is the agent",'
-        '"source_span":"L4-L4","entity_type":"product"}]'
-    )
-
-    summary = {"upserted": [{"path": "_concepts/hermes-agent.md",
-                              "action": "inserted"}],
-               "failed": [], "log_event_id": 7}
-    with mock.patch("anthropic.Anthropic") as MockClient, mock.patch(
-        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
-        return_value=summary,
-    ) as mock_dispatch:
-        MockClient.return_value.messages.create.return_value = _llm_response(
-            fake_llm_json,
-        )
-        rc = wec.main([
-            "--vault", "trade-agents",
-            "--vault-root", str(vault_root),
-            "--source-page", "hermes",
-            "--db-path", db_path,
-            "--ingest",
-        ])
-
-    assert rc == 0, f"main returned {rc}"
-    mock_dispatch.assert_called_once()
-    out = capsys.readouterr().out
-    payload = json.loads(out)
-    assert "extraction" in payload
-    assert "index" in payload
-    assert payload["index"]["log_event_id"] == 7
-
-
-def test_main_without_ingest_emits_manifest_only(
-    repo_factory: Callable[[], IndexRepository],
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    """No --ingest flag → only manifest emitted; dispatch_to_indexer NOT called."""
-    vault_root = tmp_path / "vault"
-    sources_dir = vault_root / "_sources"
-    sources_dir.mkdir(parents=True)
-    src = sources_dir / "hermes.md"
-    src.write_text("---\ntype: summary\n---\nbody.", encoding="utf-8")
-
-    db_path = str(tmp_path / "test.db")
-    bootstrap = repo_factory()
-    bootstrap.apply_schema()  # type: ignore[attr-defined]
-    _register_vault(bootstrap, "trade-agents", tmp_path)
-    bootstrap._connect().execute(  # type: ignore[attr-defined]
-        "INSERT INTO pages(vault_id, slug, project, type, title, file_path, "
-        "date, last_modified, file_hash, frontmatter_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("trade-agents", "hermes", "_vault_", "summary", "Hermes",
-         "_sources/hermes.md", "2026-05-27", "2026-05-27T12:00:00", "abc", "{}"),
-    )
-    bootstrap._connect().commit()  # type: ignore[attr-defined]
-    bootstrap.close()
-    import shutil as _sh
-    src_db = list(tmp_path.glob("wiki-*.db"))[0]
-    _sh.copy(src_db, db_path)
-
-    fake_llm_json = (
-        '[{"slug":"hermes-agent","name":"Hermes Agent",'
-        '"definition":"x.","source_quote":"q","source_span":"L1-L1",'
-        '"entity_type":"product"}]'
-    )
-    with mock.patch("anthropic.Anthropic") as MockClient, mock.patch(
-        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer"
-    ) as mock_dispatch:
-        MockClient.return_value.messages.create.return_value = _llm_response(
-            fake_llm_json,
-        )
-        rc = wec.main([
-            "--vault", "trade-agents",
-            "--vault-root", str(vault_root),
-            "--source-page", "hermes",
-            "--db-path", db_path,
-        ])
-
-    assert rc == 0
-    mock_dispatch.assert_not_called()
-    out = capsys.readouterr().out
-    payload = json.loads(out)
-    # Plain manifest shape (not the combined extraction+index wrapper)
-    assert "extraction" not in payload
-    assert payload["status"] == "ok"
-    assert payload["vault_id"] == "trade-agents"
+# DELETED in 003-v3-11a (Option A green-throughout invariant).
+# Regression intent: end-to-end via main() WITHOUT --ingest — mock LLM,
+# verify bare manifest shape (NOT {extraction, index} wrapper),
+# verify dispatch_to_indexer NOT called.
+# Migrated to: 003-v3-03 `test_apply_without_ingest_emits_manifest_only`.
 
 
 def test_build_manifest_passes_validate_manifest(tmp_path: Path) -> None:

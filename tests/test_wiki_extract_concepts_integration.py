@@ -91,6 +91,11 @@ def _setup_vault_and_db(
 # ============================================================================
 
 
+@pytest.mark.skip(
+    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
+           "longer accepted; integration tests rewritten in 003-v3-12 to use "
+           "subprocess prepare + apply against canned candidates fixture."
+)
 def test_integration_first_extraction_writes_concept_pages(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
     capsys: pytest.CaptureFixture,
@@ -152,6 +157,11 @@ def test_integration_first_extraction_writes_concept_pages(
 # ============================================================================
 
 
+@pytest.mark.skip(
+    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
+           "longer accepted; integration tests rewritten in 003-v3-12 to use "
+           "subprocess prepare + apply against canned candidates fixture."
+)
 def test_integration_reextraction_unchanged_short_circuits(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
     capsys: pytest.CaptureFixture,
@@ -194,6 +204,11 @@ def test_integration_reextraction_unchanged_short_circuits(
 # ============================================================================
 
 
+@pytest.mark.skip(
+    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
+           "longer accepted; integration tests rewritten in 003-v3-12 to use "
+           "subprocess prepare + apply against canned candidates fixture."
+)
 def test_integration_with_ingest_flag_emits_combined_payload(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
     capsys: pytest.CaptureFixture,

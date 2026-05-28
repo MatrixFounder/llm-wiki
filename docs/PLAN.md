@@ -28,7 +28,7 @@
 
 **TASK 003 v3.1 invariants** (carried forward + new — Option A revised 2026-05-28):
 
-- **Suite floor**: `pytest tests/ -q ≥ 390` between any two bead boundaries (NOT ≥ 396 as originally claimed — that floor required impossible intra-bead atomicity; see §6 R-2 and §3 Option A note).
+- **Suite floor**: `pytest tests/ -q ≥ 387` between any two bead boundaries (NOT ≥ 396 as originally claimed; NOT ≥ 390 as Option A v1 claimed — the v1 floor missed `tests/test_wiki_extract_concepts_integration.py` whose 3 legacy-`main()` tests are temporarily skipped by 003-v3-00 with `@pytest.mark.skip("refactor in 003-v3-12")` and restored / rewritten in 003-v3-12. See §6 R-2 and §3 Option A note. Effective per-boundary delta vs. original §2 table: subtract 3 from every "passed" number between 003-v3-00 and 003-v3-12; skipped count rises by 3 (7 total instead of 4).
 - **Bead atomicity**: 1 bead = 1 commit = 1 pytest gate. No intra-bead commit interleaving permitted.
 - No new DB tables; no schema changes (R-43 / §6 / §1.3 non-goal).
 - `wiki_enrich.py` argparse surface **unchanged** — no new `--manifest-*` flags (Decision-15).

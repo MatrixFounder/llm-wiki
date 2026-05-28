@@ -136,6 +136,11 @@ _REQUIRED_LLM_KEYS = {
 # envelope before the SDK rejects with a 400.
 _MAX_SOURCE_BODY_CHARS = 100_000
 
+# M-3 (TASK 003 v3.1): DoS protection on prepare's sha256+read pipeline.
+# Stat-checks st_size BEFORE read_text to bound memory. 10 MiB matches the
+# existing validate_manifest body cap pattern.
+_MAX_SOURCE_BODY_BYTES = 10_485_760  # 10 MiB
+
 
 def _build_extraction_prompt(
     source_body: str,
@@ -641,7 +646,12 @@ def dispatch_to_indexer(
 # ============================================================================
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_legacy_parser() -> argparse.ArgumentParser:
+    """v2 argparse surface. Preserved for the 003-v3-00..06 window so the
+    9 anthropic-mock function tests in tests/ keep importing
+    `extract_concepts_llm` etc. without colliding with the new subparsers.
+    Deleted in 003-v3-06 alongside the rest of the legacy v2 surface.
+    """
     p = argparse.ArgumentParser(
         prog="wiki-extract-concepts",
         description="LLM-driven concept extraction (Epic 7 R-3 entry-point)",
@@ -664,9 +674,193 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _build_parser_v3() -> argparse.ArgumentParser:
+    """v3.1 argparse surface (Decision-17): two subcommands, calling-agent
+    drives synthesis. `prepare` does deterministic recon + idempotency check;
+    `apply` consumes operator-synthesized candidates JSON and writes pages +
+    entities + manifest. Legacy single-command invocation now fails at
+    argparse with a `prepare`/`apply` hint (H-4 BREAKING CHANGE).
+    """
+    p = argparse.ArgumentParser(
+        prog="wiki-extract-concepts",
+        description=(
+            "Deterministic concept-extraction skill (v3.1). "
+            "Calling agent runs `prepare` (recon), synthesises candidates "
+            "JSON in its own context, then runs `apply` to write pages + "
+            "entities + manifest. BREAKING CHANGE vs v2: legacy single-"
+            "command shape is no longer accepted."
+        ),
+    )
+    sub = p.add_subparsers(dest="cmd", required=True,
+                           metavar="{prepare,apply}")
+
+    # ---- prepare subparser ----
+    pp = sub.add_parser("prepare",
+                        help="Recon + idempotency check; emits JSON envelope.")
+    pp.add_argument("--vault", required=True,
+                    help="Vault ID (must be registered in vaults table)")
+    pp.add_argument("--vault-root", required=True, type=Path,
+                    help="Absolute path to vault root directory")
+    pp.add_argument("--source-page", required=True,
+                    help="Source page slug or relative path within vault")
+    pp.add_argument("--db-path", default=None,
+                    help="Override global DB path (default: standard XDG location)")
+
+    # ---- apply subparser ----
+    pa = sub.add_parser("apply",
+                        help="Consume candidates JSON, write pages + manifest.")
+    pa.add_argument("--vault", required=True,
+                    help="Vault ID (must be registered in vaults table)")
+    pa.add_argument("--vault-root", required=True, type=Path,
+                    help="Absolute path to vault root directory")
+    pa.add_argument("--source-page", required=True,
+                    help="Source page slug or relative path within vault")
+    pa.add_argument("--db-path", default=None,
+                    help="Override global DB path (default: standard XDG location)")
+    pa.add_argument("--source-hash", required=True,
+                    help="sha256 hex of the source body, as emitted by `prepare`; "
+                         "mismatch → SOURCE_CHANGED_DURING_EXTRACTION (Q5).")
+    pa.add_argument("--ingest", action="store_true",
+                    help="In-process indexer dispatch (Decision-15) — "
+                         "call index_from_manifest after manifest emit")
+    # `--orchestrator-id` is added in 003-v3-05 (NOT this bead).
+    cand_group = pa.add_mutually_exclusive_group(required=True)
+    cand_group.add_argument("--candidates-file", type=Path, default=None,
+                            help="Path to JSON file inside the vault with candidates "
+                                 "array (mutex with --candidates-stdin).")
+    cand_group.add_argument("--candidates-stdin", action="store_true",
+                            help="Read candidates JSON from stdin "
+                                 "(mutex with --candidates-file).")
+    return p
+
+
+def prepare(args: argparse.Namespace) -> int:
+    """`wiki-extract-concepts prepare` subcommand (v3.1).
+
+    Deterministic recon + idempotency check. Reads the source page, computes
+    sha256, queries source_state for is_unchanged, loads known entities, and
+    builds a missing_concept_files drift list. Emits a JSON envelope the
+    calling orchestrator consumes to decide whether to short-circuit (UC-09
+    v3.1 is_unchanged path) or proceed to LLM-driven synthesis + `apply`.
+
+    No LLM call in this path — Decision-17.
+    """
+    vault_root = args.vault_root.resolve(strict=True)
+    src_page = args.source_page
+
+    # H-1 (regression migration from 003-v3-11a): absolute --source-page →
+    # INVALID_SOURCE_PATH (distinct from SOURCE_NOT_FOUND so the operator
+    # sees the actual problem). Fire BEFORE any other resolution work.
+    if Path(src_page).is_absolute():
+        return emit({
+            "error": "INVALID_SOURCE_PATH",
+            "message": (f"--source-page must be a vault-relative slug or "
+                        f"path, not absolute ({src_page!r}). Pass the "
+                        "page slug (e.g., 'self-improving-agent') or a "
+                        "relative path inside --vault-root."),
+        }, exit_code=2)
+
+    # Try slug-form first (most common): `_sources/<slug>.md`.
+    sources_dir = vault_root / "_sources"
+    slug_path = sources_dir / f"{src_page}.md"
+    if slug_path.is_file():
+        candidate_path = slug_path
+    else:
+        candidate_path = vault_root / src_page
+
+    try:
+        source_path = candidate_path.resolve(strict=True)
+        validate_inside_vault(source_path, vault_root)
+    except (FileNotFoundError, PathTraversalError) as e:
+        return emit({"error": "SOURCE_NOT_FOUND",
+                     "message": f"source-page {src_page!r} not found in vault: {e}"},
+                    exit_code=2)
+
+    # H-3 (regression migration from 003-v3-11a): validate the derived
+    # source_slug against the kebab regex BEFORE any other work. Dotted
+    # filenames (Foo.Bar.md) would otherwise propagate into apply where
+    # they'd hit the DB CHECK constraint mid-pipeline.
+    source_slug = source_path.stem
+    if not _SLUG_RE.match(source_slug):
+        return emit({
+            "error": "INVALID_SOURCE_SLUG",
+            "message": (f"source-page filename {source_slug!r} does not "
+                        "yield a valid kebab-case slug "
+                        "(^[a-z0-9][a-z0-9-]{0,62}$). Rename the file or "
+                        "pass --source-page with the canonical slug."),
+        }, exit_code=2)
+
+    # M-3: stat-check size BEFORE read_text to bound memory.
+    if source_path.stat().st_size > _MAX_SOURCE_BODY_BYTES:
+        return emit({
+            "error": "SOURCE_TOO_LARGE",
+            "message": (f"source-page st_size exceeds the {_MAX_SOURCE_BODY_BYTES}-byte cap "
+                        "(10 MiB); refuse to read into memory."),
+        }, exit_code=2)
+
+    source_body = source_path.read_text(encoding="utf-8")
+    source_hash = hashlib.sha256(source_body.encode("utf-8")).hexdigest()
+
+    repo = make_repo({
+        "vault_id": args.vault,
+        **({"db_path": args.db_path} if args.db_path else {}),
+    })
+    try:
+        is_unchanged = check_idempotency(repo, args.vault, source_slug, source_hash)
+        known = load_known_entities(repo, args.vault)
+        known_slugs = [e["slug"] for e in known]
+
+        # M-1 / Q16: disk-vs-DB drift sweep. Eager O(N) in v3.1; P-9 documents
+        # the deferred lazy variant for vaults with 10k+ entities.
+        concepts_dir = vault_root / "_concepts"
+        missing_concept_files: list[str] = []
+        for slug in known_slugs:
+            if not (concepts_dir / f"{slug}.md").is_file():
+                missing_concept_files.append(slug)
+
+        return emit({
+            "vault_id": args.vault,
+            "source_slug": source_slug,
+            "source_path": str(source_path),
+            "source_hash": source_hash,
+            "is_unchanged": is_unchanged,
+            "known_concepts": known,
+            "missing_concept_files": missing_concept_files,
+        })
+    finally:
+        repo.close()
+
+
+def apply(args: argparse.Namespace) -> int:
+    """`wiki-extract-concepts apply` subcommand — implemented in task-003-v3-03."""
+    raise NotImplementedError("task-003-v3-03 apply subcommand")
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry-point. Returns process exit code (R-42 mapping)."""
-    args = _build_parser().parse_args(argv)
+    """CLI entry-point (v3.1). Dispatches to `prepare` or `apply` subcommand.
+
+    BREAKING CHANGE vs v2: legacy single-command shape (no subcommand) is
+    rejected at argparse with a usage error pointing at `{prepare,apply}`.
+    See 003-v3-11a (deletion of legacy-shape main() tests) + this bead's
+    dispatch shim.
+    """
+    args = _build_parser_v3().parse_args(argv)
+    if args.cmd == "prepare":
+        return prepare(args)
+    if args.cmd == "apply":
+        return apply(args)
+    # argparse(required=True) makes this unreachable, but mypy-strict
+    # likes the safety net.
+    return 1
+
+
+def _legacy_main(argv: list[str] | None = None) -> int:
+    """v2 CLI entry-point body. Preserved across 003-v3-00..06 so the 9
+    anthropic-mock function tests in tests/test_wiki_extract_concepts.py
+    keep their dependencies (`extract_concepts_llm` etc.) importable.
+    Deleted in 003-v3-06 alongside the rest of the legacy v2 surface.
+    """
+    args = _build_legacy_parser().parse_args(argv)
     vault_root = args.vault_root.resolve(strict=True)
 
     # Resolve source-page (slug → relative path) and validate inside vault.
