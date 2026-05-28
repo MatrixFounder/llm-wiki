@@ -63,10 +63,33 @@ from scripts.wiki_skills._manifest_consumer import (
 
 
 class ExtractionParseError(Exception):
-    """Raised when the LLM returns malformed JSON or schema-violating output.
+    """Raised when the candidates payload returned by the calling agent is
+    malformed JSON or schema-violating.
 
-    Bound to exit code 4 (R-42 d). Real raise in I-7.4 (bead 003-04).
+    Bound to exit code 4 (R-42 d).
+
+    v3.1 (003-v3-02) extends the v2 message-only surface with three optional
+    structured attributes for sub-envelope routing:
+        .error  — sub-envelope code (e.g. "UNKNOWN_FIELD", "FIELD_TOO_LONG",
+                  "CANDIDATE_COUNT_OUT_OF_BOUNDS", "FIELD_QUOTE_NOT_IN_BODY").
+        .field  — the offending field name (NEVER the value — CWE-117 guard).
+        .reason — short structured reason string; the apply() caller maps this
+                  into the JSON error envelope's `reason` key.
+    Legacy callers that pass only a single message string continue to work.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error: str | None = None,
+        field: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error = error
+        self.field = field
+        self.reason = reason
 
 
 class LLMUnavailableError(Exception):
@@ -141,6 +164,17 @@ _MAX_SOURCE_BODY_CHARS = 100_000
 # existing validate_manifest body cap pattern.
 _MAX_SOURCE_BODY_BYTES = 10_485_760  # 10 MiB
 
+# v3.1 strict-validator caps (003-v3-02 / H-2 / H-6 / H-9):
+# Aliased name kept for v2 patch-target compatibility until 003-v3-06.
+_REQUIRED_CANDIDATE_KEYS = _REQUIRED_LLM_KEYS  # forward alias
+_CANDIDATE_COUNT_MIN = 1
+_CANDIDATE_COUNT_MAX = 25
+_FIELD_CAPS = {
+    "name": 200,
+    "definition": 2000,
+    "source_quote": 500,
+}
+
 
 def _build_extraction_prompt(
     source_body: str,
@@ -173,44 +207,132 @@ def _build_extraction_prompt(
     )
 
 
-def _validate_extraction_schema(items: list[Any]) -> None:
-    """Assert every item in the LLM response matches the required schema.
+def _validate_candidates_schema(
+    items: list[Any], source_body: str | None = None,
+) -> None:
+    """Strict-mode validation of the calling-agent's candidates payload.
 
-    R-33(d-e), Decision-10. Raises ``ExtractionParseError`` on any
-    deviation with the offending item dumped (truncated to 500 chars).
-
-    M-2 (vdd-multi 2026-05-27 critic-logic): slug-regex check moved to
-    this boundary so a malformed slug fails fast (exit 4
-    EXTRACTION_PARSE_ERROR) rather than propagating to
-    ``write_concept_page`` which would raise ``PathTraversalError`` —
-    uncaught in ``main()`` and crashing the CLI with a stack trace.
+    v3.1 (003-v3-02) extends v2's `_validate_extraction_schema`:
+      * **strict-equality on keys** (H-9): rejects extra keys with
+        UNKNOWN_FIELD (was: subset check that silently ignored extras).
+      * **count bound 1≤N≤25** (H-2): rejects empty arrays and N≥26 with
+        CANDIDATE_COUNT_OUT_OF_BOUNDS.
+      * **per-field caps** (H-6): name≤200, definition≤2000,
+        source_quote≤500 → FIELD_TOO_LONG.
+      * **optional quote-in-body check** (M-5): if `source_body` is passed
+        AND env var WIKI_EXTRACT_NO_QUOTE_CHECK is NOT set, assert
+        item['source_quote'] is a substring of source_body. Mismatch →
+        FIELD_QUOTE_NOT_IN_BODY.
+      * **CWE-117 / CWE-209 invariant**: the raised ExtractionParseError
+        carries .error / .field / .reason structured attrs. The offending
+        VALUE is NEVER included in any attribute. The apply() caller maps
+        these into the JSON envelope without echoing content.
     """
+    # H-2: count bound
+    if not (_CANDIDATE_COUNT_MIN <= len(items) <= _CANDIDATE_COUNT_MAX):
+        raise ExtractionParseError(
+            f"candidates count={len(items)} out of bounds "
+            f"[{_CANDIDATE_COUNT_MIN}, {_CANDIDATE_COUNT_MAX}]",
+            error="CANDIDATE_COUNT_OUT_OF_BOUNDS",
+            field=None,
+            reason=(f"count={len(items)} not in "
+                    f"[{_CANDIDATE_COUNT_MIN}, {_CANDIDATE_COUNT_MAX}]"),
+        )
+
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             raise ExtractionParseError(
-                f"LLM item #{idx} not a dict: {str(item)[:500]}"
+                f"candidate #{idx} not a dict",
+                error="EXTRACTION_PARSE_ERROR",
+                field=None,
+                reason=f"item #{idx} is not a JSON object",
             )
-        missing = _REQUIRED_LLM_KEYS - item.keys()
-        if missing:
+
+        # H-9: strict-equality on keys (no extras, no missing).
+        extra = item.keys() - _REQUIRED_CANDIDATE_KEYS
+        missing = _REQUIRED_CANDIDATE_KEYS - item.keys()
+        if extra:
+            offending = sorted(extra)[0]
             raise ExtractionParseError(
-                f"LLM item #{idx} missing keys {sorted(missing)}: "
-                f"{json.dumps(item)[:500]}"
+                f"candidate #{idx} has unknown key (envelope omits value)",
+                error="UNKNOWN_FIELD",
+                field=offending,
+                reason=f"item #{idx} has unknown key {offending!r} "
+                       "(strict mode rejects extras)",
             )
+        if missing:
+            offending = sorted(missing)[0]
+            raise ExtractionParseError(
+                f"candidate #{idx} missing keys {sorted(missing)}",
+                error="EXTRACTION_PARSE_ERROR",
+                field=offending,
+                reason=f"item #{idx} missing keys {sorted(missing)}",
+            )
+
+        # H-6: per-field caps (length check; offending value NOT echoed).
+        for field_name, cap in _FIELD_CAPS.items():
+            value = item[field_name]
+            if not isinstance(value, str):
+                raise ExtractionParseError(
+                    f"candidate #{idx} field {field_name!r} not a string",
+                    error="EXTRACTION_PARSE_ERROR",
+                    field=field_name,
+                    reason=(f"item #{idx} field {field_name!r} is "
+                            f"{type(value).__name__}, expected str"),
+                )
+            if len(value) > cap:
+                raise ExtractionParseError(
+                    f"candidate #{idx} field {field_name!r} exceeds cap",
+                    error="FIELD_TOO_LONG",
+                    field=field_name,
+                    reason=(f"item #{idx} field {field_name!r} length "
+                            f"{len(value)} exceeds cap {cap}"),
+                )
+
+        # Preserved v2 invariants: slug regex, span regex, entity_type whitelist.
         if not _SLUG_RE.match(str(item["slug"])):
             raise ExtractionParseError(
-                f"LLM item #{idx} slug {item['slug']!r} fails kebab-case "
-                f"regex ^[a-z0-9][a-z0-9-]{{0,62}}$"
+                f"candidate #{idx} slug fails kebab-case regex",
+                error="EXTRACTION_PARSE_ERROR",
+                field="slug",
+                reason=(f"item #{idx} slug fails regex "
+                        "^[a-z0-9][a-z0-9-]{0,62}$"),
             )
         if not _SOURCE_SPAN_RE.match(str(item["source_span"])):
             raise ExtractionParseError(
-                f"LLM item #{idx} source_span {item['source_span']!r} does "
-                f"not match Lstart-Lend (Decision-10)"
+                f"candidate #{idx} source_span fails Lstart-Lend regex",
+                error="EXTRACTION_PARSE_ERROR",
+                field="source_span",
+                reason=(f"item #{idx} source_span does not match "
+                        "^L\\d+-L\\d+$ (Decision-10)"),
             )
         if item["entity_type"] not in _ALLOWED_ENTITY_TYPES:
             raise ExtractionParseError(
-                f"LLM item #{idx} entity_type {item['entity_type']!r} not "
-                f"in allowed set {sorted(_ALLOWED_ENTITY_TYPES)}"
+                f"candidate #{idx} entity_type not in allowed set",
+                error="EXTRACTION_PARSE_ERROR",
+                field="entity_type",
+                reason=(f"item #{idx} entity_type not in "
+                        f"{sorted(_ALLOWED_ENTITY_TYPES)}"),
             )
+
+        # M-5: optional quote-in-body check.
+        if (source_body is not None
+                and not os.environ.get("WIKI_EXTRACT_NO_QUOTE_CHECK")):
+            if item["source_quote"] not in source_body:
+                raise ExtractionParseError(
+                    f"candidate #{idx} source_quote not found in body",
+                    error="FIELD_QUOTE_NOT_IN_BODY",
+                    field="source_quote",
+                    reason=(f"item #{idx} source_quote is not a verbatim "
+                            "substring of source_body (set "
+                            "WIKI_EXTRACT_NO_QUOTE_CHECK=1 to skip)"),
+                )
+
+
+# v2 alias — preserved through 003-v3-06 so the 9 remaining anthropic-mock
+# function tests in tests/test_wiki_extract_concepts.py keep importing the
+# old name. Deleted in 003-v3-06.
+_validate_extraction_schema = _validate_candidates_schema
 
 
 def extract_concepts_llm(

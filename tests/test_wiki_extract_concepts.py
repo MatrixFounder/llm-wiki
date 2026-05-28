@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from unittest import mock
 
 import pytest
@@ -654,6 +654,110 @@ def test_classify_candidates_defensive_copy() -> None:
     create_list, _ = wec.classify_candidates([original], set())
     assert "action" not in original  # original untouched
     assert create_list[0]["action"] == "create"
+
+
+# ============================================================================
+# 003-v3-02: strict-validator (R-33′, R-42)
+# ============================================================================
+
+
+def _valid_candidate(**overrides: Any) -> dict[str, Any]:
+    """Helper: build a canonical candidate with optional field overrides."""
+    base = {
+        "slug": "sharpe-ratio",
+        "name": "Sharpe Ratio",
+        "definition": "A risk-adjusted return measure.",
+        "source_quote": "this exact quote",
+        "source_span": "L1-L1",
+        "entity_type": "concept",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_validator_unknown_field_raises_H9() -> None:
+    """H-9: strict-equality on keys rejects extras with UNKNOWN_FIELD;
+    envelope identifies the field name but NEVER echoes its value."""
+    item = _valid_candidate()
+    item["evil"] = "leak-me-please"
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([item])
+    assert ei.value.error == "UNKNOWN_FIELD"
+    assert ei.value.field == "evil"
+    # CWE-117: offending value MUST NOT appear in any envelope attr.
+    assert "leak-me-please" not in (ei.value.reason or "")
+    assert "leak-me-please" not in str(ei.value)
+
+
+def test_validator_count_bound_empty_raises_H2() -> None:
+    """H-2: count < 1 → CANDIDATE_COUNT_OUT_OF_BOUNDS."""
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([])
+    assert ei.value.error == "CANDIDATE_COUNT_OUT_OF_BOUNDS"
+
+
+def test_validator_count_bound_oversize_raises_H2() -> None:
+    """H-2: count > 25 → CANDIDATE_COUNT_OUT_OF_BOUNDS."""
+    items = [_valid_candidate(slug=f"slug-{i}") for i in range(26)]
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema(items)
+    assert ei.value.error == "CANDIDATE_COUNT_OUT_OF_BOUNDS"
+
+
+def test_validator_field_too_long_definition_raises_H6() -> None:
+    """H-6: definition > 2000 chars → FIELD_TOO_LONG, no content echo."""
+    item = _valid_candidate(definition="x" * 2001)
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([item])
+    assert ei.value.error == "FIELD_TOO_LONG"
+    assert ei.value.field == "definition"
+    # CWE-117: the long string must not appear in the envelope.
+    assert "x" * 2001 not in (ei.value.reason or "")
+    assert "x" * 2001 not in str(ei.value)
+
+
+def test_validator_field_too_long_name_raises_H6() -> None:
+    """H-6: name > 200 chars → FIELD_TOO_LONG, field='name'."""
+    item = _valid_candidate(name="N" * 201)
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([item])
+    assert ei.value.error == "FIELD_TOO_LONG"
+    assert ei.value.field == "name"
+
+
+def test_validator_field_too_long_source_quote_raises_H6() -> None:
+    """H-6: source_quote > 500 chars → FIELD_TOO_LONG, field='source_quote'."""
+    item = _valid_candidate(source_quote="Q" * 501)
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([item])
+    assert ei.value.error == "FIELD_TOO_LONG"
+    assert ei.value.field == "source_quote"
+
+
+def test_validator_quote_in_body_optional_M5() -> None:
+    """M-5: optional quote-in-body check (when source_body is provided AND
+    WIKI_EXTRACT_NO_QUOTE_CHECK is NOT set). Match → pass; mismatch → raise."""
+    item = _valid_candidate(source_quote="this exact quote")
+    body_match = "preamble ... this exact quote ... epilogue"
+    body_miss = "completely different content"
+    # Match → no raise.
+    wec._validate_candidates_schema([item], source_body=body_match)
+    # Mismatch → FIELD_QUOTE_NOT_IN_BODY.
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema([item], source_body=body_miss)
+    assert ei.value.error == "FIELD_QUOTE_NOT_IN_BODY"
+    assert ei.value.field == "source_quote"
+
+
+def test_validator_quote_in_body_bypass_env_var_M5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M-5: WIKI_EXTRACT_NO_QUOTE_CHECK=1 bypasses the quote-in-body check
+    even when source_body is provided."""
+    monkeypatch.setenv("WIKI_EXTRACT_NO_QUOTE_CHECK", "1")
+    item = _valid_candidate(source_quote="not present in body at all")
+    # Would otherwise raise FIELD_QUOTE_NOT_IN_BODY; the env var bypasses.
+    wec._validate_candidates_schema([item], source_body="just preamble")
 
 
 # ============================================================================
