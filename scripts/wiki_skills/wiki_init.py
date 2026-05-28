@@ -24,7 +24,13 @@ from typing import Any
 import yaml
 
 from scripts.wiki_index.factory import make_repo
-from scripts.wiki_index.layout import SCAFFOLD_DIRS
+from scripts.wiki_index.layout import (
+    COURSE_TIER_DIR,
+    LOG_SUBDIR,
+    SCAFFOLD_DIRS,
+    SCHEMA_FILE,
+    VAULT_INDEX_DIR,
+)
 from scripts.wiki_index.models import LogEvent, Vault
 
 _VAULT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
@@ -85,7 +91,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
         "layout": args.layout or "per-project",
         "description": args.description or f"LLM Wiki vault: {vault_id}",
     }
-    schema_path = vault_root / "WIKI_SCHEMA.md"
+    schema_path = vault_root / SCHEMA_FILE
     if not schema_path.exists() or args.force:
         schema_path.write_text(
             Template((_TEMPLATES_DIR / "WIKI_SCHEMA.md.tmpl").read_text())
@@ -97,11 +103,12 @@ def scaffold_new(args: argparse.Namespace) -> int:
             Template((_TEMPLATES_DIR / "CLAUDE.md.tmpl").read_text())
             .substitute(placeholders)
         )
-    idx = vault_root / "00-Vault-Index" / "index.md"
+    idx = vault_root / VAULT_INDEX_DIR / "index.md"
     if not idx.exists():
         idx.write_text(f"# {vault_id} Index\n\nAuto-generated.\n")
     now = datetime.now()
-    log_month = vault_root / "00-Vault-Index" / "log" / f"{now.strftime('%Y-%m')}.md"
+    log_month = (vault_root / VAULT_INDEX_DIR / LOG_SUBDIR /
+                 f"{now.strftime('%Y-%m')}.md")
     if not log_month.exists():
         log_month.write_text(f"# Log {now.strftime('%Y-%m')}\n\n")
 
@@ -140,7 +147,7 @@ def register_existing(args: argparse.Namespace) -> int:
     except FileNotFoundError:
         return _emit({"error": "VAULT_NOT_FOUND", "vault": str(args.vault)},
                      exit_code=6)
-    schema_path = vault_root / "WIKI_SCHEMA.md"
+    schema_path = vault_root / SCHEMA_FILE
     if not schema_path.is_file():
         return _emit({
             "error": "MISSING_WIKI_SCHEMA",
@@ -163,7 +170,7 @@ def register_existing(args: argparse.Namespace) -> int:
             "received": vault_id,
             "pattern": _VAULT_ID_RE.pattern,
         }, exit_code=6)
-    is_two_tier = any((vault_root / "Lessons").glob("*/WIKI_SCHEMA.md"))
+    is_two_tier = any((vault_root / COURSE_TIER_DIR).glob(f"*/{SCHEMA_FILE}"))
     config: dict[str, Any] = {"vault_id": vault_id}
     if args.db_path:
         config["db_path"] = str(args.db_path)
@@ -209,7 +216,7 @@ def reconcile(args: argparse.Namespace) -> int:
     if not args.vault:
         return _emit({"error": "MISSING_VAULT_ARG"}, exit_code=1)
     vault_root = Path(args.vault).resolve(strict=True)
-    schema_path = vault_root / "WIKI_SCHEMA.md"
+    schema_path = vault_root / SCHEMA_FILE
     if not schema_path.is_file():
         return _emit({"error": "MISSING_WIKI_SCHEMA"}, exit_code=6)
     fm = _split_frontmatter(schema_path.read_text(encoding="utf-8"))

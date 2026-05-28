@@ -2303,6 +2303,201 @@ def test_apply_error_envelopes_never_echo_content(
             )
 
 
+def test_prepare_resolves_course_tier_sources_slug_form(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Dogfood regression (trade-agents 2026-05-29): slug-form lookup
+    must find `<vault>/Lessons/<Course>/_sources/<slug>.md` when the
+    vault uses the Karpathy course-tier layout (no vault-tier
+    `_sources/` exists)."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    course_sources = vault_root / "Lessons" / "ZeroOne Systems" / "_sources"
+    course_sources.mkdir(parents=True)
+    (course_sources / "self-improving-trading-agent.md").write_text(
+        "---\ntype: summary\n---\nbody.", encoding="utf-8",
+    )
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args(
+        "trade-agents", vault_root, "self-improving-trading-agent", db_path,
+    )
+    rc = wec.prepare(args)
+    assert rc == 0
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["source_slug"] == "self-improving-trading-agent"
+    assert payload["source_path"] == (
+        "Lessons/ZeroOne Systems/_sources/self-improving-trading-agent.md"
+    )
+
+
+def test_prepare_ambiguous_course_tier_slug_returns_envelope(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Slug-form lookup must error out (not silently pick one) when the
+    same slug appears under two different `Lessons/<Course>/_sources/`
+    dirs. Operator should pass the full path to disambiguate."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    for course in ("Course-A", "Course-B"):
+        d = vault_root / "Lessons" / course / "_sources"
+        d.mkdir(parents=True)
+        (d / "shared-slug.md").write_text(
+            "---\ntype: summary\n---\nbody.", encoding="utf-8",
+        )
+    args = _make_prepare_args("trade-agents", vault_root, "shared-slug")
+    rc = wec.prepare(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "AMBIGUOUS_SOURCE_SLUG"
+
+
+def test_prepare_missing_concept_files_scans_course_tier_concepts(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Dogfood regression: `missing_concept_files` must look at every
+    `_concepts/` dir in the vault, including course-tier
+    `Lessons/<Course>/_concepts/`. Without this, a Karpathy vault
+    (concepts in course-tier, no vault-tier `_concepts/`) would have
+    every known entity falsely reported as missing."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    course_sources = vault_root / "Lessons" / "ZeroOne Systems" / "_sources"
+    course_sources.mkdir(parents=True)
+    (course_sources / "sample-doc.md").write_text(
+        "---\ntype: summary\n---\nbody.", encoding="utf-8",
+    )
+    course_concepts = vault_root / "Lessons" / "ZeroOne Systems" / "_concepts"
+    course_concepts.mkdir()
+    # alpha + beta are present in course-tier _concepts/; gamma is not.
+    (course_concepts / "alpha.md").write_text("# Alpha\n", encoding="utf-8")
+    (course_concepts / "beta.md").write_text("# Beta\n", encoding="utf-8")
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    for slug, name in [("alpha", "Alpha"), ("beta", "Beta"), ("gamma", "Gamma")]:
+        _insert_entity(bootstrap, "trade-agents", slug, name)
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    args = _make_prepare_args("trade-agents", vault_root, "sample-doc", db_path)
+    rc = wec.prepare(args)
+    assert rc == 0
+    payload = _json.loads(capsys.readouterr().out)
+    assert sorted(payload["missing_concept_files"]) == ["gamma"]
+
+
+def test_derive_source_project_vault_tier(tmp_path: Path) -> None:
+    """Vault-tier source paths derive project = `_vault_` (the sentinel
+    used by `discover_pages`)."""
+    vault_root = tmp_path / "vault"
+    src = vault_root / "_sources" / "sample-doc.md"
+    assert wec._derive_source_project(src, vault_root) == "_vault_"
+
+
+def test_derive_source_project_course_tier(tmp_path: Path) -> None:
+    """Course-tier source paths derive project = slugify(course-name).
+    Dogfood regression: hardcoded `_vault_` broke the
+    page_entity_refs FK on real-world course-tier vaults."""
+    vault_root = tmp_path / "vault"
+    src = vault_root / "Lessons" / "ZeroOne Systems" / "_sources" / "sample.md"
+    assert wec._derive_source_project(src, vault_root) == "zeroone-systems"
+    # Cyrillic / Unicode course names must also slugify cleanly.
+    src2 = vault_root / "Lessons" / "Курс A" / "_sources" / "page.md"
+    out = wec._derive_source_project(src2, vault_root)
+    assert isinstance(out, str) and out  # non-empty kebab string
+
+
+def test_apply_writes_course_tier_concept_pages_to_sibling_concepts_dir(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dogfood regression: when a source page lives in
+    `Lessons/<Course>/_sources/`, `apply` must write concept pages to
+    `Lessons/<Course>/_concepts/` (sibling), NOT to vault-tier
+    `<vault>/_concepts/`. Keeps course-tier inputs and outputs
+    co-located per the operator's existing layout."""
+    import hashlib as _hashlib
+    import io
+    import json as _json
+    vault_root = tmp_path / "vault"
+    course_sources = vault_root / "Lessons" / "ZeroOne Systems" / "_sources"
+    course_sources.mkdir(parents=True)
+    body = "---\ntype: summary\n---\nSharpe ratio measures excess return per unit of volatility."
+    src = course_sources / "sample-doc.md"
+    src.write_text(body, encoding="utf-8")
+    source_hash = _hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, "trade-agents", tmp_path)
+    # Pre-register the source page with the COURSE-TIER project value
+    # so apply's `_derive_source_project` produces a matching key that
+    # satisfies the page_entity_refs FK
+    # (slugify("ZeroOne Systems") → "zeroone-systems").
+    bootstrap._connect().execute(  # type: ignore[attr-defined]
+        "INSERT INTO pages(vault_id, slug, project, type, title, file_path, "
+        "date, last_modified, file_hash, frontmatter_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("trade-agents", "sample-doc", "zeroone-systems", "summary",
+         "Sample Doc",
+         "Lessons/ZeroOne Systems/_sources/sample-doc.md",
+         "2026-05-29", "2026-05-29T00:00:00", "seed", "{}"),
+    )
+    bootstrap._connect().commit()  # type: ignore[attr-defined]
+    bootstrap.close()
+    import shutil as _sh
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+
+    candidates = [{
+        "slug": "sharpe-ratio",
+        "name": "Sharpe Ratio",
+        "definition": "A measure of risk-adjusted return.",
+        "source_quote": "Sharpe ratio measures excess return per unit of volatility.",
+        "source_span": "L3-L3",
+        "entity_type": "concept",
+    }]
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps(candidates).encode("utf-8"))
+        })(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    rc = wec.apply(args)
+    assert rc == 0
+    # Concept page MUST land in course-tier _concepts/, NOT vault-tier.
+    assert (vault_root / "Lessons" / "ZeroOne Systems" / "_concepts" /
+            "sharpe-ratio.md").is_file()
+    assert not (vault_root / "_concepts").exists(), (
+        "vault-tier _concepts/ should NOT have been created for a "
+        "course-tier source page (dogfood regression)"
+    )
+
+
 def test_prepare_source_page_escape_blocked_by_H1_layout_invariant(
     repo_factory: Callable[[], IndexRepository], tmp_path: Path,
     capsys: pytest.CaptureFixture,

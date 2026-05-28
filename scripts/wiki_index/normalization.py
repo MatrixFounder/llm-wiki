@@ -18,6 +18,8 @@ from typing import Any
 
 from slugify import slugify
 
+from scripts.wiki_index.layout import CONCEPTS_SUBDIR, ENTITIES_SUBDIR
+
 
 def _json_safe(value: Any) -> Any:
     """Recursively convert date/datetime to ISO strings. Required because
@@ -102,8 +104,8 @@ def _slugify_concept(c: str) -> str:
 
 
 _PATH_TYPE_FALLBACK: dict[str, str] = {
-    "_concepts": "concept",
-    "_entities": "external",
+    CONCEPTS_SUBDIR: "concept",
+    ENTITIES_SUBDIR: "external",
 }
 
 

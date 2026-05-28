@@ -10,6 +10,8 @@ from typing import Any
 import frontmatter  # python-frontmatter
 from slugify import slugify
 
+from scripts.wiki_index.layout import COURSE_TIER_DIR, VAULT_TIER_PROJECT
+
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 
@@ -56,18 +58,18 @@ def extract_wiki_links(body: str) -> list[tuple[str, int, str]]:
 def derive_slug(path: Path, vault_root: Path) -> tuple[str, str]:
     """Derive (slug, project) from a file path.
 
-    project='<course-slug>' if path is under `<vault>/Lessons/<Course>/...`;
-    else '_vault_' sentinel. Slug = file stem (without .md). Project name is
-    kebab-slugified.
+    project = slugified course-directory name if `path` lives under
+    `<vault>/Lessons/<Course>/…`; else `VAULT_TIER_PROJECT` sentinel
+    (`layout.py`). Slug = file stem (without .md).
     """
     slug = path.stem
     try:
         rel = path.relative_to(vault_root)
     except ValueError:
-        return slug, "_vault_"
+        return slug, VAULT_TIER_PROJECT
     parts = rel.parts
-    if len(parts) >= 2 and parts[0] == "Lessons":
+    if len(parts) >= 2 and parts[0] == COURSE_TIER_DIR:
         course_name = parts[1]
         project = slugify(course_name, lowercase=True, separator="-")
         return slug, project
-    return slug, "_vault_"
+    return slug, VAULT_TIER_PROJECT

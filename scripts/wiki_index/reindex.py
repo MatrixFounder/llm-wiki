@@ -11,10 +11,13 @@ from typing import Any, TYPE_CHECKING
 from slugify import slugify
 
 from scripts.wiki_index.layout import (
+    CONCEPTS_SUBDIR,
     COURSE_TIER_DIR,
+    ENTITIES_SUBDIR,
     LOG_SUBDIR,
     PAGE_SUBDIRS,
     VAULT_INDEX_DIR,
+    VAULT_TIER_PROJECT,
 )
 from scripts.wiki_index.logfile import parse_log_md
 from scripts.wiki_index.models import Entity, LogEvent, Page
@@ -44,7 +47,7 @@ def discover_pages(vault_root: Path) -> list[tuple[Path, str, str]]:
         if base.is_dir():
             for f in base.rglob("*.md"):
                 if f.is_file():
-                    out.append((f, f.stem, "_vault_"))
+                    out.append((f, f.stem, VAULT_TIER_PROJECT))
     # Course tier under Lessons/
     lessons = vault_root / COURSE_TIER_DIR
     if lessons.is_dir():
@@ -246,14 +249,14 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # round-trip. Fall back: _concepts/* → concept, _entities/*
                 # → external when frontmatter has no `type:`.
                 rel_parts = path.relative_to(vault_root).parts
-                if any(p in ("_concepts", "_entities") for p in rel_parts):
+                if any(p in (CONCEPTS_SUBDIR, ENTITIES_SUBDIR) for p in rel_parts):
                     fm_type = updated_fm.get("type")
                     if fm_type in (
                         "concept", "person", "company", "product",
                         "group", "event", "work", "external",
                     ):
                         e_type = fm_type
-                    elif "_concepts" in rel_parts:
+                    elif CONCEPTS_SUBDIR in rel_parts:
                         e_type = "concept"
                     else:
                         e_type = "external"

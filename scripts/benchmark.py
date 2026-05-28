@@ -16,6 +16,12 @@ import tempfile
 import time
 from datetime import date, datetime
 from pathlib import Path
+
+from scripts.wiki_index.layout import (
+    CONCEPTS_SUBDIR,
+    SCHEMA_FILE,
+    SOURCES_SUBDIR,
+)
 from typing import Any, Callable
 
 from scripts.wiki_index.models import Vault
@@ -49,11 +55,11 @@ def generate_synthetic_vault(
     """
     rng = random.Random(seed)
     target_dir.mkdir(parents=True, exist_ok=True)
-    sources = target_dir / "_sources"
+    sources = target_dir / SOURCES_SUBDIR
     sources.mkdir(exist_ok=True)
-    concepts = target_dir / "_concepts"
+    concepts = target_dir / CONCEPTS_SUBDIR
     concepts.mkdir(exist_ok=True)
-    (target_dir / "WIKI_SCHEMA.md").write_text(
+    (target_dir / SCHEMA_FILE).write_text(
         f"---\nvault_id: {vault_id}\nschema_version: '2.0'\n---\n"
         f"# {vault_id}\n\nSynthetic vault for benchmarking.\n"
     )
@@ -172,7 +178,7 @@ def run_suite(n_pages: int, output_json_path: Path | None = None,
         results.append(search)
 
         # wiki-index-upsert (one fresh page mutation)
-        new_page = vault_root / "_sources" / "bench-mutator.md"
+        new_page = vault_root / SOURCES_SUBDIR / "bench-mutator.md"
         from scripts.wiki_source.base import SourceItem
         from scripts.wiki_source.manual import ManualSourceAdapter
         from scripts.wiki_index.normalization import normalize_frontmatter

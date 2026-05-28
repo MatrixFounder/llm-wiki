@@ -64,6 +64,12 @@ import frontmatter
 logger = logging.getLogger(__name__)
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.layout import (
+    CONCEPTS_SUBDIR,
+    COURSE_TIER_DIR,
+    SOURCES_SUBDIR,
+    VAULT_TIER_PROJECT,
+)
 from scripts.wiki_index.security import (
     PathTraversalError,
     validate_inside_vault,
@@ -561,25 +567,33 @@ def write_concept_page(
     source_slug: str,
     today: date,
     vault_id: str | None = None,
+    concepts_dir: Path | None = None,
 ) -> tuple[Path, str]:
-    """Write ``_concepts/<slug>.md`` atomically with frontmatter + body.
+    """Write ``<concepts_dir>/<slug>.md`` atomically with frontmatter + body.
 
     R-36, R-40. Atomic via tempfile + ``os.replace`` (Decision-12 default).
-    v3.1 (003-v3-04) semantics:
+    Behavior:
 
-      - Symlink refuse (Q15): if ``target.is_symlink()``, raises
+      - Symlink refuse: if ``target.is_symlink()``, raises
         ``PathTraversalError`` BEFORE any read, hash-compute, or write.
-      - Content-hash skip (C-1): if the file exists with byte-identical
-        content to the would-be-written payload → return
-        ``(target, "unchanged")``. If it exists with different content →
-        atomic rewrite + return ``(target, "updated")`` + ``logger.warning``.
-        New file → ``(target, "created")``.
-      - Markdown sanitization (H-7 / Q13): ``name``, ``definition``,
-        ``source_quote``, and ``source_span`` are sanitized before being
-        embedded into the body.
+      - Content-hash skip: if the file exists with byte-identical content
+        to the would-be-written payload → return ``(target, "unchanged")``.
+        If it exists with different content → atomic rewrite + return
+        ``(target, "updated")`` + ``logger.warning``. New file →
+        ``(target, "created")``.
+      - Markdown sanitization: ``name``, ``definition``, ``source_quote``,
+        and ``source_span`` are sanitized before being embedded into the
+        body.
 
-    The ``vault_id`` parameter is explicit (per plan-reviewer nit #3) so
-    the function stays pure — callers should pass ``args.vault``.
+    The ``concepts_dir`` parameter is optional; if omitted, defaults to
+    ``<vault_root>/_concepts/`` (vault-tier layout). Callers writing for
+    a course-tier source page should pass the sibling course's
+    ``_concepts/`` (e.g. ``<vault_root>/Lessons/<Course>/_concepts``).
+    Regardless of where `concepts_dir` lives, the function asserts it
+    resolves inside ``vault_root`` (path-traversal guard).
+
+    The ``vault_id`` parameter is explicit so the function stays pure —
+    callers should pass ``args.vault``.
     """
     slug = candidate["slug"]
     # R-26 / R-40(d) path-traversal guard. We can't call validate_inside_vault
@@ -588,14 +602,14 @@ def write_concept_page(
     # defense in depth even though `_validate_candidates_schema` also checks);
     # (2) the parent resolves inside vault after we mkdir; (3) the final
     # target's resolved parent must equal the validated concepts_dir.
-    # L-3 (vdd-multi 2026-05-28): use precompiled _SLUG_RE instead of a
-    # string literal — same pattern, avoids the per-call `re` module cache
-    # lookup (and any thrash if the cache fills).
+    # L-3: use precompiled _SLUG_RE instead of a string literal — same
+    # pattern, avoids the per-call `re` module cache lookup.
     if not _SLUG_RE.match(slug):
         raise PathTraversalError(
             f"slug {slug!r} fails kebab-case regex; possible path traversal"
         )
-    concepts_dir = vault_root / "_concepts"
+    if concepts_dir is None:
+        concepts_dir = vault_root / CONCEPTS_SUBDIR
     concepts_dir.mkdir(parents=True, exist_ok=True)
     validated_dir = validate_inside_vault(concepts_dir, vault_root)
     target = validated_dir / f"{slug}.md"
@@ -1104,12 +1118,12 @@ def prepare(args: argparse.Namespace) -> int:
         known = load_known_entities(repo, args.vault)
         known_slugs = [e["slug"] for e in known]
 
-        # M-7 (vdd-multi 2026-05-28): one os.scandir instead of N `is_file`
-        # syscalls. At 10k entities on iCloud, this drops from ~100s to
-        # ~100ms. P-9 retired.
-        concepts_dir = vault_root / "_concepts"
+        # M-7: one os.scandir per `_concepts/` dir found in the vault.
+        # Course-tier layout (Karpathy / Lessons pattern) puts concept
+        # pages under `Lessons/<Course>/_concepts/` — sweep BOTH tiers
+        # so the drift report is correct on any layout.
         present_concept_files: set[str] = set()
-        if concepts_dir.is_dir():
+        for concepts_dir in _all_concepts_dirs(vault_root):
             for entry in os.scandir(concepts_dir):
                 if entry.is_file() and entry.name.endswith(".md"):
                     present_concept_files.add(entry.name[:-3])  # strip .md
@@ -1173,24 +1187,111 @@ def _read_file_bounded(path: Path, cap_bytes: int) -> bytes:
         os.close(fd)
 
 
+def _derive_source_project(source_path: Path, vault_root: Path) -> str:
+    """Derive the `pages.project` column value for `source_path`.
+
+    Mirrors `scripts.wiki_index.reindex.discover_pages()`:
+    - vault-tier  (`<vault_root>/_sources/<slug>.md`) → `VAULT_TIER_PROJECT`
+      (sentinel from `layout.py`)
+    - course-tier (`<vault_root>/Lessons/<Course>/_sources/<slug>.md`)
+      → `slugify(<Course>, lowercase=True, separator="-")`
+
+    Load-bearing for `replace_refs`: `page_entity_refs` has an FK on
+    `(vault_id, page_slug, page_project) → pages(vault_id, slug, project)`,
+    so apply MUST emit the same project value the indexer recorded.
+    Hardcoding the vault-tier sentinel worked for vault-tier vaults
+    but failed the FK on course-tier vaults (dogfood signal from
+    `trade-agents` 2026-05-29).
+    """
+    from slugify import slugify
+
+    try:
+        rel = source_path.relative_to(vault_root)
+    except ValueError:
+        return VAULT_TIER_PROJECT
+    parts = rel.parts
+    if len(parts) >= 3 and parts[0] == COURSE_TIER_DIR:
+        return slugify(parts[1], lowercase=True, separator="-")
+    return VAULT_TIER_PROJECT
+
+
+def _all_concepts_dirs(vault_root: Path) -> list[Path]:
+    """Enumerate every `_concepts/` directory present in `vault_root`.
+
+    Supports both layouts (per `layout.py::COURSE_TIER_DIR`):
+    - vault-tier:  `<vault_root>/_concepts/`
+    - course-tier: `<vault_root>/Lessons/<Course>/_concepts/`
+
+    Returns only directories that actually exist on disk. Order is
+    deterministic (vault-tier first, then course-tier sorted by course
+    name) so callers building a `set[slug]` get reproducible behavior.
+    """
+    from scripts.wiki_index.layout import COURSE_TIER_DIR
+
+    found: list[Path] = []
+    vault_tier = vault_root / CONCEPTS_SUBDIR
+    if vault_tier.is_dir():
+        found.append(vault_tier)
+    course_tier_root = vault_root / COURSE_TIER_DIR
+    if course_tier_root.is_dir():
+        for course_dir in sorted(course_tier_root.iterdir()):
+            if not course_dir.is_dir():
+                continue
+            concepts_dir = course_dir / CONCEPTS_SUBDIR
+            if concepts_dir.is_dir():
+                found.append(concepts_dir)
+    return found
+
+
 def _resolve_source_inside_sources(
     src_page: str, vault_root: Path,
 ) -> dict[str, Any] | tuple[Path, str]:
-    """Resolve `--source-page` to a real path inside `<vault_root>/_sources/`.
+    """Resolve `--source-page` to a real path inside SOME `_sources/`.
 
     Returns either an error envelope `dict` (caller emits at exit 2) or
     a `(resolved_path, source_slug)` tuple on success.
 
-    H-1 (vdd-multi 2026-05-28): enforces the `_sources/` layout invariant.
-    The previous resolver allowed `--source-page _sources/../_concepts/foo.md`
-    to escape into `_concepts/`, breaking the documented inputs/outputs
-    separation and corrupting `page_entity_refs` if `--ingest` ran.
+    Supports both layouts:
+    - vault-tier:  `<vault_root>/_sources/<slug>.md`
+    - course-tier: `<vault_root>/Lessons/<Course>/_sources/<slug>.md`
+      (per `layout.py::COURSE_TIER_DIR` — the Karpathy pattern; real
+      operator vaults like `trade-agents` use this exclusively).
+
+    Slug-form lookup tries vault-tier first, then globs course-tier.
+    Ambiguous matches (same slug under two different `_sources/`) yield
+    `AMBIGUOUS_SOURCE_SLUG` so the operator passes the full path instead.
+
+    Layout invariant: the resolved file MUST live in a directory whose
+    name is exactly `SOURCES_SUBDIR` (closes the
+    `_sources/../_concepts/foo.md` traversal escape — operator cannot
+    drive a `_concepts/` page through extraction by spelling a relative
+    path that resolves inside the vault but outside `_sources/`).
     """
-    sources_dir = vault_root / "_sources"
-    slug_path = sources_dir / f"{src_page}.md"
-    if slug_path.is_file():
-        candidate_path = slug_path
+    # Slug-form search: try every `_sources/<slug>.md` under the vault.
+    # Vault-tier first (deterministic), course-tier glob second.
+    candidate_path: Path | None = None
+    vault_tier = vault_root / SOURCES_SUBDIR / f"{src_page}.md"
+    if vault_tier.is_file():
+        candidate_path = vault_tier
     else:
+        course_tier_root = vault_root / COURSE_TIER_DIR
+        if course_tier_root.is_dir():
+            course_matches = sorted(
+                course_tier_root.glob(f"*/{SOURCES_SUBDIR}/{src_page}.md")
+            )
+            course_matches = [p for p in course_matches if p.is_file()]
+            if len(course_matches) > 1:
+                rels = [str(p.relative_to(vault_root)) for p in course_matches]
+                return {
+                    "error": "AMBIGUOUS_SOURCE_SLUG",
+                    "reason": (f"slug {src_page!r} matches multiple "
+                               f"_sources/ entries: {rels}. Pass the full "
+                               "vault-relative path instead of the slug."),
+                }
+            if course_matches:
+                candidate_path = course_matches[0]
+    # Fall back to treating `src_page` as a vault-relative path verbatim.
+    if candidate_path is None:
         candidate_path = vault_root / src_page
 
     try:
@@ -1202,22 +1303,16 @@ def _resolve_source_inside_sources(
             "reason": f"source-page {src_page!r} not found in vault: {e}",
         }
 
-    # H-1: must live directly inside `_sources/`. Reject any path that
-    # resolves elsewhere (including `_concepts/`, `_entities/`, course
-    # subdirs, or the vault root itself).
-    try:
-        resolved_sources = sources_dir.resolve(strict=True)
-    except FileNotFoundError:
-        return {
-            "error": "SOURCE_NOT_FOUND",
-            "reason": ("vault has no _sources/ directory; create it before "
-                       "invoking prepare/apply"),
-        }
-    if source_path.parent != resolved_sources:
+    # H-1: the resolved file's parent directory MUST be named SOURCES_SUBDIR
+    # (regardless of where in the vault tree that `_sources/` lives —
+    # vault-tier, course-tier, or any other future layout per `layout.py`).
+    # Rejects `_sources/../_concepts/foo.md` traversals that resolve to
+    # `_concepts/`, `_entities/`, or any other non-source directory.
+    if source_path.parent.name != SOURCES_SUBDIR:
         return {
             "error": "INVALID_SOURCE_PATH",
             "reason": (f"source-page {src_page!r} resolves outside "
-                       "_sources/ (v3.1 layout invariant: extraction "
+                       "a `_sources/` directory (layout invariant: "
                        "inputs live in _sources/ only)"),
         }
 
@@ -1506,6 +1601,20 @@ def apply(args: argparse.Namespace) -> int:
         "vault_id": args.vault,
         **({"db_path": args.db_path} if args.db_path else {}),
     })
+    # Symmetric to the source-side H-1 layout invariant: write concept
+    # pages to the `_concepts/` sibling of the source page's `_sources/`.
+    # For vault-tier sources → `<vault_root>/_concepts/`. For course-tier
+    # sources → `<vault_root>/Lessons/<Course>/_concepts/`. Keeps the
+    # course tier's inputs and outputs co-located on disk, matching the
+    # operator's existing vault layout.
+    target_concepts_dir = source_path.parent.parent / CONCEPTS_SUBDIR
+
+    # Derive `pages.project` from the source path so the
+    # `page_entity_refs` FK on `(vault_id, page_slug, page_project)`
+    # matches the indexer's recorded value. Vault-tier → VAULT_TIER_PROJECT;
+    # course-tier → slugified course-directory name.
+    source_project = _derive_source_project(source_path, vault_root)
+
     try:
         try:
             known = load_known_entities(repo, args.vault)
@@ -1515,6 +1624,7 @@ def apply(args: argparse.Namespace) -> int:
             for cand in create_list:
                 _target, file_action = write_concept_page(
                     vault_root, cand, source_slug, today, vault_id=args.vault,
+                    concepts_dir=target_concepts_dir,
                 )
                 cand["file_write_action"] = file_action
                 cand["entity_action"] = upsert_extracted_entity(
@@ -1523,7 +1633,7 @@ def apply(args: argparse.Namespace) -> int:
                 )
 
             upsert_entity_refs(
-                repo, args.vault, source_slug, "_vault_",
+                repo, args.vault, source_slug, source_project,
                 create_list + mention_list,
             )
 

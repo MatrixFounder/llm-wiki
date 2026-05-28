@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.wiki_index.layout import SYSTEM_FILES
+from scripts.wiki_index.layout import SOURCES_SUBDIR, SYSTEM_FILES
 from scripts.wiki_index.security import (
     PathTraversalError,
     validate_inside_vault,
@@ -38,7 +38,7 @@ def _hash_file(p: Path) -> str:
 
 def migrate_flat_to_folders(
     vault_path: Path,
-    target_subdir: str = "_sources",
+    target_subdir: str = SOURCES_SUBDIR,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Move flat top-level .md files into <vault>/<target_subdir>/.
@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("vault_path", type=Path)
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--target-subdir", default="_sources")
+    p.add_argument("--target-subdir", default=SOURCES_SUBDIR)
     args = p.parse_args(argv)
 
     if not args.vault_path.is_dir():

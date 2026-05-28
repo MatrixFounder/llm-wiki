@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scripts.wiki_index.layout import VAULT_TIER_PROJECT
+
 if TYPE_CHECKING:
     from scripts.wiki_index.repository import IndexRepository
 
@@ -69,7 +71,7 @@ def render_index(
     # Group by (project, kind)
     by_project: dict[str, dict[str, list[tuple[str, str, str | None]]]] = {}
     for r in rows:
-        proj = r["project"] or "_vault_"
+        proj = r["project"] or VAULT_TIER_PROJECT
         by_project.setdefault(proj, {}).setdefault(r["kind"], []).append(
             (r["slug"], r["title"], r["tldr"])
         )

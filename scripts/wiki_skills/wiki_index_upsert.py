@@ -11,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.layout import SCHEMA_FILE
 from scripts.wiki_index.models import Page
 from scripts.wiki_index.normalization import (
     BodyNormalizationError,
@@ -34,10 +35,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _find_vault_root(src: Path) -> Path | None:
-    """Walk up from src looking for WIKI_SCHEMA.md."""
+    """Walk up from src looking for the vault schema-marker file."""
     current = src.parent
     while True:
-        if (current / "WIKI_SCHEMA.md").is_file():
+        if (current / SCHEMA_FILE).is_file():
             return current
         if current.parent == current:
             return None

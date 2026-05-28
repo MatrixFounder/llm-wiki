@@ -27,11 +27,13 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 
+from scripts.wiki_index.layout import SCHEMA_FILE
+
 # Repository-relative path to the schema (project root = parent of `scripts/`)
 _SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent.parent / "config" / "wiki-config.schema.yaml"
 )
-_WIKI_SCHEMA_MARKER = "WIKI_SCHEMA.md"
+_WIKI_SCHEMA_MARKER = SCHEMA_FILE
 _PROJECT_OVERRIDE_MARKER = ".wiki.yaml"
 
 
