@@ -1,21 +1,13 @@
 # ARCHITECTURE: LLM Wiki MVP
 
-> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B IN-FLIGHT (2026-05-28) — Phase 3a: all 34 atomic tasks implemented; baseline 396 pytest pass + 4 skipped; mypy --strict clean on 55 files; rebuildability E2E gate green. ADRs 001, 002 in effect.
+> **Status**: shipped, no active task. ADRs 001 + 002 in effect.
+> Living document — describes the current architecture, not the change
+> history. For shipped task specs (history, decisions, hardening
+> rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
+> for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
-> **Phase 3b progress**:
-> - TASK 004 (wiki-ingest-vendoring) **SHIPPED** (commit `c409fd8`, 2026-05-27): Decisions 11–14 + 6 `/vdd-multi` hardenings.
-> - TASK 003 v2 (wiki-extract-concepts) **SHIPPED** (2026-05-28): 15 beads + 6 `/vdd-multi` hardenings + 3 LOW fixes; Decisions 15+16.
-> - TASK 003 v3.1 (wiki-extract-concepts deterministic refactor) **SHIPPED** (commit `43812f2`, 2026-05-28): 15 beads via `/vdd-develop-all` + 22 post-ship `/vdd-multi` findings (1 CRITICAL + 8 HIGH + 9 MEDIUM + 4 LOW) — ALL fixed in the same ship commit. Final: 450 pytest pass + 4 skipped, mypy --strict clean (55 files). Refactored v2's embedded Anthropic SDK call into deterministic `prepare`/`apply` subcommands with calling-agent-driven synthesis (matches `wiki-ingest` precedent). New envelopes: `INVALID_SOURCE_HASH` (exit 2), `IDEMPOTENCY_UPDATE_FAILED` (exit 5). New defensive primitives: `_path_is_absolute` (M-6), `_read_file_bounded` (M-3+M-5 O_NOFOLLOW + fstat + bounded read), `_preflight_sanitize` (M-4), `_try_update_idempotency_state` (H-3), `_resolve_source_inside_sources` (H-1 `_sources/` layout invariant), `_sanitize_markdown_text` (H-4 text-only allowlist replacing v3.0 denylist). Architectural follow-ups deferred to `docs/KNOWN_ISSUES.md`: `H-PERF-3` (manifest-consumer argparse-in-loop N+1), `H-5` (concept-extraction SKILL.md hash-pin enforcement), `H-6` (indirect prompt-injection canary scanning), `P-8` (now SEV-2 with --ingest).
->
-> **TASK**: no active task (TASK 003 v3.1 archived 2026-05-28 → [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md))
-> **Archived TASKs**:
-> - [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md) (v3.1 SHIPPED 2026-05-28, commit `43812f2`)
-> - [docs/tasks/task-004-wiki-ingest-vendoring.md](./tasks/task-004-wiki-ingest-vendoring.md) (complete 2026-05-27)
-> - [docs/tasks/task-003-v2-wiki-extract-concepts.md](./tasks/task-003-v2-wiki-extract-concepts.md) (v2 ship state — superseded by v3.1 refactor)
-> - [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (v1 paused snapshot)
-> **Previous TASK**: [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) (archived 2026-05-27)
-> **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (full v2 specification, 1745 lines)
-> **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
+> **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
+> **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
 > **Layout constants** consolidated in [scripts/wiki_index/layout.py](../scripts/wiki_index/layout.py) — single source of truth for `PAGE_SUBDIRS`, `COURSE_TIER_DIR`, `VAULT_INDEX_DIR`, `LOG_SUBDIR`, `SCAFFOLD_DIRS`, `SYSTEM_FILES`, `GLOBAL_VAULT_SENTINEL`.
 
@@ -36,11 +28,11 @@
 
 ## 1.5. Project Anatomy
 
-This section maps **where things live** in the repository, the symlink graph through which Claude Code resolves a slash command into a Python entry point, and how this repo's anatomy compares to the external `wiki-ingest` skill it integrates with. Added in Phase 3b prep (2026-05-27) so subagents and operators don't have to reconstruct the layout from `ls` walks.
+This section maps **where things live** in the repository, the symlink graph through which Claude Code resolves a slash command into a Python entry point, and how this repo's anatomy compares to the external `wiki-ingest` skill it integrates with. Lives here so subagents and operators don't have to reconstruct the layout from `ls` walks.
 
 ### 1.5.1. Anatomy of one in-repo skill (template, shown via `/wiki-search`)
 
-Every skill in this repo follows a strict **4-file-of-same-name** convention plus a shared DAL. There are 8 such skills today (`wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`, `wiki-enrich`); a 9th (`wiki-extract-concepts`) ships in Phase 3b per TASK 003.
+Every skill in this repo follows a strict **4-file-of-same-name** convention plus a shared DAL. There are 9 such skills (`wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`, `wiki-enrich`, `wiki-extract-concepts`).
 
 ```text
 operator: "/wiki-search 'query'"
@@ -78,7 +70,7 @@ SQLite ~/Library/Application Support/wiki-index/global.db   (multi-vault, FTS5)
 
 ### 1.5.2. Anatomy of cross-process / in-process flow (`/wiki-enrich → wiki-ingest`)
 
-`/wiki-enrich` is the **only** in-repo skill that integrates with `wiki-ingest`. As of TASK 004 (vendoring), there are **two paths**: a primary in-process path (default, post-vendoring) and a subprocess fallback path (Decision-14). The manifest contract (v1.1, [WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md)) is identical for both — only the transport changes.
+`/wiki-enrich` is the **only** in-repo skill that integrates with `wiki-ingest`. There are **two paths**: a primary in-process path (vendored Python import, default) and a subprocess fallback path (external `wiki-ingest` binary). The manifest contract (v1.1, [WIKI-INGEST-V1.1-CONTRACT.md](./WIKI-INGEST-V1.1-CONTRACT.md)) is identical for both — only the transport changes.
 
 #### Path decision branch
 
@@ -109,7 +101,7 @@ operator: /wiki-enrich --source raw.md
     │       │      `_safety.validate_inside_vault(source, vault)` from upstream
     │       │      (see §1.5.7 file `_safety.py`); confirmed post-sync by
     │       │      content-hash check in `scripts/sync_wiki_ingest.sh` (R-49(b))
-    │       │      and verified at runtime by Smoke 1 in TASK 004 §7.
+    │       │      and verified at runtime by the vendored-import smoke check.
     │       ▼
     │   scripts/wiki_ingest/commands/ingest.ingest()   [vendored copy — see §1.5.7]
     │       │   (runs full wiki-ingest pipeline in-process: register-summary →
@@ -141,7 +133,7 @@ stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...
 
 #### FALLBACK PATH (subprocess — legacy / standalone wiki-ingest use case)
 
-Activated when: `WIKI_ENRICH_NO_VENDORED` env-var is set to a truthy value (case-insensitive `{1, true, yes, on}`; whitespace-stripped — per `/vdd-multi` 2026-05-27 H-3 hardening) **or** vendored import raises `ImportError` (with `wiki-ingest` on PATH). This is identical to the pre-TASK-004 flow and is preserved for: (a) operator debugging, (b) environments where vendored copy is not yet available, (c) standalone `wiki-ingest` CLI users who invoke `wiki-enrich` without vendoring.
+Activated when: `WIKI_ENRICH_NO_VENDORED` env-var is set to a truthy value (case-insensitive `{1, true, yes, on}`; whitespace-stripped) **or** vendored import raises `ImportError` (with `wiki-ingest` on PATH). Preserved for: (a) operator debugging, (b) environments where vendored copy is not yet available, (c) standalone `wiki-ingest` CLI users who invoke `wiki-enrich` without vendoring.
 
 ```text
 operator: WIKI_ENRICH_NO_VENDORED=1 wiki-enrich --source raw.md
@@ -186,7 +178,7 @@ stdout: {"action":"enriched", "ingest":<full manifest>, "index":{"upserted":[...
 
 **Fallback path summary**: requires `wiki-ingest` on PATH; `check_wiki_ingest_version()` active; JSON round-trip via subprocess stdout. Silent activation (no user-visible warning unless `--verbose` or DEBUG log). Steps 3-5 are identical between both paths.
 
-**Phase 3b note (TASK 003 v2 / Decisions 15+16):** `wiki-enrich`'s `--source` flag remains the sole entry point. Manifest dispatch for downstream skills (`wiki_extract_concepts`) happens **in-process** via direct import of `validate_manifest` + `index_from_manifest` from the neutral module `scripts.wiki_skills._manifest_consumer` (created by TASK 003 v2 I-7.0). No `--manifest-file` / `--manifest-stdin` CLI flags are added (v1 R-44 / I-7.15 dropped — see TASK 003 v2 §0.1).
+**Manifest-dispatch contract:** `wiki-enrich`'s `--source` flag is the sole entry point. Manifest dispatch for downstream skills (`wiki_extract_concepts`) happens **in-process** via direct import of `validate_manifest` + `index_from_manifest` from the neutral module `scripts.wiki_skills._manifest_consumer`. No `--manifest-file` / `--manifest-stdin` CLI flags exist; the in-process call obviates them.
 
 ### 1.5.3. External dependency: `wiki-ingest` anatomy (different pattern)
 
@@ -222,13 +214,13 @@ Universal-skills/skills/wiki-ingest/
 
 **Neither pattern is wrong**; they reflect that this repo splits operations into composable units (DAL-thin CLIs), while `wiki-ingest` keeps related operations under one cohesive synthesis tool. The bridge (`/wiki-enrich`) is the seam.
 
-> **Post-TASK-004 dual existence note:** After TASK 004 ships, `wiki-ingest` exists in two forms simultaneously. The copy in `Universal-skills` remains the standalone CLI for "simple wiki" users who install `wiki-ingest` independently. The vendored copy at `scripts/wiki_ingest/` in this repo is for in-process use only — it is a snapshot of the upstream, not a live link, and is not intended as a user-facing CLI (though it remains usable as one via `python -m scripts.wiki_ingest.commands.ingest` per R-57). The two copies may diverge over time; the sync policy in §1.5.7 governs how drift is detected and resolved. For the external `wiki-ingest` binary: it is no longer required for standard `wiki-enrich` operation — the vendored copy at `scripts/wiki_ingest/` is the primary path. The binary remains optional (enables subprocess fallback for debugging or environments without the vendored copy). Cross-reference: §1.5.7 (vendored module anatomy).
+> **Dual existence of `wiki-ingest`:** the skill exists in two forms simultaneously. The copy in `Universal-skills` remains the standalone CLI for "simple wiki" users who install `wiki-ingest` independently. The vendored copy at `scripts/wiki_ingest/` in this repo is for in-process use only — it is a snapshot of the upstream, not a live link, and is not intended as a user-facing CLI (though it remains usable as one via `python -m scripts.wiki_ingest.commands.ingest`). The two copies may diverge over time; the sync policy in §1.5.7 governs how drift is detected and resolved. The external `wiki-ingest` binary is no longer required for standard `wiki-enrich` operation — the vendored copy is the primary path; the binary stays optional (enables subprocess fallback for debugging or environments without the vendored copy). Cross-reference: §1.5.7 (vendored module anatomy).
 
 ### 1.5.4. Shared DAL layer (`scripts/wiki_index/`)
 
 All 8 in-repo skills converge on the DAL. **No skill talks to SQLite directly; everything goes through `IndexRepository`.**
 
-> **TASK 004 DAL invariant (confirmed):** The vendored `scripts/wiki_ingest/` module does NOT use the DAL — it writes vault files only (Class A canonical per ADR-002 §D8). Index upsert of those files still flows through `IndexRepository` via `index_from_manifest()` in `wiki_enrich.py` (steps 4-5 of the §1.5.2 diagram — unchanged for both primary and fallback paths). No new DAL methods are added by TASK 004. The multi-vault invariant is preserved: vendored `ingest()` accepts `vault_id` as an explicit parameter (Decision-13 signature); all DB writes in the indexing step still carry `vault_id=?` predicates via `repo.upsert_page()`.
+> **Vendored-module DAL invariant:** The vendored `scripts/wiki_ingest/` module does NOT use the DAL — it writes vault files only (Class A canonical per ADR-002 §D8). Index upsert of those files flows through `IndexRepository` via `index_from_manifest()` in `wiki_enrich.py` (steps 4-5 of the §1.5.2 diagram — same shape for both primary and fallback paths). Multi-vault invariant preserved: vendored `ingest()` accepts `vault_id` as an explicit parameter; all DB writes in the indexing step carry `vault_id=?` predicates via `repo.upsert_page()`.
 
 ```text
 scripts/wiki_index/
@@ -247,7 +239,7 @@ scripts/wiki_index/
 └── config_loader.py       — WikiConfig parser (CLAUDE.md::wiki: + .wiki.yaml merge)
 ```
 
-**Stub-First invariant:** Phase 3a left `resolve_entity` as a stub (`NotImplementedError`); TASK 003 adds `upsert_entity` as a new abstract method (I-7.7a). See §2.1 Index Layer DAL for the planner-visible sequencing constraint that I-7.7a MUST land first.
+**Stub-First invariant:** `resolve_entity` is a deferred read-path stub (`NotImplementedError`); it will be activated by R-4 (entity promotion / candidate-vs-confirmed resolution). `upsert_entity` is fully implemented as the entity write-path method.
 
 ### 1.5.5. Symlink graph (installation footprint)
 
@@ -277,7 +269,7 @@ Generated by `bin/install-globally.sh` (idempotent, `ln -sfn`):
 
 ### 1.5.7. Vendored module anatomy (`scripts/wiki_ingest/`)
 
-Added in TASK 004 (2026-05-27). This subsection describes the provenance, sync policy, and public API surface of the vendored `wiki_ingest` Python package.
+This subsection describes the provenance, sync policy, and public API surface of the vendored `wiki_ingest` Python package.
 
 **Path:** `obsidian-llm-wiki/scripts/wiki_ingest/`
 
@@ -395,10 +387,8 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 - `begin_batch_run(mode) → run_id` / `finish_batch_run(run_id, status, **stats)`.
 - `last_batch_run() → BatchRun | None`.
 - `get_vault_metadata(key) → str | None` / `set_vault_metadata(key, value)`.
-- `resolve_entity(vault_id, slug) → Entity | None` — **read-path stub** (raises `NotImplementedError` in strict mode; entity lookup for deduplication arrives in R-4). After TASK 003, `resolve_entity` **remains a stub raising `NotImplementedError`**; R-4 (deferred) will activate it for candidate/confirmed resolution.
-- `upsert_entity(vault_id, slug, name, type, is_candidate, canonicalized_by, first_seen, last_updated) → None` — **write-path** (added in TASK 003, I-7.7a). Atomic `INSERT … ON CONFLICT DO UPDATE`; `is_candidate` downgrade-guard enforced at SQL level (`MIN(excluded.is_candidate, entities.is_candidate)`) so a confirmed entity (`is_candidate=0`) cannot be demoted to candidate by a re-extraction. See I-7.7a.
-
-> **⚠ Planner sequencing constraint (I-7.7a MUST land first)**: `upsert_entity` is added as a new `@abstractmethod` on `IndexRepository` (`scripts/wiki_index/repository.py`). Python ABCs cannot be instantiated when any abstract method is unimplemented in a subclass. The planner MUST schedule I-7.7a (ABC declaration + `SQLiteRepository.upsert_entity` concrete impl + every `IndexRepository` subclass/mock under `tests/` updated, even with a `NotImplementedError` body if logic is deferred) as the **first executed bead** of TASK 003, with all updates landing in a single commit. Any other I-7.x issue attempted before I-7.7a will fail at `import` time with `TypeError: Can't instantiate abstract class …`, breaking all 295 Phase-3a tests and blocking the whole task. Visibility for this dependency lives here (DAL section) and is duplicated in §4.1 Entity write-path paragraph + Verification Map R-37 row.
+- `resolve_entity(vault_id, slug) → Entity | None` — **read-path stub** (raises `NotImplementedError` in strict mode). R-4 (deferred) will activate it for candidate/confirmed resolution.
+- `upsert_entity(vault_id, slug, name, type, is_candidate, canonicalized_by, first_seen, last_updated) → None` — entity write-path. Atomic `INSERT … ON CONFLICT DO UPDATE`; `is_candidate` downgrade-guard enforced at SQL level (`MIN(excluded.is_candidate, entities.is_candidate)`) so a confirmed entity (`is_candidate=0`) cannot be demoted to candidate by a re-extraction.
 
 **Inputs:** `WikiConfig` (для backend/path resolution).
 **Outputs:** Repository instance с указанным backend.
@@ -410,9 +400,9 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 
 **Purpose**: Pluggable extractors для разных типов входов. Унифицированный контракт `SourceAdapter`.
 
-**File-write ownership clarification (Decision-8, TASK 003):** wiki-ingest owns **raw-source** file synthesis (transcript → summary, source page normalization, additive merge with footnote citations, contradiction flagging, etc.). Downstream skills like `wiki-extract-concepts` may write **derivative pages** (concept pages derived from already-indexed source pages) provided they emit a wiki-ingest v1.1-compatible manifest for `/wiki-enrich` consumption. This preserves the single-indexer invariant (Index Layer is the only writer to SQLite) without forcing wiki-ingest to become a god-process for every file mutation. ADR-001 ("wiki-ingest owns the file layer") is **clarified**, not amended: it governs raw-source file synthesis; `_concepts/<slug>.md` pages generated by `wiki-extract-concepts` are derivative artifacts, not raw-source synthesis.
+**File-write ownership clarification:** wiki-ingest owns **raw-source** file synthesis (transcript → summary, source-page normalization, additive merge with footnote citations, contradiction flagging, etc.). Downstream skills like `wiki-extract-concepts` may write **derivative pages** (concept pages derived from already-indexed source pages) provided they emit a wiki-ingest v1.1-compatible manifest for `/wiki-enrich` consumption. This preserves the single-indexer invariant (Index Layer is the only writer to SQLite) without forcing wiki-ingest to become a god-process for every file mutation. ADR-001 ("wiki-ingest owns the file layer") governs raw-source file synthesis; `_concepts/<slug>.md` pages generated by `wiki-extract-concepts` are derivative artifacts, not raw-source synthesis.
 
-**wiki-ingest integration transport (Decision-14, TASK 004):** As of TASK 004, `wiki-enrich` calls wiki-ingest via **in-process Python import** as the primary path (vendored module at `scripts/wiki_ingest/`). Subprocess invocation of the external `wiki-ingest` binary is retained as a fallback activated by `WIKI_ENRICH_NO_VENDORED=1` or by `ImportError` on the vendored import when the binary is on PATH. The integration contract (manifest dict in, index out via `index_from_manifest()`) is unchanged — only the transport mechanism differs. The `--source` flag surface of `wiki-enrich` is unchanged (`required=True`, no mutual-exclusion group — that is TASK 003's scope). See §1.5.2 for the full decision branch diagram and §1.5.7 for vendored module details.
+**wiki-ingest integration transport:** `wiki-enrich` calls wiki-ingest via **in-process Python import** as the primary path (vendored module at `scripts/wiki_ingest/`). Subprocess invocation of the external `wiki-ingest` binary is retained as a fallback activated by `WIKI_ENRICH_NO_VENDORED=1` or by `ImportError` on the vendored import when the binary is on PATH. The integration contract (manifest dict in, index out via `index_from_manifest()`) is the same for both paths — only the transport mechanism differs. The `--source` flag surface of `wiki-enrich` is `required=True` with no mutual-exclusion group. See §1.5.2 for the full decision branch diagram and §1.5.7 for vendored-module details.
 
 **MVP adapters:**
 1. **`wiki-source-manual`** — для уже-существующих markdown-файлов. Не модифицирует body. Validates path внутри vault_root. Ставит `trust_level='high'` для refs.
@@ -436,8 +426,8 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 **MVP skills (Phase 3a):**
 - `wiki-init` (UC-01) — bootstrap.
 - `wiki-append-log` (UC-02 step 11) — chronological log + monthly rotation.
-- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls vendored `ingest()` in-process for file synthesis (TASK 004 / Decision-14; subprocess fallback retained), then indexes manifest into SQLite. `--source` remains the sole input flag. Manifest-consumer functions (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral module `scripts.wiki_skills._manifest_consumer` (TASK 003 v2 / Decision-16); `wiki_enrich.py` re-exports them for backward compat.
-- `wiki-extract-concepts` (UC-08, UC-09) — **Phase 3b (TASK 003)**. See dedicated Component section below.
+- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls vendored `ingest()` in-process for file synthesis (subprocess fallback retained for the standalone-CLI path), then indexes the manifest into SQLite. `--source` is the sole input flag. Manifest-consumer functions (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral module `scripts.wiki_skills._manifest_consumer`; `wiki_enrich.py` re-exports them for backward compat.
+- `wiki-extract-concepts` (UC-08, UC-09) — see dedicated Component section below.
 - `wiki-index-render` (UC-05 step 7) — projection из SQLite в `index.md`.
 - `wiki-index-upsert` (UC-02 step 7) — упрощённый wrapper над `Index Layer.upsert_page`.
 - `wiki-lint` (UC-04) — health-check через SQL.
@@ -450,23 +440,17 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 
 **Dependencies:** Configuration Resolver, Index Layer, Source Adapters.
 
-#### Component: **Concept Extractor** (`wiki-extract-concepts`) — Phase 3b (v3.1 target)
+#### Component: **Concept Extractor** (`wiki-extract-concepts`)
 
-> **Architectural state**: TASK 003 v2 shipped 2026-05-28 with an embedded Anthropic LLM call (15 beads, 396 pytest). v2 worked but broke the "skills are deterministic plumbing; orchestrator does LLM work" invariant used by all other 8 skills. **TASK 003 v3.1 SHIPPED 2026-05-28 commit `43812f2`** (Decision-17 deterministic refactor + post-ship `/vdd-multi` 22-finding hardening — see [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md)). The description below documents the shipped v3.1 architecture (deterministic skill + calling-agent-driven synthesis); code at `scripts/wiki_skills/wiki_extract_concepts.py` matches.
+**Purpose**: Deterministic Python skill that (a) reads source-page hash + known-concepts list from the DB (`prepare` subcommand), and (b) accepts operator-supplied candidates JSON from the calling agent and writes `_concepts/<slug>.md` pages atomically + upserts `entities` + `page_entity_refs` rows + emits a wiki-ingest v1.1-compatible manifest (`apply` subcommand). Activates the entity layer (Epic 7 R-3). All extracted entities are written with `is_candidate=1` and quarantined until R-4 promotion logic (deferred) is implemented.
 
-##### Why deterministic (Decision-17)
+**Design pattern**: Python skills are deterministic plumbing; LLM synthesis lives in the calling agent's context (Claude Code / Gemini CLI / Cursor), mediated by an operator-facing prompt skill (`concept-extraction`). This matches `wiki-ingest`, `wiki-enrich`, and all other skills in the repo. Consequence: no `ANTHROPIC_API_KEY`, no `anthropic` SDK dependency, no embedded API call. Trade-off: no cron/headless mode (acceptable — was never a stated requirement; a future Pattern-C escape hatch `--llm-standalone` is documented as out-of-scope until a real cron need surfaces).
 
-The repo-wide pattern is: **Python skills are deterministic plumbing; LLM synthesis lives in the calling agent's context (Claude Code / Gemini CLI / Cursor)**, mediated by operator-facing prompt skills (`summarizing-meetings`, `concept-extraction`). This is the precedent set by vendored `wiki-ingest` (summary-passthrough orchestrator with no LLM calls), `wiki-enrich`, and all 8 other skills. v3.1 brings `wiki-extract-concepts` into line: the synthesis prompt moves out of Python code into `.agent/skills/concept-extraction/SKILL.md`, the skill exposes a deterministic two-subcommand surface (`prepare` + `apply`), and the calling agent (which is already an LLM with its own auth, model choice, and context) synthesizes candidates between the two CLI calls.
+**Stack position**: Between Index Layer (reads `entities`, `pages`, `source_state`; writes `entities`, `page_entity_refs`, `source_state`) and Skill Layer (user-facing entry point). Orthogonal to Source Adapters: operates exclusively on already-indexed pages, never on raw sources. Does **not** call `wiki-ingest` and makes **no** LLM API call.
 
-Consequences: no `ANTHROPIC_API_KEY` env var, no `anthropic` SDK dependency, no embedded API call, no auth surface to manage. Trade-off: lost cron/headless capability (acceptable — was never a stated requirement; future Pattern-C escape hatch `--llm-standalone` documented as out-of-scope until a real cron use case surfaces).
+##### CLI surface
 
-**Purpose**: Deterministic Python skill that (a) reads source-page hash + known-concepts list from DB (`prepare` subcommand), and (b) accepts operator-supplied candidates JSON from the calling agent and writes `_concepts/<slug>.md` pages atomically + upserts `entities` + `page_entity_refs` rows + emits a wiki-ingest v1.1-compatible manifest (`apply` subcommand). Activates the entity layer (Epic 7 R-3). All extracted entities are written with `is_candidate=1` and quarantined until R-4 promotion logic (deferred) is implemented.
-
-**Stack position**: Between Index Layer (reads `entities`, `pages`, `source_state`; writes `entities`, `page_entity_refs`, `source_state`) and Skill Layer (user-facing entry point). Orthogonal to Source Adapters: operates exclusively on already-indexed pages, never on raw sources. Does **not** call `wiki-ingest` and does **not** make any LLM API call — synthesis happens in the calling agent's context per the `concept-extraction` skill prompt.
-
-##### CLI surface (v3.1 — BREAKING CHANGE vs v2)
-
-> ⚠️ **BREAKING CHANGE**: v2's monolithic `wiki-extract-concepts --vault X --source-page Y` invocation no longer exists. v3.1 splits into `prepare` and `apply` subcommands with `argparse.add_subparsers(required=True)` — legacy invocation surfaces helpful error pointing operators at the new surface. Every shell alias, script, and muscle-memory invocation must be updated.
+`argparse` exposes two required subcommands via `add_subparsers(required=True)`. There is no monolithic "no subcommand" form — invoking `wiki-extract-concepts` without `prepare` or `apply` errors out at argparse with a usage line pointing at the two subcommands.
 
 **`wiki-extract-concepts prepare --vault V --vault-root P --source-page S [--db-path PATH]`**
 
@@ -476,7 +460,7 @@ Deterministic reconnaissance. No LLM call. Returns JSON to stdout:
 {
   "vault_id": "trade-agents",
   "source_slug": "self-improving-trading-agent",
-  "source_path": "/abs/path/to/_sources/<slug>.md",
+  "source_path": "_sources/<slug>.md",
   "source_hash": "<sha256>",
   "is_unchanged": false,
   "known_concepts": [{"slug": "...", "name": "...", "aliases": [...], "type": "..."}],
@@ -484,21 +468,19 @@ Deterministic reconnaissance. No LLM call. Returns JSON to stdout:
 }
 ```
 
-`is_unchanged=true` → calling agent emits "unchanged" envelope and stops (no synthesis needed). `missing_concept_files: [...]` warns the operator about DB rows pointing to entity files that no longer exist on disk (disk/DB drift detection per M-1; future bead converts to lazy via flag — see KNOWN_ISSUES P-9).
+`source_path` is emitted **relative to `--vault-root`** so the envelope never discloses the operator's absolute filesystem layout. `is_unchanged=true` → calling agent emits an "unchanged" envelope and stops (no synthesis). `missing_concept_files: [...]` warns the operator about DB rows pointing to entity files that no longer exist on disk (disk/DB drift detection; see KNOWN_ISSUES P-9 for the deferred lazy variant).
 
 **`wiki-extract-concepts apply --vault V --vault-root P --source-page S --source-hash HEX (--candidates-file PATH | --candidates-stdin) [--orchestrator-id STRING] [--ingest] [--db-path PATH]`**
 
-Deterministic application. No LLM call. Reads candidates JSON from operator, validates against strict schema, writes pages + upserts entities + refs + manifest + optional indexer dispatch.
+Deterministic application. No LLM call. Reads candidates JSON from the operator, validates against the strict schema, writes pages + upserts entities + refs + manifest + optional indexer dispatch.
 
-`--source-hash HEX` is **required** and compared against apply's own disk-recomputed hash. Mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (operator re-runs prepare). Eliminates the TOCTOU race that would otherwise corrupt provenance between prepare and apply (H-1).
-
-`--candidates-file PATH` is validated via `validate_inside_vault(candidates_path, vault_root)` — file must live inside `--vault-root`. External transport: `--candidates-stdin`. Total candidates JSON capped at `_MAX_CANDIDATES_BYTES = 1_048_576` (1 MiB).
-
-`--orchestrator-id STRING` (optional; regex `^[a-z0-9._:@-]{1,64}$`) populates `canonicalized_by = f"llm:{orchestrator_id}@{date}"`. Default `"orchestrator"` if absent. Operator who cares about audit trail passes their model name (`"claude-opus-4-7"`, `"gemini-2-5-pro"`); honest unknown when absent.
+- `--source-hash HEX` is **required**, validated at argparse time as 64 lowercase hex chars (regex `^[0-9a-f]{64}$` with `.lower()` normalize so case-variant pipelines do not misroute), and compared against `apply`'s own disk-recomputed hash. Mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (operator re-runs prepare). Closes the TOCTOU race between prepare and apply.
+- `--candidates-file PATH` is validated via `validate_inside_vault(...)` AND rejected if it resolves to a symlink, FIFO, device, or socket. Read via `os.open(O_NOFOLLOW)` + `os.fstat` + bounded `os.read(cap+1)` so a swap-after-stat race cannot exceed the cap. Total candidates JSON capped at `_MAX_CANDIDATES_BYTES = 1_048_576` (1 MiB). External transport: `--candidates-stdin`, similarly bounded at cap+1 bytes.
+- `--orchestrator-id STRING` (optional; regex `^[a-z0-9._:@-]{1,64}$`) populates `canonicalized_by = f"llm:{orchestrator_id}@{date}"`. Default `"orchestrator"` if absent (with `logger.warning` so audit trails surface the opaque default). Operators who care about provenance pass their model name (`"claude-opus-4-7"`, `"gemini-2-5-pro"`).
 
 ##### Candidates JSON contract
 
-Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone fields like `model`/`extracted_at` rejected per Q6 / iteration-1 review). Per-item strict schema validated by `_validate_candidates_schema`:
+Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone fields like `model`/`extracted_at` rejected). Per-item strict schema validated by `_validate_candidates_schema`:
 
 ```json
 [
@@ -506,133 +488,97 @@ Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone
     "slug": "kebab-case-string",       // ^[a-z0-9][a-z0-9-]{0,62}$
     "name": "Human Name",              // allowlist regex + ≤200 chars, no leading # or ---
     "definition": "1-3 sentences.",    // ≤2000 chars; markdown-escaped on body write
-    "source_quote": "verbatim quote",  // ≤500 chars; substring-of-source-body check (M-5)
-    "source_span": "L12-L18",          // ^L\d+-L\d+$ (Decision-10)
+    "source_quote": "verbatim quote",  // ≤500 chars; substring-of-source-body check
+    "source_span": "L12-L18",          // ^L\d+-L\d+$ — ASCII-only digits
     "entity_type": "concept"           // one of {concept, person, company, product, group, event, work, external}
   }
 ]
 ```
 
-**Strict mode** (Q14): items with keys outside the required set → `UNKNOWN_FIELD` (exit 4). **Count bound** (Q10): `1 ≤ N ≤ 25` candidates; out-of-bounds → `CANDIDATE_COUNT_OUT_OF_BOUNDS` (exit 4). **No content echo**: ALL error envelopes emit error-code + field-name + reason, NEVER the offending field content (CWE-117 / CWE-209).
+**Strict mode**: items with keys outside the required set → `UNKNOWN_FIELD` (exit 4). **Count bound**: `1 ≤ N ≤ 25` candidates; out-of-bounds → `CANDIDATE_COUNT_OUT_OF_BOUNDS` (exit 4). **No content echo**: every error envelope emits `{error, field?, reason}` only — NEVER the offending field content (CWE-117 / CWE-209). The substring-of-body check is bypassable per-invocation via the `WIKI_EXTRACT_NO_QUOTE_CHECK=1` env var.
 
-##### Functions (v3.1 target — per TASK 003 v3.1 Issues I-V3.1 through I-V3.13)
+##### Functions
 
-- `prepare(args) → int` — argparse handler for `prepare` subcommand. Resolves source-page path; runs `validate_inside_vault` + kebab-slug check; reads source body with `_MAX_SOURCE_BODY_BYTES = 10_485_760` (10 MiB) `stat().st_size` cap before `read_text()` (M-3); computes sha256; calls `check_idempotency`; calls `load_known_entities`; emits JSON payload. Exit codes 0/1/2 (sub-envelopes: `SOURCE_NOT_FOUND`, `INVALID_SOURCE_PATH`, `INVALID_SOURCE_SLUG`, `SOURCE_TOO_LARGE`). (I-V3.1, R-30..R-32, R-39, R-42)
-- `apply(args) → int` — argparse handler for `apply` subcommand. Validates candidates JSON shape (strict mode + count bound + per-field caps + no-content-echo envelopes); recomputes source_hash from disk; rejects on mismatch with `--source-hash` (H-1); classifies create/mention; writes pages; upserts entities + refs; builds manifest; optionally dispatches via `_manifest_consumer.index_from_manifest`; updates `source_state` gated on `summary["failed"]` empty. Exit codes 0/1/2/4/5/6. (I-V3.1, R-33′..R-43)
-- `load_known_entities(repo, vault_id) → list[dict]` — UNCHANGED FROM v2. Queries `entities LEFT JOIN entity_aliases WHERE vault_id=?`; serialises to CONTRACT §2 known-concepts format `[{"slug":..., "name":..., "aliases":[...], "type":...}]`. (R-32)
-- `_validate_candidates_schema(items: list[dict]) → None` — **renamed from `_validate_extraction_schema`**. Strict equality check on keys (`item.keys() == _REQUIRED_CANDIDATE_KEYS`, not subset — Q14/H-9); kebab-slug regex (`^[a-z0-9][a-z0-9-]{0,62}$`); source_span regex (`^L\d+-L\d+$`); entity_type whitelist; per-field length caps (Q12/H-6: `name ≤ 200`, `definition ≤ 2000`, `source_quote ≤ 500`); candidate count bound (Q10/H-2: `1 ≤ len(items) ≤ 25`); optional `source_quote ∈ source_body` substring check (M-5; bypassable via `WIKI_EXTRACT_NO_QUOTE_CHECK=1` env var). All envelopes emit `{error: <CODE>, field: <name>, reason: <msg>}` — no content echo. (I-V3.1, R-33′)
-- `classify_candidates(items, known_slugs) → (create_list, mention_list)` — UNCHANGED FROM v2. Items whose slug matches a known entity → `mention` (ref only, no new page); novel slugs → `create`. (R-34)
-- `write_concept_page(vault_root, candidate, source_slug, today, orchestrator_id) → tuple[Path, "created"|"updated"|"unchanged"]` — atomic write (tempfile + rename). **Content-hash skip semantics (Q15/C-1)**: if `target.is_symlink()` → `raise PathTraversalError` (iteration-2 NEW-2); if file exists, compute sha256 of existing content vs. would-be-written content — identical → return path + `"unchanged"`; different → rewrite atomically + return path + `"updated"` + log warning. **Markdown body sanitization (Q13/H-7)**: `name` regex-allowlist `^[\w\s\-.,:;()\'"!?]{1,200}$` with `re.UNICODE` flag (for non-ASCII vault contents per iteration-2 N-5) + strip leading `#`/`---`; `definition` markdown-escaped (HTML tags + `\n## ` pattern); `source_quote` wrapped in `>` blockquote (eliminates inline `"..."` ambiguity AND `]]` wikilink-target attack); `source_span` strict-regex validated (iteration-2 NEW-1). Frontmatter via `frontmatter.dumps` (PyYAML safe_dump confirmed; adversarial regression tests for YAML injection). (I-V3.1 + I-V3.13, R-36, Q13/Q15)
-- `upsert_extracted_entity(repo, vault_id, candidate, source_slug, today, orchestrator_id) → str` — calls `repo.upsert_entity(is_candidate=1, canonicalized_by=f"llm:{orchestrator_id}@{date}")`; SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) preserved from v2. Returns `"created"|"updated"|"confirmed"`. (I-V3.1, R-37, Q9/H-8)
-- `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates) → None` — UNCHANGED FROM v2. Collects `(entity_slug, ref_type='mentioned', source_quote, line_start, line_end, trust_level='medium')`; parses `"Lstart-Lend"` via `_parse_source_span`; calls `repo.replace_refs(...)` atomically. (R-38)
-- `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — UNCHANGED FROM v2. Queries `source_state` with `source_kind='extract-concepts'`; returns `True` if hash matches recorded value. (R-39)
-- `update_idempotency_state(repo, vault_id, source_slug, new_hash) → None` — UNCHANGED FROM v2. Called by `apply` at END of pipeline, gated on `summary["failed"]` being empty when `--ingest` set (C-1 invariant preserved). (R-39)
-- `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event, vault_root) → dict` — UNCHANGED FROM v2. Produces wiki-ingest v1.1-compatible JSON manifest. (R-35)
-- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — UNCHANGED FROM v2. When `--ingest` passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from neutral module `scripts.wiki_skills._manifest_consumer` in-process (Decisions 15+16). (R-41)
-
-##### Inputs (v3.1)
-
-`prepare` subcommand:
-- `--vault <vault_id>` (required, ADR-002 §D1.1 invariant — no hash fallback)
-- `--vault-root <path>` (required for filesystem operations)
-- `--source-page <slug | relative-path>` (required; validated inside vault root per R-26.2 guard)
-- `--db-path` (optional override)
-
-`apply` subcommand:
-- All `prepare` flags PLUS
-- `--source-hash HEX` (required; mismatch against disk-recomputed → exit 2)
-- `--candidates-file PATH | --candidates-stdin` (mutex group; required; file path validated inside vault root)
-- `--orchestrator-id STRING` (optional; regex `^[a-z0-9._:@-]{1,64}$`; default `"orchestrator"`)
-- `--ingest` (optional flag: in-process dispatch via `_manifest_consumer` after manifest emission)
-
-**No `ANTHROPIC_API_KEY` env var. No `--model` / `--max-tokens` flags.** v3.1 skill makes zero LLM calls; the calling agent is the LLM.
+- `prepare(args) → int` — argparse handler for `prepare`. Resolves `--source-page` via `_resolve_source_inside_sources()` which enforces the `_sources/` layout invariant (rejects any traversal that lands elsewhere in the vault); reads body via `_read_file_bounded(path, _MAX_SOURCE_BODY_BYTES)` (`os.open(O_NOFOLLOW)` + `os.fstat` cap + bounded `os.read`); computes sha256; calls `check_idempotency` + `load_known_entities`; sweeps `missing_concept_files` via single `os.scandir` over `_concepts/`; emits the recon JSON envelope. Exit codes 0 / 1 / 2.
+- `apply(args) → int` — argparse handler for `apply`. Loads candidates via `_load_candidates()` (stdin or vault-inside file, both bounded); resolves + reads source identically to `prepare`; runs hash-check against `--source-hash` (with `INVALID_SOURCE_HASH` library-caller defense if a non-CLI caller constructed args directly); runs `_validate_candidates_schema()` then `_preflight_sanitize()` (dry-pass sanitizers BEFORE any write so a mid-loop failure cannot leave partial pages); classifies create/mention; writes pages + upserts entities + refs + manifest; optionally dispatches via `_manifest_consumer.index_from_manifest`; `_try_update_idempotency_state()` wraps the final UPSERT in `try/except sqlite3.OperationalError` so a DB-lock or disk-full failure surfaces as `IDEMPOTENCY_UPDATE_FAILED` exit 5 instead of an uncaught traceback. Exit codes 0 / 1 / 2 / 4 / 5 / 6.
+- `load_known_entities(repo, vault_id) → list[dict]` — queries `entities LEFT JOIN entity_aliases WHERE vault_id=?`; serialises to `[{"slug":..., "name":..., "aliases":[...], "type":...}]`.
+- `_validate_candidates_schema(items: list[dict], source_body: str | None) → None` — defensive top-level `isinstance(items, list)` guard, then per-item: strict equality on keys (no extras, no missing); kebab-slug regex; `^L\d+-L\d+$` source-span regex (compiled with `re.ASCII` to reject Unicode digits); entity_type whitelist; per-field length caps (name ≤ 200, definition ≤ 2000, source_quote ≤ 500); type-check on slug / source_span / entity_type (so `null` slug yields "not a string" not "fails regex"); optional `source_quote ∈ source_body` substring check. Raises `ExtractionParseError` with `.error` / `.field` / `.reason` structured attrs — the apply caller maps these into the wire envelope without echoing offending values.
+- `classify_candidates(items, known_slugs) → (create_list, mention_list)` — items whose slug matches a known entity → `mention` (ref only, no new page); novel slugs → `create`.
+- `write_concept_page(vault_root, candidate, source_slug, today, vault_id) → tuple[Path, "created"|"updated"|"unchanged"]` — atomic write (tempfile + `os.replace`). Symlink-refuse: if `target.is_symlink()` → raise `PathTraversalError`. Content-hash skip: reads any existing file via `os.open(O_NOFOLLOW)` (so a symlink swapped in after the `is_symlink()` check cannot leak external content); compares sha256 of existing vs. would-be-written payload; identical → `"unchanged"`; different → atomic rewrite + `"updated"` + warning log. Body construction sanitises every text field via `_sanitize_markdown_text()` (text-only allowlist: HTML-escape `&<>`, escape `` ` ``, `[`, `]`, and line-leading markdown actives — closes javascript-link / data-URI / HTML-entity smuggling / Obsidian wikilink injection / dataview / mermaid code-span vectors). `name` runs through an additional regex allowlist (`re.UNICODE` for non-ASCII vault contents). `source_quote` is wrapped in a `>` blockquote with a provenance footer. Frontmatter goes through `frontmatter.dumps` (PyYAML safe-dump).
+- `upsert_extracted_entity(repo, vault_id, candidate, source_slug, today, orchestrator_id) → str` — calls `repo.upsert_entity(is_candidate=1, canonicalized_by=f"llm:{orchestrator_id}@{date}")`; the SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) keeps confirmed rows from being silently regressed by a re-extraction. Returns `"created" | "updated" | "confirmed"`.
+- `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates) → None` — collects `(entity_slug, ref_type='mentioned', source_quote, line_start, line_end, trust_level='medium')`; parses `"Lstart-Lend"` via `_parse_source_span`; calls `repo.replace_refs(...)` atomically.
+- `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — queries `source_state` with `source_kind='extract-concepts'`; returns `True` iff the recorded hash equals `current_hash`. Defensive NULL guard for corrupted rows.
+- `update_idempotency_state(repo, vault_id, source_slug, new_hash) → None` — UPSERT on `source_state`. Called by `apply` at the END of the pipeline, gated on `summary["failed"]` being empty when `--ingest` is set, and wrapped in `_try_update_idempotency_state()` so a DB-side failure does not split the success/failure signal.
+- `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event, vault_root) → dict` — produces wiki-ingest v1.1-compatible JSON manifest.
+- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — when `--ingest` passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from the neutral module `scripts.wiki_skills._manifest_consumer` in-process. No subprocess.
 
 ##### Outputs
 
-- `_concepts/<slug>.md` files written atomically to `<vault_root>/_concepts/` (Class A canonical per ADR-002 §D8; `mkdir -p` on first write; content-hash skip per Q15)
-- `entities` table rows (`is_candidate=1`, Class B cache per ADR-002 §D8 — rebuildable from concept page frontmatter on `wiki-reindex --full`)
-- `page_entity_refs` rows (`trust_level='medium'`, Class B cache; line spans parsed from `Lstart-Lend`)
-- `source_state` row (`source_kind='extract-concepts'`, Class C cache for idempotency)
-- Manifest JSON to stdout (wiki-ingest v1.1-compatible)
+- `_concepts/<slug>.md` files written atomically to `<vault_root>/_concepts/` (Class A canonical per ADR-002 §D8; `mkdir -p` on first write; content-hash skip suppresses no-op rewrites).
+- `entities` table rows (`is_candidate=1`; Class B cache per ADR-002 §D8 — rebuildable from concept-page frontmatter on `wiki-reindex --full`).
+- `page_entity_refs` rows (`trust_level='medium'`; Class B cache; line spans parsed from `Lstart-Lend`).
+- `source_state` row (`source_kind='extract-concepts'`; Class C cache for idempotency).
+- Manifest JSON to stdout (wiki-ingest v1.1-compatible).
 
 ##### Multi-vault invariant (ADR-002 §D1)
 
-Every DB query and every file path write includes `vault_id=?` predicate or is scoped to `vault_root`. No cross-vault entity bleed. `validate_inside_vault` applied to every path written + to `--candidates-file PATH` argument (R-40, H-5).
+Every DB query and every file-path write includes a `vault_id=?` predicate or is scoped to `vault_root`. No cross-vault entity bleed. `validate_inside_vault` is applied to every path written + to `--candidates-file PATH`.
 
 ##### Bulk-transaction semantics
 
-For one `apply` call, all DB writes — `upsert_entity` (N calls), `replace_refs` (1 call), `source_state` update (1 call) — execute under a **single `BEGIN IMMEDIATE` transaction**. Concept file writes (filesystem) happen first (atomic per-file via tempfile+rename + content-hash skip + symlink-refuse). The DB commit ties them together. On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical), and the next run replays via `source_state` mismatch — but **with the content-hash skip in `write_concept_page`**, files won't be re-written if content is already correct (drift between disk and DB after partial-failure replay eliminated per C-1/Q15).
+For one `apply` call, all DB writes — `upsert_entity` (N calls), `replace_refs` (1 call), `source_state` update (1 call) — execute under a **single `BEGIN IMMEDIATE` transaction**. Concept-file writes happen first (atomic per-file via tempfile + rename + content-hash skip + symlink refuse). The DB commit ties them together. On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical), and the next run replays via `source_state` mismatch — content-hash skip ensures files are not pointlessly rewritten if their content is already correct.
 
 ##### Operator-supplied JSON → SQL safety
 
-All operator-supplied candidate fields (`slug`, `name`, `definition`, `source_quote`, `source_span`, `entity_type`) flow into `repo.upsert_entity(...)` / `repo.replace_refs(...)` exclusively as **bound parameters** — no f-string SQL composition. Slug additionally pre-validated against regex AND against the kebab-slug schema invariant. The `--orchestrator-id` flag is regex-validated before being interpolated into `canonicalized_by` (defense-in-depth; column is parameterized anyway). This composes with the Phase-3a A03 parameterized-statement invariant.
+All operator-supplied candidate fields flow into `repo.upsert_entity(...)` / `repo.replace_refs(...)` exclusively as **bound parameters** — no f-string SQL composition. Slugs are pre-validated against the kebab regex; `--orchestrator-id` is regex-validated before being interpolated into `canonicalized_by` (defense-in-depth; the column is parameterised anyway). Composes with the project-wide A03 parameterised-statement invariant.
 
 ##### Related Use Cases
 
-UC-08 v3.1 (primary extraction flow with subcommand split + adversarial alternates A6–A13), UC-09 v3.1 (idempotency re-extraction with orchestrator-level short-circuit).
+UC-08 (primary extraction flow, including adversarial alternates A6–A13), UC-09 (idempotency re-extraction with orchestrator-level short-circuit).
 
 ##### Dependencies
 
 Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_state` queries), Configuration Resolver, `frontmatter` for YAML frontmatter handling, `_manifest_consumer` (neutral module) for in-process `--ingest` dispatch. **No external LLM API dependency. No `anthropic` SDK. No `ANTHROPIC_API_KEY`.**
 
-##### Exit-code envelope contract (R-42 v3.1)
+##### Exit-code envelope contract (R-42)
 
 | Code | `error` field | Cause |
 |---|---|---|
 | 0 | — (manifest emitted, or `action="unchanged"`) | Success or idempotency short-circuit |
-| 1 | — (argparse stderr) | Missing required flag, including legacy invocation without subcommand |
+| 1 | — (argparse stderr) | Missing required flag, or invocation without subcommand |
 | 2 | `SOURCE_NOT_FOUND` | Page slug does not resolve inside vault |
-| 2 | `INVALID_SOURCE_PATH` | `--source-page` is an absolute path |
+| 2 | `INVALID_SOURCE_PATH` | `--source-page` is absolute, or resolves outside `_sources/` |
 | 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug |
-| 2 | `SOURCE_TOO_LARGE` | Source body exceeds `_MAX_SOURCE_BODY_BYTES = 10 MiB` (M-3) |
-| 2 | `SOURCE_CHANGED_DURING_EXTRACTION` | `apply --source-hash HEX` does not match disk-recomputed hash (H-1) |
-| 2 | `INVALID_SOURCE_HASH` | `--source-hash` is not 64 lowercase hex chars (vdd-multi C-1, library-caller defense — argparse `type=` gates the CLI path) |
-| 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault`, is missing, is a symlink/FIFO/device/socket, or resolves to a non-regular file (H-5 + vdd-multi H-2) |
+| 2 | `SOURCE_TOO_LARGE` | Source body exceeds `_MAX_SOURCE_BODY_BYTES = 10 MiB` |
+| 2 | `SOURCE_CHANGED_DURING_EXTRACTION` | `apply --source-hash HEX` does not match disk-recomputed hash |
+| 2 | `INVALID_SOURCE_HASH` | `--source-hash` is not 64 lowercase hex chars (library-caller defense; argparse `type=` gates the CLI path) |
+| 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault`, is missing, or resolves to a non-regular file (symlink / FIFO / device / socket) |
 | 4 | `EXTRACTION_PARSE_ERROR` | Candidates JSON malformed (invalid JSON, missing required key, invalid kebab slug, invalid Lstart-Lend, invalid entity_type) |
-| 4 | `CANDIDATES_TOO_LARGE` | Candidates JSON exceeds `_MAX_CANDIDATES_BYTES = 1 MiB` (H-5/H-6) |
-| 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [1, 25]` (Q10/H-2) |
-| 4 | `FIELD_TOO_LONG` | Per-field cap exceeded: `name>200`, `definition>2000`, `source_quote>500` (Q12/H-6) |
-| 4 | `UNKNOWN_FIELD` | Candidate item has keys outside `_REQUIRED_CANDIDATE_KEYS` (Q14/H-9) |
-| 4 | `FIELD_QUOTE_NOT_IN_BODY` | Optional substring check: `source_quote` not found in source body (M-5; bypassable via env var) |
-| 4 | `INVALID_SOURCE_SPAN` | `source_span` fails `^L\d+-L\d+$` at the M-4 sanitization pre-flight (vdd-multi M-4) |
-| 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; `source_state` NOT updated → next run retries (C-1) |
-| 5 | `IDEMPOTENCY_UPDATE_FAILED` | Pages/entities/refs committed but `update_idempotency_state` raised `sqlite3.OperationalError` (DB locked, disk full); next run safely re-extracts (vdd-multi H-3, closes split-brain) |
+| 4 | `CANDIDATES_TOO_LARGE` | Candidates JSON exceeds `_MAX_CANDIDATES_BYTES = 1 MiB` |
+| 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [1, 25]` |
+| 4 | `FIELD_TOO_LONG` | Per-field cap exceeded: `name>200`, `definition>2000`, `source_quote>500` |
+| 4 | `UNKNOWN_FIELD` | Candidate item has keys outside the required set (strict mode) |
+| 4 | `FIELD_QUOTE_NOT_IN_BODY` | Optional substring check: `source_quote` not found in source body (bypassable via `WIKI_EXTRACT_NO_QUOTE_CHECK=1`) |
+| 4 | `INVALID_SOURCE_SPAN` | `source_span` fails `^L\d+-L\d+$` at the sanitisation pre-flight |
+| 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; `source_state` NOT updated → next run retries |
+| 5 | `IDEMPOTENCY_UPDATE_FAILED` | Pages / entities / refs committed but `update_idempotency_state` raised `sqlite3.OperationalError` (DB locked, disk full); next run safely re-extracts |
 | 6 | `MANIFEST_INVALID` | `_manifest_consumer.validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
 
-**Universal envelope invariant** (CWE-117/CWE-209): every error envelope emits `{error: <CODE>, field: <name>?, reason: <human-msg>}` shape with NO `content`, `value`, `raw`, or `received` keys. Regression test in I-V3.12 parametrized across all sub-envelopes.
+**Universal envelope invariant** (CWE-117 / CWE-209): every error envelope emits `{error, field?, reason}` only, with NO `content`, `value`, `raw`, or `received` keys. A parametrised regression test enforces this across every sub-envelope.
 
-##### v3.1 invariants (codified in regression tests)
+##### Operational invariants
 
-- **C-1** (Q15): `update_idempotency_state` called only AFTER `apply` success + (when `--ingest` set) `summary["failed"]` empty. `write_concept_page` uses content-hash skip — partial-failure replay no longer drifts between disk and DB.
-- **H-1** (Q5/Q8): `apply --source-hash HEX` REQUIRED; mismatch with disk-recomputed = `SOURCE_CHANGED_DURING_EXTRACTION` exit 2.
-- **H-2** (Q10): candidate count `1 ≤ N ≤ 25`; out-of-bounds rejected.
-- **H-5** (Q11): `--candidates-file PATH` must live inside vault; otherwise `INVALID_CANDIDATES_PATH`.
-- **H-6** (Q12): per-field caps + total JSON cap; violations rejected without content echo.
-- **H-7** (Q13): markdown/YAML sanitization + adversarial regression tests including non-ASCII names.
-- **H-8** (Q9): `--orchestrator-id` flag populates `canonicalized_by`; audit-trail attribution preserved.
-- **H-9** (Q14): strict-mode schema; extra keys rejected as `UNKNOWN_FIELD`.
-- **Symlink refuse** (Q15, NEW-2): `write_concept_page` refuses to rewrite symlink targets — `PathTraversalError`.
-- **Post-ship vdd-multi hardening (2026-05-28, commit `43812f2`)**:
-  - **C-1**: `--source-hash` argparse `type=_validate_source_hash` validator (regex `^[0-9a-f]{64}$` + `.lower()` normalize); apply() library-caller defense emits `INVALID_SOURCE_HASH` envelope. Closes uppercased-hex misroute + CWE-117 log-injection vector.
-  - **H-1**: `_resolve_source_inside_sources()` enforces `source_path.parent == _sources/` invariant in both prepare and apply. Rejects `_sources/../_concepts/foo.md` traversal as `INVALID_SOURCE_PATH`.
-  - **H-2**: `_load_candidates()` rejects non-regular files (FIFO/device/socket bypass of `stat().st_size==0`) BEFORE any read; subsequent read goes through `os.open(O_NOFOLLOW)` + bounded `os.read(cap+1)`.
-  - **H-3**: `_try_update_idempotency_state()` wraps the DB UPSERT in `try/except sqlite3.OperationalError`; emits new `IDEMPOTENCY_UPDATE_FAILED` envelope at exit 5 instead of uncaught traceback (closes stdout-success/stderr-traceback split-brain).
-  - **H-4**: `_sanitize_definition()` rewritten to delegate to shared `_sanitize_markdown_text()` text-only allowlist (HTML-escape `&<>`, escape `` ` ``, `[`, `]`, leading-line markdown actives). `source_quote` also sanitized via the helper. Closes javascript: URI, data: URI, HTML entity smuggling, Obsidian wikilink injection, code-span (dataview/mermaid) injection.
-  - **M-1**: `_manifest_consumer.BAD_UPSERT_OUTPUT` envelope `raw` key replaced with structured `reason` (length only). Restores 003-v3-17 CWE-117 invariant for the consumer module.
-  - **M-2**: prepare envelope emits `source_path` relative-to-vault-root (CWE-209 absolute-path disclosure closed).
-  - **M-3+M-5**: `_read_file_bounded(path, cap)` helper does `os.open(O_NOFOLLOW)` + `os.fstat` + bounded `os.read(cap+1)` — used by both source-body reads (prepare + apply) and candidates-file reads. `write_concept_page` content-hash compare also uses `os.open(O_NOFOLLOW)` so a symlink swap after the `is_symlink()` check can't leak external content.
-  - **M-4**: `_preflight_sanitize()` runs all per-candidate sanitizers in a dry pass BEFORE the write loop; closes partial-commit window on mid-loop sanitization failure. New `INVALID_SOURCE_SPAN` envelope at exit 4.
-  - **M-6**: `_path_is_absolute()` cross-platform absolute-path detection (catches `/etc/passwd` on Windows AND `C:\foo` on POSIX).
-  - **M-7**: `missing_concept_files` rewritten to use single `os.scandir()` instead of N `is_file()` syscalls (closes iCloud-mount cost; P-9 effectively retired).
-  - **M-9**: `apply` emits `logger.warning` when `--orchestrator-id` defaulted to opaque literal `"orchestrator"` (audit-trail signal).
-  - **L-1**: `_validate_candidates_schema` defensive top-level `isinstance(items, list)` guard + extended per-item type-checks to slug/source_span/entity_type.
-  - **L-2**: `_SOURCE_SPAN_RE` and `_SPAN_REGEX` compiled with `re.ASCII` flag (rejects Unicode digits in line spans).
-  - **L-3**: `write_concept_page` slug check uses precompiled `_SLUG_RE` instead of string-literal `re.match`.
-  - **Architectural follow-ups deferred to `docs/KNOWN_ISSUES.md`**: H-PERF-3 (manifest-consumer N+1), H-5 (SKILL.md hash-pin enforcement), H-6 (indirect prompt-injection canary scanning), P-8 (SEV bumped 3→2).
+- `update_idempotency_state` is called only AFTER `apply` succeeds and (when `--ingest` is set) `summary["failed"]` is empty. Partial-failure replay does not drift between disk and DB because `write_concept_page` content-hash skip suppresses no-op rewrites.
+- `--source-hash` is REQUIRED on `apply`; mismatch with the disk-recomputed value = `SOURCE_CHANGED_DURING_EXTRACTION` exit 2. This is the TOCTOU race-detection contract between `prepare` and `apply`.
+- Candidate-count bound `1 ≤ N ≤ 25` and per-field caps reject pathological payloads before any sanitisation or write happens.
+- `--candidates-file PATH` must live inside `--vault-root` AND be a regular file. Symlinks, FIFOs, devices, and sockets are rejected before any read.
+- Markdown / YAML sanitisation is text-only-allowlist (denylist patterns have been retired); covers HTML entity smuggling, javascript / data URIs, Obsidian wikilink injection, code-span (dataview / mermaid) injection. Adversarial regression tests include non-ASCII names.
+- `_concepts/<slug>.md` writes refuse symlink targets at `target.is_symlink()` BEFORE any hash compute. The hash-compare read uses `os.open(O_NOFOLLOW)` so a swap after the check cannot leak external content.
+- `--orchestrator-id` populates `canonicalized_by`. The default literal `"orchestrator"` triggers a `logger.warning` so audit-trail loss is visible.
 
 ##### RTM coverage
 
-R-30, R-31, R-32, R-33′ (supersedes retired R-33), R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42, R-43 — all 14 active TASK 003 v3.1 requirements. R-33 retired; R-44 retired (already in v2).
+R-30, R-31, R-32, R-33′, R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42, R-43.
 
 ---
 
@@ -1046,9 +992,14 @@ graph LR
     SAM -.reads.-> VAULT
 ```
 
-### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b — v3.1 target)
+### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow
 
-> **NOTE (2026-05-28 — TASK 003 v3.1 SHIPPED, commit `43812f2`):** This diagram reflects the shipped v3.1 architecture (Decision-17): deterministic Python skill split into `prepare`/`apply` subcommands with LLM-driven synthesis happening in the **calling agent's context** (Claude Code / Gemini CLI / Cursor) between the two subprocess calls. v2 shipped 2026-05-28 with an embedded Anthropic SDK call inside step [3]; v3.1 removed that call entirely. Synthesis prompt + JSON candidates contract live in operator-facing skill `skills/concept-extraction/SKILL.md`. Skill itself makes ZERO LLM API calls; auth lives entirely in the calling agent. See [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md) for the archived spec.
+> The Python skill is deterministic plumbing only. LLM-driven synthesis
+> happens in the calling agent's context (Claude Code / Gemini CLI /
+> Cursor) between the `prepare` and `apply` subprocess calls; the
+> synthesis prompt + JSON candidates contract live in operator-facing
+> skill `skills/concept-extraction/SKILL.md`. Auth lives entirely in
+> the calling agent.
 
 ```
 Operator
@@ -1084,7 +1035,7 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
   ├─ STEP 4 — READ SOURCE BODY (calling agent's tool)
   │   Read(source_path) → source body in agent's context window
   │   (NOT a double-read: prepare already returned source_path, NOT source_body —
-  │    avoids 100KB-payload-via-Bash-output design smell per Decision-17 H-1)
+  │    avoids 100KB-payload-via-Bash-output design smell)
   │
   ├─ STEP 5 — SYNTHESIS (calling agent's LLM context, OPERATOR'S subscription/API)
   │   Agent produces candidates JSON array per the loaded contract.
@@ -1117,7 +1068,7 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
   │          │     → repo.replace_refs (atomic; trust_level='medium'; parsed line spans)
   │          ├─ build_manifest → wiki-ingest v1.1-compatible JSON
   │          ├─ (if --ingest) dispatch_to_indexer:
-  │          │     ├─ validate_manifest from _manifest_consumer (Decisions 15+16)
+  │          │     ├─ validate_manifest from _manifest_consumer
   │          │     ├─ index_from_manifest from _manifest_consumer (in-process)
   │          │     │     → page upserts + log_event mirror
   │          │     ↳ on failed[] non-empty → exit 5 PARTIAL_INDEX_FAILURE; source_state NOT updated
@@ -1127,9 +1078,7 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
   └─ STEP 7 — operator sees manifest in their chat / shell
 ```
 
-**Auth boundary**: dotted line between STEP 1 and STEP 6 = subprocess boundary (Python skill); STEP 5 happens entirely in calling agent's process with its own LLM auth. Python skill has zero LLM dependency, zero env var requirements beyond the standard CLI flags.
-
-**Comparison to v2 (shipped)**: v2 had a single monolithic invocation; STEP 3 (synthesis) was inside the Python process via `anthropic.Anthropic().messages.create(...)` requiring `ANTHROPIC_API_KEY`. v3.1 moves STEP 3 to the calling agent; STEP 1 and STEP 6 are the two new subprocess calls. **BREAKING CHANGE for operators** — legacy `wiki-extract-concepts --vault X --source-page Y` (no subcommand) surfaces argparse error pointing at the new surface.
+**Auth boundary**: dotted line between STEP 1 and STEP 6 = subprocess boundary (Python skill); STEP 5 happens entirely in the calling agent's process with its own LLM auth. The Python skill has zero LLM dependency and zero env-var requirements beyond the standard CLI flags.
 
 ---
 
@@ -1168,7 +1117,7 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
 - **Business Rules**:
   - `is_candidate=true` для LLM-extracted без exact match (Epic 7).
   - В Phase 3a entity-resolver — stub. Entities создаются только вручную или migration tools.
-  - **TASK 003 write-path transition:** As of TASK 003, `entities`, `entity_aliases`, and `page_entity_refs` tables transition from **read-mostly** (Phase 3a) to **read+write**. The canonical write path is `repo.upsert_entity(...)` (I-7.7a). Data layering per ADR-002 §D8: concept page files (`_concepts/<slug>.md`) are **Class A canonical** (semantic truth; Obsidian-rendered; git-versioned; survive DB drop + reindex). Entity rows in the `entities` table are **Class B cache** (rebuildable from concept page frontmatter via `wiki-reindex --full`; vault wins on conflict). Entity rows written by R-3 carry `is_candidate=1`; promotion to `is_candidate=0` (confirmed) is R-4 scope (deferred — not implemented in TASK 003). The SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) ensures R-3 extraction cannot demote a previously confirmed entity.
+  - **Entity write-path:** `entities`, `entity_aliases`, and `page_entity_refs` tables are read+write. The canonical write path is `repo.upsert_entity(...)`. Data layering per ADR-002 §D8: concept page files (`_concepts/<slug>.md`) are **Class A canonical** (semantic truth; Obsidian-rendered; git-versioned; survive DB drop + reindex). Entity rows in the `entities` table are **Class B cache** (rebuildable from concept-page frontmatter via `wiki-reindex --full`; vault wins on conflict). Entity rows written by extraction carry `is_candidate=1`; promotion to `is_candidate=0` (confirmed) is R-4 scope (deferred). The SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) ensures re-extraction cannot demote a previously confirmed entity.
 
 #### Entity: **PageEntityRef**
 - **Description**: М:М связь page ↔ entity (concept упомянут на странице) с provenance v1.1.
@@ -1431,7 +1380,7 @@ erDiagram
 - Audit logs beyond `log.md`.
 - Encryption at rest (vault encryption — responsibility пользователя).
 
-### 7.4. Vendoring Policy (TASK 004 — cross-cutting concern)
+### 7.4. Vendoring Policy
 
 Snapshot-based vendoring is used for the `wiki_ingest` Python module to eliminate the external PATH dependency (Decision-11). Key policy points:
 
@@ -1655,55 +1604,54 @@ claude
 
 Все 18 MVP requirements + sub-features покрыты Architecture sections + tied к binary test references.
 
-### Phase 3b Requirements (TASK 003 — R-30..R-44)
+### Concept Extractor Requirements (R-30..R-43)
 
-| TASK Requirement | Architecture coverage | Test/AC reference |
-|---|---|---|
-| R-30 (new skill entry point) | §2.1 Component: Concept Extractor — entry point `scripts/wiki_skills/wiki_extract_concepts.py`; §2.1 Skill Layer list | I-7.1, I-7.2 — stub-first argparse + SKILL.md |
-| R-31 (`--vault`, `--source-page` required args) | §2.1 Component: Concept Extractor Inputs section; R-26.2 path-traversal guard inherited | I-7.1 — argparse error on missing args; validate_inside_vault |
-| R-32 (pre-extraction known-entities query) | §2.1 `load_known_entities` function; §4.1 Entity (ADR-002 D3 entities-via-SQL) | I-7.3 — SELECT entities + aliases WHERE vault_id=? before LLM call |
-| R-33 (LLM extraction call, claude-sonnet-4-6, temperature=0) | §2.1 `extract_concepts_llm` function; §5.3 Integrations (Anthropic API row) | I-7.4 — API call spec; R-33(e) EXTRACTION_PARSE_ERROR |
-| R-34 (de-duplication at extraction time) | §2.1 `classify_candidates` function; §2.1 Concept Extractor purpose | I-7.5 — create vs mention classification |
-| R-35 (manifest output, wiki-ingest v1.1 compatible) | §2.1 `build_manifest` function; §3.4 Sequence Diagram step [8] | I-7.10 — manifest schema round-trip test |
-| R-36 (concept page generation, `_concepts/<slug>.md`) | §2.1 `write_concept_page` function; §4.1 Entity Business Rules (Class A); §3.4 Sequence step [5] | I-7.6 — atomic write, frontmatter spec, skip-if-exists |
-| R-37 (entity row upsert, `is_candidate=1`) | §2.1 `upsert_extracted_entity`; §2.1 Index Layer (DAL) `upsert_entity` method; §4.1 Entity TASK 003 write-path paragraph | I-7.7a (DAL ABC extension), I-7.7b (call site); downgrade-guard |
-| R-38 (`page_entity_refs`, `trust_level='medium'`, provenance) | §2.1 `upsert_entity_refs`; §4.1 PageEntityRef; §3.4 Sequence step [6] | I-7.8 — replace_refs atomic delete+insert |
-| R-39 (idempotency: same file_hash → `status=unchanged`) | §2.1 `check_idempotency`; §3.4 Sequence step [1]; UC-09 prose in §4.1 | I-7.9 — source_state query; fast exit < 50ms |
-| R-40 (multi-vault `vault_id` enforced throughout) | §2.1 Concept Extractor "Multi-vault invariant"; §2.1 Index Layer multi-vault ADR-002 | All DB calls include vault_id=? predicate; validate_inside_vault on every write |
-| R-41 (in-process dispatch via neutral `_manifest_consumer` module — Decisions 15+16) | §2.1 `dispatch_to_indexer`; §3.4 Sequence step [9]; §6 Cross-module import note in TASK | **I-7.0 (refactor first)**, I-7.11 (dispatch), I-7.14 (regression) — neutral module created before any extract-concepts code; wiki_enrich re-exports for back-compat |
-| R-42 (error handling, exit codes 0-6) | §2.1 Concept Extractor purpose (fail-fast); §9.1 Error Handling; §5.2 error envelope | I-7.1 — argparse errors (exit 1); EXTRACTION_PARSE_ERROR (exit 4); partial-write envelope with written_so_far + index_failed; MANIFEST_INVALID (exit 6) |
-| R-43 (tests: unit + integration, mypy --strict) | §10.2 CI/test gate (332+ tests target post-I-7.0); §2.1 Stub-First status | I-7.0 (4 new test_manifest_consumer cases), I-7.12 unit tests, I-7.13 integration tests, I-7.14 mypy --strict |
-| ~~R-44~~ (`wiki-enrich --manifest-file` / `--manifest-stdin`) | **DROPPED** — Decision-15 supersedes v1 Decision-9; in-process dispatch obviates manifest-input CLI flags | ~~I-7.15~~ dropped |
+| Requirement | Architecture coverage |
+|---|---|
+| R-30 (skill entry point) | §2.1 Component: Concept Extractor — entry point `scripts/wiki_skills/wiki_extract_concepts.py`; §2.1 Skill Layer list |
+| R-31 (required `--vault` + `--source-page` args; vault-relative path resolution) | §2.1 CLI surface; R-26.2 path-traversal guard inherited via `validate_inside_vault` |
+| R-32 (pre-extraction known-entities query) | §2.1 `load_known_entities` function; §4.1 Entity (ADR-002 D3 entities-via-SQL) |
+| R-33′ (operator-synthesised candidates JSON; strict schema validation) | §2.1 `_validate_candidates_schema`; §2.1 Candidates JSON contract; §3.4 STEP 5 (synthesis in calling agent) |
+| R-34 (de-duplication at extraction time) | §2.1 `classify_candidates` function; §2.1 Concept Extractor purpose |
+| R-35 (manifest output, wiki-ingest v1.1 compatible) | §2.1 `build_manifest` function; §3.4 STEP 6 |
+| R-36 (concept page generation, `_concepts/<slug>.md`) | §2.1 `write_concept_page` (atomic; content-hash skip; symlink refuse; `_sanitize_markdown_text`); §4.1 Entity Business Rules (Class A) |
+| R-37 (entity row upsert, `is_candidate=1`) | §2.1 `upsert_extracted_entity`; §2.1 Index Layer DAL `upsert_entity` (SQL-level `MIN()` downgrade-guard); §4.1 Entity write-path |
+| R-38 (`page_entity_refs`, `trust_level='medium'`, parsed line spans) | §2.1 `upsert_entity_refs`; §4.1 PageEntityRef |
+| R-39 (idempotency: same source body → `is_unchanged=true`) | §2.1 `check_idempotency`; §3.4 STEP 2; UC-09 prose in §4.1 |
+| R-40 (multi-vault `vault_id` enforced throughout) | §2.1 Multi-vault invariant; §2.1 Index Layer multi-vault note (ADR-002 §D1) |
+| R-41 (in-process dispatch via neutral `_manifest_consumer`) | §2.1 `dispatch_to_indexer`; §3.4 STEP 6 sub-branch; §1.5.2 transport diagram |
+| R-42 (error handling, exit codes 0/1/2/4/5/6; CWE-117/209 envelope discipline) | §2.1 Exit-code envelope contract table; §2.1 Operational invariants; §9.1 Error Handling |
+| R-43 (tests: unit + integration + parametrised envelope shape; mypy --strict) | §10.2 CI/test gate; §2.1 Universal envelope invariant note |
 
-### Phase 3b Requirements (TASK 004 — R-45..R-57, wiki-ingest-vendoring)
+### wiki-ingest Vendoring Requirements (R-45..R-57)
 
-> TASK 004 is a transport-layer change: it collapses the subprocess hop in §1.5.2 to an in-process call. No new DAL methods, no new DB tables, no new user-facing skills. All RTM rows trace to §1.5.2 (flow diagram), §1.5.7 (vendored module anatomy), §2.1 Source Adapters (transport note), §7.4 (vendoring policy), or §10.4 (deployment/install simplification).
+> Transport-layer concern only: the in-process import path collapses the subprocess hop in §1.5.2 to a Python call. No new DAL methods, no new DB tables, no new user-facing skills. All rows trace to §1.5.2 (flow diagram), §1.5.7 (vendored module anatomy), §2.1 Source Adapters (transport note), §7.4 (vendoring policy), or §10.4 (install simplification).
 
-| TASK Requirement | Architecture coverage | Test/AC reference |
-|---|---|---|
-| R-45 (vendor copy: `scripts/wiki_ingest/` present and importable) | §1.5.7 vendored module anatomy (directory layout, `VENDORED_FROM.md`); §1.5.3 post-TASK-004 dual-existence note | I-V.1 — `from scripts.wiki_ingest.commands.ingest import ingest` succeeds; `VENDORED_FROM.md` fields present (Smoke 7) |
-| R-46 (programmatic `ingest()` function + `IngestError` exposed) | §1.5.7 Public API surface (function signature, `IngestError` attributes); §1.5.2 PRIMARY PATH step 2 | I-V.3 — `execute()` wraps `ingest()`; `IngestError` raises instead of `sys.exit()`; R-46(e) CLI path preserved |
-| R-47 (`wiki_enrich.py` primary path: in-process) | §1.5.2 PRIMARY PATH (full diagram); §2.1 Source Adapters transport note (Decision-14); §1.5.4 DAL invariant | I-V.5 — subprocess NOT called on primary path; `check_wiki_ingest_version()` NOT called; output JSON structure identical (Smoke 1) |
-| R-48 (subprocess fallback path retained) | §1.5.2 FALLBACK PATH (full diagram); §1.5.2 path decision branch (`WIKI_ENRICH_NO_VENDORED`, `ImportError`) | I-V.5 — three fallback test cases: env var, ImportError+PATH, ImportError+no-PATH; Smoke 2, Smoke 3 |
-| R-49 (`scripts/sync_wiki_ingest.sh` snapshot sync script) | §1.5.7 sync script description (divergence-check, rsync, `VENDORED_FROM.md` update, flags); §7.4 Vendoring Policy (drift detection) | I-V.2 — `--dry-run` no mutations; divergence-abort on local edit; Smoke 7 |
-| R-50 (`mypy --strict` clean for `scripts/wiki_ingest/`) | §1.5.7 vendoring policy (type fixups, `local_patches`, time-box); §7.4 Vendoring Policy | I-V.4 — zero mypy errors; fixups documented with `# VENDORED-PATCH:`; Smoke 5 |
-| R-51 (tests: vendored path + fallback coverage) | §1.5.2 path decision branch (three fallback scenarios); §10.2 CI/test gate | I-V.7 — patch `_vendored_ingest` instead of `subprocess.run`; three new test cases; Smoke 6 (298+ tests) |
-| R-52 (`bin/wiki-enrich` launcher no longer requires `wiki-ingest` on PATH) | §1.5.2 PRIMARY PATH ("wiki-ingest binary NOT required on PATH"); §1.5.5 symlink graph note (symlink optional post-TASK-004) | I-V.6 — no `which wiki-ingest || exit` guard in launcher; Smoke 1 (wiki-ingest absent, exit 0) |
-| R-53 (README and install docs simplified) | §10.4 Deployment Instructions (step 4 — `wiki-ingest` symlink no longer required step) | I-V.8 — README `## Installation` updated; `ln -s wiki-ingest` demoted to optional |
-| R-54 (ARCHITECTURE.md §1.5.2 updated — this document) | §1.5.2 full restructure (PRIMARY PATH + FALLBACK PATH + decision branch); §1.5.3 dual-existence note; §1.5.7 (new) | I-V.9 — this document (R-54 self-referential acceptance) |
-| R-55 (`THIRD_PARTY_NOTICES.md` credits upstream wiki-ingest) | §7.4 Vendoring Policy (third-party notices paragraph); §1.5.7 vendoring policy (notices file, LICENSE-upstream) | I-V.10 — file exists with required fields; LICENSE-upstream if upstream has LICENSE |
-| R-56 (TASK 003 interface contracts preserved, no surface breakage) | §1.5.2 FALLBACK PATH note ("Phase 3b extension — TASK 003 PAUSED"; R-56 explicit); §2.1 Source Adapters (`--source required=True` note); §3.4 paused-state note | I-V.11 — `--source` remains `required=True`; `index_from_manifest()` / `_validate_manifest()` signatures unchanged; all 295+ tests pass |
-| R-57 (standalone `wiki-ingest` CLI behavior unchanged) | §1.5.3 dual-existence note ("vendored copy usable as CLI via `python -m`"); §1.5.7 Public API ("CLI surface preserved: `execute()` continues to work") | I-V.11 Smoke 4 — `python -m scripts.wiki_ingest.commands.ingest --source X --vault Y --output-format json` exits 0; Universal-skills repo unmodified (`git status` clean) |
+| Requirement | Architecture coverage |
+|---|---|
+| R-45 (vendor copy: `scripts/wiki_ingest/` present and importable) | §1.5.7 vendored module anatomy (directory layout, `VENDORED_FROM.md`); §1.5.3 dual-existence note |
+| R-46 (programmatic `ingest()` function + `IngestError` exposed) | §1.5.7 Public API surface; §1.5.2 PRIMARY PATH step 2 |
+| R-47 (`wiki_enrich.py` primary path: in-process) | §1.5.2 PRIMARY PATH (full diagram); §2.1 Source Adapters transport note; §1.5.4 DAL invariant |
+| R-48 (subprocess fallback path retained) | §1.5.2 FALLBACK PATH (full diagram); §1.5.2 path decision branch (`WIKI_ENRICH_NO_VENDORED`, `ImportError`) |
+| R-49 (`scripts/sync_wiki_ingest.sh` snapshot sync script) | §1.5.7 sync-script description (divergence-check, rsync, `VENDORED_FROM.md` update); §7.4 Vendoring Policy |
+| R-50 (`mypy --strict` clean for `scripts/wiki_ingest/`) | §1.5.7 vendoring policy (type fixups, `local_patches`); §7.4 Vendoring Policy |
+| R-51 (tests: vendored path + fallback coverage) | §1.5.2 path decision branch (three fallback scenarios); §10.2 CI/test gate |
+| R-52 (`bin/wiki-enrich` launcher no longer requires `wiki-ingest` on PATH) | §1.5.2 PRIMARY PATH; §1.5.5 symlink graph note (external symlink optional) |
+| R-53 (README and install docs simplified) | §10.4 Deployment Instructions (`wiki-ingest` symlink demoted to optional) |
+| R-54 (ARCHITECTURE.md §1.5.2 updated — this document) | §1.5.2 restructure (PRIMARY PATH + FALLBACK PATH + decision branch); §1.5.3 dual-existence note; §1.5.7 |
+| R-55 (`THIRD_PARTY_NOTICES.md` credits upstream wiki-ingest) | §7.4 Vendoring Policy (third-party notices paragraph); §1.5.7 vendoring policy (notices file, LICENSE-upstream) |
+| R-56 (`wiki-enrich` interface contracts preserved, no surface breakage) | §1.5.2 (both paths emit identical envelope shape); §2.1 Source Adapters (`--source required=True` note) |
+| R-57 (standalone `wiki-ingest` CLI behavior unchanged) | §1.5.3 dual-existence note (vendored copy usable as CLI via `python -m`); §1.5.7 Public API (CLI surface preserved) |
 
 ---
 
 ## Quality Checklist (VDD)
 
-- [x] **Data Model**: Defined entities + key attributes + relationships + indexes (§4 + SCHEMA-DRAFT.sql). TASK 003 write-path transition documented in §4.1 Entity Business Rules. TASK 004: no schema changes (§5.1 confirmed).
-- [x] **Traceability**: Verification Map covers Phase 3a (R-01..R-26) + Phase 3b TASK 003 (R-30..R-44) + Phase 3b TASK 004 (R-45..R-57). All 13 TASK 004 RTM rows trace to at least one architectural surface.
-- [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; Path-traversal + SQL-injection защиты explicit (§7.3). Phase 3b: `validate_inside_vault` applied to every `_concepts/` write path (R-40). TASK 004: vendored module inherits Phase-3a A03 parameterized-statement invariant; no new attack surfaces introduced.
-- [x] **Multi-vault**: Every Phase 3b operation carries `vault_id` predicate (Concept Extractor component explicitly calls this out; R-40 covers it). TASK 004: vendored `ingest()` accepts `vault_id` as explicit kwarg (Decision-13; §1.5.7); no hash-fallback.
-- [x] **Stub-First**: Component: Concept Extractor "Stub-First status" paragraph states which functions start as stubs. `resolve_entity` remains stub (explicit H-instruction preserved). TASK 004 has no new stubs (transport-only change).
-- [x] **ADR-001 clarification (Decision-8)**: Source Adapters component has in-line note preserving single-indexer invariant while allowing derivative page writes. TASK 004 Decision-14 transport note added adjacently.
-- [x] **Backward compat**: Subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); TASK 003 resume path unbroken (R-56 explicit in RTM + §3.4 paused-state note + §2.1 `--source required=True` note).
-- [x] **Template**: Extended template применён (Sections 1-11 покрыты + §3.4 Sequence Diagram for Phase 3b + §1.5.7 new vendored module subsection + §7.4 new Vendoring Policy subsection).
+- [x] **Data Model**: entities + key attributes + relationships + indexes defined (§4 + SCHEMA-v2.sql). Entity write-path documented in §4.1 Entity Business Rules.
+- [x] **Traceability**: Verification Map covers Phase 3a (R-01..R-26), Concept Extractor (R-30..R-43), and wiki-ingest Vendoring (R-45..R-57).
+- [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; path-traversal + SQL-injection protections explicit (§7.3). `validate_inside_vault` applied to every `_concepts/` write path AND every operator-supplied path (source-page, candidates-file).
+- [x] **Multi-vault**: every operation carries a `vault_id` predicate or is scoped to `vault_root`. Vendored `ingest()` accepts `vault_id` as explicit kwarg; no hash-fallback.
+- [x] **Stub-First**: `resolve_entity` remains a deferred read-path stub (R-4 scope); all other extractor functions are fully implemented.
+- [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
+- [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
+- [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).
