@@ -8,6 +8,7 @@ helper's body fills in.
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -63,22 +64,82 @@ def test_argparse_prepare_subparser_exists() -> None:
     assert args.source_page == "sample-doc"
 
 
+_VALID_HASH = "deadbeef" * 8  # 64 lowercase hex chars (C-1 normalized form)
+_VALID_HASH_UPPER = _VALID_HASH.upper()
+
+
 def test_argparse_apply_subparser_exists() -> None:
     """`apply` subparser accepts the write-path flags including --source-hash
-    (REQUIRED) and the candidates mutex group.
+    (REQUIRED, validated as 64-lowercase-hex per C-1) and the candidates
+    mutex group.
     """
     args = wec._build_parser_v3().parse_args([
         "apply",
         "--vault", "X",
         "--vault-root", "/tmp",
         "--source-page", "sample-doc",
-        "--source-hash", "deadbeef",
+        "--source-hash", _VALID_HASH,
         "--candidates-stdin",
     ])
     assert args.cmd == "apply"
-    assert args.source_hash == "deadbeef"
+    assert args.source_hash == _VALID_HASH
     assert args.candidates_stdin is True
     assert args.candidates_file is None
+
+
+def test_argparse_apply_source_hash_case_normalized_C1() -> None:
+    """C-1: --source-hash DEADBEEF... (uppercased by PowerShell `toupper`
+    or similar pipeline) is accepted and normalized to lowercase, not
+    misrouted to SOURCE_CHANGED_DURING_EXTRACTION."""
+    args = wec._build_parser_v3().parse_args([
+        "apply",
+        "--vault", "X",
+        "--vault-root", "/tmp",
+        "--source-page", "sample-doc",
+        "--source-hash", _VALID_HASH_UPPER,
+        "--candidates-stdin",
+    ])
+    assert args.source_hash == _VALID_HASH  # normalized to lowercase
+
+
+def test_argparse_apply_source_hash_rejects_short_value_C1(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """C-1: --source-hash with < 64 chars (e.g., 'deadbeef') is rejected
+    at argparse with SystemExit(2). Without this gate, the value would
+    silently misroute and could land unescaped in CWE-117 log injection
+    vector via the envelope reason field."""
+    with pytest.raises(SystemExit) as ei:
+        wec._build_parser_v3().parse_args([
+            "apply",
+            "--vault", "X",
+            "--vault-root", "/tmp",
+            "--source-page", "sample-doc",
+            "--source-hash", "deadbeef",  # only 8 chars
+            "--candidates-stdin",
+        ])
+    assert ei.value.code == 2
+    err = capsys.readouterr().err
+    assert "64 lowercase hex chars" in err
+
+
+def test_argparse_apply_source_hash_rejects_non_hex_chars_C1(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """C-1: --source-hash with non-hex chars (e.g., embedded ANSI escape
+    or JSON-breaking sequence) is rejected at argparse, closing the
+    CWE-117 log-injection vector through the envelope reason field."""
+    evil = "z" * 64  # 64 chars but not hex
+    with pytest.raises(SystemExit) as ei:
+        wec._build_parser_v3().parse_args([
+            "apply",
+            "--vault", "X",
+            "--vault-root", "/tmp",
+            "--source-page", "sample-doc",
+            "--source-hash", evil,
+            "--candidates-stdin",
+        ])
+    assert ei.value.code == 2
 
 
 # test_main_dispatches_to_prepare_stub REMOVED in 003-v3-01:
@@ -87,19 +148,10 @@ def test_argparse_apply_subparser_exists() -> None:
 # live below (test_prepare_*).
 
 
-def test_main_dispatches_to_apply_stub() -> None:
-    """`main(["apply", ...])` reaches the apply() stub which raises
-    NotImplementedError naming the bead that fills it in (003-v3-03).
-    """
-    with pytest.raises(NotImplementedError, match="task-003-v3-03"):
-        wec.main([
-            "apply",
-            "--vault", "X",
-            "--vault-root", "/tmp",
-            "--source-page", "sample-doc",
-            "--source-hash", "deadbeef",
-            "--candidates-stdin",
-        ])
+# test_main_dispatches_to_apply_stub REMOVED in 003-v3-03:
+# the apply() stub was replaced with the real implementation, so the
+# NotImplementedError assertion no longer holds. Real apply-surface tests
+# live in the "003-v3-03: apply subcommand" section below.
 
 
 def test_argparse_top_level_help_shows_subcommands(
@@ -376,8 +428,8 @@ def test_module_imports_neutral_manifest_consumer() -> None:
 
 def test_helpers_raise_not_implemented(tmp_path: Path) -> None:
     """Phase-1 stubs that remain to be filled by downstream beads. As each
-    bead lands, the corresponding assertion is removed. 003-03 (load_known_entities)
-    and 003-04 (extract_concepts_llm) already landed."""
+    bead lands, the corresponding assertion is removed. All 003-NN helpers
+    have landed (and the v2 LLM-call helpers are retired in 003-v3-11)."""
     # All 003-NN helpers landed; this test is now an empty contract — keep
     # the function as a regression placeholder so future stubs can
     # re-populate it if more helpers are added.
@@ -497,112 +549,16 @@ def test_load_known_entities_filters_by_vault(
     assert {e["slug"] for e in b_result} == {"beta"}
 
 
-# ============================================================================
-# 003-04: extract_concepts_llm (R-33, R-34)
-# ============================================================================
-
-
-def _llm_response(text: str) -> mock.Mock:
-    """Build a mock anthropic.Messages.create() response with .content[0].text."""
-    block = mock.Mock()
-    block.text = text
-    resp = mock.Mock()
-    resp.content = [block]
-    return resp
-
-
-_VALID_LLM_JSON = (
-    '['
-    '{"slug":"sharpe-ratio","name":"Sharpe Ratio","definition":"Risk-adjusted return.",'
-    '"source_quote":"The Sharpe ratio measures excess return per unit of volatility.",'
-    '"source_span":"L12-L14","entity_type":"concept"},'
-    '{"slug":"hermes","name":"Hermes Agent","definition":"Self-improving trading framework.",'
-    '"source_quote":"Hermes is the self-improving trading agent we built on the framework.",'
-    '"source_span":"L20-L22","entity_type":"product"}'
-    ']'
-)
-
-
-def test_build_prompt_includes_known_concepts() -> None:
-    """R-34(a): known-concepts JSON embedded in the LLM prompt."""
-    known = [{"slug": "alpha", "name": "Alpha", "type": "concept",
-              "aliases": ["A1"]}]
-    prompt = wec._build_extraction_prompt("Source body here.", known)
-    assert '"slug": "alpha"' in prompt
-    assert '"name": "Alpha"' in prompt
-    assert "Source body here." in prompt
-    assert "ONLY a JSON array" in prompt
-
-
-def test_extract_concepts_llm_parses_valid_json() -> None:
-    """R-33(d): valid JSON parses into a list of dicts with all required fields."""
-    fake_response = _llm_response(_VALID_LLM_JSON)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        instance = MockClient.return_value
-        instance.messages.create.return_value = fake_response
-
-        result = wec.extract_concepts_llm(
-            "body", [], model="claude-sonnet-4-6", max_tokens=4096,
-        )
-
-    assert len(result) == 2
-    assert result[0]["slug"] == "sharpe-ratio"
-    assert result[1]["entity_type"] == "product"
-
-
-def test_extract_concepts_llm_raises_on_malformed_json() -> None:
-    """R-33(e): malformed JSON → ExtractionParseError → exit 4."""
-    fake_response = _llm_response("not json {")
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = fake_response
-        with pytest.raises(wec.ExtractionParseError, match="non-JSON"):
-            wec.extract_concepts_llm("body", [])
-
-
-def test_extract_concepts_llm_raises_on_schema_violation() -> None:
-    """Decision-10: source_span must match Lstart-Lend; otherwise ExtractionParseError."""
-    bad = (
-        '[{"slug":"x","name":"X","definition":"d",'
-        '"source_quote":"q","source_span":"lines 12-14","entity_type":"concept"}]'
-    )
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = _llm_response(bad)
-        with pytest.raises(wec.ExtractionParseError, match="source_span"):
-            wec.extract_concepts_llm("body", [])
-
-
-def test_extract_concepts_llm_raises_on_api_error() -> None:
-    """R-42(c): anthropic.APIConnectionError → LLMUnavailableError → exit 3."""
-    import anthropic
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        # APIConnectionError requires a request object — use a Mock to satisfy it.
-        MockClient.return_value.messages.create.side_effect = (
-            anthropic.APIConnectionError(request=mock.Mock())
-        )
-        with pytest.raises(wec.LLMUnavailableError):
-            wec.extract_concepts_llm("body", [])
-
-
-def test_extract_concepts_llm_uses_temperature_zero() -> None:
-    """R-33(b): every API call passes temperature=0."""
-    fake_response = _llm_response(_VALID_LLM_JSON)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = fake_response
-        wec.extract_concepts_llm("body", [], model="claude-sonnet-4-6", max_tokens=2048)
-
-    call_kwargs = MockClient.return_value.messages.create.call_args.kwargs
-    assert call_kwargs["temperature"] == 0
-    assert call_kwargs["model"] == "claude-sonnet-4-6"
-    assert call_kwargs["max_tokens"] == 2048
-
-
-def test_extract_concepts_llm_caps_max_tokens_at_4096() -> None:
-    """R-33(c): max_tokens > 4096 is clamped."""
-    fake_response = _llm_response(_VALID_LLM_JSON)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = fake_response
-        wec.extract_concepts_llm("body", [], max_tokens=8192)
-    assert MockClient.return_value.messages.create.call_args.kwargs["max_tokens"] == 4096
+# 003-v3-11: the prior v2 LLM-side test block (9 SDK-mock tests, 1
+# prompt-construction test, 2 helpers) was removed in lockstep with the
+# v3.1 Decision-17 refactor. The deleted surface tested the in-skill LLM
+# call + prompt builder; all three (function, prompt helper, SDK import)
+# are deleted in bead 003-v3-06. Regression intent for the v3.1 surface
+# (synthesis is now orchestrator-side) is covered by:
+#   - the strict validator tests (003-v3-02)
+#   - the apply subcommand tests (003-v3-03)
+#   - the envelope-shape parametrized test (003-v3-17)
+#   - the integration test refactor (003-v3-12)
 
 
 # ============================================================================
@@ -814,19 +770,12 @@ def test_write_concept_page_writes_file_with_frontmatter(tmp_path: Path) -> None
     assert "L12-L14" in body
 
 
-def test_write_concept_page_skips_existing_file(tmp_path: Path) -> None:
-    """R-36(e): existing file is NOT overwritten; H-2 fix: action='unchanged'."""
-    concepts_dir = tmp_path / "_concepts"
-    concepts_dir.mkdir(parents=True)
-    target = concepts_dir / "sharpe-ratio.md"
-    target.write_text("OPERATOR_MARKER\n", encoding="utf-8")
-    returned_path, returned_action = wec.write_concept_page(
-        tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
-        vault_id="test-vault",
-    )
-    assert returned_path == target
-    assert returned_action == "unchanged"
-    assert target.read_text(encoding="utf-8") == "OPERATOR_MARKER\n"
+# test_write_concept_page_skips_existing_file DELETED in 003-v3-04:
+# v2's "skip-on-exists regardless of content" semantic is replaced by
+# content-hash skip (C-1). The replacement coverage lives in
+# test_write_concept_page_content_hash_skip_unchanged_C1 (same-content
+# path) and test_write_concept_page_content_hash_diff_triggers_rewrite_C1
+# (different-content path), both below.
 
 
 def test_write_concept_page_creates_concepts_dir_if_missing(tmp_path: Path) -> None:
@@ -851,6 +800,239 @@ def test_write_concept_page_rejects_path_outside_vault(tmp_path: Path) -> None:
 
 
 # ============================================================================
+# 003-v3-04: write_concept_page reshape — symlink refuse + content-hash skip
+#            + markdown sanitization (R-36, R-40, Q13, Q15, H-7, C-1)
+# ============================================================================
+
+
+def test_write_concept_page_symlink_target_raises_PathTraversal_Q15(
+    tmp_path: Path,
+) -> None:
+    """Q15 / NEW-2: pre-existing `_concepts/<slug>.md` symlink → refuse
+    BEFORE any read or hash-compute."""
+    from scripts.wiki_index.security import PathTraversalError
+    concepts_dir = tmp_path / "_concepts"
+    concepts_dir.mkdir(parents=True)
+    elsewhere = tmp_path / "decoy.md"
+    elsewhere.write_text("decoy\n", encoding="utf-8")
+    target = concepts_dir / "sharpe-ratio.md"
+    target.symlink_to(elsewhere)
+    with pytest.raises(PathTraversalError, match="symlink"):
+        wec.write_concept_page(
+            tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+            vault_id="test-vault",
+        )
+
+
+def test_write_concept_page_content_hash_skip_unchanged_C1(
+    tmp_path: Path,
+) -> None:
+    """C-1: identical inputs run twice → second call returns
+    `(target, "unchanged")` and the on-disk file is byte-identical."""
+    path1, action1 = wec.write_concept_page(
+        tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+        vault_id="test-vault",
+    )
+    assert action1 == "created"
+    bytes_after_first = path1.read_bytes()
+    path2, action2 = wec.write_concept_page(
+        tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+        vault_id="test-vault",
+    )
+    assert path2 == path1
+    assert action2 == "unchanged"
+    assert path2.read_bytes() == bytes_after_first
+
+
+def test_write_concept_page_content_hash_diff_triggers_rewrite_C1(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """C-1: same target, different `definition` → atomic rewrite +
+    `(target, "updated")` + `logger.warning` emitted."""
+    path, _action = wec.write_concept_page(
+        tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+        vault_id="test-vault",
+    )
+    mutated = {**_DEMO_CANDIDATE,
+               "definition": "Updated definition — different content."}
+    caplog.set_level("WARNING", logger="scripts.wiki_skills.wiki_extract_concepts")
+    path2, action2 = wec.write_concept_page(
+        tmp_path, mutated, "src", date(2026, 5, 27),
+        vault_id="test-vault",
+    )
+    assert path2 == path
+    assert action2 == "updated"
+    assert "Updated definition" in path2.read_text(encoding="utf-8")
+    assert any("rewriting" in rec.message for rec in caplog.records), (
+        "logger.warning must fire on content rewrite (C-1 observability)"
+    )
+
+
+def test_write_concept_page_creates_new_returns_created(tmp_path: Path) -> None:
+    """New target file → action='created' (preserved from v2 happy path)."""
+    path, action = wec.write_concept_page(
+        tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+        vault_id="test-vault",
+    )
+    assert path.is_file()
+    assert action == "created"
+
+
+def test_write_concept_page_sanitize_name_strips_leading_hash_H7(
+    tmp_path: Path,
+) -> None:
+    """H-7: `name='## Backdoor'` → leading `##` stripped; body has
+    `# Backdoor` H1 and NO smuggled `## Backdoor` line."""
+    cand = {**_DEMO_CANDIDATE, "name": "## Backdoor"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    import frontmatter as _fm
+    post = _fm.loads(text)
+    assert post.metadata["name"] == "Backdoor"
+    assert "# Backdoor" in post.content
+    assert "## Backdoor" not in post.content
+
+
+def test_write_concept_page_sanitize_name_strips_leading_yaml_delimiter_H7(
+    tmp_path: Path,
+) -> None:
+    """H-7: `name='--- evil'` → leading `---` stripped to `'evil'`; body
+    does NOT contain a stray `---` outside the frontmatter block."""
+    cand = {**_DEMO_CANDIDATE, "name": "--- evil"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    import frontmatter as _fm
+    post = _fm.loads(text)
+    assert post.metadata["name"] == "evil"
+    # Body must not contain `---` (only the frontmatter delimiters do).
+    assert "---" not in post.content
+
+
+def test_write_concept_page_sanitize_name_accepts_cyrillic_N5(
+    tmp_path: Path,
+) -> None:
+    """Iteration-2 N-5: Cyrillic name `'Свидетель'` passes the
+    allowlist (re.UNICODE flag) without raising."""
+    cand = {**_DEMO_CANDIDATE, "slug": "svidetel", "name": "Свидетель"}
+    path, action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    assert action == "created"
+    import frontmatter as _fm
+    post = _fm.loads(path.read_text(encoding="utf-8"))
+    assert post.metadata["name"] == "Свидетель"
+
+
+def test_write_concept_page_sanitize_definition_escapes_newline_header_H7(
+    tmp_path: Path,
+) -> None:
+    """H-7: `definition='text\\n## Backdoor'` → escaped to `\\n\\## ` so
+    Obsidian does not render a new H2 mid-body."""
+    cand = {**_DEMO_CANDIDATE, "definition": "text\n## Backdoor"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    import frontmatter as _fm
+    post = _fm.loads(path.read_text(encoding="utf-8"))
+    # The escaped backslash sequence must appear; the bare `## Backdoor`
+    # must NOT appear at start-of-line.
+    assert "\\## Backdoor" in post.content
+    assert "\n## Backdoor" not in post.content
+
+
+def test_write_concept_page_sanitize_definition_escapes_html_tag_H7(
+    tmp_path: Path,
+) -> None:
+    """H-7: `definition='<script>alert(1)</script>'` → HTML entities
+    escaped so Obsidian does not render the tag."""
+    cand = {**_DEMO_CANDIDATE, "definition": "<script>alert(1)</script>"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    import frontmatter as _fm
+    post = _fm.loads(path.read_text(encoding="utf-8"))
+    assert "&lt;script&gt;" in post.content
+    assert "&lt;/script&gt;" in post.content
+    assert "<script>" not in post.content
+
+
+def test_write_concept_page_source_quote_wrapped_in_blockquote_H7(
+    tmp_path: Path,
+) -> None:
+    """NEW-1: source_quote rendered as ``> ...`` blockquote with a
+    provenance footer line, eliminating inline-quote ambiguity and the
+    `]]` wikilink-escape attack vector."""
+    cand = {**_DEMO_CANDIDATE,
+            "source_quote": 'said something "smart" today'}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "self-improving-agent",
+        date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    assert '> said something "smart" today' in text
+    assert "> — [[self-improving-agent]] (L12-L14)" in text
+    # v2 inline ``- [[slug]] — "quote"`` format must be gone.
+    assert '- [[self-improving-agent]] — "said something' not in text
+
+
+def test_write_concept_page_invalid_source_span_raises_H7(
+    tmp_path: Path,
+) -> None:
+    """Defense-in-depth: body construction asserts source_span regex
+    BEFORE embedding, even if a caller bypassed the upstream validator.
+    `source_span='L1-L2)]] [[evil'` → ExtractionParseError(error='INVALID_SOURCE_SPAN')."""
+    cand = {**_DEMO_CANDIDATE, "source_span": "L1-L2)]] [[evil"}
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec.write_concept_page(
+            tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+        )
+    assert ei.value.error == "INVALID_SOURCE_SPAN"
+    assert ei.value.field == "source_span"
+
+
+def test_write_concept_page_yaml_safety_name_with_yaml_key_H7(
+    tmp_path: Path,
+) -> None:
+    """H-7: `name='key: value'` round-trips through frontmatter without
+    YAML injection — the `name` field equals the literal string
+    `'key: value'` after re-parsing."""
+    cand = {**_DEMO_CANDIDATE, "name": "key: value"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    import frontmatter as _fm
+    post = _fm.loads(path.read_text(encoding="utf-8"))
+    assert post.metadata["name"] == "key: value"
+
+
+def test_write_concept_page_broken_symlink_target_also_refused_Q15(
+    tmp_path: Path,
+) -> None:
+    """Q15 defense-in-depth: a symlink pointing to a non-existent target
+    is ALSO refused. `target.is_symlink()` returns True regardless of
+    whether the symlink resolves; the pre-check fires before any
+    `target.exists()` follow-through."""
+    from scripts.wiki_index.security import PathTraversalError
+    concepts_dir = tmp_path / "_concepts"
+    concepts_dir.mkdir(parents=True)
+    nowhere = tmp_path / "nowhere.md"  # intentionally not created
+    target = concepts_dir / "sharpe-ratio.md"
+    target.symlink_to(nowhere)
+    assert target.is_symlink()
+    assert not target.exists()  # broken symlink
+    with pytest.raises(PathTraversalError, match="symlink"):
+        wec.write_concept_page(
+            tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
+            vault_id="test-vault",
+        )
+
+
+# ============================================================================
 # vdd-multi 2026-05-27 regression tests (fixes for CRITICAL + HIGH + MEDIUM)
 # ============================================================================
 
@@ -860,70 +1042,30 @@ def test_write_concept_page_rejects_path_outside_vault(tmp_path: Path) -> None:
 # (see top of file). The placeholder TODO markers were removed in 003-v3-01.
 
 
-# DELETED in 003-v3-11a (Option A green-throughout invariant).
-# Regression intent: C-1 CRITICAL — --ingest dispatch partial failure must NOT
-# update source_state so operator can retry without hash-short-circuit.
-# Migrated to: 003-v3-03 `test_apply_with_ingest_partial_failure_exits_5_C1`.
+# C-1 regression migration landed in 003-v3-03 as
+# `test_apply_with_ingest_partial_failure_exits_5_C1` (below).
 
 
-def test_extract_concepts_llm_rejects_oversized_input() -> None:
-    """M-1: source body exceeding _MAX_SOURCE_BODY_CHARS → ExtractionParseError
-    BEFORE the SDK is called."""
-    big_body = "x" * (wec._MAX_SOURCE_BODY_CHARS + 1)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        with pytest.raises(wec.ExtractionParseError, match="too large"):
-            wec.extract_concepts_llm(big_body, [], max_tokens=4096)
-    # SDK MUST NOT be instantiated when the input is rejected
-    MockClient.assert_not_called()
+def test_validate_candidates_schema_rejects_malformed_slug() -> None:
+    """M-2: candidate slug with disallowed chars → ExtractionParseError at
+    the validation boundary (exit 4) rather than propagating to
+    write_concept_page where it would raise PathTraversalError uncaught.
 
-
-def test_validate_extraction_schema_rejects_malformed_slug() -> None:
-    """M-2: LLM-returned slug with disallowed chars → ExtractionParseError at
-    the extraction boundary (exit 4) rather than propagating to
-    write_concept_page where it would raise PathTraversalError uncaught."""
+    Renamed in 003-v3-11 to match the validator's v3.1 name
+    `_validate_candidates_schema` (was the v2-era name in 003-v3-02)."""
     bad_items = [{"slug": "Hello World",  # space → not kebab
                   "name": "X", "definition": "d",
                   "source_quote": "q", "source_span": "L1-L1",
                   "entity_type": "concept"}]
     with pytest.raises(wec.ExtractionParseError, match="kebab-case"):
-        wec._validate_extraction_schema(bad_items)
+        wec._validate_candidates_schema(bad_items)
 
 
-def test_extract_concepts_llm_wraps_bad_request_error() -> None:
-    """M-1 follow-up: anthropic.BadRequestError → LLMUnavailableError (exit 3),
-    not an uncaught crash."""
-    import anthropic
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.side_effect = (
-            anthropic.BadRequestError(
-                message="prompt too long", response=mock.Mock(status_code=400),
-                body={},
-            )
-        )
-        with pytest.raises(wec.LLMUnavailableError, match="BadRequestError"):
-            wec.extract_concepts_llm("body", [], max_tokens=4096)
-
-
-def test_extract_concepts_llm_suppresses_sdk_exception_chain() -> None:
-    """L-V3.3 (CWE-209): LLMUnavailableError MUST NOT propagate the SDK
-    exception via __cause__ — `raise ... from None` strips the chain so
-    request_id / partial headers from the SDK can never surface to a
-    future __cause__ consumer."""
-    import anthropic
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.side_effect = (
-            anthropic.APIConnectionError(request=mock.Mock())
-        )
-        try:
-            wec.extract_concepts_llm("body", [])
-        except wec.LLMUnavailableError as raised:
-            assert raised.__cause__ is None, (
-                "L-V3.3 broken: SDK exception chain leaked via __cause__"
-            )
-            assert raised.__context__ is not None, (
-                "Python sets __context__ implicitly inside except blocks; "
-                "this is benign — but __cause__ being None confirms `from None`"
-            )
+# Three additional SDK-mock tests REMOVED in 003-v3-11 (M-1 input cap,
+# M-1 follow-up BadRequest wrap, L-V3.3 SDK chain-suppression). All three
+# exercised the v2 in-skill LLM call which is deleted in bead 003-v3-06.
+# The invariants are moot post-v3.1 because there is no LLM call inside
+# the Python skill (Decision-17).
 
 
 def test_check_idempotency_handles_null_row_value(
@@ -1017,14 +1159,16 @@ def test_upsert_extracted_entity_skips_confirmed(
 def test_upsert_extracted_entity_canonicalized_by_format(
     repo_factory: Callable[[], IndexRepository], tmp_path: Path,
 ) -> None:
-    """R-37(c): canonicalized_by = 'llm:<model>@<date>' format."""
+    """R-37(c) v3.1: canonicalized_by = 'llm:<orchestrator_id>@<date>'.
+    With explicit orchestrator_id='claude-sonnet-4-6' to match the v2
+    semantic shape; the new default is 'orchestrator' (Q9-v3.1)."""
     repo = repo_factory()
     repo.apply_schema()  # type: ignore[attr-defined]
     _register_vault(repo, "trade-agents", tmp_path)
     try:
-        cand = {**_DEMO_CANDIDATE, "model": "claude-sonnet-4-6"}
         wec.upsert_extracted_entity(
-            repo, "trade-agents", cand, "src", date(2026, 5, 27),
+            repo, "trade-agents", _DEMO_CANDIDATE, "src",
+            date(2026, 5, 27), orchestrator_id="claude-sonnet-4-6",
         )
         row = repo._connect().execute(  # type: ignore[attr-defined]
             "SELECT canonicalized_by FROM entities WHERE vault_id=? AND slug=?",
@@ -1348,17 +1492,10 @@ def test_patch_target_lock_at_skill_module() -> None:
 # ============================================================================
 
 
-# DELETED in 003-v3-11a (Option A green-throughout invariant).
-# Regression intent: end-to-end via main([--ingest]) — mock LLM + dispatch,
-# exercise real argparse + source-page resolution + idempotency + try/except,
-# verify {extraction, index} envelope shape and log_event_id wiring.
-# Migrated to: 003-v3-03 `test_apply_with_ingest_end_to_end_mocked_dispatch`.
-
-# DELETED in 003-v3-11a (Option A green-throughout invariant).
-# Regression intent: end-to-end via main() WITHOUT --ingest — mock LLM,
-# verify bare manifest shape (NOT {extraction, index} wrapper),
-# verify dispatch_to_indexer NOT called.
-# Migrated to: 003-v3-03 `test_apply_without_ingest_emits_manifest_only`.
+# End-to-end --ingest regression migration landed in 003-v3-03 as
+# `test_apply_with_ingest_end_to_end_mocked_dispatch` and
+# `test_apply_without_ingest_emits_manifest_only` (see "003-v3-03: apply
+# subcommand" section).
 
 
 def test_build_manifest_passes_validate_manifest(tmp_path: Path) -> None:
@@ -1378,3 +1515,1081 @@ def test_build_manifest_passes_validate_manifest(tmp_path: Path) -> None:
                            tmp_path)
     from scripts.wiki_skills._manifest_consumer import validate_manifest
     validate_manifest(m, "trade-agents", tmp_path)
+
+
+# ============================================================================
+# 003-v3-03: apply subcommand (R-31, R-33′, R-35, R-37, R-38, R-39, R-41, R-42)
+# ============================================================================
+
+
+def _seed_apply_vault(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    source_body: str = "---\ntype: summary\n---\nThe Sharpe Ratio measures excess return.\n",
+    vault_id: str = "trade-agents",
+) -> tuple[Path, str, str]:
+    """Helper: spin up a vault with a single source page + registered DB row.
+
+    Returns (vault_root, db_path, source_hash) for the seeded source body.
+    """
+    import hashlib as _hashlib
+    import shutil as _sh
+
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    src = sources_dir / "sample-doc.md"
+    src.write_text(source_body, encoding="utf-8")
+    source_hash = _hashlib.sha256(source_body.encode("utf-8")).hexdigest()
+
+    db_path = str(tmp_path / "test.db")
+    bootstrap = repo_factory()
+    bootstrap.apply_schema()  # type: ignore[attr-defined]
+    _register_vault(bootstrap, vault_id, tmp_path)
+    # Pre-register the source page so the page_entity_refs FK succeeds when
+    # apply() upserts refs keyed on (vault_id, source_slug, '_vault_').
+    bootstrap._connect().execute(  # type: ignore[attr-defined]
+        "INSERT INTO pages(vault_id, slug, project, type, title, file_path, "
+        "date, last_modified, file_hash, frontmatter_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (vault_id, "sample-doc", "_vault_", "summary",
+         "Sample Doc", "_sources/sample-doc.md",
+         "2026-05-28", "2026-05-28T00:00:00", "seed", "{}"),
+    )
+    bootstrap._connect().commit()  # type: ignore[attr-defined]
+    bootstrap.close()
+    src_db = list(tmp_path.glob("wiki-*.db"))[0]
+    _sh.copy(src_db, db_path)
+    return vault_root, db_path, source_hash
+
+
+def _make_apply_args(
+    *,
+    vault: str,
+    vault_root: Path,
+    source_page: str,
+    source_hash: str,
+    db_path: str | None = None,
+    ingest: bool = False,
+    candidates_file: Path | None = None,
+    candidates_stdin: bool = False,
+) -> argparse.Namespace:
+    """Build an argparse.Namespace matching the `apply` subparser surface."""
+    return argparse.Namespace(
+        cmd="apply",
+        vault=vault, vault_root=vault_root,
+        source_page=source_page, db_path=db_path,
+        source_hash=source_hash, ingest=ingest,
+        candidates_file=candidates_file,
+        candidates_stdin=candidates_stdin,
+    )
+
+
+_APPLY_DEMO_CANDIDATE = {
+    "slug": "sharpe-ratio",
+    "name": "Sharpe Ratio",
+    "definition": "Risk-adjusted return measure.",
+    "source_quote": "The Sharpe Ratio measures excess return.",
+    "source_span": "L3-L3",
+    "entity_type": "concept",
+}
+
+
+def test_apply_canned_json_happy(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Canned 1-candidate JSON on stdin → exit 0, concept page written,
+    manifest envelope emitted."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+
+    payload = _json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8")
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {"buffer": io.BytesIO(payload)})(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    rc = wec.apply(args)
+    assert rc == 0
+    manifest = _json.loads(capsys.readouterr().out)
+    assert manifest["status"] == "ok"
+    assert manifest["vault_id"] == "trade-agents"
+    assert (vault_root / "_concepts" / "sharpe-ratio.md").is_file()
+
+
+def test_apply_stdin_vs_file_mutex(
+    tmp_path: Path,
+) -> None:
+    """Passing BOTH --candidates-stdin AND --candidates-file fires the
+    argparse mutex group → SystemExit(2)."""
+    cf = tmp_path / "cands.json"
+    cf.write_text("[]", encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        wec._build_parser_v3().parse_args([
+            "apply",
+            "--vault", "X",
+            "--vault-root", str(tmp_path),
+            "--source-page", "sample-doc",
+            "--source-hash", _VALID_HASH,
+            "--candidates-stdin",
+            "--candidates-file", str(cf),
+        ])
+    assert ei.value.code == 2
+
+
+def test_apply_source_hash_mismatch_exits_2_SOURCE_CHANGED_H1(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-1, Q5: source edited between prepare and apply → exit 2
+    SOURCE_CHANGED_DURING_EXTRACTION. Envelope must NOT echo the new
+    source body content (CWE-117 guard)."""
+    import io
+    import json as _json
+    vault_root, db_path, original_hash = _seed_apply_vault(
+        repo_factory, tmp_path,
+        source_body="---\ntype: summary\n---\noriginal body\n",
+    )
+    # Mutate source on disk so apply's recomputed hash differs.
+    src = vault_root / "_sources" / "sample-doc.md"
+    NEW_SOURCE_MARKER = "EDITED_AFTER_PREPARE_SECRET_TOKEN"
+    src.write_text(
+        f"---\ntype: summary\n---\nedited body {NEW_SOURCE_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=original_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    rc = wec.apply(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "SOURCE_CHANGED_DURING_EXTRACTION"
+    # CWE-117 invariant: the new source content marker MUST NOT appear in
+    # any envelope field.
+    for v in payload.values():
+        assert NEW_SOURCE_MARKER not in str(v), (
+            f"CWE-117 leak: new source content surfaced in envelope: {payload!r}"
+        )
+
+
+def test_apply_candidates_file_outside_vault_exits_2_INVALID_CANDIDATES_PATH_H5(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-5: --candidates-file resolving outside the vault → exit 2
+    INVALID_CANDIDATES_PATH. Envelope emits the path string but NEVER the
+    file content (CWE-117 guard)."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    # Candidates file outside the vault: peer of vault_root under tmp_path.
+    outside = tmp_path / "outside-the-vault.json"
+    OUTSIDE_MARKER = "SECRET_FROM_OUTSIDE_FILE_CONTENT"
+    outside.write_text(_json.dumps([{"x": OUTSIDE_MARKER}]), encoding="utf-8")
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_file=outside,
+    )
+    rc = wec.apply(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_CANDIDATES_PATH"
+    # CWE-117 invariant: file content MUST NOT be in the envelope.
+    for v in payload.values():
+        assert OUTSIDE_MARKER not in str(v), (
+            f"CWE-117 leak: outside-vault file content surfaced: {payload!r}"
+        )
+
+
+def test_apply_candidates_file_too_large_exits_4_H6(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-6: candidates file > _MAX_CANDIDATES_BYTES (1 MiB) → exit 4
+    CANDIDATES_TOO_LARGE BEFORE any read or parse."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    # Write a file inside the vault that exceeds the cap by 1 byte.
+    big = vault_root / "_sources" / "huge-candidates.json"
+    big.write_bytes(b"x" * (wec._MAX_CANDIDATES_BYTES + 1))
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_file=big,
+    )
+    rc = wec.apply(args)
+    assert rc == 4
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "CANDIDATES_TOO_LARGE"
+
+
+def test_apply_with_ingest_end_to_end_mocked_dispatch(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression migration from 003-v3-11a (originally
+    test_main_with_ingest_calls_dispatch_and_emits_combined).
+
+    --ingest path: dispatch returns `{"failed": [], ...}` → envelope is
+    `{extraction, index}` shape; dispatch called once with vault_id."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    fake_summary = {"upserted": [{"path": "_concepts/sharpe-ratio.md"}],
+                    "failed": [], "log_event_id": 42}
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    with mock.patch(
+        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
+        return_value=fake_summary,
+    ) as mock_dispatch:
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True, ingest=True,
+        )
+        rc = wec.apply(args)
+
+    assert rc == 0
+    envelope = _json.loads(capsys.readouterr().out)
+    assert set(envelope.keys()) == {"extraction", "index"}, (
+        f"--ingest envelope must wrap as {{extraction, index}}; got {envelope!r}"
+    )
+    assert envelope["index"] is fake_summary or envelope["index"] == fake_summary
+    mock_dispatch.assert_called_once()
+
+
+def test_apply_without_ingest_emits_manifest_only(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression migration from 003-v3-11a (originally
+    test_main_without_ingest_emits_manifest_only).
+
+    Without --ingest: envelope is the bare manifest (NOT wrapped in
+    {extraction, index}); dispatch_to_indexer was NOT called."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    with mock.patch(
+        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
+    ) as mock_dispatch:
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True, ingest=False,
+        )
+        rc = wec.apply(args)
+
+    assert rc == 0
+    envelope = _json.loads(capsys.readouterr().out)
+    # Bare manifest, not wrapped in extraction/index.
+    assert envelope.get("status") == "ok"
+    assert "extraction" not in envelope
+    assert "index" not in envelope
+    mock_dispatch.assert_not_called()
+
+
+def test_apply_with_ingest_partial_failure_exits_5_C1(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-1 regression migration from 003-v3-11a (originally
+    test_main_ingest_partial_failure_does_not_update_source_state).
+
+    On --ingest partial failure (summary['failed'] non-empty): exit 5
+    PARTIAL_INDEX_FAILURE, and update_idempotency_state MUST NOT be
+    called so the next run retries."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    failing_summary = {"upserted": [], "failed": ["sample-concept"],
+                       "log_event_id": None}
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    with mock.patch(
+        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
+        return_value=failing_summary,
+    ), mock.patch(
+        "scripts.wiki_skills.wiki_extract_concepts.update_idempotency_state",
+    ) as mock_update_state:
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True, ingest=True,
+        )
+        rc = wec.apply(args)
+
+    assert rc == 5
+    envelope = _json.loads(capsys.readouterr().out)
+    assert envelope["error"] == "PARTIAL_INDEX_FAILURE"
+    assert envelope["action"] == "partial"
+    # C-1 invariant: source_state MUST NOT have been touched.
+    mock_update_state.assert_not_called()
+
+
+def _read_canonicalized_by(db_path: str, vault_id: str, slug: str) -> str | None:
+    """Helper for orchestrator-id tests: read entities.canonicalized_by
+    via a fresh sqlite3 connection (the apply call already closed its repo)."""
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(db_path)
+    conn.row_factory = _sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT canonicalized_by FROM entities "
+            "WHERE vault_id=? AND slug=?",
+            (vault_id, slug),
+        ).fetchone()
+        return row["canonicalized_by"] if row else None
+    finally:
+        conn.close()
+
+
+def test_apply_orchestrator_id_valid_populates_canonicalized_by_H8(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-8: --orchestrator-id 'claude-opus-4-7' → entities.canonicalized_by
+    = 'llm:claude-opus-4-7@<today>'."""
+    import io
+    import json as _json
+    from datetime import date as _date
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    args.orchestrator_id = "claude-opus-4-7"
+    rc = wec.apply(args)
+    assert rc == 0
+    canonicalized = _read_canonicalized_by(db_path, "trade-agents", "sharpe-ratio")
+    assert canonicalized == f"llm:claude-opus-4-7@{_date.today().isoformat()}"
+
+
+def test_apply_orchestrator_id_invalid_regex_argparse_error_H8(
+    tmp_path: Path,
+) -> None:
+    """H-8: --orchestrator-id 'with spaces' fails the argparse-level regex
+    → SystemExit(2) (NOT exit 4 EXTRACTION_PARSE_ERROR)."""
+    with pytest.raises(SystemExit) as ei:
+        wec._build_parser_v3().parse_args([
+            "apply",
+            "--vault", "X",
+            "--vault-root", str(tmp_path),
+            "--source-page", "sample-doc",
+            "--source-hash", _VALID_HASH,
+            "--candidates-stdin",
+            "--orchestrator-id", "with spaces",
+        ])
+    assert ei.value.code == 2
+
+
+def test_apply_orchestrator_id_default_is_orchestrator_H8(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-8 / Q9-v3.1: omitting --orchestrator-id yields the literal
+    'orchestrator' default (honest unknown beats hallucinated specific)."""
+    import io
+    import json as _json
+    from datetime import date as _date
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    # No orchestrator_id set on args → apply uses getattr default.
+    rc = wec.apply(args)
+    assert rc == 0
+    canonicalized = _read_canonicalized_by(db_path, "trade-agents", "sharpe-ratio")
+    assert canonicalized == f"llm:orchestrator@{_date.today().isoformat()}"
+
+
+# ============================================================================
+# 003-v3-17: adversarial envelope-shape parametrized test
+#            (CWE-117 / CWE-209 regression guard for every R-42 sub-envelope)
+# ============================================================================
+
+
+_CANARY = "SECRET_LEAK_CANARY_xyzzy_777"
+_FORBIDDEN_ENVELOPE_KEYS = frozenset({"content", "value", "raw", "received"})
+
+
+def _stdin_with_payload(payload_bytes: bytes) -> Any:
+    """Build a FakeStdin object exposing `.buffer` for monkeypatching."""
+    import io
+    return type("FakeStdin", (), {"buffer": io.BytesIO(payload_bytes)})()
+
+
+def _capture_apply(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    args: argparse.Namespace,
+) -> tuple[int, dict[str, Any]]:
+    """Invoke wec.apply(args) and return (rc, parsed-stdout-envelope)."""
+    import json as _json
+    rc = wec.apply(args)
+    payload = _json.loads(capsys.readouterr().out)
+    assert isinstance(payload, dict)
+    return rc, payload
+
+
+def _trigger_source_not_found(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """SOURCE_NOT_FOUND: candidates JSON carries canary in a definition; the
+    apply call fails at source resolution BEFORE schema validation, so the
+    canary must never reach the envelope."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    cand = {**_APPLY_DEMO_CANDIDATE, "definition": _CANARY}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="v", vault_root=vault_root,
+        source_page="missing-doc", source_hash=_VALID_HASH,
+        candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_invalid_source_path(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """INVALID_SOURCE_PATH: absolute --source-page. Canary in candidates."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    cand = {**_APPLY_DEMO_CANDIDATE, "definition": _CANARY}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="v", vault_root=vault_root,
+        source_page="/etc/somewhere", source_hash=_VALID_HASH,
+        candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_invalid_source_slug(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """INVALID_SOURCE_SLUG: dotted filename. Canary in candidates."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    bad = sources_dir / "Foo.Bar.md"
+    bad.write_text("body", encoding="utf-8")
+    cand = {**_APPLY_DEMO_CANDIDATE, "definition": _CANARY}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="v", vault_root=vault_root,
+        source_page="Foo.Bar", source_hash=_VALID_HASH,
+        candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_source_too_large(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """SOURCE_TOO_LARGE: 10MiB+ source body containing canary."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    sources_dir.mkdir(parents=True)
+    big = sources_dir / "huge-doc.md"
+    # Write canary at the start, then pad to exceed cap.
+    pad = b"x" * (wec._MAX_SOURCE_BODY_BYTES + 1 - len(_CANARY.encode("utf-8")))
+    big.write_bytes(_CANARY.encode("utf-8") + pad)
+    cand = {**_APPLY_DEMO_CANDIDATE}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="v", vault_root=vault_root,
+        source_page="huge-doc", source_hash=_VALID_HASH,
+        candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_source_changed(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """SOURCE_CHANGED_DURING_EXTRACTION: mutate body to include canary."""
+    import json as _json
+    vault_root, db_path, original_hash = _seed_apply_vault(
+        repo_factory, tmp_path,
+        source_body="---\ntype: summary\n---\noriginal\n",
+    )
+    src = vault_root / "_sources" / "sample-doc.md"
+    src.write_text(
+        f"---\ntype: summary\n---\nmutated with {_CANARY}\n",
+        encoding="utf-8",
+    )
+    cand = {**_APPLY_DEMO_CANDIDATE}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=original_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_invalid_candidates_path(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """INVALID_CANDIDATES_PATH: candidates file outside vault, canary in body."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    outside = tmp_path / "outside-the-vault.json"
+    outside.write_text(_json.dumps([{"sensitive": _CANARY}]), encoding="utf-8")
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_file=outside,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_candidates_too_large(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """CANDIDATES_TOO_LARGE: >1 MiB candidates file containing canary."""
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    big = vault_root / "_sources" / "huge-candidates.json"
+    payload = _CANARY.encode("utf-8") + b"x" * (
+        wec._MAX_CANDIDATES_BYTES + 1 - len(_CANARY.encode("utf-8")))
+    big.write_bytes(payload)
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_file=big,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_extraction_parse_error(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """EXTRACTION_PARSE_ERROR: malformed JSON containing canary."""
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    malformed = f"[{{ this is {_CANARY} not valid json".encode("utf-8")
+    monkeypatch.setattr("sys.stdin", _stdin_with_payload(malformed))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_count_oob(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """CANDIDATE_COUNT_OUT_OF_BOUNDS: 26 candidates, one carries canary."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    cands = []
+    for i in range(26):
+        slug = f"cand-{i}"
+        defn = _CANARY if i == 0 else f"definition {i}"
+        cands.append({**_APPLY_DEMO_CANDIDATE, "slug": slug, "definition": defn})
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps(cands).encode("utf-8")))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_field_too_long(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """FIELD_TOO_LONG: 3000-char definition starting with canary."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    huge_def = _CANARY + "x" * (3000 - len(_CANARY))
+    cand = {**_APPLY_DEMO_CANDIDATE, "definition": huge_def}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_unknown_field(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """UNKNOWN_FIELD: extra key with canary as VALUE (key name is benign)."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    cand = {**_APPLY_DEMO_CANDIDATE, "extra": _CANARY}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+def _trigger_quote_not_in_body(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> tuple[int, dict[str, Any]]:
+    """FIELD_QUOTE_NOT_IN_BODY: source_quote contains canary, not in body."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    cand = {**_APPLY_DEMO_CANDIDATE,
+            "source_quote": f"hallucinated phrase {_CANARY}"}
+    monkeypatch.setattr("sys.stdin",
+                        _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    return _capture_apply(monkeypatch, capsys, args)
+
+
+_ENVELOPE_TRIGGERS: list[tuple[str, int, Any]] = [
+    ("SOURCE_NOT_FOUND", 2, _trigger_source_not_found),
+    ("INVALID_SOURCE_PATH", 2, _trigger_invalid_source_path),
+    ("INVALID_SOURCE_SLUG", 2, _trigger_invalid_source_slug),
+    ("SOURCE_TOO_LARGE", 2, _trigger_source_too_large),
+    ("SOURCE_CHANGED_DURING_EXTRACTION", 2, _trigger_source_changed),
+    ("INVALID_CANDIDATES_PATH", 2, _trigger_invalid_candidates_path),
+    ("CANDIDATES_TOO_LARGE", 4, _trigger_candidates_too_large),
+    ("EXTRACTION_PARSE_ERROR", 4, _trigger_extraction_parse_error),
+    ("CANDIDATE_COUNT_OUT_OF_BOUNDS", 4, _trigger_count_oob),
+    ("FIELD_TOO_LONG", 4, _trigger_field_too_long),
+    ("UNKNOWN_FIELD", 4, _trigger_unknown_field),
+    ("FIELD_QUOTE_NOT_IN_BODY", 4, _trigger_quote_not_in_body),
+]
+
+
+@pytest.mark.parametrize("envelope_code,expected_exit,trigger", _ENVELOPE_TRIGGERS)
+def test_apply_error_envelopes_never_echo_content(
+    envelope_code: str,
+    expected_exit: int,
+    trigger: Any,
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """R-42 / CWE-117 / CWE-209 regression guard: every error sub-envelope
+    from R-42(c) + R-42(d) v3.1 (a) emits the documented exit code,
+    (b) contains NONE of the forbidden keys `{content, value, raw,
+    received}`, and (c) does NOT echo the canary OFFENDING string in
+    any field value.
+
+    Future regressions where a developer accidentally adds `value` or
+    `raw` to an envelope (or starts echoing the offending payload back)
+    are caught here BEFORE reaching production.
+    """
+    rc, env = trigger(repo_factory, tmp_path, monkeypatch, capsys)
+    assert rc == expected_exit, (
+        f"{envelope_code} expected exit {expected_exit}, got {rc} "
+        f"with envelope {env!r}"
+    )
+    assert env.get("error") == envelope_code, (
+        f"{envelope_code} envelope did not match: {env!r}"
+    )
+    leaked_keys = _FORBIDDEN_ENVELOPE_KEYS & set(env.keys())
+    assert not leaked_keys, (
+        f"{envelope_code} envelope contains forbidden keys {leaked_keys}: "
+        f"{env!r}"
+    )
+    for k, v in env.items():
+        if isinstance(v, str):
+            assert _CANARY not in v, (
+                f"CWE-117 leak: {envelope_code} envelope echoes canary "
+                f"in field {k!r}: {v!r}"
+            )
+
+
+def test_prepare_source_page_escape_blocked_by_H1_layout_invariant(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-1 (vdd-multi 2026-05-28): `--source-page _sources/../_concepts/foo.md`
+    used to resolve inside the vault and silently honor any `.md` file.
+    The new `_sources/` layout invariant rejects it with
+    INVALID_SOURCE_PATH instead."""
+    import json as _json
+    vault_root = tmp_path / "vault"
+    sources_dir = vault_root / "_sources"
+    concepts_dir = vault_root / "_concepts"
+    sources_dir.mkdir(parents=True)
+    concepts_dir.mkdir()
+    # Seed a concept page (the file the attacker is trying to read).
+    (concepts_dir / "sharpe-ratio.md").write_text("# Sharpe Ratio\n",
+                                                  encoding="utf-8")
+    args = _make_prepare_args(
+        "trade-agents", vault_root, "_sources/../_concepts/sharpe-ratio.md",
+    )
+    rc = wec.prepare(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_SOURCE_PATH"
+
+
+def test_apply_candidates_file_fifo_rejected_H2(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """H-2 (vdd-multi 2026-05-28): a FIFO/named-pipe at the
+    --candidates-file path has stat().st_size==0 (bypassing the cap)
+    and would let `read_bytes()` accumulate unbounded data. The new
+    `is_file()` guard rejects non-regular files with
+    INVALID_CANDIDATES_PATH BEFORE any read."""
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    fifo = vault_root / "_sources" / "evil.fifo"
+    os.mkfifo(fifo)
+    assert not fifo.is_file()
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_file=fifo,
+    )
+    rc = wec.apply(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_CANDIDATES_PATH"
+    assert "not a regular file" in payload.get("reason", "")
+
+
+def test_apply_update_idempotency_state_failure_emits_partial_H3(
+    repo_factory: Callable[[], IndexRepository], tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-3 (vdd-multi 2026-05-28): if `update_idempotency_state` raises
+    a sqlite OperationalError (DB locked, disk full) AFTER pages/entities
+    are committed, the operator gets a clean IDEMPOTENCY_UPDATE_FAILED
+    envelope at exit 5 instead of an uncaught traceback that produces
+    split-brain (success on stdout, traceback on stderr, exit 1)."""
+    import io
+    import json as _json
+    import sqlite3
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+
+    def _boom(*a: Any, **kw: Any) -> None:
+        raise sqlite3.OperationalError("simulated database is locked")
+
+    with mock.patch(
+        "scripts.wiki_skills.wiki_extract_concepts.update_idempotency_state",
+        side_effect=_boom,
+    ):
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True, ingest=False,
+        )
+        rc = wec.apply(args)
+    assert rc == 5
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "IDEMPOTENCY_UPDATE_FAILED"
+    assert payload["action"] == "partial"
+    # Pages SHOULD still be on disk (commit happened before the failure)
+    assert (vault_root / "_concepts" / "sharpe-ratio.md").is_file()
+
+
+def test_sanitize_definition_blocks_javascript_link_injection_H4(
+    tmp_path: Path,
+) -> None:
+    """H-4 (vdd-multi 2026-05-28): the previous denylist sanitizer let
+    `[click](javascript:alert(1))` through. The new text-only allowlist
+    backslash-escapes `[` and `]` so markdown does not render the link
+    at all (rendered output: literal `[click](javascript:alert(1))`)."""
+    cand = {**_DEMO_CANDIDATE,
+            "definition": "Click here: [click](javascript:alert(1))"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    # The brackets must be escaped (markdown literal); the URL must NOT
+    # form an active link.
+    assert "\\[click\\]" in text
+    # And the original unescaped `[click](javascript:` MUST NOT appear.
+    assert "[click](javascript:" not in text
+
+
+def test_sanitize_definition_blocks_html_entity_smuggling_H4(
+    tmp_path: Path,
+) -> None:
+    """H-4: HTML entity smuggling `&#x3C;script&#x3E;` previously
+    bypassed the `<tag>` regex; the new sanitizer escapes `&` first
+    so the entity itself renders as literal `&#x3C;`."""
+    cand = {**_DEMO_CANDIDATE,
+            "definition": "Smuggled: &#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;"}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    # The `&` got HTML-escaped to `&amp;` so the entity renders as
+    # literal `&#x3C;`, not as `<`.
+    assert "&amp;#x3C;" in text
+    # And the active form `<script>` must NOT have been reconstructed.
+    assert "<script>" not in text
+
+
+def test_sanitize_definition_blocks_obsidian_wikilink_injection_H4(
+    tmp_path: Path,
+) -> None:
+    """H-4: hostile `[[evil-target]]` in definition would otherwise
+    render as an active Obsidian wikilink; the new sanitizer escapes
+    `[` and `]` so it renders as literal text."""
+    cand = {**_DEMO_CANDIDATE,
+            "definition": "See [[evil-target]] for malicious context."}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "\\[\\[evil-target\\]\\]" in text
+    assert "[[evil-target]]" not in text
+
+
+def test_sanitize_definition_blocks_code_span_injection_H4(
+    tmp_path: Path,
+) -> None:
+    """H-4: `` `dataview LIST FROM \"\"` `` would otherwise execute as
+    an Obsidian dataview block; backtick escape neutralizes it."""
+    cand = {**_DEMO_CANDIDATE,
+            "definition": "Try `dataview LIST FROM \"\"` to enumerate."}
+    path, _action = wec.write_concept_page(
+        tmp_path, cand, "src", date(2026, 5, 27), vault_id="test-vault",
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "\\`dataview" in text
+
+
+def test_sanitize_source_quote_blocks_html_injection_H4(
+    tmp_path: Path,
+) -> None:
+    """H-4: source_quote was previously embedded verbatim in the
+    blockquote (only the `>` prefix protected against block-level
+    markdown). HTML and wikilink injection slipped through. New
+    sanitizer covers source_quote via the shared text helper."""
+    cand = {**_DEMO_CANDIDATE,
+            "source_quote": "The Sharpe Ratio measures excess return."}
+    # Mutate to include an HTML injection attempt — the upstream M-5
+    # quote-in-body check is bypassed in write_concept_page so we test
+    # the sanitizer in isolation via the helper.
+    sanitized = wec._sanitize_markdown_text(
+        "Hostile <img src=x onerror=alert(1)> quote with [[wikilink]]"
+    )
+    assert "&lt;img" in sanitized
+    assert "<img" not in sanitized
+    assert "\\[\\[wikilink\\]\\]" in sanitized
+
+
+def test_validate_candidates_schema_rejects_non_list_L1() -> None:
+    """L-1 (vdd-multi 2026-05-28): top-level type-guard. If a future
+    caller bypasses `_load_candidates` and passes a dict directly,
+    the validator now emits a clear EXTRACTION_PARSE_ERROR envelope
+    saying 'payload is not a list' rather than per-item confusion."""
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema({"oops": "I'm a dict"})  # type: ignore[arg-type]
+    assert ei.value.error == "EXTRACTION_PARSE_ERROR"
+    assert ei.value.reason is not None
+    assert "expected JSON array" in ei.value.reason
+
+
+def test_validate_candidates_schema_rejects_null_slug_L1() -> None:
+    """L-1: a `null` slug used to fall through to `re.match("None")`
+    yielding a misleading 'kebab-case regex' envelope. The new type-
+    check loop emits 'slug is not a string' first."""
+    bad = [{"slug": None, "name": "X", "definition": "d",
+            "source_quote": "q", "source_span": "L1-L1",
+            "entity_type": "concept"}]
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema(bad)  # type: ignore[list-item]
+    assert ei.value.field == "slug"
+    assert ei.value.reason is not None
+    assert "is NoneType" in ei.value.reason
+
+
+def test_validate_candidates_schema_rejects_unicode_digits_in_span_L2() -> None:
+    """L-2 (vdd-multi 2026-05-28): `\\d` with re.ASCII rejects Arabic-
+    Indic digits like `L١-L٢` that would otherwise pass and (per
+    `int()` Unicode-digit coercion) produce confusing line numbers."""
+    bad = [{"slug": "x", "name": "X", "definition": "d",
+            "source_quote": "q", "source_span": "L١-L٢",
+            "entity_type": "concept"}]
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec._validate_candidates_schema(bad)
+    assert ei.value.field == "source_span"
+
+
+def test_apply_invalid_source_hash_library_caller_defense_C1(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-1 belt-and-braces: library/test callers that construct args
+    directly (bypassing argparse) still get INVALID_SOURCE_HASH instead
+    of a misleading SOURCE_CHANGED_DURING_EXTRACTION when they pass a
+    short/non-hex value. Closes the bypass that the argparse `type=`
+    validator would otherwise leave open for non-CLI consumers."""
+    import io
+    import json as _json
+    vault_root, db_path, _ = _seed_apply_vault(repo_factory, tmp_path)
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8"))
+        })(),
+    )
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc",
+        source_hash="not-a-real-hash",  # would-be argparse-rejected
+        db_path=db_path, candidates_stdin=True,
+    )
+    rc = wec.apply(args)
+    assert rc == 2
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "INVALID_SOURCE_HASH"
+
+
+def test_apply_validator_unknown_field_exits_4_with_structured_envelope(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-9: candidates carrying an extra key → exit 4 UNKNOWN_FIELD with
+    structured `{error, field, reason}` envelope. The offending value
+    MUST NOT appear anywhere in the envelope (CWE-117 guard)."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    LEAK_MARKER = "if_this_leaks_we_have_a_cwe117"
+    evil_cand = {**_APPLY_DEMO_CANDIDATE, "evil": LEAK_MARKER}
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        type("FakeStdin", (), {
+            "buffer": io.BytesIO(_json.dumps([evil_cand]).encode("utf-8"))
+        })(),
+    )
+
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root,
+        source_page="sample-doc", source_hash=source_hash,
+        db_path=db_path, candidates_stdin=True,
+    )
+    rc = wec.apply(args)
+    assert rc == 4
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["error"] == "UNKNOWN_FIELD"
+    assert payload["field"] == "evil"
+    # CWE-117: the offending VALUE must never appear.
+    for v in payload.values():
+        assert LEAK_MARKER not in str(v), (
+            f"CWE-117 leak: offending value surfaced in envelope: {payload!r}"
+        )

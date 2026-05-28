@@ -1,37 +1,56 @@
-"""`wiki-extract-concepts` CLI — LLM-driven entity extraction for Epic 7 R-3.
+"""`wiki-extract-concepts` CLI (v3.1) — deterministic concept-extraction skill.
 
-Reads an already-indexed source summary page from a vault, calls Claude
-Sonnet 4.6 to identify candidate concept entities, de-duplicates against
-``entities`` rows already in the DB, writes derivative ``_concepts/<slug>.md``
-pages, and emits a wiki-ingest v1.1-compatible manifest. When ``--ingest``
-is passed, dispatches the manifest in-process to ``index_from_manifest``
-from the neutral ``_manifest_consumer`` module (TASK 003 v2 / Decision-15
-+ Decision-16 — no subprocess, no cross-skill coupling).
+Two subcommands:
 
-The 9 internal helper functions are scaffolded as ``NotImplementedError``
-stubs in this bead (003-01) and filled in by 003-03..003-11. Module-top
-import of the three neutral-consumer symbols is intentional (stable
-``unittest.mock.patch`` target — see I-7.12 patch-target lock).
+* ``prepare`` — read the source summary page, compute its sha256, query
+  ``source_state`` for ``is_unchanged``, load the vault's known concepts,
+  sweep for disk/DB drift, emit a JSON recon envelope. NO LLM call.
+* ``apply``   — consume the orchestrator-synthesised candidates JSON
+  (``--candidates-file`` or ``--candidates-stdin``), hash-check against
+  ``--source-hash`` from prepare, validate the schema (strict), write
+  ``_concepts/<slug>.md`` pages (atomic + content-hash skip + symlink
+  refuse + markdown sanitization), upsert entity rows + refs, emit a
+  wiki-ingest v1.1-compatible manifest, optionally dispatch the manifest
+  in-process to ``index_from_manifest`` from the neutral
+  ``_manifest_consumer`` module (Decision-15 + Decision-16 — no
+  subprocess, no cross-skill coupling).
 
-Exit codes (R-42):
-    0 — success or idempotency short-circuit (status="unchanged")
+Synthesis lives outside this skill (TASK 003 v3.1 / Decision-17). The
+orchestrator runs ``prepare``, loads the ``concept-extraction`` skill
+into its own context, reads the source body, generates candidates JSON,
+and pipes them into ``apply``. This module makes ZERO model-provider
+SDK calls (the v2 LLM-call code path was deleted in bead 003-v3-06).
+
+Module-top import of the three neutral-consumer symbols is intentional
+(stable ``unittest.mock.patch`` target — see PLAN R-1 patch-target lock).
+
+Exit codes (R-42 v3.1 + vdd-multi 2026-05-28 hardening):
+    0 — success (manifest or {extraction, index} envelope)
     1 — argparse / usage error
-    2 — input-validation failure family — JSON envelope's ``error`` field
-        disambiguates: SOURCE_NOT_FOUND | INVALID_SOURCE_PATH (absolute
-        path passed) | INVALID_SOURCE_SLUG (filename doesn't yield a
-        valid kebab-case slug)
-    3 — LLM_API_UNAVAILABLE (Anthropic SDK connection / auth / rate-limit
-        / bad-request / 5xx failure)
-    4 — EXTRACTION_PARSE_ERROR (LLM returned malformed JSON, oversized
-        source body, or schema-violating output)
-    5 — PARTIAL_INDEX_FAILURE (some concept pages written, indexer failed)
-    6 — MANIFEST_INVALID (validate_manifest raised WikiIngestError)
+    2 — input-validation failure: SOURCE_NOT_FOUND | INVALID_SOURCE_PATH
+        | INVALID_SOURCE_SLUG | SOURCE_TOO_LARGE |
+        SOURCE_CHANGED_DURING_EXTRACTION | INVALID_CANDIDATES_PATH |
+        INVALID_SOURCE_HASH (new in vdd-multi-fix C-1; library-caller
+        defense — argparse already gates the CLI path)
+    4 — candidates payload error: EXTRACTION_PARSE_ERROR |
+        CANDIDATES_TOO_LARGE | CANDIDATE_COUNT_OUT_OF_BOUNDS |
+        FIELD_TOO_LONG | UNKNOWN_FIELD | FIELD_QUOTE_NOT_IN_BODY |
+        INVALID_NAME_FORMAT | INVALID_SOURCE_SPAN
+    5 — PARTIAL_INDEX_FAILURE (with --ingest; source_state NOT updated
+        per C-1 invariant so a retry is safe) OR
+        IDEMPOTENCY_UPDATE_FAILED (new in vdd-multi-fix H-3; pages /
+        entities / refs committed but source_state UPSERT raised
+        OperationalError — next run will safely re-extract)
+    6 — MANIFEST_INVALID (with --ingest)
+
+(The v2 exit-3 envelope for upstream-API failures is retired in v3.1.)
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
@@ -41,6 +60,8 @@ from pathlib import Path
 from typing import Any
 
 import frontmatter
+
+logger = logging.getLogger(__name__)
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.security import (
@@ -92,13 +113,6 @@ class ExtractionParseError(Exception):
         self.reason = reason
 
 
-class LLMUnavailableError(Exception):
-    """Raised when the Anthropic API is unreachable or auth fails.
-
-    Bound to exit code 3 (R-42 c). Real raise in I-7.4 (bead 003-04).
-    """
-
-
 # ============================================================================
 # Helper stubs — replaced one-by-one by beads 003-03..003-11.
 # ============================================================================
@@ -142,31 +156,103 @@ def load_known_entities(repo: Any, vault_id: str) -> list[dict[str, Any]]:
     ]
 
 
-_SOURCE_SPAN_RE = re.compile(r"^L\d+-L\d+$")
+# L-2 (vdd-multi 2026-05-28): `\d` in Python 3 matches Unicode digits
+# (Arabic-Indic, Devanagari, ...) by default. We want ASCII-only digits
+# in source-span line numbers — anchor with re.ASCII so the schema
+# rejects e.g. `L١-L٢` at validation rather than silently coercing.
+_SOURCE_SPAN_RE = re.compile(r"^L\d+-L\d+$", re.ASCII)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ALLOWED_ENTITY_TYPES = {
     "concept", "person", "company", "product",
     "group", "event", "work", "external",
 }
-_REQUIRED_LLM_KEYS = {
-    "slug", "name", "definition", "source_quote", "source_span", "entity_type",
-}
-# M-1 (vdd-multi 2026-05-27 critic-logic): LLM input-size cap. Anthropic
-# context window for sonnet-4-6 is ~200K tokens; our extraction prompt
-# wraps the source body + known-concepts JSON + ~250 tokens of
-# instruction. Bound the source body at 100K chars (~25K tokens) so the
-# prompt never exceeds the model's context and we get a clear error
-# envelope before the SDK rejects with a 400.
-_MAX_SOURCE_BODY_CHARS = 100_000
 
+# C-1 (vdd-multi 2026-05-28): operator-supplied sha256-hex must match
+# /^[0-9a-f]{64}$/ exactly. Without this, an uppercased hex value (e.g.,
+# PowerShell `toupper` pipeline) silently misroutes to
+# SOURCE_CHANGED_DURING_EXTRACTION; and unvalidated values become a
+# CWE-117 log-injection vector in the envelope reason field.
+_SOURCE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 # M-3 (TASK 003 v3.1): DoS protection on prepare's sha256+read pipeline.
 # Stat-checks st_size BEFORE read_text to bound memory. 10 MiB matches the
 # existing validate_manifest body cap pattern.
 _MAX_SOURCE_BODY_BYTES = 10_485_760  # 10 MiB
 
+# H-5 / H-6 (TASK 003 v3.1 / 003-v3-03): DoS protection on candidates input
+# (file or stdin). Capped BEFORE any JSON parse so a 5 GB payload cannot
+# OOM the interpreter. Risk R-6 mitigation: stdin read uses cap+1 bytes
+# so we never accumulate beyond the limit even if the producer streams.
+_MAX_CANDIDATES_BYTES = 1_048_576  # 1 MiB
+
+# H-8 (003-v3-05): operator-supplied attribution string that flows into
+# `entities.canonicalized_by`. Strict charset: lowercase alphanumerics +
+# `._:@-` (allows model names like `claude-opus-4-7@vendor`). Cap at
+# 64 chars; rejects newlines, control chars, and shell metachars.
+_ORCHESTRATOR_ID_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+
+
+def _path_is_absolute(p: Path | str) -> bool:
+    """Cross-platform absolute-path detection (M-6).
+
+    `Path.is_absolute()` treats `/foo` as non-absolute on Windows (it's
+    drive-relative there) and `C:\\foo` as non-absolute on POSIX. For the
+    skill's input-validation gates we want "looks absolute on EITHER
+    platform" semantics so the same operator mistake (`--source-page
+    /etc/passwd`) produces the same envelope regardless of OS.
+    """
+    s = str(p)
+    if not s:
+        return False
+    if Path(s).is_absolute():
+        return True
+    # POSIX-style absolute path on Windows (drive-relative under Windows
+    # path rules but operator-intent is clearly "absolute").
+    if s.startswith("/") or s.startswith("\\"):
+        return True
+    # Windows drive prefix on POSIX (e.g. "C:\foo" or "C:/foo").
+    if len(s) >= 2 and s[1] == ":" and s[0].isalpha():
+        return True
+    return False
+
+
+def _validate_source_hash(value: str) -> str:
+    """argparse `type=` validator for `--source-hash`.
+
+    C-1 invariant: case-normalize to lowercase + reject anything that
+    isn't exactly 64 hex chars. Without this validator, an upper-cased
+    hex pipeline (PowerShell `toupper`, awk transforms) silently
+    misroutes to SOURCE_CHANGED_DURING_EXTRACTION, AND the unvalidated
+    value lands unescaped in stdout JSON (CWE-117 log-injection vector
+    via embedded ANSI/JSON-breaking sequences). Both vectors close by
+    forcing the value through this lowercased-hex gate at argparse time.
+    """
+    normalized = value.lower()
+    if not _SOURCE_HASH_RE.match(normalized):
+        raise argparse.ArgumentTypeError(
+            "--source-hash must be exactly 64 lowercase hex chars "
+            "(sha256 hex digest from `prepare`'s envelope)"
+        )
+    return normalized
+
+
+def _validate_orchestrator_id(value: str) -> str:
+    """argparse `type=` validator for `--orchestrator-id`.
+
+    On regex fail, raises ``argparse.ArgumentTypeError`` so the operator
+    sees an argparse-level usage error (exit 2 / SystemExit 2) rather
+    than the exit-4 EXTRACTION_PARSE_ERROR envelope.
+    """
+    if not _ORCHESTRATOR_ID_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            f"--orchestrator-id must match regex "
+            f"{_ORCHESTRATOR_ID_RE.pattern!r}"
+        )
+    return value
+
 # v3.1 strict-validator caps (003-v3-02 / H-2 / H-6 / H-9):
-# Aliased name kept for v2 patch-target compatibility until 003-v3-06.
-_REQUIRED_CANDIDATE_KEYS = _REQUIRED_LLM_KEYS  # forward alias
+_REQUIRED_CANDIDATE_KEYS = {
+    "slug", "name", "definition", "source_quote", "source_span", "entity_type",
+}
 _CANDIDATE_COUNT_MIN = 1
 _CANDIDATE_COUNT_MAX = 25
 _FIELD_CAPS = {
@@ -176,43 +262,12 @@ _FIELD_CAPS = {
 }
 
 
-def _build_extraction_prompt(
-    source_body: str,
-    known_entities: list[dict[str, Any]],
-) -> str:
-    """Compose the LLM extraction prompt.
-
-    The known-concepts block (CONTRACT §2 shape — produced by
-    `load_known_entities`) is embedded verbatim so the LLM can echo back
-    the canonical `slug`/`name` for de-dup hits instead of inventing new
-    ones (R-34).
-    """
-    known_block = json.dumps(known_entities, indent=2) if known_entities else "[]"
-    types_block = ", ".join(sorted(_ALLOWED_ENTITY_TYPES))
-    return (
-        "You are a knowledge-graph entity extractor for a personal wiki.\n"
-        "Identify 3-10 key concepts mentioned in the source page below.\n\n"
-        "Known concepts already in this vault — USE THE EXACT slug + name "
-        "when a mentioned concept matches an entry here (so the wiki can "
-        "de-duplicate):\n"
-        f"{known_block}\n\n"
-        "Source page body:\n"
-        f"{source_body}\n\n"
-        'Reply with ONLY a JSON array (no prose, no markdown fence). '
-        'Each item MUST be a JSON object with exactly these keys: '
-        '{"slug": kebab-case-string, "name": "Human Name", '
-        '"definition": "1-3 sentences", "source_quote": "10-50 words verbatim '
-        'from the source body", "source_span": "L<start>-L<end>" (1-indexed '
-        f'lines from the source), "entity_type": one of [{types_block}]}}.'
-    )
-
-
 def _validate_candidates_schema(
     items: list[Any], source_body: str | None = None,
 ) -> None:
     """Strict-mode validation of the calling-agent's candidates payload.
 
-    v3.1 (003-v3-02) extends v2's `_validate_extraction_schema`:
+    v3.1 (003-v3-02) extends the v2-era validator:
       * **strict-equality on keys** (H-9): rejects extra keys with
         UNKNOWN_FIELD (was: subset check that silently ignored extras).
       * **count bound 1≤N≤25** (H-2): rejects empty arrays and N≥26 with
@@ -228,6 +283,20 @@ def _validate_candidates_schema(
         VALUE is NEVER included in any attribute. The apply() caller maps
         these into the JSON envelope without echoing content.
     """
+    # L-1 (vdd-multi 2026-05-28): defensive top-level type guard. The
+    # apply caller goes through `_load_candidates` which already enforces
+    # `isinstance(parsed, list)`, but `_validate_candidates_schema` is a
+    # module-level public-ish symbol with other call sites (tests, future
+    # library consumers). Reject non-lists here so envelopes stay
+    # consistent regardless of entry point.
+    if not isinstance(items, list):
+        raise ExtractionParseError(
+            "candidates payload top-level is not a list",
+            error="EXTRACTION_PARSE_ERROR",
+            field=None,
+            reason=(f"payload is {type(items).__name__}, expected JSON array"),
+        )
+
     # H-2: count bound
     if not (_CANDIDATE_COUNT_MIN <= len(items) <= _CANDIDATE_COUNT_MAX):
         raise ExtractionParseError(
@@ -238,6 +307,11 @@ def _validate_candidates_schema(
             reason=(f"count={len(items)} not in "
                     f"[{_CANDIDATE_COUNT_MIN}, {_CANDIDATE_COUNT_MAX}]"),
         )
+
+    # L-1 (vdd-multi 2026-05-28): also type-check the non-capped fields
+    # so a `null` slug / span / entity_type produces a clear
+    # "not a string" envelope instead of `re.match` on coerced `"None"`.
+    _NONCAPPED_STR_FIELDS = ("slug", "source_span", "entity_type")
 
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
@@ -289,8 +363,21 @@ def _validate_candidates_schema(
                             f"{len(value)} exceeds cap {cap}"),
                 )
 
+        # L-1: type-check non-capped string fields first (so `null` slug
+        # yields "not a string" instead of `re.match("None")` confusion).
+        for field_name in _NONCAPPED_STR_FIELDS:
+            value = item[field_name]
+            if not isinstance(value, str):
+                raise ExtractionParseError(
+                    f"candidate #{idx} field {field_name!r} not a string",
+                    error="EXTRACTION_PARSE_ERROR",
+                    field=field_name,
+                    reason=(f"item #{idx} field {field_name!r} is "
+                            f"{type(value).__name__}, expected str"),
+                )
+
         # Preserved v2 invariants: slug regex, span regex, entity_type whitelist.
-        if not _SLUG_RE.match(str(item["slug"])):
+        if not _SLUG_RE.match(item["slug"]):
             raise ExtractionParseError(
                 f"candidate #{idx} slug fails kebab-case regex",
                 error="EXTRACTION_PARSE_ERROR",
@@ -298,7 +385,7 @@ def _validate_candidates_schema(
                 reason=(f"item #{idx} slug fails regex "
                         "^[a-z0-9][a-z0-9-]{0,62}$"),
             )
-        if not _SOURCE_SPAN_RE.match(str(item["source_span"])):
+        if not _SOURCE_SPAN_RE.match(item["source_span"]):
             raise ExtractionParseError(
                 f"candidate #{idx} source_span fails Lstart-Lend regex",
                 error="EXTRACTION_PARSE_ERROR",
@@ -329,94 +416,6 @@ def _validate_candidates_schema(
                 )
 
 
-# v2 alias — preserved through 003-v3-06 so the 9 remaining anthropic-mock
-# function tests in tests/test_wiki_extract_concepts.py keep importing the
-# old name. Deleted in 003-v3-06.
-_validate_extraction_schema = _validate_candidates_schema
-
-
-def extract_concepts_llm(
-    source_body: str,
-    known_entities: list[dict[str, Any]],
-    model: str = "claude-sonnet-4-6",
-    max_tokens: int = 4096,
-) -> list[dict[str, Any]]:
-    """Claude Sonnet 4.6 extraction call (temperature=0, structured JSON).
-
-    R-33, R-34. Returns a validated list of candidate concept dicts.
-    Raises ``ExtractionParseError`` on malformed JSON / schema violation
-    or oversized input (→ exit 4); raises ``LLMUnavailableError`` on
-    connection/auth/rate-limit/bad-request failure (→ exit 3).
-    """
-    # M-1 (vdd-multi 2026-05-27 critic-logic): input-size cap before
-    # building the prompt — prevents anthropic.BadRequestError on
-    # multi-megabyte pages, and gives the operator a clear envelope
-    # instead of an SDK stack trace.
-    if len(source_body) > _MAX_SOURCE_BODY_CHARS:
-        raise ExtractionParseError(
-            f"source body too large ({len(source_body)} chars; max "
-            f"{_MAX_SOURCE_BODY_CHARS}). Chunking is deferred to a "
-            "future epic — for now, split the source page or summarize "
-            "it before extraction."
-        )
-    import anthropic
-    if max_tokens > 4096:
-        max_tokens = 4096  # R-33(c) enforcement
-    client = anthropic.Anthropic()
-    prompt = _build_extraction_prompt(source_body, known_entities)
-    try:
-        response = client.messages.create(
-            model=model,
-            temperature=0,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except (
-        anthropic.APIConnectionError,
-        anthropic.AuthenticationError,
-        anthropic.RateLimitError,
-        anthropic.BadRequestError,
-        anthropic.APIStatusError,
-    ) as e:
-        # M-1 follow-up: include BadRequestError (oversized prompt despite
-        # our cap; model-side context-window mismatches) and the generic
-        # APIStatusError so 5xx responses don't crash with a stack trace.
-        # L-V3.3 (vdd-multi 2026-05-28 CWE-209): `from None` suppresses
-        # the exception chain so the SDK exception's ``__cause__`` (which
-        # may carry ``request_id``, partial headers, or auth context on
-        # some SDK versions) cannot be surfaced by future ``__cause__``
-        # consumers. The wrapper str uses ``type(e).__name__`` only — no
-        # ``str(e)`` leak. Operators reading stderr/stdout get a clean
-        # `LLM_API_UNAVAILABLE` envelope.
-        raise LLMUnavailableError(
-            f"{type(e).__name__}: Anthropic API call failed"
-        ) from None
-
-    # Anthropic SDK returns response.content = list[ContentBlock]; the first
-    # text block has .text attr. We rely on temperature=0 + a clear prompt
-    # to keep this single-block; fall back gracefully if structure changes.
-    if not response.content:
-        raise ExtractionParseError("LLM response has empty content")
-    first_block = response.content[0]
-    raw_text = getattr(first_block, "text", None)
-    if not isinstance(raw_text, str):
-        raise ExtractionParseError(
-            f"LLM first content-block has no .text str (got {type(first_block).__name__})"
-        )
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise ExtractionParseError(
-            f"LLM returned non-JSON: {raw_text[:500]}"
-        ) from e
-    if not isinstance(parsed, list):
-        raise ExtractionParseError(
-            f"LLM returned non-list (got {type(parsed).__name__}): {raw_text[:500]}"
-        )
-    _validate_extraction_schema(parsed)
-    return parsed
-
-
 def classify_candidates(
     llm_results: list[dict[str, Any]],
     known_slugs: set[str],
@@ -441,6 +440,121 @@ def classify_candidates(
     return create_list, mention_list
 
 
+# v3.1 (003-v3-04) markdown sanitization helpers — H-7 / Q13 defense in
+# depth against prompt-injection-style content surfacing in the concept
+# page body or frontmatter.
+
+# Iteration-2 N-5: allow Unicode word chars (Cyrillic, diacritics) by
+# anchoring the regex with re.UNICODE flag.
+_NAME_ALLOWLIST = re.compile(
+    r"^[\w\s\-.,:;()\'\"!?]{1,200}$", flags=re.UNICODE,
+)
+
+# H-4 (vdd-multi 2026-05-28): markdown-active characters that, when
+# appearing at start-of-line (after optional whitespace), trigger
+# block-level rendering. Escaped to `\X` to render as literal text.
+_LINE_LEADING_MD_ACTIVES = frozenset("#>|*+-~")
+
+
+def _sanitize_name(name: str) -> str:
+    """Sanitize a concept name for safe embedding into the H1 + frontmatter.
+
+    Strips leading ``#`` (markdown header injection) and ``-`` / ``---``
+    (YAML frontmatter delimiter injection), then enforces the
+    `_NAME_ALLOWLIST` regex. If the post-strip string fails the allowlist
+    or is empty, raises ``ExtractionParseError(error="INVALID_NAME_FORMAT")``.
+    """
+    stripped = name.lstrip("#").lstrip("-").strip()
+    if not _NAME_ALLOWLIST.match(stripped):
+        raise ExtractionParseError(
+            "candidate name fails sanitization allowlist",
+            error="INVALID_NAME_FORMAT",
+            field="name",
+            reason=("name contains disallowed characters after stripping "
+                    "leading '#'/'-' and trimming whitespace"),
+        )
+    return stripped
+
+
+def _sanitize_markdown_text(text: str) -> str:
+    """Escape every markdown/HTML-active sequence so `text` renders as
+    literal plain prose.
+
+    H-4 (vdd-multi 2026-05-28): the v2 denylist approach missed
+    ``javascript:`` / ``data:`` URIs (via markdown link form), HTML
+    entity smuggling (``&#x3C;script&#x3E;``), Obsidian wikilink
+    injection (``[[evil]]``), code-span injection (`````), footnote
+    refs, and tag forms with leading whitespace. This text-only
+    allowlist replaces it.
+
+    Attacks closed:
+      * ``<tag>`` / ``</tag>`` / ``<!CDATA...>`` → ``&lt;...&gt;``
+      * ``&#x3C;`` / named entities → ``&amp;#x3C;``
+      * ``[text](javascript:...)`` / ``![img](data:...)`` → ``\\[text\\](javascript:...)``
+        (markdown does not render a link when the ``[`` is backslash-escaped)
+      * ``[[wikilink]]`` → ``\\[\\[wikilink\\]\\]``
+      * ```code``` / `````fence````` → ``\\`code\\```
+      * Leading-line ``#``/``>``/``|``/``*``/``+``/``-``/``~`` → ``\\X``
+        (closes header, blockquote-escape, table, list, strikethrough)
+
+    Markdown rendering: backslash-escaped chars render as literal
+    glyphs per CommonMark §2.4, so the on-page text looks unchanged
+    for legitimate content (the LLM rarely produces literal `[Sharpe
+    1966]` references that need to render as actual brackets — and if
+    it does, the escaped form `\\[Sharpe 1966\\]` still renders as
+    `[Sharpe 1966]` visually).
+    """
+    # 1. HTML escape: & FIRST (so subsequent &lt; / &gt; aren't double-
+    # escaped), then < and >. Closes tag injection, CDATA, entity smuggling.
+    s = (text
+         .replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;"))
+    # 2. Escape backticks (code spans + fenced code blocks + Obsidian
+    # dataview / mermaid embedded blocks).
+    s = s.replace("`", "\\`")
+    # 3. Escape markdown link / Obsidian wikilink brackets. Both [[ ]]
+    # (wikilink) and [ ]( ) (markdown link) require unescaped [.
+    s = s.replace("[", "\\[").replace("]", "\\]")
+    # 4. Escape line-leading markdown actives (after optional whitespace).
+    out_lines: list[str] = []
+    for line in s.split("\n"):
+        stripped = line.lstrip()
+        if stripped and stripped[0] in _LINE_LEADING_MD_ACTIVES:
+            ws_len = len(line) - len(stripped)
+            line = f"{line[:ws_len]}\\{stripped[0]}{stripped[1:]}"
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
+def _sanitize_definition(definition: str) -> str:
+    """Sanitize a candidate's definition for safe embedding in concept body.
+
+    Delegates to the shared `_sanitize_markdown_text` (H-4 v3.2 — text-
+    only allowlist replacing v3.1's denylist).
+    """
+    return _sanitize_markdown_text(definition)
+
+
+def _format_source_quote_block(
+    source_quote: str, source_slug: str, source_span: str,
+) -> str:
+    """Render the source quote as a Markdown blockquote (``>``) line(s)
+    followed by a provenance footer line.
+
+    H-4: `source_quote` is sanitized via `_sanitize_markdown_text` so a
+    hostile quote containing `<script>...`, `[[evil-wikilink]]`,
+    `` `dataview LIST FROM ""` ``, or footnote-syntax injection cannot
+    surface in the rendered concept page. The `> ` line prefix
+    additionally neutralizes any leading-line block-markdown that
+    survives the escape.
+    """
+    sanitized_quote = _sanitize_markdown_text(source_quote)
+    quote_lines = sanitized_quote.split("\n")
+    quoted = "\n".join(f"> {line}" for line in quote_lines)
+    return f"{quoted}\n> — [[{source_slug}]] ({source_span})"
+
+
 def write_concept_page(
     vault_root: Path,
     candidate: dict[str, Any],
@@ -450,14 +564,19 @@ def write_concept_page(
 ) -> tuple[Path, str]:
     """Write ``_concepts/<slug>.md`` atomically with frontmatter + body.
 
-    R-36, R-40. Atomic via tempfile + ``os.replace`` (Decision-12 default —
-    repo-local primitive over the vendored ``_safety.atomic_write_text``).
-    Skip-on-exists (R-36e): if the file already exists, return ``(path,
-    "unchanged")`` without rewriting; otherwise return ``(path, "created")``.
+    R-36, R-40. Atomic via tempfile + ``os.replace`` (Decision-12 default).
+    v3.1 (003-v3-04) semantics:
 
-    H-2 fix (vdd-multi 2026-05-27): returning the action label from this
-    function (single stat inside the function) eliminates the TOCTOU race
-    that the previous caller-side pre-check + internal re-check exposed.
+      - Symlink refuse (Q15): if ``target.is_symlink()``, raises
+        ``PathTraversalError`` BEFORE any read, hash-compute, or write.
+      - Content-hash skip (C-1): if the file exists with byte-identical
+        content to the would-be-written payload → return
+        ``(target, "unchanged")``. If it exists with different content →
+        atomic rewrite + return ``(target, "updated")`` + ``logger.warning``.
+        New file → ``(target, "created")``.
+      - Markdown sanitization (H-7 / Q13): ``name``, ``definition``,
+        ``source_quote``, and ``source_span`` are sanitized before being
+        embedded into the body.
 
     The ``vault_id`` parameter is explicit (per plan-reviewer nit #3) so
     the function stays pure — callers should pass ``args.vault``.
@@ -465,11 +584,14 @@ def write_concept_page(
     slug = candidate["slug"]
     # R-26 / R-40(d) path-traversal guard. We can't call validate_inside_vault
     # on a not-yet-existing file (it uses .resolve(strict=True)). Pre-flight:
-    # (1) slug must be kebab-case (LLM-output is untrusted — defense in depth
-    # even though _validate_extraction_schema also checks); (2) the parent
-    # resolves inside vault after we mkdir; (3) the final target's resolved
-    # parent must equal the validated concepts_dir.
-    if not re.match(r"^[a-z0-9][a-z0-9-]{0,62}$", slug):
+    # (1) slug must be kebab-case (operator-synthesised input is untrusted —
+    # defense in depth even though `_validate_candidates_schema` also checks);
+    # (2) the parent resolves inside vault after we mkdir; (3) the final
+    # target's resolved parent must equal the validated concepts_dir.
+    # L-3 (vdd-multi 2026-05-28): use precompiled _SLUG_RE instead of a
+    # string literal — same pattern, avoids the per-call `re` module cache
+    # lookup (and any thrash if the cache fills).
+    if not _SLUG_RE.match(slug):
         raise PathTraversalError(
             f"slug {slug!r} fails kebab-case regex; possible path traversal"
         )
@@ -477,13 +599,42 @@ def write_concept_page(
     concepts_dir.mkdir(parents=True, exist_ok=True)
     validated_dir = validate_inside_vault(concepts_dir, vault_root)
     target = validated_dir / f"{slug}.md"
-    if target.exists():
-        return target, "unchanged"
+
+    # Q15 / NEW-2: symlink refuse BEFORE any read or hash-compute. Risk R-5
+    # (TOCTOU between is_symlink check and os.replace) is acknowledged: the
+    # pre-check fails before any write so the worst case is a refused
+    # operation, not a write-through-symlink. O_NOFOLLOW-based hardening
+    # is deferred (iteration-2 LOW residual).
+    if target.is_symlink():
+        raise PathTraversalError(
+            f"concept page target {target} is a symlink — refusing "
+            "to read or write through it"
+        )
+
+    # Sanitize the three free-text fields BEFORE assembling the body.
+    safe_name = _sanitize_name(str(candidate["name"]))
+    safe_definition = _sanitize_definition(str(candidate["definition"]))
+
+    # Defense-in-depth source_span regex check at body-construction time
+    # (in addition to the upstream `_validate_candidates_schema` check).
+    source_span = str(candidate["source_span"])
+    if not _SOURCE_SPAN_RE.match(source_span):
+        raise ExtractionParseError(
+            "source_span body construction requires Lstart-Lend format",
+            error="INVALID_SOURCE_SPAN",
+            field="source_span",
+            reason=("source_span must match ^L\\d+-L\\d+$ before embedding "
+                    "into _concepts page body"),
+        )
+    safe_quote_block = _format_source_quote_block(
+        str(candidate["source_quote"]), source_slug, source_span,
+    )
+
     fm: dict[str, Any] = {
         "type": "concept",
         "vault_id": vault_id,
         "slug": slug,
-        "name": candidate["name"],
+        "name": safe_name,
         "date": today.isoformat() if isinstance(today, date) else str(today),
         "tags": ["concept", "candidate"],
         "is_candidate": True,
@@ -491,28 +642,75 @@ def write_concept_page(
         "trust_level": "medium",
     }
     body = (
-        f"# {candidate['name']}\n\n"
-        f"{candidate['definition']}\n\n"
+        f"# {safe_name}\n\n"
+        f"{safe_definition}\n\n"
         f"## Mentions\n\n"
-        f"- [[{source_slug}]] — \"{candidate['source_quote']}\" "
-        f"({candidate['source_span']})\n"
+        f"{safe_quote_block}\n"
     )
     post = frontmatter.Post(body, **fm)
     payload = frontmatter.dumps(post)
+    payload_bytes = payload.encode("utf-8")
+
+    # C-1 content-hash skip semantics + M-5 symlink-follow defense:
+    # existing-and-identical → "unchanged"; existing-and-different →
+    # atomic rewrite + "updated" + warning; missing → atomic write +
+    # "created". Risk R-4 mitigation: both sides normalized to UTF-8
+    # bytes before sha256 so trailing-newline / frontmatter-encoding
+    # differences cannot trigger spurious rewrites.
+    # M-5: open the existing file with O_NOFOLLOW so a symlink swapped
+    # in between the earlier is_symlink() check and this read cannot
+    # leak content from outside the vault. ELOOP/ENOENT race → treat as
+    # "not present" and write.
+    action: str
+    existing_bytes: bytes | None = None
+    try:
+        rd_fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        action = "created"
+    except OSError:
+        # ELOOP (target became a symlink after is_symlink check) or
+        # other I/O race. Treat as not-present; the atomic write below
+        # uses tempfile + os.replace which is rename(2) and DOES NOT
+        # follow symlinks on POSIX — so even if the race persists, the
+        # write goes to the intended path, not the symlink target.
+        action = "created"
+    else:
+        try:
+            existing_bytes = os.read(rd_fd, len(payload_bytes) + 1)
+            # If the file is larger than the would-be-written payload,
+            # we've already detected the mismatch; otherwise read the
+            # exact remaining bytes to confirm length equality.
+            while True:
+                chunk = os.read(rd_fd, 65536)
+                if not chunk:
+                    break
+                existing_bytes += chunk
+        finally:
+            os.close(rd_fd)
+        if (hashlib.sha256(existing_bytes).hexdigest()
+                == hashlib.sha256(payload_bytes).hexdigest()):
+            return target, "unchanged"
+        action = "updated"
+        logger.warning(
+            "write_concept_page: rewriting %s — existing content differs "
+            "from would-be-written payload (content-hash mismatch)",
+            target,
+        )
+
     fd, tmp_name = tempfile.mkstemp(
         dir=str(concepts_dir),
         prefix=f".{slug}.",
         suffix=".md.tmp",
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload_bytes)
         os.replace(tmp_name, target)
     except Exception:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
         raise
-    return target, "created"
+    return target, action
 
 
 def _lookup_entity_row(
@@ -536,6 +734,7 @@ def upsert_extracted_entity(
     candidate: dict[str, Any],
     source_slug: str,
     today: date,
+    orchestrator_id: str = "orchestrator",
 ) -> str:
     """Upsert an extracted entity row with defensive downgrade-guard.
 
@@ -548,13 +747,18 @@ def upsert_extracted_entity(
     defense; this call-layer skip is defense-in-depth — both let confirmed
     entities (R-37b) survive intact. Skipping at the call layer also
     avoids a no-op write that would touch last_updated unnecessarily.
+
+    v3.1 (003-v3-05 / H-8): the ``orchestrator_id`` parameter populates
+    ``canonicalized_by = f"llm:{orchestrator_id}@{today}"``. Defaults to
+    the literal string ``"orchestrator"`` so operators who omit
+    ``--orchestrator-id`` get an honest unknown rather than a hallucinated
+    model attribution (Q9-v3.1).
     """
     existing = _lookup_entity_row(repo, vault_id, candidate["slug"])
     if existing is not None and existing.get("is_candidate") == 0:
         return "confirmed"
     today_iso = today.isoformat() if isinstance(today, date) else str(today)
-    model = candidate.get("model", "claude-sonnet-4-6")
-    canonicalized_by = f"llm:{model}@{today_iso}"
+    canonicalized_by = f"llm:{orchestrator_id}@{today_iso}"
     first_seen = existing["first_seen"] if existing else today_iso
     repo.upsert_entity(
         vault_id=vault_id,
@@ -570,7 +774,7 @@ def upsert_extracted_entity(
     return "updated" if existing else "created"
 
 
-_SPAN_REGEX = re.compile(r"^L(\d+)-L(\d+)$")
+_SPAN_REGEX = re.compile(r"^L(\d+)-L(\d+)$", re.ASCII)  # L-2: ASCII-only digits
 
 
 def _parse_source_span(span: str) -> tuple[int, int]:
@@ -768,34 +972,6 @@ def dispatch_to_indexer(
 # ============================================================================
 
 
-def _build_legacy_parser() -> argparse.ArgumentParser:
-    """v2 argparse surface. Preserved for the 003-v3-00..06 window so the
-    9 anthropic-mock function tests in tests/ keep importing
-    `extract_concepts_llm` etc. without colliding with the new subparsers.
-    Deleted in 003-v3-06 alongside the rest of the legacy v2 surface.
-    """
-    p = argparse.ArgumentParser(
-        prog="wiki-extract-concepts",
-        description="LLM-driven concept extraction (Epic 7 R-3 entry-point)",
-    )
-    p.add_argument("--vault", required=True,
-                   help="Vault ID (must be registered in vaults table)")
-    p.add_argument("--vault-root", required=True, type=Path,
-                   help="Absolute path to vault root directory")
-    p.add_argument("--source-page", required=True,
-                   help="Source page slug or relative path within vault")
-    p.add_argument("--db-path", default=None,
-                   help="Override global DB path (default: standard XDG location)")
-    p.add_argument("--model", default="claude-sonnet-4-6",
-                   help="Anthropic model ID (default: claude-sonnet-4-6)")
-    p.add_argument("--ingest", action="store_true",
-                   help="In-process indexer dispatch (Decision-15) — "
-                        "call index_from_manifest after manifest emit")
-    p.add_argument("--max-tokens", type=int, default=4096,
-                   help="LLM extraction max_tokens cap (R-33c, default: 4096)")
-    return p
-
-
 def _build_parser_v3() -> argparse.ArgumentParser:
     """v3.1 argparse surface (Decision-17): two subcommands, calling-agent
     drives synthesis. `prepare` does deterministic recon + idempotency check;
@@ -840,12 +1016,22 @@ def _build_parser_v3() -> argparse.ArgumentParser:
     pa.add_argument("--db-path", default=None,
                     help="Override global DB path (default: standard XDG location)")
     pa.add_argument("--source-hash", required=True,
-                    help="sha256 hex of the source body, as emitted by `prepare`; "
-                         "mismatch → SOURCE_CHANGED_DURING_EXTRACTION (Q5).")
+                    type=_validate_source_hash,
+                    help="sha256 hex (64 lowercase hex chars) of the source "
+                         "body, as emitted by `prepare`; mismatch → "
+                         "SOURCE_CHANGED_DURING_EXTRACTION (Q5). Case-"
+                         "normalized to lowercase at argparse time (C-1).")
     pa.add_argument("--ingest", action="store_true",
                     help="In-process indexer dispatch (Decision-15) — "
                          "call index_from_manifest after manifest emit")
-    # `--orchestrator-id` is added in 003-v3-05 (NOT this bead).
+    pa.add_argument("--orchestrator-id",
+                    type=_validate_orchestrator_id,
+                    default="orchestrator",
+                    help="Free-form orchestrator identifier "
+                         "(e.g., 'claude-opus-4-7'). Populates "
+                         "entities.canonicalized_by. Regex: "
+                         f"{_ORCHESTRATOR_ID_RE.pattern}. "
+                         "Default: literal 'orchestrator' (Q9-v3.1).")
     cand_group = pa.add_mutually_exclusive_group(required=True)
     cand_group.add_argument("--candidates-file", type=Path, default=None,
                             help="Path to JSON file inside the vault with candidates "
@@ -873,7 +1059,7 @@ def prepare(args: argparse.Namespace) -> int:
     # H-1 (regression migration from 003-v3-11a): absolute --source-page →
     # INVALID_SOURCE_PATH (distinct from SOURCE_NOT_FOUND so the operator
     # sees the actual problem). Fire BEFORE any other resolution work.
-    if Path(src_page).is_absolute():
+    if _path_is_absolute(src_page):
         return emit({
             "error": "INVALID_SOURCE_PATH",
             "message": (f"--source-page must be a vault-relative slug or "
@@ -882,7 +1068,124 @@ def prepare(args: argparse.Namespace) -> int:
                         "relative path inside --vault-root."),
         }, exit_code=2)
 
-    # Try slug-form first (most common): `_sources/<slug>.md`.
+    resolved = _resolve_source_inside_sources(src_page, vault_root)
+    if isinstance(resolved, dict):  # error envelope
+        return emit(resolved, exit_code=2)
+    source_path, source_slug = resolved
+
+    # M-3 + M-5: stat-check size BEFORE read AND read via O_NOFOLLOW so
+    # a symlink swap between resolve and read can't redirect to a file
+    # outside the vault. ELOOP/race → SOURCE_NOT_FOUND envelope.
+    try:
+        source_body_bytes = _read_file_bounded(
+            source_path, _MAX_SOURCE_BODY_BYTES,
+        )
+    except _FileTooLargeError:
+        return emit({
+            "error": "SOURCE_TOO_LARGE",
+            "reason": (f"source-page exceeds the {_MAX_SOURCE_BODY_BYTES}-byte "
+                       "cap (10 MiB); refuse to read into memory."),
+        }, exit_code=2)
+    except OSError:
+        return emit({
+            "error": "SOURCE_NOT_FOUND",
+            "reason": (f"source-page {src_page!r} could not be opened "
+                       "(symlink swap race or transient I/O error)"),
+        }, exit_code=2)
+    source_body = source_body_bytes.decode("utf-8")
+    source_hash = hashlib.sha256(source_body_bytes).hexdigest()
+
+    repo = make_repo({
+        "vault_id": args.vault,
+        **({"db_path": args.db_path} if args.db_path else {}),
+    })
+    try:
+        is_unchanged = check_idempotency(repo, args.vault, source_slug, source_hash)
+        known = load_known_entities(repo, args.vault)
+        known_slugs = [e["slug"] for e in known]
+
+        # M-7 (vdd-multi 2026-05-28): one os.scandir instead of N `is_file`
+        # syscalls. At 10k entities on iCloud, this drops from ~100s to
+        # ~100ms. P-9 retired.
+        concepts_dir = vault_root / "_concepts"
+        present_concept_files: set[str] = set()
+        if concepts_dir.is_dir():
+            for entry in os.scandir(concepts_dir):
+                if entry.is_file() and entry.name.endswith(".md"):
+                    present_concept_files.add(entry.name[:-3])  # strip .md
+        missing_concept_files = sorted(
+            slug for slug in known_slugs if slug not in present_concept_files
+        )
+
+        # M-2 (vdd-multi 2026-05-28): emit RELATIVE source_path instead
+        # of absolute. The orchestrator already knows --vault-root and
+        # can join. CWE-209: stop leaking operator home directory /
+        # vault location into logs.
+        try:
+            source_path_rel = str(source_path.relative_to(vault_root))
+        except ValueError:
+            source_path_rel = str(source_path)  # defensive (shouldn't happen)
+
+        return emit({
+            "vault_id": args.vault,
+            "source_slug": source_slug,
+            "source_path": source_path_rel,
+            "source_hash": source_hash,
+            "is_unchanged": is_unchanged,
+            "known_concepts": known,
+            "missing_concept_files": missing_concept_files,
+        })
+    finally:
+        repo.close()
+
+
+class _FileTooLargeError(OSError):
+    """Raised by `_read_file_bounded` when fstat shows size > cap."""
+
+
+def _read_file_bounded(path: Path, cap_bytes: int) -> bytes:
+    """Open `path` with O_NOFOLLOW, fstat-check size, read up to cap+1 bytes.
+
+    M-3 / M-5: closes the TOCTOU between `Path.stat().st_size` and a
+    subsequent `Path.read_bytes()` AND defends against symlink-swap
+    races (O_NOFOLLOW → ELOOP if the path became a symlink after the
+    earlier resolve). The fstat-then-bounded-read pattern guarantees
+    we never accumulate more than `cap_bytes + 1` bytes from the FD.
+    Raises:
+      - _FileTooLargeError if fstat shows size > cap OR the read
+        produced more than cap bytes.
+      - OSError on ELOOP / ENOENT / EACCES (caller maps to envelope).
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if st.st_size > cap_bytes:
+            raise _FileTooLargeError(
+                f"file size {st.st_size} > cap {cap_bytes}"
+            )
+        data = os.read(fd, cap_bytes + 1)
+        if len(data) > cap_bytes:
+            raise _FileTooLargeError(
+                f"read returned > cap {cap_bytes} bytes (TOCTOU growth)"
+            )
+        return data
+    finally:
+        os.close(fd)
+
+
+def _resolve_source_inside_sources(
+    src_page: str, vault_root: Path,
+) -> dict[str, Any] | tuple[Path, str]:
+    """Resolve `--source-page` to a real path inside `<vault_root>/_sources/`.
+
+    Returns either an error envelope `dict` (caller emits at exit 2) or
+    a `(resolved_path, source_slug)` tuple on success.
+
+    H-1 (vdd-multi 2026-05-28): enforces the `_sources/` layout invariant.
+    The previous resolver allowed `--source-page _sources/../_concepts/foo.md`
+    to escape into `_concepts/`, breaking the documented inputs/outputs
+    separation and corrupting `page_entity_refs` if `--ingest` ran.
+    """
     sources_dir = vault_root / "_sources"
     slug_path = sources_dir / f"{src_page}.md"
     if slug_path.is_file():
@@ -894,68 +1197,455 @@ def prepare(args: argparse.Namespace) -> int:
         source_path = candidate_path.resolve(strict=True)
         validate_inside_vault(source_path, vault_root)
     except (FileNotFoundError, PathTraversalError) as e:
-        return emit({"error": "SOURCE_NOT_FOUND",
-                     "message": f"source-page {src_page!r} not found in vault: {e}"},
-                    exit_code=2)
+        return {
+            "error": "SOURCE_NOT_FOUND",
+            "reason": f"source-page {src_page!r} not found in vault: {e}",
+        }
 
-    # H-3 (regression migration from 003-v3-11a): validate the derived
-    # source_slug against the kebab regex BEFORE any other work. Dotted
-    # filenames (Foo.Bar.md) would otherwise propagate into apply where
-    # they'd hit the DB CHECK constraint mid-pipeline.
+    # H-1: must live directly inside `_sources/`. Reject any path that
+    # resolves elsewhere (including `_concepts/`, `_entities/`, course
+    # subdirs, or the vault root itself).
+    try:
+        resolved_sources = sources_dir.resolve(strict=True)
+    except FileNotFoundError:
+        return {
+            "error": "SOURCE_NOT_FOUND",
+            "reason": ("vault has no _sources/ directory; create it before "
+                       "invoking prepare/apply"),
+        }
+    if source_path.parent != resolved_sources:
+        return {
+            "error": "INVALID_SOURCE_PATH",
+            "reason": (f"source-page {src_page!r} resolves outside "
+                       "_sources/ (v3.1 layout invariant: extraction "
+                       "inputs live in _sources/ only)"),
+        }
+
     source_slug = source_path.stem
     if not _SLUG_RE.match(source_slug):
-        return emit({
+        return {
             "error": "INVALID_SOURCE_SLUG",
-            "message": (f"source-page filename {source_slug!r} does not "
-                        "yield a valid kebab-case slug "
-                        "(^[a-z0-9][a-z0-9-]{0,62}$). Rename the file or "
-                        "pass --source-page with the canonical slug."),
+            "reason": (f"source-page filename {source_slug!r} does not "
+                       "yield a valid kebab-case slug "
+                       "(^[a-z0-9][a-z0-9-]{0,62}$). Rename the file or "
+                       "pass --source-page with the canonical slug."),
+        }
+
+    return source_path, source_slug
+
+
+def _load_candidates(
+    args: argparse.Namespace, vault_root: Path,
+) -> list[Any]:
+    """Load + cap + path-validate + parse the candidates JSON payload.
+
+    Encapsulates the four `apply()` failure modes that fire BEFORE any
+    schema validation:
+
+      - `CANDIDATES_TOO_LARGE` (exit 4, H-6 / R-6) — stdin or file payload
+        exceeds `_MAX_CANDIDATES_BYTES`. For stdin we read cap+1 bytes via
+        `sys.stdin.buffer.read(...)` so the cap holds even under streaming.
+      - `INVALID_CANDIDATES_PATH` (exit 2, H-5) — `--candidates-file` does
+        not exist OR resolves to a location outside the vault root. Envelope
+        emits the operator-supplied path STRING (never the file contents).
+      - `EXTRACTION_PARSE_ERROR` (exit 4) — JSON decode error. Envelope
+        emits the SDK-style `at line N column M` locator, never the
+        offending byte stream (CWE-117 invariant).
+
+    All three are raised as `ExtractionParseError` with `.error` populated
+    so the apply() caller can map straight into a JSON envelope.
+    """
+    if args.candidates_stdin:
+        # Risk R-6 mitigation: bound the read so a malicious producer
+        # streaming one byte at a time cannot drive memory growth past
+        # the cap. cap+1 bytes lets us detect overflow with one check.
+        data = sys.stdin.buffer.read(_MAX_CANDIDATES_BYTES + 1)
+        if len(data) > _MAX_CANDIDATES_BYTES:
+            raise ExtractionParseError(
+                "candidates stdin payload exceeds size cap",
+                error="CANDIDATES_TOO_LARGE",
+                field=None,
+                reason=(f"stdin payload > {_MAX_CANDIDATES_BYTES} bytes "
+                        "(1 MiB cap)"),
+            )
+    else:
+        candidates_file = args.candidates_file
+        # H-5 / M-6 (cross-platform): path-validate BEFORE any read. Both
+        # FileNotFoundError and PathTraversalError map to
+        # INVALID_CANDIDATES_PATH so the envelope never discloses on-disk
+        # existence outside the vault. If the operator passed a relative
+        # path, resolve it against vault_root (instead of CWD which would
+        # produce inconsistent envelopes across operator shells).
+        if not _path_is_absolute(candidates_file):
+            candidates_file = vault_root / candidates_file
+        try:
+            resolved = validate_inside_vault(candidates_file, vault_root)
+        except (FileNotFoundError, PathTraversalError):
+            raise ExtractionParseError(
+                "candidates file is not inside vault root",
+                error="INVALID_CANDIDATES_PATH",
+                field=None,
+                reason=(f"--candidates-file {str(candidates_file)!r} is "
+                        "missing or outside --vault-root"),
+            ) from None
+        # H-2: FIFO/device/socket bypasses stat-cap (st_size=0 for
+        # FIFOs/char devices); reject anything that isn't a regular file.
+        # M-3/M-5: open the file with O_NOFOLLOW + read at most cap+1
+        # bytes from THAT FD so a TOCTOU swap between stat and read
+        # cannot exceed the cap. The fstat-then-bounded-read pattern
+        # closes both the FIFO bypass and the swap race.
+        if not resolved.is_file():
+            raise ExtractionParseError(
+                "candidates file is not a regular file",
+                error="INVALID_CANDIDATES_PATH",
+                field=None,
+                reason=(f"--candidates-file {str(candidates_file)!r} is "
+                        "not a regular file (FIFOs/devices/sockets "
+                        "rejected; H-2 bypass guard)"),
+            )
+        try:
+            fd = os.open(resolved, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            # ELOOP if target became a symlink between is_file() and open;
+            # EACCES / ENOENT on race. All map to INVALID_CANDIDATES_PATH.
+            raise ExtractionParseError(
+                "candidates file open failed",
+                error="INVALID_CANDIDATES_PATH",
+                field=None,
+                reason=(f"--candidates-file {str(candidates_file)!r} "
+                        "could not be opened (possible symlink-swap race)"),
+            ) from None
+        try:
+            data = os.read(fd, _MAX_CANDIDATES_BYTES + 1)
+            if len(data) > _MAX_CANDIDATES_BYTES:
+                raise ExtractionParseError(
+                    "candidates file exceeds size cap",
+                    error="CANDIDATES_TOO_LARGE",
+                    field=None,
+                    reason=(f"--candidates-file size > "
+                            f"{_MAX_CANDIDATES_BYTES} bytes (1 MiB cap)"),
+                )
+        finally:
+            os.close(fd)
+
+    try:
+        parsed = json.loads(data.decode("utf-8"))
+    except json.JSONDecodeError as e:
+        # CWE-117: never echo the raw payload — only the SDK locator.
+        raise ExtractionParseError(
+            "candidates payload is not valid JSON",
+            error="EXTRACTION_PARSE_ERROR",
+            field=None,
+            reason=f"JSON decode failed at line {e.lineno} column {e.colno}",
+        ) from None
+    except UnicodeDecodeError:
+        raise ExtractionParseError(
+            "candidates payload is not valid UTF-8",
+            error="EXTRACTION_PARSE_ERROR",
+            field=None,
+            reason="payload bytes are not decodable as UTF-8",
+        ) from None
+    if not isinstance(parsed, list):
+        raise ExtractionParseError(
+            "candidates payload top-level shape is not a JSON array",
+            error="EXTRACTION_PARSE_ERROR",
+            field=None,
+            reason=(f"top-level JSON is {type(parsed).__name__}, "
+                    "expected array"),
+        )
+    return parsed
+
+
+def _envelope_from_parse_error(
+    e: ExtractionParseError,
+) -> dict[str, Any]:
+    """Build the structured JSON envelope from an ExtractionParseError.
+
+    CWE-117 / CWE-209 invariant: only `.error`, `.field`, `.reason` from the
+    exception attrs land in the envelope — never the message string and
+    never the offending value. The apply() caller drives the exit code
+    off the envelope's `error` key.
+    """
+    payload: dict[str, Any] = {
+        "error": e.error or "EXTRACTION_PARSE_ERROR",
+    }
+    if e.field is not None:
+        payload["field"] = e.field
+    if e.reason is not None:
+        payload["reason"] = e.reason
+    return payload
+
+
+def apply(args: argparse.Namespace) -> int:
+    """`wiki-extract-concepts apply` subcommand (v3.1).
+
+    Consumes operator-synthesised candidates JSON and writes pages +
+    entities + manifest. Hash-checks the source body against the
+    `--source-hash` emitted by `prepare` so an edit-during-extraction
+    race surfaces as a clean exit 2 SOURCE_CHANGED_DURING_EXTRACTION
+    envelope (H-1, Q5) instead of corrupting the manifest.
+
+    Exit codes (R-42):
+      0 — success (manifest or {extraction, index} envelope)
+      2 — input validation (INVALID_SOURCE_PATH, SOURCE_NOT_FOUND,
+          INVALID_SOURCE_SLUG, SOURCE_TOO_LARGE,
+          SOURCE_CHANGED_DURING_EXTRACTION, INVALID_CANDIDATES_PATH)
+      4 — candidates payload errors (CANDIDATES_TOO_LARGE,
+          EXTRACTION_PARSE_ERROR, UNKNOWN_FIELD, FIELD_TOO_LONG,
+          CANDIDATE_COUNT_OUT_OF_BOUNDS, FIELD_QUOTE_NOT_IN_BODY)
+      5 — PARTIAL_INDEX_FAILURE (some concept pages written, indexer
+          rejected at least one; source_state NOT updated so a retry is
+          safe — C-1 invariant carried forward from v2)
+      6 — MANIFEST_INVALID
+    """
+    vault_root = args.vault_root.resolve(strict=True)
+
+    # Step 1 — load candidates (cap + path-validate + parse).
+    try:
+        candidates = _load_candidates(args, vault_root)
+    except ExtractionParseError as e:
+        envelope = _envelope_from_parse_error(e)
+        exit_code = 2 if envelope["error"] == "INVALID_CANDIDATES_PATH" else 4
+        return emit(envelope, exit_code=exit_code)
+
+    # Step 2 — resolve + read source. Same gating as prepare(): absolute
+    # source-page → INVALID_SOURCE_PATH (cross-platform via
+    # _path_is_absolute, M-6), escape outside `_sources/` → also
+    # INVALID_SOURCE_PATH (H-1 layout invariant), missing →
+    # SOURCE_NOT_FOUND, dotted slug → INVALID_SOURCE_SLUG, oversize →
+    # SOURCE_TOO_LARGE. Read via O_NOFOLLOW (M-3/M-5).
+    src_page = args.source_page
+    if _path_is_absolute(src_page):
+        return emit({
+            "error": "INVALID_SOURCE_PATH",
+            "reason": (f"--source-page must be a vault-relative slug or "
+                       f"path, not absolute ({src_page!r})."),
         }, exit_code=2)
 
-    # M-3: stat-check size BEFORE read_text to bound memory.
-    if source_path.stat().st_size > _MAX_SOURCE_BODY_BYTES:
+    resolved = _resolve_source_inside_sources(src_page, vault_root)
+    if isinstance(resolved, dict):
+        return emit(resolved, exit_code=2)
+    source_path, source_slug = resolved
+
+    try:
+        source_body_bytes = _read_file_bounded(
+            source_path, _MAX_SOURCE_BODY_BYTES,
+        )
+    except _FileTooLargeError:
         return emit({
             "error": "SOURCE_TOO_LARGE",
-            "message": (f"source-page st_size exceeds the {_MAX_SOURCE_BODY_BYTES}-byte cap "
-                        "(10 MiB); refuse to read into memory."),
+            "reason": (f"source-page exceeds the {_MAX_SOURCE_BODY_BYTES}-byte "
+                       "cap (10 MiB); refuse to read into memory."),
+        }, exit_code=2)
+    except OSError:
+        return emit({
+            "error": "SOURCE_NOT_FOUND",
+            "reason": (f"source-page {src_page!r} could not be opened "
+                       "(symlink swap race or transient I/O error)"),
+        }, exit_code=2)
+    source_body = source_body_bytes.decode("utf-8")
+    current_hash = hashlib.sha256(source_body_bytes).hexdigest()
+
+    # Step 3 — hash check (H-1, Q5 + C-1). Argparse normalizes
+    # --source-hash via _validate_source_hash; this belt-and-braces
+    # check defends library/test callers that construct `args` directly
+    # (and would otherwise bypass argparse). Envelope emits truncated
+    # prefixes only; never the source body or the supplied hash in full.
+    supplied_hash = str(args.source_hash).lower()
+    if not _SOURCE_HASH_RE.match(supplied_hash):
+        return emit({
+            "error": "INVALID_SOURCE_HASH",
+            "reason": ("--source-hash must be exactly 64 lowercase hex "
+                       "chars (sha256 hex digest from `prepare`)"),
+        }, exit_code=2)
+    if current_hash != supplied_hash:
+        return emit({
+            "error": "SOURCE_CHANGED_DURING_EXTRACTION",
+            "reason": (f"expected={supplied_hash[:16]}, "
+                       f"got={current_hash[:16]} "
+                       "(source body changed between prepare and apply; "
+                       "re-run prepare to refresh)"),
         }, exit_code=2)
 
-    source_body = source_path.read_text(encoding="utf-8")
-    source_hash = hashlib.sha256(source_body.encode("utf-8")).hexdigest()
+    # Step 4 — strict schema validation (incl. optional quote-in-body).
+    try:
+        _validate_candidates_schema(candidates, source_body=source_body)
+    except ExtractionParseError as e:
+        return emit(_envelope_from_parse_error(e), exit_code=4)
 
+    # Step 4b (M-4 vdd-multi 2026-05-28): SANITIZATION PRE-FLIGHT. Run
+    # the per-candidate sanitizers in a dry pass BEFORE any filesystem /
+    # DB mutation. Prevents the original mid-loop failure that left
+    # items #0..N-1 committed to disk while item #N raised
+    # INVALID_NAME_FORMAT. After this check passes, the write loop's
+    # actual sanitizer calls are guaranteed to succeed for the same
+    # inputs.
+    try:
+        _preflight_sanitize(candidates)
+    except ExtractionParseError as e:
+        return emit(_envelope_from_parse_error(e), exit_code=4)
+
+    # M-9 (vdd-multi 2026-05-28): log a warning when the operator
+    # omitted --orchestrator-id, since `entities.canonicalized_by`
+    # then records the opaque literal "orchestrator" which is useless
+    # for audit/forensics.
+    orchestrator_id_val = getattr(args, "orchestrator_id", "orchestrator")
+    if orchestrator_id_val == "orchestrator":
+        logger.warning(
+            "apply: --orchestrator-id not supplied; entity provenance "
+            "will record opaque literal 'orchestrator'. Pass "
+            "--orchestrator-id <model-id> for an auditable canonicalized_by."
+        )
+
+    # Step 5+ — write pages, upsert entities + refs, build manifest,
+    # optionally dispatch, then update idempotency state. The C-1
+    # invariant is preserved: update_idempotency_state() runs ONLY when
+    # the dispatch (if requested) reports zero failures.
+    today = date.today()
     repo = make_repo({
         "vault_id": args.vault,
         **({"db_path": args.db_path} if args.db_path else {}),
     })
     try:
-        is_unchanged = check_idempotency(repo, args.vault, source_slug, source_hash)
-        known = load_known_entities(repo, args.vault)
-        known_slugs = [e["slug"] for e in known]
+        try:
+            known = load_known_entities(repo, args.vault)
+            known_slugs = {e["slug"] for e in known}
+            create_list, mention_list = classify_candidates(candidates, known_slugs)
 
-        # M-1 / Q16: disk-vs-DB drift sweep. Eager O(N) in v3.1; P-9 documents
-        # the deferred lazy variant for vaults with 10k+ entities.
-        concepts_dir = vault_root / "_concepts"
-        missing_concept_files: list[str] = []
-        for slug in known_slugs:
-            if not (concepts_dir / f"{slug}.md").is_file():
-                missing_concept_files.append(slug)
+            for cand in create_list:
+                _target, file_action = write_concept_page(
+                    vault_root, cand, source_slug, today, vault_id=args.vault,
+                )
+                cand["file_write_action"] = file_action
+                cand["entity_action"] = upsert_extracted_entity(
+                    repo, args.vault, cand, source_slug, today,
+                    orchestrator_id=orchestrator_id_val,
+                )
 
-        return emit({
-            "vault_id": args.vault,
-            "source_slug": source_slug,
-            "source_path": str(source_path),
-            "source_hash": source_hash,
-            "is_unchanged": is_unchanged,
-            "known_concepts": known,
-            "missing_concept_files": missing_concept_files,
-        })
+            upsert_entity_refs(
+                repo, args.vault, source_slug, "_vault_",
+                create_list + mention_list,
+            )
+
+            log_event = {
+                "event_ts": today.isoformat() + "T00:00:00",
+                "event_type": "ingest",
+                "subject": source_slug,
+            }
+            manifest = build_manifest(
+                args.vault, source_slug, current_hash,
+                create_list, mention_list, log_event, vault_root,
+            )
+        except ExtractionParseError as e:
+            # v2 parity: downstream raises (e.g. _parse_source_span on an
+            # inverted L10-L5 range that the regex validator passed) map
+            # to exit 4 with the structured envelope rather than an
+            # uncaught traceback.
+            return emit(_envelope_from_parse_error(e), exit_code=4)
+
+        if args.ingest:
+            try:
+                summary = dispatch_to_indexer(
+                    manifest, args.vault, vault_root, args.db_path,
+                )
+            except WikiIngestError as e:
+                return emit({"error": "MANIFEST_INVALID",
+                             "reason": str(e)}, exit_code=6)
+            if summary.get("failed"):
+                # C-1 invariant: do NOT update_idempotency_state on
+                # partial failure so the next run retries.
+                return emit({
+                    "action": "partial",
+                    "error": "PARTIAL_INDEX_FAILURE",
+                    "extraction": manifest,
+                    "index": summary,
+                }, exit_code=5)
+            if not _try_update_idempotency_state(
+                repo, args.vault, source_slug, current_hash, manifest,
+            ):
+                return emit({
+                    "action": "partial",
+                    "error": "IDEMPOTENCY_UPDATE_FAILED",
+                    "extraction": manifest,
+                    "index": summary,
+                    "reason": ("pages/entities/indexer all committed, "
+                               "but source_state update failed; next "
+                               "run will safely re-extract"),
+                }, exit_code=5)
+            return emit({"extraction": manifest, "index": summary})
+
+        if not _try_update_idempotency_state(
+            repo, args.vault, source_slug, current_hash, manifest,
+        ):
+            # Pages + entities + refs committed; only source_state row
+            # update failed. Treat as PARTIAL (exit 5) so the operator
+            # knows retry-safety is degraded.
+            return emit({
+                "action": "partial",
+                "error": "IDEMPOTENCY_UPDATE_FAILED",
+                "extraction": manifest,
+                "reason": ("pages/entities/refs committed, but "
+                           "source_state update failed; next run will "
+                           "safely re-extract"),
+            }, exit_code=5)
+        return emit(manifest)
     finally:
         repo.close()
 
 
-def apply(args: argparse.Namespace) -> int:
-    """`wiki-extract-concepts apply` subcommand — implemented in task-003-v3-03."""
-    raise NotImplementedError("task-003-v3-03 apply subcommand")
+def _preflight_sanitize(candidates: list[Any]) -> None:
+    """M-4: run per-candidate sanitizers in a dry pass.
+
+    Raises `ExtractionParseError` on the first failure. After this
+    function returns cleanly, the subsequent `write_concept_page` loop
+    is guaranteed to succeed for the same inputs (same sanitizers run
+    over the same data → same outcome). Closes the partial-commit
+    window where item #N's sanitization failure left items #0..N-1
+    written to disk.
+    """
+    for idx, cand in enumerate(candidates):
+        try:
+            _sanitize_name(str(cand["name"]))
+            _sanitize_definition(str(cand["definition"]))
+            _sanitize_markdown_text(str(cand["source_quote"]))
+            if not _SOURCE_SPAN_RE.match(str(cand["source_span"])):
+                raise ExtractionParseError(
+                    f"candidate #{idx} source_span fails preflight regex",
+                    error="INVALID_SOURCE_SPAN",
+                    field="source_span",
+                    reason=("source_span must match ^L\\d+-L\\d+$ "
+                            "before embedding into _concepts body"),
+                )
+        except ExtractionParseError:
+            raise
+
+
+def _try_update_idempotency_state(
+    repo: Any, vault_id: str, source_slug: str, current_hash: str,
+    manifest: dict[str, Any],
+) -> bool:
+    """H-3: wrap `update_idempotency_state` in defensive try/except.
+
+    Returns True on success, False if the DB UPDATE failed (caller maps
+    to IDEMPOTENCY_UPDATE_FAILED envelope). Without this wrap, an
+    OperationalError ("database locked", "disk full") after pages /
+    entities / refs are committed leaves the caller with a Python
+    traceback on stderr + a successfully-built manifest on stdout =
+    split-brain. Treating the failure as PARTIAL keeps the envelope
+    contract intact and signals "retry is safe" to the operator.
+    """
+    import sqlite3
+    try:
+        update_idempotency_state(repo, vault_id, source_slug, current_hash)
+        return True
+    except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+        logger.warning(
+            "apply: update_idempotency_state failed for "
+            "(vault=%s, source_slug=%s): %s — emitting "
+            "IDEMPOTENCY_UPDATE_FAILED envelope, manifest preserved",
+            vault_id, source_slug, type(e).__name__,
+        )
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -974,145 +1664,6 @@ def main(argv: list[str] | None = None) -> int:
     # argparse(required=True) makes this unreachable, but mypy-strict
     # likes the safety net.
     return 1
-
-
-def _legacy_main(argv: list[str] | None = None) -> int:
-    """v2 CLI entry-point body. Preserved across 003-v3-00..06 so the 9
-    anthropic-mock function tests in tests/test_wiki_extract_concepts.py
-    keep their dependencies (`extract_concepts_llm` etc.) importable.
-    Deleted in 003-v3-06 alongside the rest of the legacy v2 surface.
-    """
-    args = _build_legacy_parser().parse_args(argv)
-    vault_root = args.vault_root.resolve(strict=True)
-
-    # Resolve source-page (slug → relative path) and validate inside vault.
-    src_page = args.source_page
-    # H-1 fix (vdd-multi 2026-05-27 critic-logic): absolute --source-page
-    # bypasses the slug-form convention and conflates path-traversal with
-    # missing-file errors. Reject absolutes up front with a distinct error
-    # code so the operator sees the actual problem.
-    if Path(src_page).is_absolute():
-        return emit({
-            "error": "INVALID_SOURCE_PATH",
-            "message": (f"--source-page must be a vault-relative slug or "
-                        f"path, not absolute ({src_page!r}). Pass the "
-                        "page slug (e.g., 'self-improving-agent') or a "
-                        "relative path inside --vault-root."),
-        }, exit_code=2)
-
-    # Try slug-form first (most common): `_sources/<slug>.md`.
-    sources_dir = vault_root / "_sources"
-    slug_path = sources_dir / f"{src_page}.md"
-    if slug_path.is_file():
-        candidate_path = slug_path
-    else:
-        candidate_path = vault_root / src_page
-
-    try:
-        source_path = candidate_path.resolve(strict=True)
-        validate_inside_vault(source_path, vault_root)
-    except (FileNotFoundError, PathTraversalError) as e:
-        return emit({"error": "SOURCE_NOT_FOUND",
-                     "message": f"source-page {src_page!r} not found in vault: {e}"},
-                    exit_code=2)
-
-    today = date.today()
-    repo = make_repo({
-        "vault_id": args.vault,
-        **({"db_path": args.db_path} if args.db_path else {}),
-    })
-
-    try:
-        # The full extraction pipeline.
-        source_body = source_path.read_text(encoding="utf-8")
-        current_hash = hashlib.sha256(source_body.encode("utf-8")).hexdigest()
-
-        # H-3 fix (vdd-multi 2026-05-27 critic-logic): validate the derived
-        # source_slug against the kebab regex BEFORE any writes. Dotted
-        # filenames like `Foo.Bar.md` would otherwise produce slug="Foo.Bar"
-        # and fail at the DB CHECK constraint AFTER pages are on disk —
-        # leaving dangling artifacts and a half-success manifest.
-        source_slug = source_path.stem
-        if not _SLUG_RE.match(source_slug):
-            return emit({
-                "error": "INVALID_SOURCE_SLUG",
-                "message": (f"source-page filename {source_slug!r} does not "
-                            "yield a valid kebab-case slug "
-                            "(^[a-z0-9][a-z0-9-]{0,62}$). Rename the file or "
-                            "pass --source-page with the canonical slug."),
-            }, exit_code=2)
-
-        if check_idempotency(repo, args.vault, source_slug, current_hash):
-            return emit({"status": "ok", "action": "unchanged",
-                         "manifest": None})
-
-        known = load_known_entities(repo, args.vault)
-        known_slugs = {e["slug"] for e in known}
-
-        candidates = extract_concepts_llm(
-            source_body, known, args.model, args.max_tokens,
-        )
-        create_list, mention_list = classify_candidates(candidates, known_slugs)
-
-        # Write concept pages + upsert entity rows for create-list. H-2 fix
-        # (vdd-multi 2026-05-27): use the (path, action) tuple returned by
-        # write_concept_page so the caller doesn't TOCTOU-race the
-        # pre-existence check.
-        for cand in create_list:
-            _path, file_action = write_concept_page(
-                vault_root, cand, source_slug, today, vault_id=args.vault,
-            )
-            cand["file_write_action"] = file_action
-            cand["entity_action"] = upsert_extracted_entity(
-                repo, args.vault, cand, source_slug, today,
-            )
-
-        upsert_entity_refs(
-            repo, args.vault, source_slug, "_vault_",
-            create_list + mention_list,
-        )
-
-        log_event = {
-            "event_ts": today.isoformat() + "T00:00:00",
-            "event_type": "ingest",
-            "subject": source_slug,
-        }
-        manifest = build_manifest(
-            args.vault, source_slug, current_hash,
-            create_list, mention_list, log_event, vault_root,
-        )
-
-        # C-1 fix (vdd-multi 2026-05-27 critic-logic CRITICAL): defer
-        # source_state update until AFTER the optional dispatch step. If
-        # dispatch fails (exit 5 PARTIAL_INDEX_FAILURE) we MUST NOT mark
-        # the source as processed — next run must retry the index step.
-        if args.ingest:
-            summary = dispatch_to_indexer(
-                manifest, args.vault, vault_root, args.db_path,
-            )
-            if summary.get("failed"):
-                # Do NOT update_idempotency_state — operator re-runs to retry.
-                return emit({"action": "partial",
-                             "error": "PARTIAL_INDEX_FAILURE",
-                             "extraction": manifest,
-                             "index": summary}, exit_code=5)
-            update_idempotency_state(repo, args.vault, source_slug, current_hash)
-            return emit({"extraction": manifest, "index": summary})
-        # No-ingest path: extraction completed successfully → safe to record.
-        update_idempotency_state(repo, args.vault, source_slug, current_hash)
-        return emit(manifest)
-
-    except LLMUnavailableError as e:
-        return emit({"error": "LLM_API_UNAVAILABLE", "message": str(e)},
-                    exit_code=3)
-    except ExtractionParseError as e:
-        return emit({"error": "EXTRACTION_PARSE_ERROR", "message": str(e)},
-                    exit_code=4)
-    except WikiIngestError as e:
-        return emit({"error": "MANIFEST_INVALID", "message": str(e)},
-                    exit_code=6)
-    finally:
-        repo.close()
 
 
 if __name__ == "__main__":

@@ -59,10 +59,16 @@ def validate_manifest(manifest: dict[str, Any], expected_vault_id: str,
         )
     if not isinstance(manifest.get("written"), list):
         raise WikiIngestError("manifest missing 'written[]' list")
-    for entry in manifest["written"]:
+    for idx, entry in enumerate(manifest["written"]):
         rel = entry.get("path")
         if not rel or not isinstance(rel, str):
-            raise WikiIngestError(f"manifest written entry missing path: {entry}")
+            # M-1 (vdd-multi 2026-05-28): emit position only, not the
+            # whole entry dict. Earlier wording echoed entry contents
+            # into the error message, leaking through `str(e)` to the
+            # MANIFEST_INVALID envelope (partial CWE-117).
+            raise WikiIngestError(
+                f"manifest written entry #{idx} missing 'path' key"
+            )
         # R-26: paths must resolve inside vault_root.
         try:
             validate_inside_vault(vault_root / rel, vault_root)
@@ -132,7 +138,21 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
         try:
             envelope = json.loads(buf.getvalue())
         except json.JSONDecodeError:
-            envelope = {"error": "BAD_UPSERT_OUTPUT", "raw": buf.getvalue()}
+            # M-1 (vdd-multi 2026-05-28): the v3.1 envelope CWE-117
+            # invariant (tested by 003-v3-17) forbids `raw` / `content`
+            # / `value` / `received` keys in error envelopes — they
+            # surface arbitrary downstream output (potentially including
+            # sensitive vault content) into the final emitted payload.
+            # Replace with a structured `reason` that emits only the
+            # output LENGTH, not the bytes themselves. Operators can
+            # find the full output in the application log if needed.
+            raw_len = len(buf.getvalue())
+            envelope = {
+                "error": "BAD_UPSERT_OUTPUT",
+                "reason": (f"wiki-index-upsert emitted non-JSON stdout "
+                           f"({raw_len} bytes); see application log "
+                           "for the raw output"),
+            }
         if rc != 0 or "error" in envelope:
             failed.append({"path": rel, "envelope": envelope})
         else:

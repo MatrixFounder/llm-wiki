@@ -329,6 +329,25 @@ the misleading docstring.
   inline (L-V3.1 datetime hoist, L-V3.2 NULL defensive check, L-V3.3
   CWE-209 exception-chain suppression). 396 pytest / mypy --strict clean
   on 55 files. R-44 retired, I-7.15 dropped.
+- **R-3 / TASK 003 v3.1 closed 2026-05-28** — `wiki-extract-concepts`
+  **deterministic refactor** per Decision-17 + post-vdd-multi + Option A
+  green-throughout hardening. **19 beads shipped** (Phase -1: 11a; Phase 0:
+  00; Phase 1: 01-06; Phase 2: 07-10; Phase 3: 11-12; Phase 4: 13-17).
+  Skill split into two subcommands: `prepare` (recon + idempotency) +
+  `apply` (consume operator-synthesised candidates JSON + write pages +
+  upsert entities + manifest + optional in-process indexer dispatch). LLM
+  call deleted; `import anthropic` removed; `anthropic>=0.34.0` dropped
+  from `requirements.txt`. New surface: strict candidates validator
+  (count bound 1–25, per-field caps, no extra keys, optional
+  quote-in-body check); 12 sub-envelopes with CWE-117/CWE-209 invariant
+  (no offending value echoed); markdown sanitization for concept page
+  bodies (name allowlist, definition HTML/header escape, source_quote
+  blockquote, source_span regex); content-hash skip semantics in
+  `write_concept_page`; symlink refuse; `--source-hash` flow ensures
+  no edit-during-extraction race. ~436 pytest / mypy --strict clean.
+  **BREAKING CHANGE**: legacy single-command CLI invocation no longer
+  accepted; argparse routes to `prepare` / `apply` subparsers and errors
+  out with a helpful pointer on missing subcommand.
 - **R-V1 / TASK 004 closed 2026-05-27** — wiki-ingest Python-import-only
   vendor (Option 5). `scripts/wiki_ingest/` snapshot from
   `Universal-skills/skills/wiki-ingest/`; `scripts/wiki_skills/wiki_enrich.py`

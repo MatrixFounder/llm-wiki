@@ -2,113 +2,203 @@
 ---
 name: wiki-extract-concepts
 description: >-
-  LLM-driven concept extraction from an already-indexed source summary page.
-  Reads the page body, calls Claude Sonnet 4.6 to identify candidate
-  concepts, de-duplicates against existing entities, writes
-  `_concepts/<slug>.md` pages, and emits a wiki-ingest v1.1-compatible
-  manifest. Optionally indexes the manifest in-process via `--ingest`.
+  Deterministic concept-extraction skill (v3.1). Two subcommands —
+  `prepare` (recon + idempotency check) and `apply` (consume operator-
+  synthesised candidates JSON; write _concepts/<slug>.md pages, upsert
+  entity rows, emit a wiki-ingest v1.1 manifest, optionally dispatch
+  in-process via --ingest). The orchestrator owns the synthesis step
+  (Decision-17): there is no `import anthropic` in this skill.
   Triggers: "extract concepts from", "populate entity layer for".
 tier: 2
-version: 1.0
+version: 3.1
 ---
 
-# wiki-extract-concepts
+# wiki-extract-concepts (v3.1)
+
+> ⚠️ **BREAKING CHANGE (v2 → v3.1) — operator-facing CLI surface**
+>
+> - v2: `wiki-extract-concepts --vault X --vault-root P --source-page Y [--ingest]`
+> - v3.1: `wiki-extract-concepts prepare ...` **AND** `wiki-extract-concepts apply ...`
+>
+> The legacy single-command invocation (no subcommand) now errors out at
+> argparse with help text pointing at the new surface. Every existing
+> script, shell alias, agent prompt, or muscle-memory invocation using
+> the v2 form will break. **Migration**: run `prepare` to get a source
+> hash, synthesise candidates in your orchestrator context, then run
+> `apply --source-hash <hash> --candidates-stdin`. No shim is provided
+> — the CLI surface change is intentional (TASK 003 v3.1 / Decision-17).
 
 **Purpose**: Activate the entity layer (Epic 7 R-3 entry-point) on a
 specific source page that's already in the vault. The skill is the
-"synthesis step" for the concept layer — it does NOT call `wiki-ingest`
-(that's `/wiki-enrich`'s job for raw-source synthesis). Concept-page
-derivation from already-summarised pages is this skill's responsibility
-(Decision-8).
+deterministic plumbing for the v3.1 two-pass workflow:
 
-## When to use
+1. `prepare` — read the source body, compute its sha256, query
+   `source_state` for `is_unchanged`, load the vault's known concepts,
+   sweep for disk/DB drift, emit a JSON envelope.
+2. (orchestrator) — synthesise candidates JSON per the
+   `concept-extraction` skill's contract.
+3. `apply` — re-read the source, hash-check against the supplied
+   `--source-hash`, validate the candidates payload, write
+   `_concepts/<slug>.md` pages, upsert entity rows + refs, emit the
+   manifest, optionally dispatch via `--ingest`.
 
-- A source page (type=`summary`/`lesson-summary`/`meeting-summary`) is
-  already indexed in the vault via `/wiki-enrich` or `/wiki-index-upsert`.
-- You want LLM-extracted concept entities written to `_concepts/<slug>.md`
-  and recorded in the `entities` table with `is_candidate=1`.
-- `ANTHROPIC_API_KEY` is set in the environment.
+End-to-end workflow lives at [`workflows/wiki-extract-concepts.md`](../../workflows/wiki-extract-concepts.md).
+The prompt + JSON contract for the synthesis step lives in the
+[`concept-extraction`](../../.agent/skills/concept-extraction/SKILL.md)
+skill.
 
-## When NOT to use
-
-- Source page is not yet indexed → run `/wiki-enrich --source ...` first.
-- You want to register a vault → use `/wiki-init`.
-- You want to promote a candidate to confirmed (`is_candidate=0`) → that's
-  the future R-4 `wiki-confirm` CLI (deferred per Decision-7).
-- You need batch extraction across many sources → script it externally
-  (loop the slash command per source).
-
-## Invocation
-
-Two modes — inspection (manifest only) and auto-dispatch (in-process index):
+## `prepare` subcommand
 
 ```bash
-# Inspection mode — manifest to stdout, no DB index mirror
-python -m scripts.wiki_skills.wiki_extract_concepts \
-    --vault <vault_id> \
-    --vault-root <abs-path-to-vault> \
-    --source-page <slug-or-rel-path> \
-    [--model claude-sonnet-4-6] \
-    [--max-tokens 4096] \
+wiki-extract-concepts prepare \
+    --vault <vault-id> \
+    --vault-root <path> \
+    --source-page <slug-or-relative-path> \
     [--db-path <override>]
+```
 
-# Auto-dispatch mode — manifest emitted + in-process index_from_manifest
-python -m scripts.wiki_skills.wiki_extract_concepts \
-    --vault <vault_id> \
-    --vault-root <abs-path-to-vault> \
+| Flag | Required | Notes |
+|---|---|---|
+| `--vault` | yes | vault_id; must be registered in `vaults` |
+| `--vault-root` | yes | absolute path; resolved with `strict=True` |
+| `--source-page` | yes | kebab slug OR vault-relative path |
+| `--db-path` | no | override XDG global DB location |
+
+**No** `--model`, `--max-tokens`, `--ingest` (those belong to v2 / apply).
+
+Output JSON envelope (success, exit 0):
+
+```json
+{
+  "vault_id": "...",
+  "source_slug": "...",
+  "source_path": "/absolute/path/.md",
+  "source_hash": "<sha256-hex>",
+  "is_unchanged": false,
+  "known_concepts": [{"slug":"...","name":"...","type":"...","aliases":[...]}],
+  "missing_concept_files": ["..."]
+}
+```
+
+## `apply` subcommand
+
+```bash
+wiki-extract-concepts apply \
+    --vault <vault-id> \
+    --vault-root <path> \
     --source-page <slug> \
+    --source-hash <hex-from-prepare> \
+    (--candidates-stdin | --candidates-file <path>) \
+    [--db-path <override>] \
+    [--orchestrator-id <id>] \
+    [--ingest]
+```
+
+| Flag | Required | Notes |
+|---|---|---|
+| `--vault` / `--vault-root` / `--source-page` / `--db-path` | as `prepare` | same semantics |
+| `--source-hash HEX` | **yes** | sha256 emitted by `prepare`; mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (H-1, Q5) |
+| `--candidates-stdin` | mutex | reads JSON array from stdin (cap 1 MiB) |
+| `--candidates-file PATH` | mutex | reads JSON from path (must resolve inside vault; stat-cap 1 MiB) |
+| `--orchestrator-id ID` | no | regex `^[a-z0-9._:@-]{1,64}$`; defaults to literal `"orchestrator"` (Q9-v3.1) |
+| `--ingest` | no | dispatch manifest in-process to `index_from_manifest` (Decision-15 preserved) |
+
+## Exit codes (R-42 v3.1)
+
+| Code | Meaning | Sub-envelopes |
+|---|---|---|
+| 0 | Success (manifest or `{extraction, index}`) or `is_unchanged=true` | — |
+| 1 | argparse / usage error | — |
+| 2 | Input-validation failure | `SOURCE_NOT_FOUND`, `INVALID_SOURCE_PATH`, `INVALID_SOURCE_SLUG`, `SOURCE_TOO_LARGE`, `SOURCE_CHANGED_DURING_EXTRACTION`, `INVALID_CANDIDATES_PATH` |
+| 4 | Candidates payload error | `EXTRACTION_PARSE_ERROR`, `CANDIDATES_TOO_LARGE`, `CANDIDATE_COUNT_OUT_OF_BOUNDS`, `FIELD_TOO_LONG`, `UNKNOWN_FIELD`, `FIELD_QUOTE_NOT_IN_BODY`, `INVALID_NAME_FORMAT`, `INVALID_SOURCE_SPAN` |
+| 5 | Partial index failure (`--ingest`) | `PARTIAL_INDEX_FAILURE` — `source_state` NOT updated (C-1 invariant); safe to retry |
+| 6 | Manifest invalid (`--ingest`) | `MANIFEST_INVALID` |
+
+> Exit code **3** (the v2 `LLM_API_UNAVAILABLE` envelope) is **RETIRED**
+> in v3.1 — the Python skill makes no LLM calls. (Note: the legacy v2
+> code path retains the exit-3 mapping until `task-003-v3-06` deletes
+> it; this is invisible to v3.1 operators.)
+
+**CWE-117 / CWE-209 invariant**: error envelopes carry `{error, field?,
+reason}` only — they NEVER echo the offending payload value (the
+`field` key names the field; the `reason` describes the violation in
+length / type / shape terms).
+
+## Example: end-to-end orchestrator script
+
+```bash
+# Step 1: prepare
+PREPARE=$(wiki-extract-concepts prepare \
+    --vault myvault \
+    --vault-root /vaults/myvault \
+    --source-page some-summary)
+HASH=$(echo "$PREPARE" | jq -r .source_hash)
+UNCHANGED=$(echo "$PREPARE" | jq -r .is_unchanged)
+[ "$UNCHANGED" = "true" ] && exit 0
+
+# Step 2: orchestrator synthesises candidates JSON
+# (per the concept-extraction skill's strict schema)
+CANDIDATES='[{"slug":"sharpe-ratio","name":"Sharpe Ratio", "...":"..."}]'
+
+# Step 3: apply
+echo "$CANDIDATES" | wiki-extract-concepts apply \
+    --vault myvault \
+    --vault-root /vaults/myvault \
+    --source-page some-summary \
+    --source-hash "$HASH" \
+    --candidates-stdin \
+    --orchestrator-id "claude-opus-4-7" \
     --ingest
 ```
 
-Or via the slash command: `/wiki-extract-concepts <args>`.
+## Architecture note (Decision-15 + Decision-16 + Decision-17)
 
-## Contract
+- **Decision-15** (preserved): the `--ingest` auto-dispatch path is
+  **in-process** — `apply` imports `validate_manifest`,
+  `index_from_manifest`, and `WikiIngestError` from the neutral module
+  `scripts.wiki_skills._manifest_consumer` and calls them directly.
+  No subprocess.
+- **Decision-16** (preserved): the neutral module exists so this skill
+  does not depend on `wiki_enrich` (which would have been a
+  skill-to-skill coupling smell).
+- **Decision-17** (NEW in v3.1): the synthesis step lives outside the
+  Python skill. The orchestrator runs `prepare`, loads the
+  `concept-extraction` skill into its own context, reads the source
+  body, generates candidates JSON, and pipes them into `apply`. The
+  skill no longer imports `anthropic` and has no `--model` /
+  `--max-tokens` flags.
 
-- Reads `entities LEFT JOIN entity_aliases WHERE vault_id=?` before any LLM
-  call (R-32). Passes canonical names as known-concepts to the LLM so it
-  de-duplicates server-side.
-- Calls Claude Sonnet 4.6 at `temperature=0` for reproducibility (R-33).
-- Writes `_concepts/<slug>.md` atomically (tempfile + rename) with
-  frontmatter declaring `is_candidate: true`, `trust_level: medium`,
-  `vault_id`, `source_page` (R-36).
-- All new `entities` rows land with `is_candidate=1`; existing confirmed
-  entities (`is_candidate=0`) are never downgraded (R-37).
-- All `page_entity_refs` rows carry `trust_level='medium'`, `source_quote`
-  (10-50 words from the body), and `line_start`/`line_end` parsed from the
-  LLM's `"Lstart-Lend"` source-span format (R-38, Decision-10).
-- Idempotent: re-running with unchanged source body returns
-  `{"status": "ok", "action": "unchanged", "manifest": null}` and makes
-  zero LLM calls (R-39, hash compared against `source_state` row).
-- Multi-vault: every DB query carries `vault_id=?`; concept pages are
-  written under the caller's `--vault-root` only (R-40, ADR-002 §D1.1).
+## Migration from v2
 
-## Architecture note (Decision-15 + Decision-16)
+If you had a v2 shell script:
 
-The `--ingest` auto-dispatch path is **in-process** — it imports
-`validate_manifest`, `index_from_manifest`, and `WikiIngestError` from the
-neutral module `scripts.wiki_skills._manifest_consumer` and calls them
-directly. No subprocess. No CLI-flag dispatch on `wiki-enrich` (that path
-was retracted by Decision-15; the v1 R-44 / I-7.15 flags are dropped).
-The neutral module exists so this skill does not depend on `wiki_enrich`
-(which would have been a skill-to-skill coupling smell).
+```bash
+# v2 (NO LONGER WORKS):
+wiki-extract-concepts --vault X --vault-root Y --source-page Z --ingest
+```
 
-## Exit codes & envelopes
+Rewrite it as:
 
-| Code | Envelope | Meaning |
-|---|---|---|
-| `0` | manifest JSON (no `--ingest`) or `{"extraction": ..., "index": ...}` (with `--ingest`) | Full success |
-| `0` | `{"status": "ok", "action": "unchanged", "manifest": null}` | Idempotency short-circuit — source hash unchanged |
-| `1` | argparse usage error | Missing required flag |
-| `2` | `{"error": "SOURCE_NOT_FOUND", ...}` | `--source-page` does not resolve inside `--vault-root` |
-| `3` | `{"error": "LLM_API_UNAVAILABLE", ...}` | Anthropic SDK unreachable or auth failed (after 1 retry) |
-| `4` | `{"error": "EXTRACTION_PARSE_ERROR", "details": {"raw_response": ...}}` | LLM returned malformed JSON |
-| `5` | `{"action": "partial", "error": "PARTIAL_INDEX_FAILURE", "extraction": ..., "index": ...}` | `--ingest` set; some concept pages written but indexer failed for some (operator can roll back files listed in `summary.failed[]`) |
-| `6` | `{"error": "MANIFEST_INVALID", ...}` | `validate_manifest` rejected the manifest (path-traversal, vault_id mismatch, missing field) |
+```bash
+# v3.1:
+out=$(wiki-extract-concepts prepare --vault X --vault-root Y --source-page Z)
+hash=$(echo "$out" | jq -r .source_hash)
+# (orchestrator synthesises $candidates JSON)
+echo "$candidates" | wiki-extract-concepts apply \
+    --vault X --vault-root Y --source-page Z \
+    --source-hash "$hash" --candidates-stdin --ingest
+```
+
+The synthesis step (which v2 ran inside the Python process) is now the
+orchestrator's responsibility. There is no Python-side shim because
+embedding an LLM call in the skill was the architectural mistake
+Decision-17 reversed.
 
 ## Related
 
-- [`docs/TASK.md`](../../docs/TASK.md) — TASK 003 v2 spec
-- [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) §2.1 Concept Extractor component, §3.4 UC-08 sequence
+- [`workflows/wiki-extract-concepts.md`](../../workflows/wiki-extract-concepts.md) — 7-step orchestrator recipe (UC-08 v3.1)
+- [`concept-extraction` skill](../../.agent/skills/concept-extraction/SKILL.md) — extraction prompt + strict JSON contract
+- [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) §2.1 Concept Extractor + §3.4 UC-08 sequence
 - [`docs/adr/ADR-001-wiki-ingest-integration.md`](../../docs/adr/ADR-001-wiki-ingest-integration.md) — Option I (clarified by Decision-8)
 - [`docs/adr/ADR-002-multi-vault-bottleneck-corrections.md`](../../docs/adr/ADR-002-multi-vault-bottleneck-corrections.md) — Class A/B/C layering
 - [`docs/WIKI-INGEST-V1.1-CONTRACT.md`](../../docs/WIKI-INGEST-V1.1-CONTRACT.md) — manifest schema this skill emits

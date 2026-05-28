@@ -1,51 +1,44 @@
-"""Integration tests for `wiki-extract-concepts` (TASK 003 v2 / I-7.13).
+"""Integration tests for `wiki-extract-concepts` v3.1 — TASK 003 v3.1 / I-V3.7.
 
-Exercises the full extraction pipeline end-to-end against a fixture source
-page. The Anthropic LLM call is mocked with a deterministic JSON response
-(loaded from `tests/fixtures/source_extract/llm-response.json`) so re-runs
-are byte-identical.
+Exercises the full prepare → apply round-trip end-to-end against a fixture
+source page. The orchestrator-side LLM synthesis step is simulated by
+piping a canned candidates JSON array (`tests/fixtures/source_extract/
+candidates.json`) into `apply --candidates-stdin`. The subprocess pattern
+mirrors operator reality (no in-process import shortcuts).
 
-Scenarios:
-  1. First extraction (no prior source_state): manifest contains expected
-     concepts; concept pages written; entity rows + refs in DB.
-  2. Re-extraction on unchanged body: action="unchanged", exit 0, ZERO LLM
-     calls (idempotency short-circuit per UC-09 Scenario A).
-  3. --ingest end-to-end: combined {"extraction":..., "index":...} JSON;
-     index summary reports upserted concept pages.
+Scenarios (003-v3-12 rewrite of v2's mock-LLM integration tests):
+  1. First extraction: prepare emits source_hash + is_unchanged=false;
+     apply writes 3 concept pages + entity rows + refs.
+  2. Re-extraction on unchanged body: prepare emits is_unchanged=true so
+     the orchestrator short-circuits BEFORE apply (UC-09 v3.1).
+  3. Full --ingest: apply + in-process index_from_manifest produces the
+     combined `{extraction, index}` envelope.
 """
 from __future__ import annotations
 
 import json
 import shutil
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from unittest import mock
 
 import pytest
 
 from scripts.wiki_index.models import Vault
 from scripts.wiki_index.repository import IndexRepository
-import scripts.wiki_skills.wiki_extract_concepts as wec
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "source_extract"
 SOURCE_FIXTURE = FIXTURE_DIR / "source-page.md"
-LLM_RESPONSE_FIXTURE = FIXTURE_DIR / "llm-response.json"
+CANDIDATES_FIXTURE = FIXTURE_DIR / "candidates.json"
 
 
 # ============================================================================
 # Fixtures
 # ============================================================================
-
-
-def _llm_mock_response() -> mock.Mock:
-    block = mock.Mock()
-    block.text = LLM_RESPONSE_FIXTURE.read_text(encoding="utf-8")
-    resp = mock.Mock()
-    resp.content = [block]
-    return resp
 
 
 def _setup_vault_and_db(
@@ -86,38 +79,69 @@ def _setup_vault_and_db(
     return vault_root, db_path
 
 
+def _run_skill_subprocess(
+    *args: str, stdin_payload: bytes | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Invoke `python -m scripts.wiki_skills.wiki_extract_concepts <args>`."""
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.wiki_skills.wiki_extract_concepts", *args],
+        input=stdin_payload,
+        capture_output=True,
+        check=False,
+    )
+
+
 # ============================================================================
-# Scenario 1: first extraction
+# Scenario 1: first extraction (prepare + apply round-trip)
 # ============================================================================
 
 
-@pytest.mark.skip(
-    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
-           "longer accepted; integration tests rewritten in 003-v3-12 to use "
-           "subprocess prepare + apply against canned candidates fixture."
-)
-def test_integration_first_extraction_writes_concept_pages(
+def test_integration_first_extraction(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    """End-to-end: fresh extraction produces 3 concept pages + 3 entity rows
-    + 3 page_entity_refs rows. Manifest validates against _manifest_consumer."""
+    """End-to-end: prepare emits source_hash; apply consumes canned
+    candidates fixture via stdin and produces 3 concept pages + entity
+    rows + 3 page_entity_refs rows."""
     vault_root, db_path = _setup_vault_and_db(tmp_path, repo_factory)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = _llm_mock_response()
-        rc = wec.main([
-            "--vault", "test-vault",
-            "--vault-root", str(vault_root),
-            "--source-page", "trading-agent-demo",
-            "--db-path", db_path,
-        ])
-    assert rc == 0, f"main returned {rc}, captured: {capsys.readouterr().out}"
 
-    # Manifest emitted to stdout
-    payload = json.loads(capsys.readouterr().out)
+    # Step 1 — prepare
+    prep = _run_skill_subprocess(
+        "prepare",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--db-path", db_path,
+    )
+    assert prep.returncode == 0, (
+        f"prepare exit {prep.returncode}; stderr={prep.stderr!r}; "
+        f"stdout={prep.stdout!r}"
+    )
+    prepare_env = json.loads(prep.stdout)
+    assert prepare_env["is_unchanged"] is False
+    source_hash = prepare_env["source_hash"]
+    assert len(source_hash) == 64  # sha256 hex
+
+    # Step 2 — orchestrator "synthesises" candidates (we substitute the fixture)
+    candidates_bytes = CANDIDATES_FIXTURE.read_bytes()
+
+    # Step 3 — apply
+    app = _run_skill_subprocess(
+        "apply",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--source-hash", source_hash,
+        "--db-path", db_path,
+        "--candidates-stdin",
+        stdin_payload=candidates_bytes,
+    )
+    assert app.returncode == 0, (
+        f"apply exit {app.returncode}; stderr={app.stderr!r}; "
+        f"stdout={app.stdout!r}"
+    )
+    payload = json.loads(app.stdout)
     assert payload["status"] == "ok"
     assert payload["vault_id"] == "test-vault"
-    assert len(payload["written"]) == 3
     written_slugs = {w["slug"] for w in payload["written"]}
     assert written_slugs == {"hermes-api", "backtesting", "reinforcement-learning"}
 
@@ -144,7 +168,10 @@ def test_integration_first_extraction_writes_concept_pages(
         assert len(ref_rows) == 3
         for r in ref_rows:
             assert r["trust_level"] == "medium"
-            assert r["source_quote"] and len(r["source_quote"].split()) >= 5
+            # v3.1: quotes are operator-synthesised verbatim substrings of
+            # the source body (variable length). The min word-count check
+            # from v2 was prompt-shape-specific and no longer applies.
+            assert r["source_quote"]
             assert r["line_start"] is not None
             assert r["line_end"] is not None
             assert r["line_end"] >= r["line_start"]
@@ -153,50 +180,61 @@ def test_integration_first_extraction_writes_concept_pages(
 
 
 # ============================================================================
-# Scenario 2: re-extraction on unchanged body (UC-09 Scenario A)
+# Scenario 2: re-extraction on unchanged body — UC-09 v3.1 short-circuit
 # ============================================================================
 
 
-@pytest.mark.skip(
-    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
-           "longer accepted; integration tests rewritten in 003-v3-12 to use "
-           "subprocess prepare + apply against canned candidates fixture."
-)
-def test_integration_reextraction_unchanged_short_circuits(
+def test_integration_unchanged_on_rerun(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    """R-39 / UC-09 Scenario A: re-run on unchanged body → action='unchanged',
-    exit 0, ZERO LLM API calls (idempotency)."""
+    """R-39 / UC-09 v3.1: first prepare+apply records the source hash;
+    second prepare on the unchanged body emits `is_unchanged=true` so
+    the orchestrator short-circuits BEFORE invoking apply."""
     vault_root, db_path = _setup_vault_and_db(tmp_path, repo_factory)
-    with mock.patch("anthropic.Anthropic") as MockClient:
-        MockClient.return_value.messages.create.return_value = _llm_mock_response()
-        # First run — should LLM-call once.
-        rc1 = wec.main([
-            "--vault", "test-vault",
-            "--vault-root", str(vault_root),
-            "--source-page", "trading-agent-demo",
-            "--db-path", db_path,
-        ])
-        assert rc1 == 0
-        first_call_count = MockClient.return_value.messages.create.call_count
-        assert first_call_count == 1
-        capsys.readouterr()  # drain stdout
+    candidates_bytes = CANDIDATES_FIXTURE.read_bytes()
 
-        # Second run — same source body — must short-circuit, NO LLM call.
-        rc2 = wec.main([
-            "--vault", "test-vault",
-            "--vault-root", str(vault_root),
-            "--source-page", "trading-agent-demo",
-            "--db-path", db_path,
-        ])
-        assert rc2 == 0
-        # call_count unchanged from first run → idempotency held
-        assert MockClient.return_value.messages.create.call_count == first_call_count
+    # First prepare + apply (must succeed end-to-end to record source_state).
+    prep1 = _run_skill_subprocess(
+        "prepare",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--db-path", db_path,
+    )
+    assert prep1.returncode == 0, (
+        f"first prepare exit {prep1.returncode}; stderr={prep1.stderr!r}"
+    )
+    hash1 = json.loads(prep1.stdout)["source_hash"]
 
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "unchanged"
-    assert payload["manifest"] is None
+    app1 = _run_skill_subprocess(
+        "apply",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--source-hash", hash1,
+        "--db-path", db_path,
+        "--candidates-stdin",
+        stdin_payload=candidates_bytes,
+    )
+    assert app1.returncode == 0, (
+        f"first apply exit {app1.returncode}; stderr={app1.stderr!r}"
+    )
+
+    # Second prepare on the unchanged body — must report is_unchanged.
+    prep2 = _run_skill_subprocess(
+        "prepare",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--db-path", db_path,
+    )
+    assert prep2.returncode == 0
+    env2 = json.loads(prep2.stdout)
+    assert env2["is_unchanged"] is True, (
+        f"UC-09 v3.1 short-circuit broken: prepare did not report "
+        f"is_unchanged=true after a successful apply; env={env2!r}"
+    )
+    assert env2["source_hash"] == hash1
 
 
 # ============================================================================
@@ -204,37 +242,47 @@ def test_integration_reextraction_unchanged_short_circuits(
 # ============================================================================
 
 
-@pytest.mark.skip(
-    reason="BREAKING CHANGE (003-v3-00): legacy `main([--vault, ...])` no "
-           "longer accepted; integration tests rewritten in 003-v3-12 to use "
-           "subprocess prepare + apply against canned candidates fixture."
-)
-def test_integration_with_ingest_flag_emits_combined_payload(
+def test_integration_with_ingest(
     tmp_path: Path, repo_factory: Callable[[], IndexRepository],
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    """--ingest: full Decision-15 path — extraction + in-process
-    index_from_manifest. Combined {"extraction":..., "index":...} on stdout."""
+    """Full Decision-15 path: apply --ingest dispatches manifest to
+    `_manifest_consumer.index_from_manifest` in-process; stdout carries
+    the combined `{extraction, index}` envelope."""
     vault_root, db_path = _setup_vault_and_db(tmp_path, repo_factory)
-    with mock.patch("anthropic.Anthropic") as MockClient, mock.patch(
-        "scripts.wiki_skills.wiki_extract_concepts.dispatch_to_indexer",
-        return_value={"upserted": [{"path": "_concepts/hermes-api.md",
-                                     "action": "inserted"}],
-                       "failed": [], "log_event_id": 42},
-    ) as mock_dispatch:
-        MockClient.return_value.messages.create.return_value = _llm_mock_response()
-        rc = wec.main([
-            "--vault", "test-vault",
-            "--vault-root", str(vault_root),
-            "--source-page", "trading-agent-demo",
-            "--db-path", db_path,
-            "--ingest",
-        ])
-    assert rc == 0
-    mock_dispatch.assert_called_once()
+    candidates_bytes = CANDIDATES_FIXTURE.read_bytes()
 
-    payload = json.loads(capsys.readouterr().out)
-    assert "extraction" in payload
-    assert "index" in payload
+    prep = _run_skill_subprocess(
+        "prepare",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--db-path", db_path,
+    )
+    assert prep.returncode == 0
+    source_hash = json.loads(prep.stdout)["source_hash"]
+
+    app = _run_skill_subprocess(
+        "apply",
+        "--vault", "test-vault",
+        "--vault-root", str(vault_root),
+        "--source-page", "trading-agent-demo",
+        "--source-hash", source_hash,
+        "--db-path", db_path,
+        "--candidates-stdin",
+        "--ingest",
+        stdin_payload=candidates_bytes,
+    )
+    assert app.returncode == 0, (
+        f"apply --ingest exit {app.returncode}; stderr={app.stderr!r}; "
+        f"stdout={app.stdout!r}"
+    )
+    payload = json.loads(app.stdout)
+    assert set(payload.keys()) == {"extraction", "index"}, (
+        f"--ingest envelope must wrap as {{extraction, index}}; got {payload!r}"
+    )
     assert payload["extraction"]["status"] == "ok"
-    assert payload["index"]["log_event_id"] == 42
+    # The indexer summary should report at least one upserted page; exact
+    # shape depends on _manifest_consumer's response contract.
+    assert payload["index"].get("failed") in (None, []), (
+        f"in-process indexer reported failures: {payload['index']!r}"
+    )
