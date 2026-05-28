@@ -1,8 +1,13 @@
 # Roadmap
 
 What's deferred after Phase 3a, ordered by priority. Phase 3a (foundation,
-DAL, core ingest, search/lint, reindex, benchmark) is **complete** —
-see [TASK.md](TASK.md), [PLAN.md](PLAN.md).
+DAL, core ingest, search/lint, reindex, benchmark) is **complete** (see
+[ARCHITECTURE.md](ARCHITECTURE.md) status header). Phase 3b: TASK 004
+shipped 2026-05-27 (R-V1); TASK 003 v2 shipped 2026-05-28 (R-3 v1+v2);
+TASK 003 v3.1 shipped 2026-05-28 commit `43812f2` (Decision-17
+deterministic refactor + post-ship `/vdd-multi` 22-finding hardening).
+No active task at HEAD — archived specs under [tasks/](tasks/) +
+[plans/](plans/).
 
 Status legend:
 - **P0** — start when there is a concrete trigger / pain
@@ -86,35 +91,33 @@ The Karpathy compounding-artifact promise lives here. Currently a single
 ingest touches one source page + index + log (~3 pages); Karpathy says
 10–15. Closing that gap requires the entity layer.
 
-### R-3. `wiki-extract-concepts` skill (R-18, partial) ✅ DONE 2026-05-28
-**Status**: TASK 003 v2 **COMPLETE** (awaiting operator commit per
-`/vdd-develop-all` no-auto-commit policy). All 15 beads shipped
-(I-7.0..I-7.14) + `/vdd-multi` adversarial sweep applied 6 inline
-hardenings (C-1 idempotency ordering CRITICAL, H-1 absolute-path
-rejection, H-2 TOCTOU `write_concept_page` tuple-return, H-3 source_slug
-kebab validation, M-1 LLM input-size + `BadRequestError` catch, M-2
-schema slug regex) + 6 regression tests. **Final state**: 394 pytest /
-mypy --strict clean on 55 files. 3 LOW findings deferred (see
-`docs/KNOWN_ISSUES.md`).
+### R-3. `wiki-extract-concepts` skill (R-18, partial) ✅ DONE 2026-05-28 (v2 + v3.1)
+**Status**: SHIPPED. Both v2 (LLM-call inside skill, 396 pytest) and v3.1
+(Decision-17 deterministic refactor: synthesis moved to orchestrator,
+LLM call deleted, anthropic dep dropped, 450 pytest + 22-finding
+`/vdd-multi` hardening) closed 2026-05-28. See full ship summary in
+**Done since 2026-05-25** below; archived specs at
+[docs/tasks/task-003-v3.1-wiki-extract-concepts.md](tasks/task-003-v3.1-wiki-extract-concepts.md)
+(v3.1), [docs/tasks/task-003-v2-wiki-extract-concepts.md](tasks/task-003-v2-wiki-extract-concepts.md)
+(v2), [docs/tasks/task-003-wiki-extract-concepts.md](tasks/task-003-wiki-extract-concepts.md)
+(v1 paused snapshot).
 
 Architectural decisions shipped:
-- **Decision-15** retracts v1 Decision-9: `--manifest-stdin` /
+- **Decision-15** (v2) retracts v1 Decision-9: `--manifest-stdin` /
   `--manifest-file` flags on `wiki-enrich` NOT added — in-process Python
   import replaces subprocess dispatch.
-- **Decision-16** + I-7.0: `validate_manifest` + `index_from_manifest`
-  + `WikiIngestError` extracted from `wiki_enrich.py` into neutral
-  sub-layer module `scripts/wiki_skills/_manifest_consumer.py` so no
-  skill depends on another skill. `wiki_enrich.py` re-exports for
-  back-compat (one release cycle).
-
-Active spec: [docs/TASK.md](TASK.md); v1 PAUSED snapshot archived at
-[docs/tasks/task-003-wiki-extract-concepts.md](tasks/task-003-wiki-extract-concepts.md).
-RTM R-30..R-43 shipped; R-44 retired; I-7.15 dropped.
-
-LLM-driven pass over a summary page → emits candidate concept slugs,
-de-dups against existing `entities` rows, proposes new `_concepts/<slug>.md`
-files. After vendoring, calls vendored `wiki_ingest` Python API
-in-process rather than wiki-ingest CLI via subprocess.
+- **Decision-16** (v2) + I-7.0: `validate_manifest` +
+  `index_from_manifest` + `WikiIngestError` extracted from
+  `wiki_enrich.py` into neutral sub-layer module
+  `scripts/wiki_skills/_manifest_consumer.py` so no skill depends on
+  another skill.
+- **Decision-17** (v3.1): Python skills are deterministic plumbing; LLM
+  synthesis lives in the calling agent's context (Claude Code / Gemini
+  CLI / Cursor). `wiki-extract-concepts` split into `prepare` + `apply`
+  subcommands; calling agent runs `Skill({skill: "concept-extraction"})`
+  + `Read(source_path)` + own-context synthesis between the two CLI
+  calls. **BREAKING CHANGE**: legacy single-command invocation rejected
+  at argparse.
 
 ### R-4. Confirmed / candidate entity resolution (R-18, cybos pattern)
 `entities.is_candidate = 1` for LLM-proposed entities; promotion to
@@ -329,25 +332,57 @@ the misleading docstring.
   inline (L-V3.1 datetime hoist, L-V3.2 NULL defensive check, L-V3.3
   CWE-209 exception-chain suppression). 396 pytest / mypy --strict clean
   on 55 files. R-44 retired, I-7.15 dropped.
-- **R-3 / TASK 003 v3.1 closed 2026-05-28** — `wiki-extract-concepts`
-  **deterministic refactor** per Decision-17 + post-vdd-multi + Option A
-  green-throughout hardening. **19 beads shipped** (Phase -1: 11a; Phase 0:
-  00; Phase 1: 01-06; Phase 2: 07-10; Phase 3: 11-12; Phase 4: 13-17).
-  Skill split into two subcommands: `prepare` (recon + idempotency) +
-  `apply` (consume operator-synthesised candidates JSON + write pages +
-  upsert entities + manifest + optional in-process indexer dispatch). LLM
-  call deleted; `import anthropic` removed; `anthropic>=0.34.0` dropped
-  from `requirements.txt`. New surface: strict candidates validator
-  (count bound 1–25, per-field caps, no extra keys, optional
-  quote-in-body check); 12 sub-envelopes with CWE-117/CWE-209 invariant
-  (no offending value echoed); markdown sanitization for concept page
-  bodies (name allowlist, definition HTML/header escape, source_quote
-  blockquote, source_span regex); content-hash skip semantics in
-  `write_concept_page`; symlink refuse; `--source-hash` flow ensures
-  no edit-during-extraction race. ~436 pytest / mypy --strict clean.
-  **BREAKING CHANGE**: legacy single-command CLI invocation no longer
-  accepted; argparse routes to `prepare` / `apply` subparsers and errors
-  out with a helpful pointer on missing subcommand.
+- **R-3 / TASK 003 v3.1 closed 2026-05-28** (commit `43812f2`) —
+  `wiki-extract-concepts` **deterministic refactor** per Decision-17
+  + Option A green-throughout invariant + post-ship `/vdd-multi`
+  22-finding hardening landed in the same commit. **19 beads shipped**
+  via `/vdd-develop-all` (Phase -1: 11a; Phase 0: 00; Phase 1: 01-06;
+  Phase 2: 07-10; Phase 3: 11-12; Phase 4: 13-17). Skill split into two
+  subcommands: `prepare` (recon + idempotency + missing-concept-files
+  drift sweep via `os.scandir`) + `apply` (consume operator-synthesised
+  candidates JSON + write pages + upsert entities + manifest + optional
+  in-process indexer dispatch). LLM call deleted; `import anthropic`
+  removed; `anthropic>=0.34.0` dropped from `requirements.txt`.
+  - **v3.1 surface**: strict candidates validator (count bound 1–25,
+    per-field caps, strict-equality on keys, optional quote-in-body
+    check, L-1 type-coverage on slug/source_span/entity_type, L-2
+    `re.ASCII` on span regex); sub-envelopes with CWE-117/CWE-209
+    invariant (no offending value echoed; parametrized regression test
+    `test_apply_error_envelopes_never_echo_content` enforces);
+    `_sanitize_markdown_text` text-only allowlist for concept-page body
+    (HTML-escape `&<>`, escape `[]` + backticks + leading-line markdown
+    actives — closes javascript-link / data-URI / HTML-entity-smuggling
+    / Obsidian-wikilink / dataview injection vectors); content-hash
+    skip semantics in `write_concept_page` (via `os.open(O_NOFOLLOW)`
+    for the existing-file read); symlink refuse on target;
+    `--source-hash` argparse `type=` validator (64-lowercase-hex);
+    `_sources/` layout invariant (no traversal escape to other vault
+    subdirs); cross-platform `_path_is_absolute()`; bounded
+    `_read_file_bounded(O_NOFOLLOW + fstat)` for source + candidates
+    reads; FIFO/device/socket guard on `--candidates-file`;
+    sanitization pre-flight (no partial commits on mid-loop sanitize
+    failure); `update_idempotency_state` wrapped in
+    `try/except sqlite3.OperationalError` → new
+    `IDEMPOTENCY_UPDATE_FAILED` envelope (exit 5, preserves C-1
+    retry-safety); logger warning on default `--orchestrator-id`.
+  - **New exit-code envelopes** (vdd-multi-fix): `INVALID_SOURCE_HASH`
+    (exit 2, C-1 library-caller defense), `INVALID_SOURCE_SPAN` (exit
+    4, M-4 sanitization pre-flight), `IDEMPOTENCY_UPDATE_FAILED` (exit
+    5, H-3 DB-lock graceful path).
+  - **Final gate**: 450 pytest pass + 4 skipped, mypy --strict clean
+    (55 files), anthropic-free invariant clean, patch-target lock clean.
+  - **Architectural follow-ups deferred** to
+    [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md): **H-PERF-3** (SEV-2 —
+    `_manifest_consumer` argparse-in-loop N+1; needs
+    `wiki_index_upsert` programmatic entry-point), **H-5**
+    (`concept-extraction/SKILL.md` hash-pin enforcement), **H-6**
+    (indirect prompt-injection canary scanning),
+    **P-8** (two-process WAL setup cost — bumped SEV-3 → SEV-2 after
+    counting `--ingest`-path connection cycles), **L-4** (`>=` deps
+    unpinned; add `pip-compile` lockfile + `pip-audit` to CI).
+  - **BREAKING CHANGE**: legacy single-command CLI invocation no longer
+    accepted; argparse routes to `prepare` / `apply` subparsers and
+    errors out with a helpful pointer on missing subcommand.
 - **R-V1 / TASK 004 closed 2026-05-27** — wiki-ingest Python-import-only
   vendor (Option 5). `scripts/wiki_ingest/` snapshot from
   `Universal-skills/skills/wiki-ingest/`; `scripts/wiki_skills/wiki_enrich.py`
@@ -360,7 +395,7 @@ the misleading docstring.
   beads + 6 `/vdd-multi` hardening fixes + 33 new tests. Publication
   path (PyPI / GitHub plugin / Claude Code marketplace) unblocked.
 - **R-1 closed 2026-05-27** (commit `81b7aff`) — UC-06/UC-07 marked
-  `SUPERSEDED → /wiki-enrich` in [TASK.md](TASK.md); RTM rows R-06.3 and
+  `SUPERSEDED → /wiki-enrich` in [TASK 002 wiki-mvp](tasks/task-002-wiki-mvp.md); RTM rows R-06.3 and
   R-24 carry the status, Use Case bodies retain SUPERSEDED banners with
   historical spec preserved.
 - **R-0 closed 2026-05-27** — wiki-ingest v1.1 contract alignment.

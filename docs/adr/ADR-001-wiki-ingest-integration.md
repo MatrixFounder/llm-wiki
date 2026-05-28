@@ -3,7 +3,7 @@
 - **Status**: Accepted (2026-05-25)
 - **Decider**: innokentiy.georgievskiy@mdcloud.tech
 - **Consulted**: VDD adversarial review (`docs/reviews/TASK-vdd-adversarial-2026-05-25*.md`)
-- **Supersedes**: §6.1 "Karpathy-deviation (MVP intentional gap)" in [TASK.md](../TASK.md) — that note is now obsolete and will be removed during v1.1-rework.
+- **Supersedes**: §6.1 "Karpathy-deviation (MVP intentional gap)" in [TASK 002 wiki-mvp](../tasks/task-002-wiki-mvp.md) — obsolete since Phase 3a archived.
 
 ## Context
 
@@ -116,7 +116,8 @@ MVP wiki-append-log + SQLite vault_metadata update
 ## References
 
 - [Reference/karpathy/llm-wiki.md](../Reference/karpathy/llm-wiki.md) — source pattern
-- [TASK.md](../TASK.md) — current MVP spec (will be reworked in Phase 3)
+- [tasks/task-002-wiki-mvp.md](../tasks/task-002-wiki-mvp.md) — MVP spec (Phase 3a archived 2026-05-27)
+- [tasks/task-003-v3.1-wiki-extract-concepts.md](../tasks/task-003-v3.1-wiki-extract-concepts.md) — Phase 3b ship that consumes this contract via in-process dispatch (Decision-15+16)
 - [reviews/TASK-vdd-adversarial-2026-05-25.md](../reviews/TASK-vdd-adversarial-2026-05-25.md) — adversarial review Pass 1
 - [reviews/TASK-vdd-adversarial-2026-05-25-pass2.md](../reviews/TASK-vdd-adversarial-2026-05-25-pass2.md) — adversarial review Pass 2 (Zero-Slop)
 - `~/.claude/skills/wiki-ingest/SKILL.md` — global wiki-ingest skill (v1.0)

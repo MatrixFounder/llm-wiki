@@ -11,8 +11,11 @@ pattern. Provides CLIs (`wiki-init`, `wiki-search`, `wiki-lint`,
 `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
 `wiki-enrich`) over an `IndexRepository` DAL (SQLite + FTS5 + WAL).
 
-Phase 3a complete (2026-05-26). See `docs/TASK.md`, `docs/ARCHITECTURE.md`,
-`docs/PLAN.md`, `docs/adr/`.
+Phase 3a complete (2026-05-26). Phase 3b: TASK 003 v2 shipped 2026-05-28;
+TASK 003 v3.1 (Decision-17 deterministic refactor) shipped 2026-05-28
+(commit `43812f2`). No active task at HEAD. See `docs/ARCHITECTURE.md`,
+`docs/adr/`, and the archived task/plan pairs under `docs/tasks/` +
+`docs/plans/`.
 
 ## Knowledge lookup priority
 
@@ -53,8 +56,11 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/TASK.md` — current task spec (Phase-3a-complete).
-- `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002).
+- `docs/tasks/` + `docs/plans/` — archived task/plan pairs (no
+  `docs/TASK.md` at HEAD — most recent: `task-003-v3.1-wiki-extract-concepts.md`
+  shipped 2026-05-28).
+- `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002,
+  status header tracks Phase 3a/3b progress).
 - `docs/KNOWN_ISSUES.md` — deferred items, including perf SEV-1 set
   flagged by `/vdd-multi` 2026-05-26.
 - `docs/adr/ADR-001-wiki-ingest-integration.md` — Option I (Wrap + Index).

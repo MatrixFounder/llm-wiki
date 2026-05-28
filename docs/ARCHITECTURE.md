@@ -5,10 +5,11 @@
 > **Phase 3b progress**:
 > - TASK 004 (wiki-ingest-vendoring) **SHIPPED** (commit `c409fd8`, 2026-05-27): Decisions 11–14 + 6 `/vdd-multi` hardenings.
 > - TASK 003 v2 (wiki-extract-concepts) **SHIPPED** (2026-05-28): 15 beads + 6 `/vdd-multi` hardenings + 3 LOW fixes; Decisions 15+16.
-> - **TASK 003 v3.1** (wiki-extract-concepts deterministic refactor) **ANALYSIS COMPLETE — DEV IN-FLIGHT**: Decision-17 + Q5/Q8/Q9 rewritten + Q10–Q17 added; `/vdd-multi` 2-iteration convergence (0 CRITICAL · 0 HIGH · 0 MEDIUM residual). Refactors v2's embedded Anthropic SDK call into deterministic `prepare`/`apply` subcommands with calling-agent-driven synthesis (matches `wiki-ingest` precedent). §2.1 Concept Extractor component description below already reflects **v3.1 target architecture**; code at `scripts/wiki_skills/wiki_extract_concepts.py` will be reshaped across beads I-V3.1..I-V3.13 to match.
+> - TASK 003 v3.1 (wiki-extract-concepts deterministic refactor) **SHIPPED** (commit `43812f2`, 2026-05-28): 15 beads via `/vdd-develop-all` + 22 post-ship `/vdd-multi` findings (1 CRITICAL + 8 HIGH + 9 MEDIUM + 4 LOW) — ALL fixed in the same ship commit. Final: 450 pytest pass + 4 skipped, mypy --strict clean (55 files). Refactored v2's embedded Anthropic SDK call into deterministic `prepare`/`apply` subcommands with calling-agent-driven synthesis (matches `wiki-ingest` precedent). New envelopes: `INVALID_SOURCE_HASH` (exit 2), `IDEMPOTENCY_UPDATE_FAILED` (exit 5). New defensive primitives: `_path_is_absolute` (M-6), `_read_file_bounded` (M-3+M-5 O_NOFOLLOW + fstat + bounded read), `_preflight_sanitize` (M-4), `_try_update_idempotency_state` (H-3), `_resolve_source_inside_sources` (H-1 `_sources/` layout invariant), `_sanitize_markdown_text` (H-4 text-only allowlist replacing v3.0 denylist). Architectural follow-ups deferred to `docs/KNOWN_ISSUES.md`: `H-PERF-3` (manifest-consumer argparse-in-loop N+1), `H-5` (concept-extraction SKILL.md hash-pin enforcement), `H-6` (indirect prompt-injection canary scanning), `P-8` (now SEV-2 with --ingest).
 >
-> **TASK**: [docs/TASK.md](./TASK.md) (TASK 003 v3.1 wiki-extract-concepts — ACTIVE, dev pending)
+> **TASK**: no active task (TASK 003 v3.1 archived 2026-05-28 → [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md))
 > **Archived TASKs**:
+> - [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md) (v3.1 SHIPPED 2026-05-28, commit `43812f2`)
 > - [docs/tasks/task-004-wiki-ingest-vendoring.md](./tasks/task-004-wiki-ingest-vendoring.md) (complete 2026-05-27)
 > - [docs/tasks/task-003-v2-wiki-extract-concepts.md](./tasks/task-003-v2-wiki-extract-concepts.md) (v2 ship state — superseded by v3.1 refactor)
 > - [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (v1 paused snapshot)
@@ -451,7 +452,7 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 
 #### Component: **Concept Extractor** (`wiki-extract-concepts`) — Phase 3b (v3.1 target)
 
-> **Architectural state**: TASK 003 v2 shipped 2026-05-28 with an embedded Anthropic LLM call (15 beads, 396 pytest). v2 worked but broke the "skills are deterministic plumbing; orchestrator does LLM work" invariant used by all other 8 skills. **TASK 003 v3.1 is the in-flight refactor** (Decision-17, post `/vdd-multi` 2-iteration convergence — see `docs/TASK.md`). The description below documents the **v3.1 target architecture** (deterministic skill + calling-agent-driven synthesis). The shipped v2 code at `scripts/wiki_skills/wiki_extract_concepts.py` will be reshaped to match this description across beads I-V3.1..I-V3.13. Until I-V3.8 lands the code matching this section, this is a **forward specification**.
+> **Architectural state**: TASK 003 v2 shipped 2026-05-28 with an embedded Anthropic LLM call (15 beads, 396 pytest). v2 worked but broke the "skills are deterministic plumbing; orchestrator does LLM work" invariant used by all other 8 skills. **TASK 003 v3.1 SHIPPED 2026-05-28 commit `43812f2`** (Decision-17 deterministic refactor + post-ship `/vdd-multi` 22-finding hardening — see [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md)). The description below documents the shipped v3.1 architecture (deterministic skill + calling-agent-driven synthesis); code at `scripts/wiki_skills/wiki_extract_concepts.py` matches.
 
 ##### Why deterministic (Decision-17)
 
@@ -585,14 +586,17 @@ Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_stat
 | 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug |
 | 2 | `SOURCE_TOO_LARGE` | Source body exceeds `_MAX_SOURCE_BODY_BYTES = 10 MiB` (M-3) |
 | 2 | `SOURCE_CHANGED_DURING_EXTRACTION` | `apply --source-hash HEX` does not match disk-recomputed hash (H-1) |
-| 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault` (H-5) |
+| 2 | `INVALID_SOURCE_HASH` | `--source-hash` is not 64 lowercase hex chars (vdd-multi C-1, library-caller defense — argparse `type=` gates the CLI path) |
+| 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault`, is missing, is a symlink/FIFO/device/socket, or resolves to a non-regular file (H-5 + vdd-multi H-2) |
 | 4 | `EXTRACTION_PARSE_ERROR` | Candidates JSON malformed (invalid JSON, missing required key, invalid kebab slug, invalid Lstart-Lend, invalid entity_type) |
 | 4 | `CANDIDATES_TOO_LARGE` | Candidates JSON exceeds `_MAX_CANDIDATES_BYTES = 1 MiB` (H-5/H-6) |
 | 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [1, 25]` (Q10/H-2) |
 | 4 | `FIELD_TOO_LONG` | Per-field cap exceeded: `name>200`, `definition>2000`, `source_quote>500` (Q12/H-6) |
 | 4 | `UNKNOWN_FIELD` | Candidate item has keys outside `_REQUIRED_CANDIDATE_KEYS` (Q14/H-9) |
 | 4 | `FIELD_QUOTE_NOT_IN_BODY` | Optional substring check: `source_quote` not found in source body (M-5; bypassable via env var) |
+| 4 | `INVALID_SOURCE_SPAN` | `source_span` fails `^L\d+-L\d+$` at the M-4 sanitization pre-flight (vdd-multi M-4) |
 | 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; `source_state` NOT updated → next run retries (C-1) |
+| 5 | `IDEMPOTENCY_UPDATE_FAILED` | Pages/entities/refs committed but `update_idempotency_state` raised `sqlite3.OperationalError` (DB locked, disk full); next run safely re-extracts (vdd-multi H-3, closes split-brain) |
 | 6 | `MANIFEST_INVALID` | `_manifest_consumer.validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
 
 **Universal envelope invariant** (CWE-117/CWE-209): every error envelope emits `{error: <CODE>, field: <name>?, reason: <human-msg>}` shape with NO `content`, `value`, `raw`, or `received` keys. Regression test in I-V3.12 parametrized across all sub-envelopes.
@@ -608,6 +612,23 @@ Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_stat
 - **H-8** (Q9): `--orchestrator-id` flag populates `canonicalized_by`; audit-trail attribution preserved.
 - **H-9** (Q14): strict-mode schema; extra keys rejected as `UNKNOWN_FIELD`.
 - **Symlink refuse** (Q15, NEW-2): `write_concept_page` refuses to rewrite symlink targets — `PathTraversalError`.
+- **Post-ship vdd-multi hardening (2026-05-28, commit `43812f2`)**:
+  - **C-1**: `--source-hash` argparse `type=_validate_source_hash` validator (regex `^[0-9a-f]{64}$` + `.lower()` normalize); apply() library-caller defense emits `INVALID_SOURCE_HASH` envelope. Closes uppercased-hex misroute + CWE-117 log-injection vector.
+  - **H-1**: `_resolve_source_inside_sources()` enforces `source_path.parent == _sources/` invariant in both prepare and apply. Rejects `_sources/../_concepts/foo.md` traversal as `INVALID_SOURCE_PATH`.
+  - **H-2**: `_load_candidates()` rejects non-regular files (FIFO/device/socket bypass of `stat().st_size==0`) BEFORE any read; subsequent read goes through `os.open(O_NOFOLLOW)` + bounded `os.read(cap+1)`.
+  - **H-3**: `_try_update_idempotency_state()` wraps the DB UPSERT in `try/except sqlite3.OperationalError`; emits new `IDEMPOTENCY_UPDATE_FAILED` envelope at exit 5 instead of uncaught traceback (closes stdout-success/stderr-traceback split-brain).
+  - **H-4**: `_sanitize_definition()` rewritten to delegate to shared `_sanitize_markdown_text()` text-only allowlist (HTML-escape `&<>`, escape `` ` ``, `[`, `]`, leading-line markdown actives). `source_quote` also sanitized via the helper. Closes javascript: URI, data: URI, HTML entity smuggling, Obsidian wikilink injection, code-span (dataview/mermaid) injection.
+  - **M-1**: `_manifest_consumer.BAD_UPSERT_OUTPUT` envelope `raw` key replaced with structured `reason` (length only). Restores 003-v3-17 CWE-117 invariant for the consumer module.
+  - **M-2**: prepare envelope emits `source_path` relative-to-vault-root (CWE-209 absolute-path disclosure closed).
+  - **M-3+M-5**: `_read_file_bounded(path, cap)` helper does `os.open(O_NOFOLLOW)` + `os.fstat` + bounded `os.read(cap+1)` — used by both source-body reads (prepare + apply) and candidates-file reads. `write_concept_page` content-hash compare also uses `os.open(O_NOFOLLOW)` so a symlink swap after the `is_symlink()` check can't leak external content.
+  - **M-4**: `_preflight_sanitize()` runs all per-candidate sanitizers in a dry pass BEFORE the write loop; closes partial-commit window on mid-loop sanitization failure. New `INVALID_SOURCE_SPAN` envelope at exit 4.
+  - **M-6**: `_path_is_absolute()` cross-platform absolute-path detection (catches `/etc/passwd` on Windows AND `C:\foo` on POSIX).
+  - **M-7**: `missing_concept_files` rewritten to use single `os.scandir()` instead of N `is_file()` syscalls (closes iCloud-mount cost; P-9 effectively retired).
+  - **M-9**: `apply` emits `logger.warning` when `--orchestrator-id` defaulted to opaque literal `"orchestrator"` (audit-trail signal).
+  - **L-1**: `_validate_candidates_schema` defensive top-level `isinstance(items, list)` guard + extended per-item type-checks to slug/source_span/entity_type.
+  - **L-2**: `_SOURCE_SPAN_RE` and `_SPAN_REGEX` compiled with `re.ASCII` flag (rejects Unicode digits in line spans).
+  - **L-3**: `write_concept_page` slug check uses precompiled `_SLUG_RE` instead of string-literal `re.match`.
+  - **Architectural follow-ups deferred to `docs/KNOWN_ISSUES.md`**: H-PERF-3 (manifest-consumer N+1), H-5 (SKILL.md hash-pin enforcement), H-6 (indirect prompt-injection canary scanning), P-8 (SEV bumped 3→2).
 
 ##### RTM coverage
 
@@ -1027,7 +1048,7 @@ graph LR
 
 ### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b — v3.1 target)
 
-> **NOTE (2026-05-28 — TASK 003 v3.1 ANALYSIS COMPLETE, DEV IN-FLIGHT):** This diagram reflects the **v3.1 target architecture** (Decision-17): deterministic Python skill split into `prepare`/`apply` subcommands with LLM-driven synthesis happening in the **calling agent's context** (Claude Code / Gemini CLI / Cursor) between the two subprocess calls. v2 shipped 2026-05-28 with an embedded Anthropic SDK call inside step [3]; v3.1 removes that call entirely. Synthesis prompt + JSON candidates contract moved out of Python code and into operator-facing skill `.agent/skills/concept-extraction/SKILL.md`. Skill itself makes ZERO LLM API calls; auth lives entirely in the calling agent. See [docs/TASK.md](./TASK.md) for the in-flight refactor spec.
+> **NOTE (2026-05-28 — TASK 003 v3.1 SHIPPED, commit `43812f2`):** This diagram reflects the shipped v3.1 architecture (Decision-17): deterministic Python skill split into `prepare`/`apply` subcommands with LLM-driven synthesis happening in the **calling agent's context** (Claude Code / Gemini CLI / Cursor) between the two subprocess calls. v2 shipped 2026-05-28 with an embedded Anthropic SDK call inside step [3]; v3.1 removed that call entirely. Synthesis prompt + JSON candidates contract live in operator-facing skill `skills/concept-extraction/SKILL.md`. Skill itself makes ZERO LLM API calls; auth lives entirely in the calling agent. See [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md) for the archived spec.
 
 ```
 Operator

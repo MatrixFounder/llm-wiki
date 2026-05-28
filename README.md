@@ -5,9 +5,15 @@ Karpathy's [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c115
 pattern. Markdown is the canonical source; SQLite (FTS5 + WAL) is a
 rebuildable derivative cache.
 
-> **Status**: Phase 3a complete (2026-05-26) — 34 tasks landed, 293 tests
-> green, mypy `--strict` clean, dogfooded on a real two-tier vault.
-> See [docs/TASK.md](docs/TASK.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status**: Phase 3a complete (2026-05-26) — 34 tasks landed, dogfooded
+> on a real two-tier vault. Phase 3b: TASK 004 (wiki-ingest vendoring)
+> shipped 2026-05-27; TASK 003 v2 (wiki-extract-concepts) shipped
+> 2026-05-28; **TASK 003 v3.1** (Decision-17 deterministic refactor +
+> `/vdd-multi` 22-finding hardening) shipped 2026-05-28 (commit
+> `43812f2`) — 450 pytest pass + 4 skipped, mypy `--strict` clean
+> (55 files). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+> living architecture and the status header pointing at archived task
+> specs under [docs/tasks/](docs/tasks/).
 
 ---
 
@@ -291,10 +297,12 @@ to this repo's `.claude/` and `.agent/` trees.
 
 ## Pointers
 
-- **[docs/TASK.md](docs/TASK.md)** — current task spec (Phase 3a complete)
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — system architecture, multi-vault design
-- **[docs/PLAN.md](docs/PLAN.md)** — development plan & exit criteria
-- **[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)** — deferred items, including performance SEV-1 set
+- **[docs/tasks/](docs/tasks/)** — archived task specs (no active task at
+  HEAD; most recent: `task-003-v3.1-wiki-extract-concepts.md`)
+- **[docs/plans/](docs/plans/)** — archived development plans (lockstep
+  with `docs/tasks/`)
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — system architecture, multi-vault design (living document; status header tracks shipped tasks)
+- **[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)** — deferred items, including performance SEV-1/SEV-2 set + architectural follow-ups (H-PERF-3, H-5, H-6)
 - **[docs/adr/ADR-001-wiki-ingest-integration.md](docs/adr/ADR-001-wiki-ingest-integration.md)** — Option I (wrap + index)
 - **[docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)** — vault_id, Class A/B/C contract
 - **[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md)** — external skill contract

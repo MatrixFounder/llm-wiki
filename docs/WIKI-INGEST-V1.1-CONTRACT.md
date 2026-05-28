@@ -395,4 +395,5 @@ When ALL items (Core + Multi-vault) green, MVP может начать Phase 3 (
 - [docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](./adr/ADR-002-multi-vault-bottleneck-corrections.md) — multi-vault + bottleneck corrections (vault_id REQUIRED)
 - `~/.claude/skills/wiki-ingest/SKILL.md` — v1.0 surface (baseline)
 - [trade-agents/docs/wiki-ingest-promotion-spec.md](../../trade-agents/docs/wiki-ingest-promotion-spec.md) — two-tier promotion roadmap
-- [docs/TASK.md](./TASK.md) — MVP spec (will be reworked в Phase 3)
+- [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) — MVP spec (Phase 3a archived)
+- [docs/tasks/task-003-v3.1-wiki-extract-concepts.md](./tasks/task-003-v3.1-wiki-extract-concepts.md) — Phase 3b ship: `wiki-extract-concepts` v3.1 consumes this contract via in-process `index_from_manifest` dispatch (Decision-15)
