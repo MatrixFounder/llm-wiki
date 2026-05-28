@@ -1,8 +1,17 @@
 # ARCHITECTURE: LLM Wiki MVP
 
-> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B SHIPPING (2026-05-28) — Phase 3a: all 34 atomic tasks implemented; **394 tests pass post-TASK-003-v2** (+66 net new since baseline); mypy --strict clean on 55 files; rebuildability E2E gate green. ADRs 001, 002 in effect. Phase 3b sequence: TASK 004 (wiki-ingest-vendoring) **COMPLETE** (commit `c409fd8`, 2026-05-27); TASK 003 v2 (wiki-extract-concepts) **COMPLETE** (2026-05-28, awaiting operator commit) — Decisions 15 (in-process indexer dispatch supersedes v1 Decision-9 subprocess+CLI-flag approach) + 16 (neutral `_manifest_consumer` module — no skill depends on another skill) shipped; `/vdd-multi` adversarial sweep applied 6 hardenings inline (C-1 idempotency ordering, H-1 absolute path rejection, H-2 TOCTOU tuple-return, H-3 source_slug validation, M-1 LLM input-size + BadRequestError catch, M-2 schema slug regex).
-> **TASK**: [docs/TASK.md](./TASK.md) (TASK 003 v2 wiki-extract-concepts — COMPLETE, awaiting commit)
-> **Archived TASKs**: [docs/tasks/task-004-wiki-ingest-vendoring.md](./tasks/task-004-wiki-ingest-vendoring.md) (complete 2026-05-27) · [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (v1 paused snapshot — superseded by current TASK.md v2)
+> **Status**: PHASE-3A-COMPLETE (2026-05-26) + PHASE-3B IN-FLIGHT (2026-05-28) — Phase 3a: all 34 atomic tasks implemented; baseline 396 pytest pass + 4 skipped; mypy --strict clean on 55 files; rebuildability E2E gate green. ADRs 001, 002 in effect.
+>
+> **Phase 3b progress**:
+> - TASK 004 (wiki-ingest-vendoring) **SHIPPED** (commit `c409fd8`, 2026-05-27): Decisions 11–14 + 6 `/vdd-multi` hardenings.
+> - TASK 003 v2 (wiki-extract-concepts) **SHIPPED** (2026-05-28): 15 beads + 6 `/vdd-multi` hardenings + 3 LOW fixes; Decisions 15+16.
+> - **TASK 003 v3.1** (wiki-extract-concepts deterministic refactor) **ANALYSIS COMPLETE — DEV IN-FLIGHT**: Decision-17 + Q5/Q8/Q9 rewritten + Q10–Q17 added; `/vdd-multi` 2-iteration convergence (0 CRITICAL · 0 HIGH · 0 MEDIUM residual). Refactors v2's embedded Anthropic SDK call into deterministic `prepare`/`apply` subcommands with calling-agent-driven synthesis (matches `wiki-ingest` precedent). §2.1 Concept Extractor component description below already reflects **v3.1 target architecture**; code at `scripts/wiki_skills/wiki_extract_concepts.py` will be reshaped across beads I-V3.1..I-V3.13 to match.
+>
+> **TASK**: [docs/TASK.md](./TASK.md) (TASK 003 v3.1 wiki-extract-concepts — ACTIVE, dev pending)
+> **Archived TASKs**:
+> - [docs/tasks/task-004-wiki-ingest-vendoring.md](./tasks/task-004-wiki-ingest-vendoring.md) (complete 2026-05-27)
+> - [docs/tasks/task-003-v2-wiki-extract-concepts.md](./tasks/task-003-v2-wiki-extract-concepts.md) (v2 ship state — superseded by v3.1 refactor)
+> - [docs/tasks/task-003-wiki-extract-concepts.md](./tasks/task-003-wiki-extract-concepts.md) (v1 paused snapshot)
 > **Previous TASK**: [docs/tasks/task-002-wiki-mvp.md](./tasks/task-002-wiki-mvp.md) (archived 2026-05-27)
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (full v2 specification, 1745 lines)
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
@@ -440,72 +449,169 @@ The CLI surface is preserved: `execute(args: argparse.Namespace)` continues to w
 
 **Dependencies:** Configuration Resolver, Index Layer, Source Adapters.
 
-#### Component: **Concept Extractor** (`wiki-extract-concepts`) — Phase 3b
+#### Component: **Concept Extractor** (`wiki-extract-concepts`) — Phase 3b (v3.1 target)
 
-**Purpose**: LLM-driven extraction pass that reads an already-indexed source page from the vault, identifies candidate concept entities mentioned in it, de-duplicates against known entities already in the DB, writes `_concepts/<slug>.md` pages atomically, and emits a wiki-ingest v1.1-compatible manifest for `/wiki-enrich` consumption. Activates the entity layer (Epic 7 R-3 entry-point). All extracted entities are written with `is_candidate=1` and quarantined until R-4 promotion logic (deferred) is implemented.
+> **Architectural state**: TASK 003 v2 shipped 2026-05-28 with an embedded Anthropic LLM call (15 beads, 396 pytest). v2 worked but broke the "skills are deterministic plumbing; orchestrator does LLM work" invariant used by all other 8 skills. **TASK 003 v3.1 is the in-flight refactor** (Decision-17, post `/vdd-multi` 2-iteration convergence — see `docs/TASK.md`). The description below documents the **v3.1 target architecture** (deterministic skill + calling-agent-driven synthesis). The shipped v2 code at `scripts/wiki_skills/wiki_extract_concepts.py` will be reshaped to match this description across beads I-V3.1..I-V3.13. Until I-V3.8 lands the code matching this section, this is a **forward specification**.
 
-**Stack position**: Between Index Layer (reads `entities`, `pages`, `source_state`; writes `entities`, `page_entity_refs`, `source_state`) and Skill Layer (user-facing entry point). Orthogonal to Source Adapters: operates exclusively on already-indexed pages, never on raw sources. Does not call `wiki-ingest` — it IS the synthesis step for the concept layer.
+##### Why deterministic (Decision-17)
 
-**Functions** (per TASK 003 Issues I-7.1 through I-7.11):
-- `load_known_entities(repo, vault_id) → list[dict]` — queries `entities LEFT JOIN entity_aliases WHERE vault_id=?`; serialises to CONTRACT §2 known-concepts format `[{"slug":..., "name":..., "aliases":[...]}]`. Empty vault handled gracefully. (I-7.3, R-32)
-- `extract_concepts_llm(source_body, known_entities, model, max_tokens) → list[dict]` — builds LLM prompt with source body + known-concepts JSON block; calls Anthropic API (`claude-sonnet-4-6`, `temperature=0`, `max_tokens≤4096`); validates response JSON schema; returns structured candidate list with `slug`, `name`, `definition`, `source_quote`, `source_span`, `entity_type`, `action` fields. **Input-size guard**: if `len(source_body)` exceeds 32K tokens (~128KB raw), fail-fast with `{"error":"INPUT_TOO_LARGE", "size_bytes":N, "limit":131072}` and exit 4 — chunking strategy is deferred to a later epic (do not silently truncate). (I-7.4, R-33, R-34)
-- `classify_candidates(llm_results, known_slugs) → tuple[list_create, list_mention]` — items whose slug matches a known entity → `mention` (ref only, no new page); novel slugs → `create`. (I-7.5, R-34)
-- `write_concept_page(vault_root, candidate, source_slug, today) → Path` — writes `_concepts/<slug>.md` atomically (tempfile + rename). **Defense-in-depth on slug**: (a) slug pre-validated against `^[a-z0-9][a-z0-9-]{0,62}$` regex before path composition (LLM output is untrusted; this prevents `../` / `..\\` / path-component injection); (b) post-composition path runs through `validate_inside_vault(vault_root, _concepts/<slug>.md)` (R-26.2 guard); malformed slug or escape attempt → `{"error":"INVALID_SLUG"|"PATH_TRAVERSAL"}` exit 1. Frontmatter per R-36: `type: concept`, `vault_id`, `slug`, `name`, `date`, `tags: [concept, candidate]`, `is_candidate: true`, `source_page`, `trust_level: medium`. Body: `# <name>`, LLM definition, `## Mentions` provenance block. Skips and returns unchanged if file already exists. (I-7.6, R-36)
-- `upsert_extracted_entity(repo, vault_id, candidate, source_slug, today) → str` — calls `repo.upsert_entity(is_candidate=1)`; guards against confirmed-entity downgrade at call layer (primary guard is SQL-level). (I-7.7b, R-37)
-- `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates)` — collects `(entity_slug, ref_type='mentioned', source_quote, source_span, trust_level='medium')` for all candidates (create + mention); calls `repo.replace_refs(...)` atomically. (I-7.8, R-38)
-- `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — queries `source_state` with `source_kind='extract-concepts'`; returns `True` (unchanged) if hash matches; updates `source_state` after successful extraction. (I-7.9, R-39)
-- `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event) → dict` — produces wiki-ingest v1.1-compatible JSON manifest; emits to stdout. (I-7.10, R-35)
-- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — when `--ingest` flag passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from the **neutral module** `scripts.wiki_skills._manifest_consumer` **in-process** (TASK 003 v2 / Decisions 15+16). No subprocess, no tempfile. Failure inside `validate_manifest` → exit 6 (`MANIFEST_INVALID`); failure inside `index_from_manifest` returns a `PARTIAL_INDEX_FAILURE` envelope mirroring `wiki-enrich`'s shape. The three imported symbols (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral consumer module — created by I-7.0 (the first bead of this task) — so no skill depends on another skill. `wiki_enrich.py` re-exports the same symbols for backward compat (one release cycle). (I-7.0, I-7.11, R-41)
+The repo-wide pattern is: **Python skills are deterministic plumbing; LLM synthesis lives in the calling agent's context (Claude Code / Gemini CLI / Cursor)**, mediated by operator-facing prompt skills (`summarizing-meetings`, `concept-extraction`). This is the precedent set by vendored `wiki-ingest` (summary-passthrough orchestrator with no LLM calls), `wiki-enrich`, and all 8 other skills. v3.1 brings `wiki-extract-concepts` into line: the synthesis prompt moves out of Python code into `.agent/skills/concept-extraction/SKILL.md`, the skill exposes a deterministic two-subcommand surface (`prepare` + `apply`), and the calling agent (which is already an LLM with its own auth, model choice, and context) synthesizes candidates between the two CLI calls.
 
-**Inputs:**
+Consequences: no `ANTHROPIC_API_KEY` env var, no `anthropic` SDK dependency, no embedded API call, no auth surface to manage. Trade-off: lost cron/headless capability (acceptable — was never a stated requirement; future Pattern-C escape hatch `--llm-standalone` documented as out-of-scope until a real cron use case surfaces).
+
+**Purpose**: Deterministic Python skill that (a) reads source-page hash + known-concepts list from DB (`prepare` subcommand), and (b) accepts operator-supplied candidates JSON from the calling agent and writes `_concepts/<slug>.md` pages atomically + upserts `entities` + `page_entity_refs` rows + emits a wiki-ingest v1.1-compatible manifest (`apply` subcommand). Activates the entity layer (Epic 7 R-3). All extracted entities are written with `is_candidate=1` and quarantined until R-4 promotion logic (deferred) is implemented.
+
+**Stack position**: Between Index Layer (reads `entities`, `pages`, `source_state`; writes `entities`, `page_entity_refs`, `source_state`) and Skill Layer (user-facing entry point). Orthogonal to Source Adapters: operates exclusively on already-indexed pages, never on raw sources. Does **not** call `wiki-ingest` and does **not** make any LLM API call — synthesis happens in the calling agent's context per the `concept-extraction` skill prompt.
+
+##### CLI surface (v3.1 — BREAKING CHANGE vs v2)
+
+> ⚠️ **BREAKING CHANGE**: v2's monolithic `wiki-extract-concepts --vault X --source-page Y` invocation no longer exists. v3.1 splits into `prepare` and `apply` subcommands with `argparse.add_subparsers(required=True)` — legacy invocation surfaces helpful error pointing operators at the new surface. Every shell alias, script, and muscle-memory invocation must be updated.
+
+**`wiki-extract-concepts prepare --vault V --vault-root P --source-page S [--db-path PATH]`**
+
+Deterministic reconnaissance. No LLM call. Returns JSON to stdout:
+
+```json
+{
+  "vault_id": "trade-agents",
+  "source_slug": "self-improving-trading-agent",
+  "source_path": "/abs/path/to/_sources/<slug>.md",
+  "source_hash": "<sha256>",
+  "is_unchanged": false,
+  "known_concepts": [{"slug": "...", "name": "...", "aliases": [...], "type": "..."}],
+  "missing_concept_files": []
+}
+```
+
+`is_unchanged=true` → calling agent emits "unchanged" envelope and stops (no synthesis needed). `missing_concept_files: [...]` warns the operator about DB rows pointing to entity files that no longer exist on disk (disk/DB drift detection per M-1; future bead converts to lazy via flag — see KNOWN_ISSUES P-9).
+
+**`wiki-extract-concepts apply --vault V --vault-root P --source-page S --source-hash HEX (--candidates-file PATH | --candidates-stdin) [--orchestrator-id STRING] [--ingest] [--db-path PATH]`**
+
+Deterministic application. No LLM call. Reads candidates JSON from operator, validates against strict schema, writes pages + upserts entities + refs + manifest + optional indexer dispatch.
+
+`--source-hash HEX` is **required** and compared against apply's own disk-recomputed hash. Mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (operator re-runs prepare). Eliminates the TOCTOU race that would otherwise corrupt provenance between prepare and apply (H-1).
+
+`--candidates-file PATH` is validated via `validate_inside_vault(candidates_path, vault_root)` — file must live inside `--vault-root`. External transport: `--candidates-stdin`. Total candidates JSON capped at `_MAX_CANDIDATES_BYTES = 1_048_576` (1 MiB).
+
+`--orchestrator-id STRING` (optional; regex `^[a-z0-9._:@-]{1,64}$`) populates `canonicalized_by = f"llm:{orchestrator_id}@{date}"`. Default `"orchestrator"` if absent. Operator who cares about audit trail passes their model name (`"claude-opus-4-7"`, `"gemini-2-5-pro"`); honest unknown when absent.
+
+##### Candidates JSON contract
+
+Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone fields like `model`/`extracted_at` rejected per Q6 / iteration-1 review). Per-item strict schema validated by `_validate_candidates_schema`:
+
+```json
+[
+  {
+    "slug": "kebab-case-string",       // ^[a-z0-9][a-z0-9-]{0,62}$
+    "name": "Human Name",              // allowlist regex + ≤200 chars, no leading # or ---
+    "definition": "1-3 sentences.",    // ≤2000 chars; markdown-escaped on body write
+    "source_quote": "verbatim quote",  // ≤500 chars; substring-of-source-body check (M-5)
+    "source_span": "L12-L18",          // ^L\d+-L\d+$ (Decision-10)
+    "entity_type": "concept"           // one of {concept, person, company, product, group, event, work, external}
+  }
+]
+```
+
+**Strict mode** (Q14): items with keys outside the required set → `UNKNOWN_FIELD` (exit 4). **Count bound** (Q10): `1 ≤ N ≤ 25` candidates; out-of-bounds → `CANDIDATE_COUNT_OUT_OF_BOUNDS` (exit 4). **No content echo**: ALL error envelopes emit error-code + field-name + reason, NEVER the offending field content (CWE-117 / CWE-209).
+
+##### Functions (v3.1 target — per TASK 003 v3.1 Issues I-V3.1 through I-V3.13)
+
+- `prepare(args) → int` — argparse handler for `prepare` subcommand. Resolves source-page path; runs `validate_inside_vault` + kebab-slug check; reads source body with `_MAX_SOURCE_BODY_BYTES = 10_485_760` (10 MiB) `stat().st_size` cap before `read_text()` (M-3); computes sha256; calls `check_idempotency`; calls `load_known_entities`; emits JSON payload. Exit codes 0/1/2 (sub-envelopes: `SOURCE_NOT_FOUND`, `INVALID_SOURCE_PATH`, `INVALID_SOURCE_SLUG`, `SOURCE_TOO_LARGE`). (I-V3.1, R-30..R-32, R-39, R-42)
+- `apply(args) → int` — argparse handler for `apply` subcommand. Validates candidates JSON shape (strict mode + count bound + per-field caps + no-content-echo envelopes); recomputes source_hash from disk; rejects on mismatch with `--source-hash` (H-1); classifies create/mention; writes pages; upserts entities + refs; builds manifest; optionally dispatches via `_manifest_consumer.index_from_manifest`; updates `source_state` gated on `summary["failed"]` empty. Exit codes 0/1/2/4/5/6. (I-V3.1, R-33′..R-43)
+- `load_known_entities(repo, vault_id) → list[dict]` — UNCHANGED FROM v2. Queries `entities LEFT JOIN entity_aliases WHERE vault_id=?`; serialises to CONTRACT §2 known-concepts format `[{"slug":..., "name":..., "aliases":[...], "type":...}]`. (R-32)
+- `_validate_candidates_schema(items: list[dict]) → None` — **renamed from `_validate_extraction_schema`**. Strict equality check on keys (`item.keys() == _REQUIRED_CANDIDATE_KEYS`, not subset — Q14/H-9); kebab-slug regex (`^[a-z0-9][a-z0-9-]{0,62}$`); source_span regex (`^L\d+-L\d+$`); entity_type whitelist; per-field length caps (Q12/H-6: `name ≤ 200`, `definition ≤ 2000`, `source_quote ≤ 500`); candidate count bound (Q10/H-2: `1 ≤ len(items) ≤ 25`); optional `source_quote ∈ source_body` substring check (M-5; bypassable via `WIKI_EXTRACT_NO_QUOTE_CHECK=1` env var). All envelopes emit `{error: <CODE>, field: <name>, reason: <msg>}` — no content echo. (I-V3.1, R-33′)
+- `classify_candidates(items, known_slugs) → (create_list, mention_list)` — UNCHANGED FROM v2. Items whose slug matches a known entity → `mention` (ref only, no new page); novel slugs → `create`. (R-34)
+- `write_concept_page(vault_root, candidate, source_slug, today, orchestrator_id) → tuple[Path, "created"|"updated"|"unchanged"]` — atomic write (tempfile + rename). **Content-hash skip semantics (Q15/C-1)**: if `target.is_symlink()` → `raise PathTraversalError` (iteration-2 NEW-2); if file exists, compute sha256 of existing content vs. would-be-written content — identical → return path + `"unchanged"`; different → rewrite atomically + return path + `"updated"` + log warning. **Markdown body sanitization (Q13/H-7)**: `name` regex-allowlist `^[\w\s\-.,:;()\'"!?]{1,200}$` with `re.UNICODE` flag (for non-ASCII vault contents per iteration-2 N-5) + strip leading `#`/`---`; `definition` markdown-escaped (HTML tags + `\n## ` pattern); `source_quote` wrapped in `>` blockquote (eliminates inline `"..."` ambiguity AND `]]` wikilink-target attack); `source_span` strict-regex validated (iteration-2 NEW-1). Frontmatter via `frontmatter.dumps` (PyYAML safe_dump confirmed; adversarial regression tests for YAML injection). (I-V3.1 + I-V3.13, R-36, Q13/Q15)
+- `upsert_extracted_entity(repo, vault_id, candidate, source_slug, today, orchestrator_id) → str` — calls `repo.upsert_entity(is_candidate=1, canonicalized_by=f"llm:{orchestrator_id}@{date}")`; SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) preserved from v2. Returns `"created"|"updated"|"confirmed"`. (I-V3.1, R-37, Q9/H-8)
+- `upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates) → None` — UNCHANGED FROM v2. Collects `(entity_slug, ref_type='mentioned', source_quote, line_start, line_end, trust_level='medium')`; parses `"Lstart-Lend"` via `_parse_source_span`; calls `repo.replace_refs(...)` atomically. (R-38)
+- `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — UNCHANGED FROM v2. Queries `source_state` with `source_kind='extract-concepts'`; returns `True` if hash matches recorded value. (R-39)
+- `update_idempotency_state(repo, vault_id, source_slug, new_hash) → None` — UNCHANGED FROM v2. Called by `apply` at END of pipeline, gated on `summary["failed"]` being empty when `--ingest` set (C-1 invariant preserved). (R-39)
+- `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event, vault_root) → dict` — UNCHANGED FROM v2. Produces wiki-ingest v1.1-compatible JSON manifest. (R-35)
+- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — UNCHANGED FROM v2. When `--ingest` passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from neutral module `scripts.wiki_skills._manifest_consumer` in-process (Decisions 15+16). (R-41)
+
+##### Inputs (v3.1)
+
+`prepare` subcommand:
 - `--vault <vault_id>` (required, ADR-002 §D1.1 invariant — no hash fallback)
 - `--vault-root <path>` (required for filesystem operations)
 - `--source-page <slug | relative-path>` (required; validated inside vault root per R-26.2 guard)
-- `--db-path` (optional override, mirrors `wiki-enrich` pattern)
-- `--model` (default `claude-sonnet-4-6`)
-- `--ingest` (optional flag: auto-dispatch to `/wiki-enrich` after manifest emission)
-- Implicit: `ANTHROPIC_API_KEY` env var
+- `--db-path` (optional override)
 
-**Outputs:**
-- `_concepts/<slug>.md` files written atomically to `<vault_root>/_concepts/` (Class A canonical per ADR-002 §D8; `mkdir -p` on first write)
+`apply` subcommand:
+- All `prepare` flags PLUS
+- `--source-hash HEX` (required; mismatch against disk-recomputed → exit 2)
+- `--candidates-file PATH | --candidates-stdin` (mutex group; required; file path validated inside vault root)
+- `--orchestrator-id STRING` (optional; regex `^[a-z0-9._:@-]{1,64}$`; default `"orchestrator"`)
+- `--ingest` (optional flag: in-process dispatch via `_manifest_consumer` after manifest emission)
+
+**No `ANTHROPIC_API_KEY` env var. No `--model` / `--max-tokens` flags.** v3.1 skill makes zero LLM calls; the calling agent is the LLM.
+
+##### Outputs
+
+- `_concepts/<slug>.md` files written atomically to `<vault_root>/_concepts/` (Class A canonical per ADR-002 §D8; `mkdir -p` on first write; content-hash skip per Q15)
 - `entities` table rows (`is_candidate=1`, Class B cache per ADR-002 §D8 — rebuildable from concept page frontmatter on `wiki-reindex --full`)
-- `page_entity_refs` rows (`trust_level='medium'`, Class B cache)
+- `page_entity_refs` rows (`trust_level='medium'`, Class B cache; line spans parsed from `Lstart-Lend`)
 - `source_state` row (`source_kind='extract-concepts'`, Class C cache for idempotency)
 - Manifest JSON to stdout (wiki-ingest v1.1-compatible)
 
-**Multi-vault invariant (ADR-002 §D1):** every DB query and every file path write includes `vault_id=?` predicate or is scoped to `vault_root`. No cross-vault entity bleed. `validate_inside_vault` applied to every path written (R-40).
+##### Multi-vault invariant (ADR-002 §D1)
 
-**Bulk-transaction semantics:** for one extraction call, all DB writes — `upsert_entity` (N calls), `replace_refs` (1 call), `source_state` update (1 call) — execute under a **single `BEGIN IMMEDIATE` transaction**. Concept file writes (filesystem) happen first (atomic per-file via tempfile+rename); the DB commit ties them together. On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical), and the next run re-replays via `source_state` mismatch. This bounds per-source-page overhead to one transaction regardless of concept count.
+Every DB query and every file path write includes `vault_id=?` predicate or is scoped to `vault_root`. No cross-vault entity bleed. `validate_inside_vault` applied to every path written + to `--candidates-file PATH` argument (R-40, H-5).
 
-**LLM output → SQL safety:** all LLM-supplied fields (`slug`, `name`, `definition`, `source_quote`, `source_span`) flow into `repo.upsert_entity(...)` / `repo.replace_refs(...)` exclusively as **bound parameters** — no f-string SQL composition. Slug additionally pre-validated against regex (see `write_concept_page` above). This composes with the Phase-3a A03 parameterized-statement invariant.
+##### Bulk-transaction semantics
 
-**Stub-First status (TASK 003):** Entry point and argparse surface (I-7.1) implemented as stubs first. All `load_known_entities`, `extract_concepts_llm`, etc. functions are individually stubbed before logic is filled in. See Issues I-7.1 through I-7.11 for stub → logic progression.
+For one `apply` call, all DB writes — `upsert_entity` (N calls), `replace_refs` (1 call), `source_state` update (1 call) — execute under a **single `BEGIN IMMEDIATE` transaction**. Concept file writes (filesystem) happen first (atomic per-file via tempfile+rename + content-hash skip + symlink-refuse). The DB commit ties them together. On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical), and the next run replays via `source_state` mismatch — but **with the content-hash skip in `write_concept_page`**, files won't be re-written if content is already correct (drift between disk and DB after partial-failure replay eliminated per C-1/Q15).
 
-**Related Use Cases:** UC-08 (primary extraction flow), UC-09 (idempotency re-extraction).
+##### Operator-supplied JSON → SQL safety
 
-**Dependencies:** Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, `repo.check_idempotency`-equivalent via `source_state`), Configuration Resolver, Anthropic API (Claude Sonnet 4.6 via `anthropic` SDK). Optionally imports `validate_manifest` + `index_from_manifest` + `WikiIngestError` from the neutral module `scripts.wiki_skills._manifest_consumer` for in-process dispatch when `--ingest` is passed (TASK 003 v2 / Decisions 15+16 — no subprocess, no cross-skill coupling).
+All operator-supplied candidate fields (`slug`, `name`, `definition`, `source_quote`, `source_span`, `entity_type`) flow into `repo.upsert_entity(...)` / `repo.replace_refs(...)` exclusively as **bound parameters** — no f-string SQL composition. Slug additionally pre-validated against regex AND against the kebab-slug schema invariant. The `--orchestrator-id` flag is regex-validated before being interpolated into `canonicalized_by` (defense-in-depth; column is parameterized anyway). This composes with the Phase-3a A03 parameterized-statement invariant.
 
-**Exit-code envelope contract (R-42, post-vdd-multi 2026-05-28 hardening):**
+##### Related Use Cases
+
+UC-08 v3.1 (primary extraction flow with subcommand split + adversarial alternates A6–A13), UC-09 v3.1 (idempotency re-extraction with orchestrator-level short-circuit).
+
+##### Dependencies
+
+Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_state` queries), Configuration Resolver, `frontmatter` for YAML frontmatter handling, `_manifest_consumer` (neutral module) for in-process `--ingest` dispatch. **No external LLM API dependency. No `anthropic` SDK. No `ANTHROPIC_API_KEY`.**
+
+##### Exit-code envelope contract (R-42 v3.1)
 
 | Code | `error` field | Cause |
 |---|---|---|
-| 0 | — (manifest emitted) | Success; or idempotency short-circuit (`action="unchanged"`, `manifest=null`) |
-| 1 | — (argparse stderr) | Missing required flag |
+| 0 | — (manifest emitted, or `action="unchanged"`) | Success or idempotency short-circuit |
+| 1 | — (argparse stderr) | Missing required flag, including legacy invocation without subcommand |
 | 2 | `SOURCE_NOT_FOUND` | Page slug does not resolve inside vault |
-| 2 | `INVALID_SOURCE_PATH` | `--source-page` is an absolute path (H-1 fix — was conflated as SOURCE_NOT_FOUND in v2 first cut) |
-| 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug (H-3 fix — `Foo.Bar.md` rejected before any writes) |
-| 3 | `LLM_API_UNAVAILABLE` | Anthropic SDK connection/auth/rate-limit/bad-request/5xx failure (M-1 fix widened the catch; wrap uses `type(e).__name__` only — CWE-209 mitigation) |
-| 4 | `EXTRACTION_PARSE_ERROR` | LLM returned malformed JSON, schema-violating output, oversized source body (M-1 cap `_MAX_SOURCE_BODY_CHARS=100_000`), or slug failing `_SLUG_RE` (M-2 fix) |
-| 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; **source_state is NOT updated** so next run retries (C-1 fix) |
-| 6 | `MANIFEST_INVALID` | `validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
+| 2 | `INVALID_SOURCE_PATH` | `--source-page` is an absolute path |
+| 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug |
+| 2 | `SOURCE_TOO_LARGE` | Source body exceeds `_MAX_SOURCE_BODY_BYTES = 10 MiB` (M-3) |
+| 2 | `SOURCE_CHANGED_DURING_EXTRACTION` | `apply --source-hash HEX` does not match disk-recomputed hash (H-1) |
+| 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault` (H-5) |
+| 4 | `EXTRACTION_PARSE_ERROR` | Candidates JSON malformed (invalid JSON, missing required key, invalid kebab slug, invalid Lstart-Lend, invalid entity_type) |
+| 4 | `CANDIDATES_TOO_LARGE` | Candidates JSON exceeds `_MAX_CANDIDATES_BYTES = 1 MiB` (H-5/H-6) |
+| 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [1, 25]` (Q10/H-2) |
+| 4 | `FIELD_TOO_LONG` | Per-field cap exceeded: `name>200`, `definition>2000`, `source_quote>500` (Q12/H-6) |
+| 4 | `UNKNOWN_FIELD` | Candidate item has keys outside `_REQUIRED_CANDIDATE_KEYS` (Q14/H-9) |
+| 4 | `FIELD_QUOTE_NOT_IN_BODY` | Optional substring check: `source_quote` not found in source body (M-5; bypassable via env var) |
+| 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; `source_state` NOT updated → next run retries (C-1) |
+| 6 | `MANIFEST_INVALID` | `_manifest_consumer.validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
 
-**vdd-multi 2026-05-28 invariants** (codified in regression tests):
+**Universal envelope invariant** (CWE-117/CWE-209): every error envelope emits `{error: <CODE>, field: <name>?, reason: <human-msg>}` shape with NO `content`, `value`, `raw`, or `received` keys. Regression test in I-V3.12 parametrized across all sub-envelopes.
 
-- C-1: `update_idempotency_state` is called **only after** dispatch succeeds (or extraction succeeds in no-`--ingest` mode) — partial failures leave `source_state` row absent so operators can retry.
-- H-2: `write_concept_page` returns `tuple[Path, "created" | "unchanged"]` — TOCTOU race between caller's pre-check and function's internal check eliminated.
-- M-1: Input-size guard `len(source_body) > 100_000 chars` raises `ExtractionParseError` **before** instantiating the Anthropic SDK client.
+##### v3.1 invariants (codified in regression tests)
 
-**RTM coverage:** R-30, R-31, R-32, R-33, R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42, R-43 (all primary TASK 003 requirements).
+- **C-1** (Q15): `update_idempotency_state` called only AFTER `apply` success + (when `--ingest` set) `summary["failed"]` empty. `write_concept_page` uses content-hash skip — partial-failure replay no longer drifts between disk and DB.
+- **H-1** (Q5/Q8): `apply --source-hash HEX` REQUIRED; mismatch with disk-recomputed = `SOURCE_CHANGED_DURING_EXTRACTION` exit 2.
+- **H-2** (Q10): candidate count `1 ≤ N ≤ 25`; out-of-bounds rejected.
+- **H-5** (Q11): `--candidates-file PATH` must live inside vault; otherwise `INVALID_CANDIDATES_PATH`.
+- **H-6** (Q12): per-field caps + total JSON cap; violations rejected without content echo.
+- **H-7** (Q13): markdown/YAML sanitization + adversarial regression tests including non-ASCII names.
+- **H-8** (Q9): `--orchestrator-id` flag populates `canonicalized_by`; audit-trail attribution preserved.
+- **H-9** (Q14): strict-mode schema; extra keys rejected as `UNKNOWN_FIELD`.
+- **Symlink refuse** (Q15, NEW-2): `write_concept_page` refuses to rewrite symlink targets — `PathTraversalError`.
+
+##### RTM coverage
+
+R-30, R-31, R-32, R-33′ (supersedes retired R-33), R-34, R-35, R-36, R-37, R-38, R-39, R-40, R-41, R-42, R-43 — all 14 active TASK 003 v3.1 requirements. R-33 retired; R-44 retired (already in v2).
 
 ---
 
@@ -919,59 +1025,90 @@ graph LR
     SAM -.reads.-> VAULT
 ```
 
-### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b)
+### 3.4. Sequence Diagram: UC-08 Concept Extraction Flow (Phase 3b — v3.1 target)
 
-> **NOTE (2026-05-27 — TASK 003 v2 RESUMED):** This diagram reflects TASK 003 v2, the post-TASK-004 revision. Step [9] is an **in-process function call** into the neutral module `scripts.wiki_skills._manifest_consumer` (Decisions 15+16 supersede v1 Decision-9). The subprocess hop to `wiki-enrich --manifest-file` and the corresponding `--manifest-{file,stdin}` flag work (former v1 R-44 / I-7.15) have been **dropped** from this task. The cross-skill coupling Decision-15 alone would have created (`wiki_extract_concepts` importing private-prefix `_validate_manifest` from sibling `wiki_enrich`) is resolved by Decision-16 / I-7.0: both functions are extracted to `_manifest_consumer.py` as the FIRST bead of this task, so no skill depends on another skill. `wiki-extract-concepts` does NOT call the vendored `ingest()` function — `ingest()` is for raw-source synthesis (TASK 004 / wiki-enrich's primary path); concept-page derivation is this skill's responsibility (Decision-8). Active RTM = R-30..R-43; R-44 retired.
+> **NOTE (2026-05-28 — TASK 003 v3.1 ANALYSIS COMPLETE, DEV IN-FLIGHT):** This diagram reflects the **v3.1 target architecture** (Decision-17): deterministic Python skill split into `prepare`/`apply` subcommands with LLM-driven synthesis happening in the **calling agent's context** (Claude Code / Gemini CLI / Cursor) between the two subprocess calls. v2 shipped 2026-05-28 with an embedded Anthropic SDK call inside step [3]; v3.1 removes that call entirely. Synthesis prompt + JSON candidates contract moved out of Python code and into operator-facing skill `.agent/skills/concept-extraction/SKILL.md`. Skill itself makes ZERO LLM API calls; auth lives entirely in the calling agent. See [docs/TASK.md](./TASK.md) for the in-flight refactor spec.
 
 ```
 Operator
   │
-  ├─ /wiki-extract-concepts --vault V --vault-root P --source-page S [--ingest]
+  ├─ /wiki-extract-concepts --vault V --source-page S
   │
   ▼
-wiki-extract-concepts (scripts/wiki_skills/wiki_extract_concepts.py)
+Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM context)
+  │  reads workflows/wiki-extract-concepts.md
   │
-  ├─ [1] check_idempotency(repo, vault_id, source_slug, sha256(body))
-  │      → source_state table  ────── hash match? → return {action:"unchanged"}, exit 0
+  ├─ STEP 1 — DETERMINISTIC RECONNAISSANCE (no LLM call)
+  │   Bash: wiki-extract-concepts prepare --vault V --vault-root P --source-page S
+  │   │
+  │   └─▶ wiki_extract_concepts.py::prepare(args)
+  │          ├─ resolve source-page path; validate_inside_vault (R-26)
+  │          ├─ stat().st_size check → _MAX_SOURCE_BODY_BYTES (10 MiB) → SOURCE_TOO_LARGE
+  │          ├─ read_text() → sha256(body)
+  │          ├─ check_idempotency(repo, V, S, sha256) → source_state table query
+  │          ├─ load_known_entities(repo, V) → entities ⨝ entity_aliases
+  │          └─ emit JSON: {source_path, source_hash, is_unchanged,
+  │                          known_concepts, missing_concept_files}
   │
-  ├─ [2] load_known_entities(repo, vault_id)
-  │      → entities LEFT JOIN entity_aliases WHERE vault_id=V
-  │      → JSON [{"slug":..., "name":..., "aliases":[...]}]
+  ├─ STEP 2 — IDEMPOTENCY GATE
+  │   if is_unchanged=true → emit {action:"unchanged", manifest:null} to operator, STOP.
   │
-  ├─ [3] extract_concepts_llm(source_body, known_entities, model="claude-sonnet-4-6", temperature=0)
-  │      → Anthropic API (HTTPS POST /v1/messages)
-  │      → validated JSON array of candidates
+  ├─ STEP 3 — LOAD EXTRACTION CONTRACT (calling agent's context)
+  │   Skill({skill: "concept-extraction"})
+  │   → loads .agent/skills/concept-extraction/SKILL.md into agent context
+  │   → contract: 1≤N≤25 candidates, per-field caps (name 200/def 2000/quote 500),
+  │     kebab slug regex, Lstart-Lend span, entity_type whitelist, dedup against
+  │     known_concepts list, NO extra keys, source_quote substring of body
   │
-  ├─ [4] classify_candidates(llm_results, known_slugs)
-  │      → list_create (novel slugs) / list_mention (existing slugs)
+  ├─ STEP 4 — READ SOURCE BODY (calling agent's tool)
+  │   Read(source_path) → source body in agent's context window
+  │   (NOT a double-read: prepare already returned source_path, NOT source_body —
+  │    avoids 100KB-payload-via-Bash-output design smell per Decision-17 H-1)
   │
-  ├─ [5] For each item in list_create:
-  │      ├─ write_concept_page(vault_root, candidate, source_slug, today)
-  │      │      → _concepts/<slug>.md  (atomic tempfile+rename)  [Class A]
-  │      └─ upsert_extracted_entity(repo, vault_id, candidate, source_slug, today)
-  │             → repo.upsert_entity(is_candidate=1)             [Class B]
+  ├─ STEP 5 — SYNTHESIS (calling agent's LLM context, OPERATOR'S subscription/API)
+  │   Agent produces candidates JSON array per the loaded contract.
+  │   THIS IS THE ONLY LLM-INVOLVED STEP. No Python code touches an LLM API.
+  │   No ANTHROPIC_API_KEY. No anthropic SDK. No subagent spawn.
   │
-  ├─ [6] upsert_entity_refs(repo, vault_id, source_slug, source_project, all_candidates)
-  │      → repo.replace_refs(...)  [atomic delete+insert, trust_level='medium',
-  │                                  line_start/line_end parsed from "Lstart-Lend"]
+  ├─ STEP 6 — DETERMINISTIC APPLICATION (no LLM call)
+  │   Bash: echo '[{...}, {...}]' | wiki-extract-concepts apply \
+  │           --vault V --vault-root P --source-page S \
+  │           --source-hash <hash-from-prepare> --candidates-stdin \
+  │           [--orchestrator-id "claude-opus-4-7"] [--ingest]
+  │   │
+  │   └─▶ wiki_extract_concepts.py::apply(args)
+  │          ├─ recompute source_hash from disk
+  │          │     → mismatch with --source-hash → exit 2 SOURCE_CHANGED_DURING_EXTRACTION
+  │          ├─ if --candidates-file: validate_inside_vault(path); stat ≤ 1 MiB
+  │          ├─ json.loads(stdin or file)
+  │          ├─ _validate_candidates_schema (strict mode):
+  │          │     count bound, per-field caps, kebab slug, Lstart-Lend,
+  │          │     entity_type whitelist, NO extra keys, source_quote ∈ body
+  │          │     → on violation → exit 4 + specific sub-envelope (no content echo)
+  │          ├─ classify_candidates → (create_list, mention_list)
+  │          ├─ for cand in create_list:
+  │          │     ├─ write_concept_page (atomic; content-hash skip; refuse symlinks)
+  │          │     │       → _concepts/<slug>.md  [Class A]
+  │          │     │       → returns (Path, "created"|"updated"|"unchanged")
+  │          │     └─ upsert_extracted_entity (canonicalized_by=orchestrator_id)
+  │          │           → repo.upsert_entity(is_candidate=1, SQL MIN() downgrade-guard)
+  │          ├─ upsert_entity_refs(repo, V, S, project, all_candidates)
+  │          │     → repo.replace_refs (atomic; trust_level='medium'; parsed line spans)
+  │          ├─ build_manifest → wiki-ingest v1.1-compatible JSON
+  │          ├─ (if --ingest) dispatch_to_indexer:
+  │          │     ├─ validate_manifest from _manifest_consumer (Decisions 15+16)
+  │          │     ├─ index_from_manifest from _manifest_consumer (in-process)
+  │          │     │     → page upserts + log_event mirror
+  │          │     ↳ on failed[] non-empty → exit 5 PARTIAL_INDEX_FAILURE; source_state NOT updated
+  │          ├─ update_idempotency_state (gated: success + ingest-failed[] empty)
+  │          └─ emit manifest JSON (or {extraction, index} combined if --ingest)
   │
-  ├─ [7] update source_state (source_kind='extract-concepts', hash=current_hash)
-  │
-  ├─ [8] build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event)
-  │      → manifest dict (held in memory; emitted to stdout if --ingest is NOT set)
-  │
-  └─ [9] (if --ingest flag — Decisions 15+16: IN-PROCESS, no subprocess, NEUTRAL module)
-         dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path)
-           │  (uses: from scripts.wiki_skills._manifest_consumer import
-           │         validate_manifest, index_from_manifest, WikiIngestError)
-           ├─ validate_manifest(manifest, vault_id, vault_root)
-           │       → on WikiIngestError → exit 6, MANIFEST_INVALID envelope
-           ├─ index_from_manifest(manifest, vault_id, vault_root, db_path=...)
-           │       → page upsert for each kind=concept written[] entry
-           │       → log_event mirrored to log_events table (Class C)
-           └─ emit {"extraction": <manifest>, "index": <summary>} to stdout
-                  → exit 0 on success, exit 5 on partial-index failure
+  └─ STEP 7 — operator sees manifest in their chat / shell
 ```
+
+**Auth boundary**: dotted line between STEP 1 and STEP 6 = subprocess boundary (Python skill); STEP 5 happens entirely in calling agent's process with its own LLM auth. Python skill has zero LLM dependency, zero env var requirements beyond the standard CLI flags.
+
+**Comparison to v2 (shipped)**: v2 had a single monolithic invocation; STEP 3 (synthesis) was inside the Python process via `anthropic.Anthropic().messages.create(...)` requiring `ANTHROPIC_API_KEY`. v3.1 moves STEP 3 to the calling agent; STEP 1 and STEP 6 are the two new subprocess calls. **BREAKING CHANGE for operators** — legacy `wiki-extract-concepts --vault X --source-page Y` (no subcommand) surfaces argparse error pointing at the new surface.
 
 ---
 

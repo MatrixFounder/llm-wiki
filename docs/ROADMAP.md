@@ -308,11 +308,27 @@ the misleading docstring.
 
 - All 34 Phase 3a tasks (TASK 001 wiki-mvp)
 - Bridge skill `wiki-enrich` integrating with wiki-ingest v1.1
-- 8 skills + 8 commands + 8 wrappers + global installer
+- 8 skills + 8 commands + 8 wrappers + global installer (now 9 after R-3)
 - Dogfood on trade-agents (5 production bugs found + fixed +
   regression tests)
 - VDD multi-adversarial + adversarial round 1 reviews (zero-slop)
 - README + Installation flow for any-target-project use
+- **R-3 / TASK 003 v2 closed 2026-05-28** — `wiki-extract-concepts` Epic 7
+  entry-point shipped. LLM-driven concept extraction (Claude Sonnet 4.6,
+  `temperature=0`); kebab-validated slugs; `_concepts/<slug>.md` atomic
+  writes; `entities` rows with `is_candidate=1` + SQL `MIN()` downgrade
+  guard (R-37b); `page_entity_refs` with `trust_level='medium'` and
+  parsed `Lstart-Lend` line spans (Decision-10); source-state idempotency
+  short-circuit (R-39). Decisions 15 (in-process dispatch retracts v1
+  Decision-9 subprocess+CLI-flag) + 16 (neutral `_manifest_consumer`
+  module — no skill depends on another skill) shipped. 15 atomic beads
+  (I-7.0..I-7.14) + `/vdd-multi` adversarial sweep with 6 inline hardenings
+  (C-1 idempotency ordering, H-1 absolute-path rejection, H-2 TOCTOU
+  tuple-return, H-3 source_slug validation, M-1 LLM input-size +
+  BadRequestError catch, M-2 schema slug regex) + 3 deferred LOWs closed
+  inline (L-V3.1 datetime hoist, L-V3.2 NULL defensive check, L-V3.3
+  CWE-209 exception-chain suppression). 396 pytest / mypy --strict clean
+  on 55 files. R-44 retired, I-7.15 dropped.
 - **R-V1 / TASK 004 closed 2026-05-27** — wiki-ingest Python-import-only
   vendor (Option 5). `scripts/wiki_ingest/` snapshot from
   `Universal-skills/skills/wiki-ingest/`; `scripts/wiki_skills/wiki_enrich.py`
