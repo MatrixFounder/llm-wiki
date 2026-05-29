@@ -24,6 +24,7 @@ SOURCES_SUBDIR: str = "_sources"
 CONCEPTS_SUBDIR: str = "_concepts"
 ENTITIES_SUBDIR: str = "_entities"
 QUERIES_SUBDIR: str = "_queries"
+VERIFICATIONS_SUBDIR: str = "_verifications"
 RAW_SUBDIR: str = "_raw"
 
 # Subdirs shared with the vendored wiki-ingest file-synthesis layer
@@ -37,16 +38,19 @@ INGEST_SHARED_SUBDIRS: tuple[str, ...] = (
 
 # Host-only page-bearing subdirs the wiki-ingest synthesis layer does NOT
 # produce. `_queries` (TASK 007 / R-6): RAG answer pages written by
-# `wiki-query`. The vendored ingest snapshot legitimately knows nothing about
-# these (they are not raw-source synthesis output), so they are NOT part of the
-# INGEST_SHARED_SUBDIRS contract.
+# `wiki-query`. `_verifications` (TASK 008 / R-8): multi-critic verdict pages
+# written by `wiki-verify-multi`. The vendored ingest snapshot legitimately
+# knows nothing about these (they are not raw-source synthesis output), so they
+# are NOT part of the INGEST_SHARED_SUBDIRS contract.
 #
 # Forward note (ROADMAP R-X1 "universalise layout engine"): the shared-vs-
 # host-only split modelled here is the seam R-X1 will fold into the per-vault
 # layout config (`karpathy.yaml` / `dev-project.yaml` / ...). Until then this
-# is the explicit chokepoint; new host-only page subdirs join this tuple.
+# is the explicit chokepoint; new host-only page subdirs join this tuple
+# (`_verifications` is the second member, proving the seam generalises).
 HOST_ONLY_SUBDIRS: tuple[str, ...] = (
     QUERIES_SUBDIR,
+    VERIFICATIONS_SUBDIR,
 )
 
 # All page-bearing subdirectories under a vault root or course directory —

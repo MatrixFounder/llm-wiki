@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS pages (
     slug              TEXT NOT NULL,
     project           TEXT NOT NULL DEFAULT '_vault_',
     type              TEXT NOT NULL CHECK (type IN (
-                          'summary', 'concept', 'query', 'brief', 'research', 'index'
+                          'summary', 'concept', 'query', 'brief', 'research', 'index',
+                          'verification'   -- TASK 008 / R-8.9 (schema v5): wiki-verify-multi verdict page
                       )),
     title             TEXT NOT NULL,
     file_path         TEXT NOT NULL,
@@ -192,7 +193,8 @@ CREATE TABLE IF NOT EXISTS page_entity_refs (
     page_project      TEXT NOT NULL DEFAULT '_vault_',
     entity_slug       TEXT NOT NULL,
     ref_type          TEXT NOT NULL CHECK (ref_type IN (
-                          'mentioned', 'defined-here', 'related', 'cited'
+                          'mentioned', 'defined-here', 'related', 'cited',
+                          'verifies'   -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
                       )),
     line_start        INTEGER,
     line_end          INTEGER,
@@ -226,7 +228,8 @@ CREATE TABLE IF NOT EXISTS log_events (
                           'ingest', 'query', 'lint', 'reindex',
                           'promote', 'demote',
                           'backfill', 'reclassify',
-                          'resolve-contradiction', 'fix-dangling', 'fix-orphan'
+                          'resolve-contradiction', 'fix-dangling', 'fix-orphan',
+                          'verify'   -- TASK 008 / R-8.9 (schema v5): wiki-verify-multi audit event
                       )),
     subject           TEXT,
     project           TEXT,
@@ -394,7 +397,7 @@ CREATE VIEW IF NOT EXISTS index_meta AS
     SELECT vault_id, slug, project, type AS kind,
            title, tldr, last_modified
       FROM pages
-     WHERE type IN ('summary', 'concept', 'query')
+     WHERE type IN ('summary', 'concept', 'query', 'verification')
   UNION ALL
     SELECT vault_id, slug, project, type AS kind,
            name AS title, definition AS tldr, last_updated AS last_modified
@@ -445,11 +448,17 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- decide whether to seed schema or run a migration step.
 -- v3 (TASK 005 / R-5.4): entity_aliases PK (vault_id, alias) + idx swap.
 -- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5); event_date GENERATED
--- STORED (L-2). The DB is a Class B rebuildable cache, so every vN→vN+1
--- migration is a `wiki-reindex --full`, NOT an in-place ALTER (apply_schema's
--- CREATE TABLE IF NOT EXISTS cannot mutate a live PK, and a STORED generated
--- column cannot be ALTER-added to a populated table). See ADR-002 §D8 amendment.
-PRAGMA user_version = 4;
+-- STORED (L-2).
+-- v5 (TASK 008 / R-8.9): admit pages.type='verification', ref_type='verifies',
+-- event_type='verify' (wiki-verify-multi verdict page) + index_meta view parity.
+-- The DB is a Class B rebuildable cache, so every vN→vN+1 migration is NOT an
+-- in-place ALTER (apply_schema's CREATE TABLE IF NOT EXISTS cannot mutate a live
+-- PK/CHECK, and SQLite cannot ALTER-relax a CHECK on a populated table). The
+-- migration on an EXISTING populated DB is: delete the .db/-wal/-shm files
+-- (forcing a fresh schema apply), then `wiki-init --register-existing` +
+-- `wiki-reindex --full` (bare `wiki-reindex --full` only re-INSERTs rows and
+-- cannot relax the old CHECK). See ADR-002 §D8 amendment.
+PRAGMA user_version = 5;
 
 -- 13.3 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

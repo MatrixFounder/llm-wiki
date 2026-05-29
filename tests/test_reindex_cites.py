@@ -13,7 +13,7 @@ from pathlib import Path
 
 from scripts.wiki_index.models import Vault
 from scripts.wiki_index.reindex import (
-    _cited_refs_from_frontmatter,
+    _frontmatter_refs,
     reindex_delta,
     reindex_full,
 )
@@ -144,11 +144,12 @@ def test_e2e_04_delta_unions_cited_refs(tmp_path: Path) -> None:
 
 
 def test_unit_cited_refs_parser() -> None:
-    """TC-UNIT: `_cited_refs_from_frontmatter` parses `project/slug`, dedups on
-    slug, and stores only the slug as entity_slug with the expected columns."""
+    """TC-UNIT: the `cites:`→'cited' parser (via `_frontmatter_refs("query", …)`)
+    parses `project/slug`, dedups on slug, and stores only the slug as
+    entity_slug with the expected columns."""
     skipped: list[dict[str, object]] = []
-    refs = _cited_refs_from_frontmatter(
-        {"cites": ["_vault_/foo", "courseA/bar", "_vault_/foo"]},
+    refs = _frontmatter_refs(
+        "query", {"cites": ["_vault_/foo", "courseA/bar", "_vault_/foo"]},
         "v", "qslug", "_vault_", skipped,
     )
     assert {r.entity_slug for r in refs} == {"foo", "bar"}  # dedup foo
@@ -161,12 +162,12 @@ def test_unit_cited_refs_parser() -> None:
 
 def test_unit_cited_refs_parser_malformed_recorded() -> None:
     skipped: list[dict[str, object]] = []
-    refs = _cited_refs_from_frontmatter(
-        {"cites": ["", "noslash", "_vault_/", "/onlyslug", 42, "_vault_/ok"]},
+    refs = _frontmatter_refs(
+        "query", {"cites": ["", "noslash", "_vault_/", "/onlyslug", 42, "_vault_/ok"]},
         "v", "q", "_vault_", skipped,
     )
     assert {r.entity_slug for r in refs} == {"ok"}
     assert len(skipped) == 5  # "", noslash, _vault_/ (empty slug), /onlyslug (empty proj), 42
     # non-list cites → empty, no skip
-    assert _cited_refs_from_frontmatter({"cites": "nope"}, "v", "q", "_vault_", []) == []
-    assert _cited_refs_from_frontmatter({}, "v", "q", "_vault_", []) == []
+    assert _frontmatter_refs("query", {"cites": "nope"}, "v", "q", "_vault_", []) == []
+    assert _frontmatter_refs("query", {}, "v", "q", "_vault_", []) == []

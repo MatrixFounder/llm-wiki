@@ -22,6 +22,7 @@ from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
     ENTITIES_SUBDIR,
     QUERIES_SUBDIR,
+    VERIFICATIONS_SUBDIR,
 )
 
 
@@ -88,6 +89,7 @@ TYPE_MAPPING: dict[str, tuple[str, str | None]] = {
     "product": ("concept", "product"),
     "group": ("concept", "group"),
     "query": ("query", None),
+    "verification": ("verification", None),  # TASK 008 / R-8 — wiki-verify-multi verdict page
     "brief": ("brief", None),
     "research": ("research", None),
     "index": ("index", None),
@@ -115,6 +117,9 @@ _PATH_TYPE_FALLBACK: dict[str, str] = {
     # `apply` always writes `type: query`, but reindex of a hand-authored
     # query page stays robust).
     QUERIES_SUBDIR: "query",
+    # TASK 008 / R-8.5: same defensive inference for a hand-authored
+    # `_verifications/<slug>.md` verdict page missing an explicit `type:`.
+    VERIFICATIONS_SUBDIR: "verification",
 }
 
 

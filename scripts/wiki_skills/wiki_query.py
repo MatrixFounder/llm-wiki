@@ -308,7 +308,7 @@ def _index_query_page(
     from scripts.wiki_index.normalization import normalize_frontmatter
     from scripts.wiki_index.reindex import (
         _build_page,
-        _cited_refs_from_frontmatter,
+        _frontmatter_refs,
     )
     from scripts.wiki_source.base import SourceItem
     from scripts.wiki_source.manual import ManualSourceAdapter
@@ -321,9 +321,8 @@ def _index_query_page(
     page = _build_page(out, vault_id, db_type, page_path, vault_root, updated_fm)
     repo.upsert_page(page)
     all_refs = list(out.refs)
-    if db_type == "query":
-        all_refs.extend(_cited_refs_from_frontmatter(
-            updated_fm, vault_id, out.page_slug, out.project, []))
+    all_refs.extend(_frontmatter_refs(
+        db_type, updated_fm, vault_id, out.page_slug, out.project, []))
     repo.replace_refs(vault_id, out.page_slug, out.project, all_refs)
 
 

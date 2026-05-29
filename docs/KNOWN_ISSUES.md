@@ -471,3 +471,67 @@ single most valuable find of the task); everything else worked first-try.
   cross-vault `--types query` search returns the filed query pages from both
   vaults; `is_unchanged` short-circuits a re-query; `--orchestrator-id`
   provenance lands in the `query` log event's `details_json`.
+
+---
+
+## TASK 008 (Epic 7 RAG verification, `wiki-verify-multi`) — closures + notes (2026-05-29)
+
+Shipped via 11 beads (Stub-First green-throughout; 4 VDD gates incl.
+`/vdd-adversarial` on the plan). Schema **v4→v5**. 666 pytest / 4 skip, mypy
+strict clean. Nothing auto-committed.
+
+## [2026-05-29] DF-V1 verdict-page `pages` PK collides with the audited query page [STATUS: fixed 2026-05-29]
+
+- **Symptom**: filing a verdict page overwrote the audited query page's `pages`
+  row — after `wiki-verify-multi apply`, `get_page(query-slug, _vault_)` returned
+  `type=verification` and the query row was gone (the compounding loop broke;
+  `wiki-search`/re-`prepare` could no longer find the query).
+- **Root cause**: the `pages` PK `(vault_id, slug, project)` is **subdir-independent**.
+  The plan defaulted `verification_slug = query_slug` + filed at
+  `_verifications/<query-slug>.md`, indexing as `(query-slug, _vault_, verification)`
+  — the **same PK** as the query page `(query-slug, _vault_, query)`, so
+  `upsert_page` (INSERT OR REPLACE on the PK) clobbered the query row. All four
+  pre-impl gates (task/architecture/plan/adversarial) missed it; the 008-07
+  strict-TDD test (`test_verify_state_recorded_then_unchanged`) surfaced it.
+- **Affected**: `scripts/wiki_skills/wiki_verify_multi.py::prepare` (slug default).
+- **Resolution (operator-approved STOP-and-decide)**: `verification_slug` defaults
+  to **`verify-<query-slug>`** → file `_verifications/verify-<query-slug>.md`, a
+  distinct `pages` PK; `verifies:` still points at `_vault_/<query-slug>`.
+  Regression: `tests/test_wiki_verify_index.py::test_query_page_row_survives_verification`
+  (both rows coexist) + the §D8 round-trip (`test_verify_durability.py`).
+
+## [2026-05-29] N-008-1 `exit 6` for a FAIL verdict diverges from the family `6=error` convention [STATUS: documented design note]
+
+- **Symptom/Note**: `wiki-verify-multi apply` returns **exit 6** on a FAIL verdict,
+  but `6` is the wiki-CLI family's generic *error* code (`_common.emit`). A FAIL
+  is a SUCCESS envelope (the verdict page IS filed; **no `error` key**).
+- **Root cause**: operator decision D-008-3 — FAIL must be a non-zero machine
+  signal, but every non-zero code reads as "error" somewhere in the family.
+- **Resolution**: deliberate, documented divergence (adversarial-plan SEC-4).
+  The `wiki-verify-multi` SKILL + `workflows/wiki-verify-multi.md` + `apply`'s
+  inline contract require callers to **branch on the stdout `verdict` field**
+  (not `$?==6`); `--fail-on=none` → exit 0. Off-by-default; the sole consumer
+  today is the orchestrator-driven workflow.
+
+## [2026-05-29] L-008-1 `verification_slug` not length-capped [STATUS: open, low]
+
+- **Symptom**: the derived `verify-<query-slug>` adds a 7-char prefix without a
+  length cap; a max-length (80-char) query slug yields an 87-char verification
+  slug/filename. Harmless on modern filesystems; no `pages.slug` length CHECK.
+- **Fix plan**: cap to a filesystem-safe length if a real long-slug case appears.
+  Defer — query slugs are question-derived and typically short.
+
+## [2026-05-29] L-008-2 verify_hash keys on the cited-source SET, not source content [STATUS: documented, by-design]
+
+- **Symptom**: `wiki-verify-multi`'s `verify_hash = sha256(answer_hash ‖ ordered
+  examined project/slug)` re-triggers a re-verify when the answer body changes or
+  the cited-source *set* changes (add/remove a cite), but NOT when a cited source
+  is rewritten **in place** (same slug, new body). `prepare` reports
+  `is_unchanged=true` even though the grounding evidence shifted.
+- **Root cause**: parity with TASK 007's `question_hash` (keys on the retrieved
+  slug set, not content) — a deliberate idempotency-vs-cost trade-off.
+- **Affected**: `scripts/wiki_skills/wiki_verify_multi.py::_verify_hash`.
+- **Fix plan**: if a real "re-verify on source rewrite" need appears, fold each
+  examined source's `pages.file_hash` into `verify_hash`. Deferred — the operator
+  can `--force` a re-verify; the answer-body + cite-set anchors cover the common
+  cases. (vdd-multi L-5.)

@@ -110,5 +110,29 @@
 | R-6.6 (idempotency / re-run) | §2.1 Index Layer `check_query_state`/`record_query_state`; §4.1 SourceState (query reuse; Q-A6 hash-content) | UC-17 AC (unchanged re-query = no synthesis, no write; `--force` re-synthesises) |
 | R-6.7 (grounding / no-hit refusal) | §2.1 RAG Query Layer Operational invariants ("grounding enforced in Python"); CLI surface `--min-hits` + `CITATION_NOT_RETRIEVED`/`NO_CONTEXT` | UC-18 AC (no synthesis on empty retrieval); UC-21 AC (citation ∉ hit set refused at boundary, `project/slug` key) |
 
+### Verification Layer Requirements (TASK 008 — R-8 `wiki-verify-multi`)
+
+> Epic 7 RAG-layer verification half. Decision-17 `prepare`/`apply` split (no LLM
+> in Python). Verdict page = first-class compounding artifact (`type=verification`,
+> `verifies` backlink, §D8-durable via R-8.5e). **Schema v4→v5** (verdict type +
+> `verifies` ref + `verify` event NOT pre-provisioned). Off-by-default; FAIL =
+> record verdict + non-zero exit, never mutate the answer. Layout-agnostic source
+> access + verdict-surface role-split are a **binding** R-X1/R-X2-compat requirement.
+
+| Requirement | Architecture coverage | Test / AC reference |
+|---|---|---|
+| R-8.1 (`prepare` deterministic envelope) | §2.1 Verification Layer CLI surface (`prepare`) + `prepare(args)` fn; reads query page + cited sources via `get_page`/`pages.file_path` | UC-22 AC (envelope assembled; cited bodies read via `file_path`); UC-28 AC (works on non-Karpathy layout) |
+| R-8.2 (orchestrator-owned 4-critic audit, Decision-17) | §2.1 Verification Layer "Design pattern" + "Verdict contract (`wiki-verify`)"; four prose lenses (factual/logic/security/completeness) | grounding contract: every `findings[].source` ∈ examined set; H-6 untrusted-content prompt-armor |
+| R-8.3 (`apply` writes Class A verdict page) | §2.1 Verification Layer CLI surface (`apply`) + `apply(args)` fn (atomic-write, `_sanitize_markdown_text`, `--answer-hash` TOCTOU); §4.1 Page (verification page Class A) | UC-22 AC (`type: verification` + `verifies:` + `verdict:` written); `ANSWER_CHANGED` on hash mismatch |
+| R-8.4 (compounding — indexed + back-linked) | §2.1 Verification Layer Outputs + Operational invariants (self-index via direct `upsert_page`+`replace_refs`, **not** manifest/`main(argv)`); §4.1 PageEntityRef (`verifies` ref) | UC-25 AC (filed verdict page returned by `--types verification` search; `verifies` ref exists) |
+| R-8.5 (`_verifications/` discoverable **and type-mapped**) | §4.1 Page (verification page, layout role-split); §4.4 Migrations (v4→v5, the three-part code-side change); [layout.py](../../scripts/wiki_index/layout.py) `_verifications` in `HOST_ONLY_SUBDIRS` **+** [normalization.py](../../scripts/wiki_index/normalization.py) `TYPE_MAPPING["verification"]` + `_PATH_TYPE_FALLBACK[VERIFICATIONS_SUBDIR]` (without the mapping `normalize_frontmatter` raises `UnmappedTypeError` → page skipped, never indexed — "layout.py alone is insufficient", the TASK 007 C-1 lesson) | UC-26 AC (verdict page rediscovered + re-indexed `type=verification`) |
+| **R-8.5e** (reindex `verifies:`→`'verifies'` read-side — §D8 fix) | §4.1 PageEntityRef "Verifies ref" (union into Step-2 `out.refs`; `_frontmatter_refs(db_type)` generalising R-6.5e; Step-2.5 AM-3 preserves `ref_type`); §4.4 Migrations; §2.1 Verification Layer "§D8 durability" + the R-8.5e function note (prerequisite `normalization.py` mapping + the `reindex.py` read-side) | UC-26 is the binding §D8 gate (`verifies` ref reconstructed from frontmatter alone; **not** degraded to `mentioned`, not clobbered; `--full` **and** `--delta`) |
+| R-8.6 (idempotency / re-run) | §2.1 Index Layer `check_verify_state`/`record_verify_state`; §4.1 SourceState (`source_kind='verification'`; Q-008-b verify_hash = `sha256(answer_hash ‖ examined slugs)`) | UC-24 AC (unchanged re-verify = no critics, no write; `--force` re-verifies; changed answer/source re-triggers) |
+| R-8.7 (FAIL semantics — record + non-zero exit, no mutation) | §2.1 Verification Layer Exit-code contract (VERDICT_FAIL exit 6, distinct from errors) + Operational invariants ("answer never mutated"); `--fail-on` default `high` (Q-008-e) | UC-23 AC (FAIL → exit 6 + verdict filed; answer byte-identical; `--fail-on=none` → exit 0) |
+| R-8.8 (grounding / no-fabrication of findings) | §2.1 Verification Layer Operational invariants ("grounding enforced in Python"); `NO_SOURCES`/`FINDING_SOURCE_NOT_EXAMINED`/`INVALID_VERDICT` | UC-22 (empty `cites:`→`NO_SOURCES`); UC-27 AC (stray finding source / answer-change refused at boundary, `project/slug` key) |
+| R-8.9 (schema v4→v5) | §4.4 Migrations v4→v5 (`pages.type+='verification'`, `ref_type+='verifies'`, `event_type+='verify'`, `index_meta` view; `user_version` 4→5; reindex-rebuild migration, no ALTER); §4.1 Page/PageEntityRef | `tests/test_schema_v5.py` (new enums + `user_version=5`); UC-26 §D8 round-trip |
+| R-8.10 (off-by-default opt-in) | §2.1 Verification Layer Purpose + Design pattern ("`wiki-query` never invokes it"); `workflows/wiki-verify-multi.md` recipe | regression: `wiki-query apply` does not call `wiki-verify-multi`; `wiki-query` behaviour unchanged |
+| C-8/NFR-7 (layout-agnostic — binding R-X1/R-X2-compat) | §2.1 Verification Layer Stack position + Operational invariants ("layout-agnostic source access"); §4.1 Page (role-split); reads via `pages.file_path`, verdict surface only in `layout.py` | UC-28 AC (cited source resolved on non-Karpathy layout) + grep guard (no `PAGE_SUBDIRS` literal in `wiki_verify_multi.py`) |
+
 ---
 

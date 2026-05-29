@@ -168,11 +168,26 @@ the `wiki-query` retrieval/synthesis loop (R-6) — now shipped, so R-7 is
 unblocked. Needs a web-access design (overlaps `deep-research`); still
 **off-by-default** + a separate TASK.
 
-### R-8. `wiki-verify-multi` (R-21) — UNBLOCKED (gated on R-6, now shipped)
-4-critic ensemble (logic, security, performance, factual) for high-stakes query
-responses. Off by default. Pairs with the `/vdd-multi` infrastructure already in
-this repo. Layers on the `wiki-query` answer (R-6, shipped) → unblocked; still a
-separate, off-by-default TASK.
+### R-8. `wiki-verify-multi` (R-21) ✅ DONE 2026-05-29 (TASK 008)
+Off-by-default multi-critic verification of a filed `wiki-query` answer against
+its cited sources. Recast for prose (D-008-2): four critics — **factual-grounding,
+logic-coherence, security-injection, completeness-faithfulness** (the ROADMAP's
+"performance" lens dropped as a non-fit for prose). Decision-17 `prepare`/`apply`
+(no `import anthropic`; the four-critic audit lives in the orchestrator via the
+`wiki-verify` prompt skill, optionally fanned out via `Agent` Layer-A like
+`/vdd-multi`). Verdict filed as a **first-class compounding** `_verifications/verify-<slug>.md`
+page (`type=verification`, `verifies` backlink, §D8-durable via the R-8.5e reindex
+read-side that generalises R-6.5e). **FAIL = record verdict + non-zero exit (6) +
+NEVER mutate the Class-A answer** (D-008-3); the authoritative PASS/FAIL is the
+Python `--fail-on` rule (default `high`), not the LLM's self-report. **Layout-agnostic**
+by construction (reads the answer + cited sources via `pages.file_path`; grep-guarded
+— C-8/NFR-7), so R-X1/R-X2-forward. **First RAG-layer task requiring DDL — schema
+v4→v5** (`pages.type+='verification'`, `ref_type+='verifies'`, `event_type+='verify'`,
+`index_meta` parity; Class-B reindex migration). **Shipped**: TASK 008 (11 beads,
+Stub-First green-throughout; 4 VDD gates incl. `/vdd-adversarial` on the plan;
+one found-in-dev serious-deviation fixed — verdict↔query `pages` PK collision →
+`verify-<slug>` distinct slug). See archived spec/plan at [tasks/task-008-*.md](tasks/)
++ [plans/plan-008-*.md](plans/). Pairs with `/vdd-multi`.
 
 ---
 

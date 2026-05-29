@@ -1043,6 +1043,37 @@ class SQLiteRepository(IndexRepository):
                 (vault_id, query_slug, question_hash, now),
             )
 
+    def check_verify_state(self, vault_id: str, verification_slug: str) -> str | None:
+        """TASK 008 / R-8.6 — recorded `verify_hash` for a filed verdict, or
+        None. Defensive NULL guard mirrors `check_query_state` (L-V3.2)."""
+        row = self._connect().execute(
+            "SELECT value FROM source_state "
+            "WHERE vault_id = ? AND source_kind = 'verification' AND scope = ? "
+            "AND key = 'verify_hash'",
+            (vault_id, verification_slug),
+        ).fetchone()
+        if row is None or row["value"] is None:
+            return None
+        return str(row["value"])
+
+    def record_verify_state(
+        self, vault_id: str, verification_slug: str, verify_hash: str,
+    ) -> None:
+        """TASK 008 / R-8.6 — UPSERT the verify-idempotency row in `source_state`
+        (`source_kind='verification'`, `scope=verification_slug`,
+        `key='verify_hash'`)."""
+        conn = self._connect()
+        now = datetime.now(timezone.utc).isoformat()
+        with conn:
+            conn.execute(
+                "INSERT INTO source_state "
+                "(vault_id, source_kind, scope, key, value, updated_at) "
+                "VALUES (?, 'verification', ?, 'verify_hash', ?, ?) "
+                "ON CONFLICT(vault_id, source_kind, scope, key) DO UPDATE SET "
+                "value = excluded.value, updated_at = excluded.updated_at",
+                (vault_id, verification_slug, verify_hash, now),
+            )
+
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """R-5.6: in-DB (legacy) + cross-table alias collisions. The Class A
         frontmatter scan lives in the Lint Layer."""

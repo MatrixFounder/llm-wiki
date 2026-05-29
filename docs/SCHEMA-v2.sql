@@ -191,7 +191,8 @@ CREATE TABLE IF NOT EXISTS pages (
     slug              TEXT NOT NULL,
     project           TEXT NOT NULL DEFAULT '_vault_', -- '_vault_' sentinel for vault-wide
     type              TEXT NOT NULL CHECK (type IN (
-                          'summary', 'concept', 'query', 'brief', 'research', 'index'
+                          'summary', 'concept', 'query', 'brief', 'research', 'index',
+                          'verification'   -- TASK 008 / R-8.9 (schema v5): wiki-verify-multi verdict page
                       )),
     title             TEXT NOT NULL,
     file_path         TEXT NOT NULL,                   -- relative to vault_root
@@ -229,7 +230,8 @@ CREATE TABLE IF NOT EXISTS page_entity_refs (
     page_project      TEXT NOT NULL DEFAULT '_vault_',
     entity_slug       TEXT NOT NULL,
     ref_type          TEXT NOT NULL CHECK (ref_type IN (
-                          'mentioned', 'defined-here', 'related', 'cited'
+                          'mentioned', 'defined-here', 'related', 'cited',
+                          'verifies'   -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
                       )),
     -- Provenance v1.1
     line_start        INTEGER,
@@ -268,7 +270,8 @@ CREATE TABLE IF NOT EXISTS log_events (
                           'ingest', 'query', 'lint', 'reindex',
                           'promote', 'demote',
                           'backfill', 'reclassify',
-                          'resolve-contradiction', 'fix-dangling', 'fix-orphan'
+                          'resolve-contradiction', 'fix-dangling', 'fix-orphan',
+                          'verify'   -- TASK 008 / R-8.9 (schema v5): wiki-verify-multi audit event
                       )),
     subject           TEXT,                            -- source title / concept name / etc.
     project           TEXT,                            -- course this event happened in; '_vault_' for vault-wide
@@ -464,7 +467,7 @@ CREATE VIEW IF NOT EXISTS index_meta AS
     SELECT vault_id, slug, project, type AS kind,
            title, tldr, last_modified
       FROM pages
-     WHERE type IN ('summary', 'concept', 'query')
+     WHERE type IN ('summary', 'concept', 'query', 'verification')
   UNION ALL
     SELECT vault_id, slug, project, type AS kind,
            name AS title, definition AS tldr, last_updated AS last_modified
@@ -514,9 +517,11 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 
 -- Seeded on first init by wiki-init:
---   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '4.0', <ISO-8601>);
+--   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '5.0', <ISO-8601>);
 --   INSERT INTO schema_meta(key, value, updated_at) VALUES ('created_at',     <ISO-8601>, <ISO-8601>);
---   PRAGMA user_version = 4;   -- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5) + event_date GENERATED (L-2); migration = wiki-reindex --full
+--   PRAGMA user_version = 5;   -- v5 (TASK 008 / R-8.9): admit pages.type='verification', ref_type='verifies', event_type='verify' + index_meta parity (wiki-verify-multi).
+--                              -- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5) + event_date GENERATED (L-2).
+--                              -- Migration on a populated DB: delete .db/-wal/-shm → wiki-init --register-existing → wiki-reindex --full (bare reindex can't relax a CHECK).
 --
 -- 13.2 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

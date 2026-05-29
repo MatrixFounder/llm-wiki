@@ -17,7 +17,28 @@
 > only; R-7 (`wiki-research`) + R-8 (`wiki-verify-multi`) unblocked + deferred.
 > 10 beads (Stub-First, green-throughout; 3 VDD gates APPROVED + `/vdd-multi` ×2
 > + real-content dogfood — DF-Q1 keyword-OR retrieval fix); **599 pytest**, mypy
-> strict clean (60 files). Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
+> strict clean (60 files).
+>
+> **TASK 008 (R-8 `wiki-verify-multi`) — SHIPPED 2026-05-29** (11 beads, Stub-First
+> green-throughout; 4 VDD gates incl. `/vdd-adversarial` on the plan; **666 pytest**,
+> mypy strict clean (61 files); one found-in-dev serious-deviation fixed — the
+> verdict↔query `pages` PK collision, resolved via the `verify-<query-slug>` distinct
+> slug). Schema **v4→v5**. Nothing auto-committed): the RAG-layer
+> *verification* half — an **off-by-default** four-critic **prose** audit
+> (factual-grounding / logic-coherence / security-injection / completeness-
+> faithfulness) of a filed `wiki-query` answer against its cited sources → a
+> first-class `_verifications/<slug>.md` **verdict page** (`type=verification`,
+> `verifies` backlink, §D8-durable via the **R-8.5e** reindex read-side that
+> generalises R-6.5e). FAIL = record the verdict + **non-zero exit (6)**; the
+> Class-A answer is **never mutated** (D-008-3). **First RAG-layer task requiring
+> DDL — schema v4→v5** (verdict-page type + `verifies` ref + `verify` event are
+> NOT pre-provisioned; Class-B reindex migration, no in-place ALTER). Adds
+> `_verifications` as the **second `HOST_ONLY_SUBDIRS` member** (proving the
+> R-X1-forward role-split generalises) and is **layout-agnostic by construction**
+> (reads sources via `pages.file_path` + DAL, never a reconstructed subdir path —
+> a binding R-X1/R-X2-compat constraint, C-8/NFR-7). Decision-17 `prepare`/`apply`
+> (no `anthropic`). Spec + reviews: [tasks/](./tasks/) + [reviews/](./reviews/).
+> Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
 > v3→v4 hygiene changes. Living document — current architecture, not change

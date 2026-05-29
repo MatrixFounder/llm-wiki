@@ -1,7 +1,9 @@
-"""TASK 006-01 — schema v3→v4 (P-5 drop dead index, L-2 GENERATED event_date).
+"""TASK 006-01 — schema v3→v4 hygiene invariants (still hold under v5).
 
-Validates the runtime DDL (`sql/wiki-index-v2.sql`) directly:
-- PRAGMA user_version == 4
+Validates the runtime DDL (`sql/wiki-index-v2.sql`) directly. NOTE: the live
+`user_version` advanced to 5 in TASK 008 (R-8.9); the authoritative version pin
+lives in `test_schema_v5.py`. The v4-era invariants below persist unchanged:
+- PRAGMA user_version == 5 (was 4; bumped by TASK 008)
 - idx_pages_vault_tags dropped (P-5)
 - log_events.event_date is a STORED generated column == substr(event_ts,1,10) (L-2)
 - pages.type CHECK has no 'log' value (L-5 — already absent; guard)
@@ -24,7 +26,9 @@ def _fresh(tmp_path: Path) -> sqlite3.Connection:
 
 
 def test_user_version_is_4(tmp_path: Path) -> None:
-    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 4
+    # TASK 008 / R-8.9 bumped the live schema to v5; the v4-era hygiene
+    # invariants below (idx drop, generated event_date, no 'log' type) still hold.
+    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_idx_pages_vault_tags_dropped(tmp_path: Path) -> None:

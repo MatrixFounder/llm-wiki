@@ -18,9 +18,13 @@ from typing import Any, Literal
 # Type aliases — keep enums in one place, mirror SQLite CHECK constraints.
 # -----------------------------------------------------------------------------
 
-PageType = Literal["summary", "concept", "query", "brief", "research", "index"]
+PageType = Literal[
+    "summary", "concept", "query", "brief", "research", "index", "verification"
+]
 """`pages.type` enum (sql/wiki-index-v2.sql §4). Class B mirror of file frontmatter `type:`.
-Note: 'log' was removed from enum per architecture-review L-5."""
+Note: 'log' was removed from enum per architecture-review L-5.
+TASK 008 / R-8.9 (schema v5) added 'verification' (wiki-verify-multi verdict page) —
+kept in lockstep with the SQL CHECK so a `Page(type='verification')` type-checks."""
 
 TrustLevel = Literal["high", "medium", "low"]
 """Provenance trust level (R-15.3). manual=high, transcript/light=medium."""
@@ -183,8 +187,9 @@ class PageRef:
     page_project: str
     entity_slug: str
     ref_type: str
-    """One of 'mentioned', 'defined-here', 'related', 'cited'
-    (sql/wiki-index-v2.sql §5 CHECK enum)."""
+    """One of 'mentioned', 'defined-here', 'related', 'cited', 'verifies'
+    (sql/wiki-index-v2.sql §5 CHECK enum; 'verifies' added TASK 008 / R-8.9 —
+    the verdict-page → audited-query-page edge)."""
 
     trust_level: TrustLevel = "medium"
     line_start: int | None = None
@@ -212,7 +217,8 @@ class LogEvent:
     event_type: str
     """One of 'ingest', 'query', 'lint', 'reindex', 'promote', 'demote',
     'backfill', 'reclassify', 'resolve-contradiction', 'fix-dangling',
-    'fix-orphan' (sql/wiki-index-v2.sql §6 CHECK enum)."""
+    'fix-orphan', 'verify' (sql/wiki-index-v2.sql §6 CHECK enum; 'verify'
+    added TASK 008 / R-8.9 — the wiki-verify-multi audit event)."""
 
     pages_created_json: list[str]
     """List of page slugs that this event created. JSON-serialized on disk."""

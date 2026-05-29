@@ -60,6 +60,12 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
   retrieval → orchestrator-owned cited synthesis → a first-class compounding
   `_queries/<slug>.md` page that is indexed, FTS-searchable, `cited`-back-linked,
   and §D8-durable).
+  The **Epic 7 RAG verification layer** (TASK 008): `wiki-verify-multi`
+  (off-by-default 4-critic prose audit of a filed answer against its cited
+  sources — `prepare`/`apply`, Decision-17 — filing a first-class compounding
+  `_verifications/verify-<slug>.md` verdict page; FAIL = record verdict +
+  non-zero exit, **never mutating the answer**; layout-agnostic via
+  `pages.file_path`; schema v4→v5).
   Plus a neutral sub-layer module `_manifest_consumer.py` shared by
   `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
 - **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —

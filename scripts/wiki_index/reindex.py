@@ -88,34 +88,18 @@ def discover_pages(vault_root: Path) -> list[tuple[Path, str, str]]:
     return out
 
 
-def _cited_refs_from_frontmatter(
+def _cited_refs(
     updated_fm: dict[str, Any], vault_id: str, page_slug: str,
-    page_project: str, cite_skipped: list[dict[str, Any]],
+    page_project: str, skipped: list[dict[str, Any]],
 ) -> list[PageRef]:
-    """TASK 007 / R-6.5e — the §D8 durability read-side for query pages.
-
-    Parse a ``type=query`` page's ``cites:`` frontmatter list into
-    ``ref_type='cited'`` ``PageRef``s so a query page's citation backlinks
-    survive a full DB rebuild from Class A markdown alone (the body-only
-    ``extract_wiki_links`` path can only produce ``'mentioned'`` refs).
-
-    Each ``cites:`` entry is a ``"<project>/<slug>"`` string; only the **slug**
-    is persisted as ``entity_slug`` — the cited target's project is parsed for
-    shape-validation only, not stored (mirroring how body-wikilink ``mentioned``
-    refs and ``wiki-query apply`` store refs, so the reindex-rebuilt row and the
-    apply-written row are byte-identical). ``line_start``/``line_end``/
-    ``source_quote`` are ``None`` (a frontmatter cite has no body line);
-    ``trust_level='medium'`` (rides an LLM-synthesised answer).
-
-    The caller **unions the returned refs into the page's single
-    ``replace_refs`` ref-set** (NOT a second ``replace_refs`` — that is
-    delete-all-then-insert and would clobber the body ``mentioned`` refs). The
-    composite PK ``(vault_id, page_slug, page_project, entity_slug, ref_type)``
-    keeps a ``cited`` and a ``mentioned`` ref to the same target distinct.
-
-    Malformed / empty entries are recorded in ``cite_skipped``
-    (report-and-skip — never silent-drop, never raise; the ``reason`` never
-    echoes the offending value, CWE-117/209). De-dups on ``entity_slug``.
+    """Parse a ``cites:`` frontmatter list into ``ref_type='cited'`` ``PageRef``s
+    (TASK 007 / R-6.5e). Each entry is a ``"<project>/<slug>"`` string; only the
+    **slug** is persisted as ``entity_slug`` (the project is parsed for shape
+    validation only, so the reindex-rebuilt row and the apply-written row are
+    byte-identical). ``line_start``/``line_end``/``source_quote`` are ``None``;
+    ``trust_level='medium'``. Malformed/empty entries are recorded in ``skipped``
+    (report-and-skip — never silent-drop, never raise; ``reason`` never echoes
+    the offending value, CWE-117/209). De-dups on ``entity_slug``.
     """
     raw = updated_fm.get("cites")
     if not isinstance(raw, list):
@@ -124,7 +108,7 @@ def _cited_refs_from_frontmatter(
     refs: list[PageRef] = []
     for entry in raw:
         if not isinstance(entry, str) or "/" not in entry:
-            cite_skipped.append({
+            skipped.append({
                 "page_slug": page_slug,
                 "reason": "malformed cites entry (expected 'project/slug' string)",
             })
@@ -132,7 +116,7 @@ def _cited_refs_from_frontmatter(
         proj, _, cslug = entry.rpartition("/")
         cslug = cslug.strip()
         if not proj.strip() or not cslug:
-            cite_skipped.append({
+            skipped.append({
                 "page_slug": page_slug,
                 "reason": "malformed cites entry (empty project or slug)",
             })
@@ -144,6 +128,68 @@ def _cited_refs_from_frontmatter(
             vault_id=vault_id, page_slug=page_slug, page_project=page_project,
             entity_slug=cslug, ref_type="cited", trust_level="medium",
         ))
+    return refs
+
+
+def _verifies_ref(
+    updated_fm: dict[str, Any], vault_id: str, page_slug: str,
+    page_project: str, skipped: list[dict[str, Any]],
+) -> list[PageRef]:
+    """Parse a ``type=verification`` page's ``verifies:`` frontmatter — a single
+    ``"<project>/<slug>"`` string naming the audited query page — into one
+    ``ref_type='verifies'`` ``PageRef`` (TASK 008 / R-8.5e, the verdict→query
+    edge). Only the slug is persisted as ``entity_slug`` (project parsed for
+    shape-validation only, byte-identical to the ``wiki-verify-multi apply``-
+    written row); ``trust_level='medium'``, line/quote ``None``. A
+    missing/blank/malformed ``verifies:`` is recorded in ``skipped`` (a verdict
+    page should always carry one — ``apply`` writes it; report-and-skip, never
+    raise; ``reason`` never echoes the value) and ``[]`` is returned.
+    """
+    raw = updated_fm.get("verifies")
+    if isinstance(raw, str) and "/" in raw:
+        proj, _, vslug = raw.rpartition("/")
+        vslug = vslug.strip()
+        if proj.strip() and vslug:
+            return [PageRef(
+                vault_id=vault_id, page_slug=page_slug, page_project=page_project,
+                entity_slug=vslug, ref_type="verifies", trust_level="medium",
+            )]
+    skipped.append({
+        "page_slug": page_slug,
+        "reason": "missing or malformed verifies entry (expected 'project/slug' string)",
+    })
+    return []
+
+
+def _frontmatter_refs(
+    db_type: str, updated_fm: dict[str, Any], vault_id: str, page_slug: str,
+    page_project: str, skipped: list[dict[str, Any]],
+) -> list[PageRef]:
+    """§D8 durability read-side dispatcher (TASK 007 R-6.5e + TASK 008 R-8.5e).
+
+    Re-materialise the frontmatter-declared refs a host-only *compounding* page
+    carries, so they survive a full DB rebuild from Class A markdown alone (the
+    body-only ``extract_wiki_links`` path can produce only ``'mentioned'`` refs):
+
+    * ``query``        → ``cites:`` list  → ``ref_type='cited'``
+    * ``verification`` → ``verifies:`` str → ``ref_type='verifies'`` **plus** any
+      ``cites:`` → ``ref_type='cited'`` (a verdict page may cite the sources a
+      finding referenced — Q-008-f)
+    * any other type   → ``[]`` (no-op — body ``mentioned`` refs are its only refs)
+
+    The caller **unions the returned refs into the page's single
+    ``replace_refs`` ref-set** (NOT a second ``replace_refs`` — that is
+    delete-all-then-insert and would clobber the body ``mentioned`` refs, M-1).
+    The composite PK ``(vault_id, page_slug, page_project, entity_slug,
+    ref_type)`` keeps ``verifies`` / ``cited`` / ``mentioned`` refs to the same
+    target distinct. Step 2.5 (AM-3) then canonicalizes every ref's
+    ``entity_slug`` through the alias map, ``ref_type`` preserved.
+    """
+    refs: list[PageRef] = []
+    if db_type in ("query", "verification"):
+        refs.extend(_cited_refs(updated_fm, vault_id, page_slug, page_project, skipped))
+    if db_type == "verification":
+        refs.extend(_verifies_ref(updated_fm, vault_id, page_slug, page_project, skipped))
     return refs
 
 
@@ -234,11 +280,10 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # `cited` refs (full/delta symmetry; matches reindex_full +
                 # _index_query_page). Cite-parse warnings fold into `skipped`.
                 delta_refs = list(out.refs)
-                if db_type == "query":
-                    delta_refs.extend(_cited_refs_from_frontmatter(
-                        updated_fm, vault_id, out.page_slug, out.project,
-                        skipped,
-                    ))
+                delta_refs.extend(_frontmatter_refs(
+                    db_type, updated_fm, vault_id, out.page_slug, out.project,
+                    skipped,
+                ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   delta_refs)
                 touched += 1
@@ -340,18 +385,18 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
                 repo.upsert_page(page)
-                # R-6.5e: for a query page, union the `cites:` frontmatter
-                # `cited` refs into the SINGLE replace_refs call alongside the
-                # body-wikilink `mentioned` refs (replace_refs is
-                # delete-all-then-insert — a second call would clobber the body
-                # refs). Step 2.5 (AM-3) below canonicalizes all refs' targets
-                # through the alias map, ref_type preserved.
+                # R-6.5e + R-8.5e: for a host-only compounding page (query /
+                # verification), union the frontmatter-declared refs (`cites:`→
+                # 'cited'; `verifies:`→'verifies') into the SINGLE replace_refs
+                # call alongside the body-wikilink `mentioned` refs (replace_refs
+                # is delete-all-then-insert — a second call would clobber the
+                # body refs, M-1). Step 2.5 (AM-3) below canonicalizes all refs'
+                # targets through the alias map, ref_type preserved.
                 all_refs = list(out.refs)
-                if db_type == "query":
-                    all_refs.extend(_cited_refs_from_frontmatter(
-                        updated_fm, vault_id, out.page_slug, out.project,
-                        cite_skipped,
-                    ))
+                all_refs.extend(_frontmatter_refs(
+                    db_type, updated_fm, vault_id, out.page_slug, out.project,
+                    cite_skipped,
+                ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   all_refs)
                 pages_count += 1

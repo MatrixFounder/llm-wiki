@@ -397,6 +397,29 @@ class IndexRepository(abc.ABC):
         ...
 
     @abc.abstractmethod
+    def check_verify_state(self, vault_id: str, verification_slug: str) -> str | None:
+        """TASK 008 / R-8.6 — return the recorded ``verify_hash`` for a filed
+        verdict, or ``None`` if absent. Reads ``source_state`` with
+        ``source_kind='verification'``, ``scope=verification_slug``,
+        ``key='verify_hash'``. Backs ``wiki-verify-multi prepare``'s
+        ``is_unchanged`` short-circuit. Defensive NULL guard: a corrupt
+        ``value IS NULL`` row → ``None`` (re-verify). Sibling of
+        ``check_query_state``."""
+        ...
+
+    @abc.abstractmethod
+    def record_verify_state(
+        self, vault_id: str, verification_slug: str, verify_hash: str,
+    ) -> None:
+        """TASK 008 / R-8.6 — UPSERT the verify-idempotency row in
+        ``source_state`` (``source_kind='verification'``,
+        ``scope=verification_slug``, ``key='verify_hash'``). Called by
+        ``wiki-verify-multi apply`` after a successful Class A write +
+        self-index. No raw SQL in the skill (NFR-2). Sibling of
+        ``record_query_state``."""
+        ...
+
+    @abc.abstractmethod
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """All alias collisions (R-5.6), each tagged by ``AliasCollision.kind``:
         ``in_table`` (legacy/pre-migration), ``cross_slug``/``cross_name`` (alias

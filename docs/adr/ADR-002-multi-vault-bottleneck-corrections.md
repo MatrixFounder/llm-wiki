@@ -217,6 +217,38 @@ Single-user personal scale (5-10 vaults × 1K concepts текущие 12-18 ме
 >   rebuild path is mandatory (reinforces the no-ALTER rule). (L-5 — the dead
 >   `pages.type='log'` enum value — was already absent from the current schema;
 >   no change needed, ledger entry closed.)
+>
+> **Amendment (TASK 008, schema v4→v5 — 2026-05-29).** Epic 7 R-8
+> (`wiki-verify-multi`) adds a first-class `_verifications/<slug>.md` **verdict
+> page** — the first RAG-layer task that requires DDL (R-6's `query`/`cited`/
+> `query`-event were pre-provisioned; the verdict-page type/ref/event are not).
+> Four **CHECK-enum / view** edits, **same Class-B rebuild contract** (no in-place
+> `ALTER`; bump `PRAGMA user_version` 4→5):
+> - `pages.type` CHECK `+= 'verification'`; `page_entity_refs.ref_type` CHECK
+>   `+= 'verifies'` (the verdict→query edge); `log_events.event_type` CHECK
+>   `+= 'verify'`; `index_meta` view WHERE `+= 'verification'` (catalog parity).
+> - **This is the first amendment that relaxes a CHECK enum** (vs the v2→v3 PK
+>   change and v3→v4 generated-column/index changes). SQLite **cannot
+>   `ALTER`-relax a CHECK constraint** on a populated table.
+> - **Precise migration procedure for an EXISTING populated v4 DB** (corrected per
+>   the TASK 008 adversarial-plan review, DUR-2 — the prior amendments' bare
+>   "migrate via `wiki-reindex --full`" wording was imprecise): the schema DDL is
+>   `CREATE TABLE IF NOT EXISTS`, and `wiki-reindex --full` only `DELETE`s+re-`INSERT`s
+>   *rows* — **neither recreates the table**, so on a live DB the old v4 CHECK
+>   persists and a `verification` insert raises `IntegrityError`. The migration is
+>   therefore **delete the `.db`/`-wal`/`-shm` files first** (so the next
+>   `make_repo`/`apply_schema_if_missing` applies the fresh v5 DDL), **then
+>   `wiki-init --register-existing`** (the `vaults` row was wiped with the DB)
+>   **+ `wiki-reindex --full`** (repopulate from Class A). This is legitimate
+>   because the DB is **Class B rebuildable** — there is **no in-place auto-reseed**
+>   keyed on `user_version` in the codebase. The verdict page's `pages` row + its
+>   `verifies` (+ optional `cited`) refs reconstruct from the
+>   `_verifications/<slug>.md` Class-A frontmatter via the R-8.5e reindex read-side
+>   (the `verifies:`→`'verifies'` analog of R-6.5e's `cites:`→`'cited'`).
+>   `source_state` (`source_kind='verification'`) verify-idempotency is Class C
+>   (no DDL). *(The same delete-then-rebuild procedure applies to the v2→v3 and
+>   v3→v4 amendments above, whose "wiki-reindex --full" shorthand carried the same
+>   imprecision; recorded here for accuracy.)*
 
 Все данные классифицируются по трём классам с чётким правилом расположения:
 
