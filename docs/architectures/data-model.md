@@ -34,9 +34,13 @@
   - `is_candidate` (INTEGER 0/1) — two-tier (cybos pattern).
 - **Relationships**: 1:N с `entity_aliases`; M:N с `pages` через `page_entity_refs`.
 - **Business Rules**:
-  - `is_candidate=true` для LLM-extracted без exact match (Epic 7).
-  - В Phase 3a entity-resolver — stub. Entities создаются только вручную или migration tools.
-  - **Entity write-path:** `entities`, `entity_aliases`, and `page_entity_refs` tables are read+write. The canonical write path is `repo.upsert_entity(...)`. Data layering per ADR-002 §D8: concept page files (`_concepts/<slug>.md`) are **Class A canonical** (semantic truth; Obsidian-rendered; git-versioned; survive DB drop + reindex). Entity rows in the `entities` table are **Class B cache** (rebuildable from concept-page frontmatter via `wiki-reindex --full`; vault wins on conflict). Entity rows written by extraction carry `is_candidate=1`; promotion to `is_candidate=0` (confirmed) is R-4 scope (deferred). The SQL-level downgrade guard (`MIN(excluded.is_candidate, entities.is_candidate)`) ensures re-extraction cannot demote a previously confirmed entity.
+  - `is_candidate=1` — LLM-extracted candidate; `is_candidate=0` — confirmed (operator-approved or auto-promoted). Two-tier cybos resolution (R-4, **active since TASK 005**).
+  - **is_candidate is Class A** (ADR-002 §D8): persisted in concept-page frontmatter (`is_candidate: true|false`, already emitted by `write_concept_page`). `wiki-reindex --full` now **reads** the flag from frontmatter (R-4.1); an absent key ⇒ confirmed (`0`) for back-compat with pre-TASK-005 vaults. The DB column is the Class B mirror. This closes the durability gap where a full reindex previously reset every candidate to confirmed (reindex registered entities with `INSERT OR IGNORE` omitting the column → schema default 0).
+  - **Confirm path (R-4.2/4.3):** `wiki-confirm <slug>` flips Class A frontmatter + DB to confirmed; `--undo` reverses. Both use an **explicit DB setter** that **bypasses** the `MIN()` downgrade-guard — operator intent is authoritative. The guard still protects the *re-extraction* path (`upsert_entity`), so a re-run of `wiki-extract-concepts` can never silently demote a confirmed entity.
+  - **Auto-promote (R-4.4):** `wiki-confirm --auto [--threshold N]` recomputes `mentions_count` (single set-based `UPDATE` over `page_entity_refs`, identical to reindex Step 3) then promotes every candidate with `mentions_count ≥ N` (default 3, configurable). `--dry-run` reports without writing.
+  - **Read path (R-4.5):** `resolve_entity(vault_id, slug)` is **implemented** (retires the Epic-7 `NotImplementedError` stub): resolves a slug *or an alias surface string* → its canonical `Entity` (confirmed or candidate); `None` on no match. The same alias-resolution makes `find_orphan_links` **alias-aware** (R-4.5d): a ref whose target is a registered alias is **not** an orphan.
+  - **Merge path (R-4.7):** `wiki-merge <from> <into>` folds an LLM-spawned duplicate into its canonical entity. **Class A first** (C-8): append `from`'s slug + name + aliases to `into`'s frontmatter `aliases:` (`alias_type=former_name`) and **delete the `from` concept page** (so a full reindex cannot re-materialise it — the merge needs **no merge-ledger table**, it is fully expressed in Class A). **Then** the Class B mirror in one `merge_entities(...)` transaction: re-point `page_entity_refs.entity_slug from→into` (dedup on the composite PK, keep higher `trust_level`); re-point `entity_aliases` (skip+report on hard-PK collision); register the redirect aliases; delete the `from` row; recompute `into.mentions_count`. **The alias table is the durable redirect** — stale `[[from-slug]]` references in source bodies re-materialise on reindex but resolve through the alias (R-4.5b/d), never orphaned. No `[[...]]` wikilink rewriting (C-7). `--dry-run` reports without writing.
+  - **Entity write-path:** `entities`, `entity_aliases`, `page_entity_refs` are read+write. Canonical write path is `repo.upsert_entity(...)`. Per ADR-002 §D8: concept page files (`_concepts/<slug>.md`) are **Class A canonical** (semantic truth; Obsidian-rendered; git-versioned; survive DB drop + reindex). Entity rows are **Class B cache** (rebuildable from concept-page frontmatter via `wiki-reindex --full`; vault wins on conflict).
 
 #### Entity: **PageEntityRef**
 - **Description**: М:М связь page ↔ entity (concept упомянут на странице) с provenance v1.1.
@@ -50,6 +54,8 @@
   - `wiki-source-manual` ставит `trust_level='high'` (user-curated).
   - `wiki-source-transcript` / `wiki-source-light` — `'medium'` (LLM-generated).
   - `replace_refs(...)` атомарно delete + insert (для re-ingest без drift'а).
+  - **Merge re-pointing (R-4.7):** `merge_entities` rewrites `entity_slug from→into`. There is **no FK on `entity_slug`** (schema note: refs may target unresolved wiki-link slugs), so the re-point is free; the only conflict is the composite PK `(vault_id, page_slug, page_project, entity_slug, ref_type)` when the page already refs `into` with the same `ref_type` — dedup keeps the higher `trust_level`. Covered by the existing `idx_refs_entity (vault_id, entity_slug)` index (no new index needed).
+  - **Canonical-slug invariant (AM-3):** a `page_entity_refs` row names the **canonical** entity whenever its raw `[[surface]]` target is a known alias. `reindex_full` enforces this by resolving each ref target through the alias table at build time (phase order entities → aliases → refs → recompute_mentions), so `recompute_mentions`/`get_backlinks` (`WHERE entity_slug = entities.slug`) stay correct after a full rebuild — the merge §D8 round-trip (UC-15) depends on this. Between reindexes the immediate `merge_entities` UPDATE holds the same invariant; `find_orphan_links` query-time alias resolution (R-4.5d) covers partially-indexed gaps.
 
 #### Entity: **VaultMetadata** (NEW в v2 — R-25)
 - **Description**: Key-value таблица для vault identity и schema versioning. Keys: `vault_hash`, `vault_root_path`, `schema_version`, `created_at`, `language`, `layout`.
@@ -76,8 +82,18 @@
 #### Entity: **SourceState**
 - **Description**: Per-source dedup state. Future Epic 6 (email messageIds, telegram msg_ids).
 
-#### Entity: **EntityAlias**
-- **Description**: Alias-имена для дедупликации. Future Epic 7.
+#### Entity: **EntityAlias** (active since TASK 005 — R-5)
+- **Description**: Two-tier alias surface-strings resolving many display names to one canonical entity ("Hermes" / "Hermes Agent" / "Hermes Framework" → `hermes-agent`). Powers search expansion (R-5.5) and dedup.
+- **Key Attributes**:
+  - `alias` (TEXT) — surface string.
+  - `entity_slug` (TEXT, FK → `entities`) — canonical target.
+  - `alias_type` (TEXT CHECK: `spelling_variant` | `translation` | `nickname` | `acronym` | `former_name` | `product_codename`).
+- **Relationships**: N:1 → `entities` (FK `ON UPDATE CASCADE ON DELETE CASCADE`).
+- **Business Rules**:
+  - **PK = `(vault_id, alias)`** (R-5.4 — was `(vault_id, alias, entity_slug)`; closes KNOWN_ISSUES **L-4**). One alias resolves to **exactly one** entity in a vault; `entity_slug` is now a regular column. Hard-enforced at write time.
+  - **Class A canonical:** entity-page frontmatter `aliases:` (flat Obsidian-native list). **Class B mirror:** `entity_aliases` table, rebuilt by `wiki-reindex --full` (R-5.3). This closes the schema's previously-documented-but-unimplemented Class A→B path (reindex never read `aliases:` before TASK 005).
+  - `wiki-alias <slug> --add/--remove/--list` (R-5.1/5.2) is the write path: mutates frontmatter + mirrors to DB. `alias_type` defaults to `spelling_variant` on the reindex mirror (the flat list carries no type — documented round-trip limitation; a richer `--type` is Class B only and normalises on full reindex).
+  - **Collision policy (R-5.6):** the hard PK blocks same-alias→two-slugs *inside the DB*. The canonical conflict can therefore only survive at the **Class A frontmatter** layer (two pages claiming the same alias); reindex **reports + skips** the loser (never silent `INSERT OR IGNORE`), and `wiki-lint` scans the DB (legacy/pre-migration rows) **and** frontmatter, plus the cross-table case (an alias string equal to a *different* entity's `slug`/`name`).
 
 ### 4.2. Logical Data Model
 
@@ -90,6 +106,9 @@
 - `idx_pages_frontmatter` — JSON-extract на `tags` для tag-based queries.
 - `idx_refs_entity` — для backlinks queries (concept-pages).
 - `idx_refs_page` — для лint orphan checks.
+- **entity_aliases PK `(vault_id, alias)`** (TASK 005) — alias→entity lookup (R-5.5 expansion entry point). The pre-existing `idx_aliases_lookup ON entity_aliases(vault_id, alias)` becomes a **redundant duplicate of the PK index** under the v2→v3 PK change → **drop it** (dead-weight hygiene, cf. P-5).
+- **`idx_aliases_entity (vault_id, entity_slug)`** — **NEW (TASK 005, R-5)**: reverse lookup for `list_aliases` (R-5.2) + sibling-alias gathering during search expansion (R-5.5) + alias re-pointing during merge (R-4.7). The old composite PK put `entity_slug` as the 3rd column (not a usable index prefix), so these paths would otherwise table-scan.
+- **Merge (R-4.7) needs no new index or DDL** — it is pure DML (UPDATE/DELETE) over existing tables; re-pointing uses `idx_refs_entity` + `idx_aliases_entity`, both already present after the v3 revision.
 
 ### 4.3. Data Model Diagram
 
@@ -131,8 +150,8 @@ erDiagram
     }
     
     entity_aliases {
-        TEXT alias PK
-        TEXT entity_slug PK,FK
+        TEXT alias PK "L-4: PK is (vault_id, alias) only"
+        TEXT entity_slug FK
         TEXT alias_type
     }
     
@@ -176,6 +195,7 @@ erDiagram
 **Backward compatibility**:
 - Markdown — single source of truth → DB можно дропнуть и пересобрать в любой момент. Migration в worst case = `wiki-reindex --full`.
 - v1 → v2 migration описан в [MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md).
+- **v2 → v3 (TASK 005):** `entity_aliases` PK `(vault_id, alias, entity_slug)` → `(vault_id, alias)` (closes L-4). Because the DB is a Class B rebuildable cache, this is **not** an in-place `ALTER` — bump `PRAGMA user_version 2→3` (+ `schema_meta`) in the DDL and rebuild via `wiki-reindex --full`. Operators on an existing DB run one full reindex; aliases reconstruct from Class A frontmatter under the new PK, with any collisions surfaced per R-5.6. `apply_schema` (`CREATE TABLE IF NOT EXISTS`) cannot mutate an existing table's PK, so the rebuild path is mandatory — documented in the migration note + ADR-002 amendment (or ADR-003 stub). The same DDL revision **drops** the now-redundant `idx_aliases_lookup` and **adds** `idx_aliases_entity (vault_id, entity_slug)` (see §4.2).
 
 ---
 

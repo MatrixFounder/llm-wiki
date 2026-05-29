@@ -4,9 +4,11 @@
 > [docs/architectures/](./architectures/). Edit the relevant chunk and
 > keep the one-line summary on this page in sync.
 
-> **Status**: shipped, no active task. ADRs 001 + 002 in effect.
-> Living document — describes the current architecture, not the change
-> history. For shipped task specs (history, decisions, hardening
+> **Status**: **TASK 005 active** — Epic 7 completion (R-4 confirmed/candidate
+> entity resolution incl. `wiki-merge` duplicate-fold + R-5 two-tier alias
+> table). ADRs 001 + 002 in effect; ADR-002 §D8 amended for the
+> `entity_aliases` PK change (schema v2→v3, closes L-4). Living document —
+> describes the current/target architecture, not the change history. For shipped task specs (history, decisions, hardening
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
@@ -59,7 +61,7 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 
 ## 2. Functional Architecture
 
-Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, exit-code envelope contract, operational invariants, and RTM cross-reference.
+Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
 
@@ -75,7 +77,7 @@ Architectural style (layered + plugin), system-component breakdown (Skill Layer 
 
 ## 4. Data Model (Conceptual)
 
-Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path transition + downgrade-guard semantics.
+Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), and the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table).
 
 → [details](./architectures/data-model.md)
 
@@ -83,7 +85,7 @@ Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceStat
 
 ## 5. Interfaces
 
-External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`), and integrations (wiki-ingest manifest contract v1.1).
+External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes), and integrations (wiki-ingest manifest contract v1.1).
 
 → [details](./architectures/interfaces.md)
 
@@ -161,12 +163,19 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 - **Q-A3: Schema migration framework выбор**.
   - **Default assumption**: rolling files в `scripts/migrations/v{N}_to_v{N+1}.py` без external lib (Alembic-style — overkill).
   - **Resolution**: confirmed для MVP. Re-evaluate если migration count > 5.
+  - **TASK 005 note**: the v2→v3 `entity_aliases` PK change needs **no migration script** — the DB is a Class B rebuildable cache, so `wiki-reindex --full` is the migration. Bump `PRAGMA user_version` + `schema_meta` only.
+
+- **Q-A4 (TASK 005): alias-expansion breadth cap.** What maximum number of OR-terms per query before truncation (FTS-blow-up perf guard)?
+  - **Default assumption**: cap at the matched entity's own alias set + canonical name; **no transitive expansion**. Non-blocking — tune in Dev on real-vault feedback.
+
+- **Q-A5 (TASK 005): auto-promote log-event granularity.** Should `wiki-confirm --auto` emit one `entity-confirmed` log event per promoted slug, or a single batch event?
+  - **Default assumption**: one event per promotion (backlink traceability). Resolve in Planning. Non-blocking.
 
 ---
 
 ## Verification Map
 
-Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), and wiki-ingest Vendoring (R-45..R-57).
+Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), wiki-ingest Vendoring (R-45..R-57), and Entity Resolver (R-4 + R-5, TASK 005).
 
 → [details](./architectures/verification-map.md)
 
@@ -178,7 +187,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Traceability**: Verification Map covers Phase 3a (R-01..R-26), Concept Extractor (R-30..R-43), and wiki-ingest Vendoring (R-45..R-57).
 - [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; path-traversal + SQL-injection protections explicit (§7.3). `validate_inside_vault` applied to every `_concepts/` write path AND every operator-supplied path (source-page, candidates-file).
 - [x] **Multi-vault**: every operation carries a `vault_id` predicate or is scoped to `vault_root`. Vendored `ingest()` accepts `vault_id` as explicit kwarg; no hash-fallback.
-- [x] **Stub-First**: `resolve_entity` remains a deferred read-path stub (R-4 scope); all other extractor functions are fully implemented.
+- [x] **Stub-First**: TASK 005 Entity Resolver is designed Stub-First (DAL signatures + RED tests before logic); `resolve_entity` is promoted from deferred stub → implemented (R-4.5).
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

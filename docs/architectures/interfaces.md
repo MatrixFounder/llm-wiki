@@ -33,6 +33,8 @@
 
 **Skill ↔ DAL**: через Python imports. `make_repo(config)` factory.
 
+**Entity Resolver CLIs (TASK 005):** `wiki-confirm` / `wiki-alias` / `wiki-merge` follow the same success (`{status|action, slug, …}`) and error (`{error, field?, reason}`) envelopes. `wiki-confirm`/`wiki-alias` error codes: `ENTITY_NOT_FOUND` (exit 3), `ENTITY_FILE_MISSING` (exit 4), `ALIAS_COLLISION` (exit 5). `wiki-merge` owns an **independent** code space (no cross-binary collision): `ENTITY_NOT_FOUND` (3), `ENTITY_FILE_MISSING` (4), `INVALID_MERGE` self-merge (5), `MERGE_MIRROR_FAILED` Class-A-mutated-DB-failed (6) — all illustrative, finalised in Planning against the `wiki-extract-concepts` code space. New `IndexRepository` methods: `set_entity_candidate`, `list_candidates`, `recompute_mentions`, `auto_promote_candidates`, `add_alias` / `remove_alias` / `list_aliases`, `expand_query_aliases`, `find_alias_collisions`, `merge_entities`, plus `resolve_entity` (now implemented) and `find_orphan_links` (now alias-aware, R-4.5d). Full signatures in [functional-architecture.md](./functional-architecture.md) §2.1 (Index Layer + Entity Resolver).
+
 **DAL ↔ SQLite**: через stdlib `sqlite3` module. Все queries — parameterized statements. Никакого f-string concatenation.
 
 **Adapter ↔ External Skill (transcript)**: Subprocess. Capture stdout, проверить exit code, расковырять JSON envelope.

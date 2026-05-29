@@ -71,5 +71,26 @@
 | R-56 (`wiki-enrich` interface contracts preserved, no surface breakage) | §1.5.2 (both paths emit identical envelope shape); §2.1 Source Adapters (`--source required=True` note) |
 | R-57 (standalone `wiki-ingest` CLI behavior unchanged) | §1.5.3 dual-existence note (vendored copy usable as CLI via `python -m`); §1.5.7 Public API (CLI surface preserved) |
 
+### Entity Resolver Requirements (TASK 005 — R-4 + R-5)
+
+> Epic 7 completion. Closes KNOWN_ISSUES **L-4**; unblocks ROADMAP **R-X5**.
+> Persistence is Class A frontmatter + Class B mirror throughout (ADR-002 §D8).
+
+| Requirement | Architecture coverage | Test / AC reference |
+|---|---|---|
+| R-4.1 (is_candidate Class A round-trip) | §4.1 Entity Business Rules (Class A frontmatter; reindex reads flag); §2.1 Entity Resolver "Class A/B durability" | UC-14 AC (delete DB → reindex → candidate stays candidate) |
+| R-4.2 (`wiki-confirm <slug>`) | §2.1 Entity Resolver CLI surface; §2.1 Index Layer `set_entity_candidate` | UC-09 AC (frontmatter + DB flip; idempotent) |
+| R-4.3 (`--undo` demotion) | §2.1 Entity Resolver CLI surface; `set_entity_candidate` bypasses `MIN()` | UC-09 A4 |
+| R-4.4 (`--auto [--threshold N]`, N=3) | §2.1 Index Layer `recompute_mentions` + `auto_promote_candidates`; §4.1 Entity Business Rules (auto-promote) | UC-10 AC (fresh mentions; `--dry-run` no-write; `≥` boundary) |
+| R-4.5 (`resolve_entity` implemented, incl. alias-aware `find_orphan_links` R-4.5d) | §2.1 Index Layer `resolve_entity` (slug or alias → Entity) + `find_orphan_links` (alias-aware) | UC-12 (alias resolution feeds search); UC-15 AC (merged-away slug not orphaned) |
+| R-4.6 (extract-concepts keeps Class A flag) | §2.1 Concept Extractor (writes `is_candidate: true`); §4.1 Entity | regression: applied candidate survives `reindex --full` as candidate |
+| R-4.7 (`wiki-merge <from> <into>` duplicate fold) | §2.1 Entity Resolver CLI surface + `merge_entities` (pure-DML, no DDL) + durability "Reindex ref-canonicalization (AM-3)"; §4.1 Entity "Merge path" + PageEntityRef "Merge re-pointing" + "Canonical-slug invariant (AM-3)"; §4.2 (uses `idx_refs_entity` + `idx_aliases_entity`) | UC-15 AC (resolve(from-surface)→into; mentions = dedup union **survives full reindex** via AM-3; no orphans; full-reindex reproduces from Class A alone; `--dry-run` no-write) |
+| R-5.1 (`wiki-alias --add`) | §2.1 Entity Resolver CLI; §4.1 EntityAlias Business Rules; §2.1 Index Layer `add_alias` | UC-11 AC (frontmatter + DB; collision refused) |
+| R-5.2 (`--remove` / `--list`) | §2.1 Entity Resolver CLI; Index Layer `remove_alias` / `list_aliases` | UC-11 A3/A4 |
+| R-5.3 (reindex mirrors `aliases:`) | §4.1 EntityAlias (Class A→B path); §2.1 Entity Resolver durability (report+skip on PK conflict) | UC-14 AC (alias rebuilt from frontmatter) |
+| R-5.4 (PK → `(vault_id, alias)`, L-4) | §4.1 EntityAlias PK rule; §4.4 Migrations v2→v3; SCHEMA-v2.sql + sql/wiki-index-v2.sql | migration: bump `user_version` 2→3 + `wiki-reindex --full` |
+| R-5.5 (search alias expansion, default on) | §2.1 Skill Layer `wiki-search`; Index Layer `expand_query_aliases` | UC-12 AC (page w/ only "Hermes Framework" hit by "Hermes"; `--no-expand-aliases` byte-identical) |
+| R-5.6 (lint alias collision) | §2.1 Skill Layer `wiki-lint`; Index Layer `find_alias_collisions` + Lint-Layer frontmatter scan | UC-13 AC (in-table + cross-table + Class A frontmatter; `--json` parity) |
+
 ---
 
