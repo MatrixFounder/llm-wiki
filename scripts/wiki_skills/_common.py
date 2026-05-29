@@ -39,6 +39,41 @@ def sanitize_alias_surface(surface: str, *, cap: int = 200) -> str | None:
     return surface or None
 
 
+_LINE_LEADING_MD_ACTIVES = frozenset("#>|*+-~")
+
+
+def sanitize_markdown_text(text: str) -> str:
+    """Escape every markdown/HTML-active sequence so ``text`` renders as
+    literal plain prose (text-only allowlist).
+
+    Lifted to this neutral module (TASK 007 / Decision-16 — no skill imports
+    another skill) so both ``wiki-extract-concepts`` (concept-page bodies,
+    H-4) and ``wiki-query`` (the synthesised answer body, R-6.3 egress guard)
+    share one implementation.
+
+    Attacks closed (verbatim from the H-4 vdd-multi 2026-05-28 hardening):
+      * ``<tag>`` / CDATA / HTML entity smuggling → ``&lt;...&gt;`` / ``&amp;...``
+      * ``[text](javascript:...)`` / ``![img](data:...)`` → ``\\[...\\](...)``
+      * ``[[wikilink]]`` → ``\\[\\[wikilink\\]\\]`` (Obsidian wikilink injection)
+      * ```code``` / `````fence````` → ``\\`...\\``` (dataview / mermaid embeds)
+      * Leading-line ``#``/``>``/``|``/``*``/``+``/``-``/``~`` → ``\\X``
+    """
+    s = (text
+         .replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;"))
+    s = s.replace("`", "\\`")
+    s = s.replace("[", "\\[").replace("]", "\\]")
+    out_lines: list[str] = []
+    for line in s.split("\n"):
+        stripped = line.lstrip()
+        if stripped and stripped[0] in _LINE_LEADING_MD_ACTIVES:
+            ws_len = len(line) - len(stripped)
+            line = f"{line[:ws_len]}\\{stripped[0]}{stripped[1:]}"
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 def atomic_write_text(target: Path, text: str) -> None:
     """Atomically write ``text`` to ``target`` (tempfile in the same dir +
     fsync + ``os.replace``). ``os.replace`` is ``rename(2)`` on POSIX — it does

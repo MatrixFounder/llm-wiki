@@ -4,14 +4,21 @@
 > [docs/architectures/](./architectures/). Edit the relevant chunk and
 > keep the one-line summary on this page in sync.
 
-> **Status**: **TASK 006 SHIPPED 2026-05-29** — consolidation/hardening sweep
-> (schema **v3→v4**: drop dead `idx_pages_vault_tags` P-5 + `event_date`
-> GENERATED L-2; `'log'` enum already-absent; reindex name fallback L-8;
-> `_recompute_mentions` dedup F12c; `wiki-lint` frontmatter scan from
-> `pages.frontmatter_json` P-10+F12b; doc clarifications L-1/6/7; 6 beads +
-> `/vdd-multi` 1-fix + dogfood; 546 pytest, mypy clean). No active task at HEAD.
-> Predecessor: **TASK 005** (`8a6491e`) — Epic 7 entity resolution. ADRs 001 +
-> 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
+> **Status**: **TASK 007 SHIPPED 2026-05-29** — Epic 7 **RAG layer** entry-point
+> `wiki-query` (R-6): retrieve (FTS5 BM25 + alias expansion) → orchestrator-owned
+> cited synthesis (Decision-17 `prepare`/`apply`; no `anthropic` import) → file a
+> **first-class compounding** `_queries/<slug>.md` page (indexed `type=query`,
+> FTS-searchable, `cited` backlinks, §D8-durable). **Zero schema DDL**
+> (`pages.type='query'`, `ref_type='cited'`, `event_type='query'`, generic
+> `source_state` all pre-exist; `user_version` stays **4**); **two code-only
+> structural changes** — `layout.py` adds `_queries` (R-X1-forward role split
+> `INGEST_SHARED_SUBDIRS`/`HOST_ONLY_SUBDIRS`), and a type-aware reindex read-side
+> parses `cites:`→`'cited'` (R-6.5e, the §D8 fix mirroring R-5.3). Scope = R-6
+> only; R-7 (`wiki-research`) + R-8 (`wiki-verify-multi`) unblocked + deferred.
+> 10 beads (Stub-First, green-throughout; 3 VDD gates APPROVED); 590 pytest, mypy
+> strict clean. Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
+> (schema **v3→v4**). ADRs 001
+> + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
 > v3→v4 hygiene changes. Living document — current architecture, not change
 > history. Shipped specs live in [tasks/](./tasks/) + [plans/](./plans/) +
 > [KNOWN_ISSUES.md](./KNOWN_ISSUES.md). For shipped task specs (history, decisions, hardening
@@ -67,7 +74,7 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 
 ## 2. Functional Architecture
 
-Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), operational invariants, and RTM cross-reference.
+Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
 
@@ -83,7 +90,7 @@ Architectural style (layered + plugin), system-component breakdown (Skill Layer 
 
 ## 4. Data Model (Conceptual)
 
-Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), and the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table).
+Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table), and the TASK 007 RAG additions (query page as a first-class compounding `type=query` artifact; `ref_type='cited'` query→source backlinks with the R-6.5e reindex read-side; `source_state` reuse for query idempotency — all **zero-DDL**, `user_version` stays 4).
 
 → [details](./architectures/data-model.md)
 
@@ -91,7 +98,7 @@ Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceStat
 
 ## 5. Interfaces
 
-External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes), and integrations (wiki-ingest manifest contract v1.1).
+External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes; the TASK 007 `wiki-query` `prepare`/`apply` CLI surface + `check_query_state`/`record_query_state` DAL methods + error codes), and integrations (wiki-ingest manifest contract v1.1).
 
 → [details](./architectures/interfaces.md)
 
@@ -177,11 +184,23 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 - **Q-A5 (TASK 005): auto-promote log-event granularity.** Should `wiki-confirm --auto` emit one `entity-confirmed` log event per promoted slug, or a single batch event?
   - **Default assumption**: one event per promotion (backlink traceability). Resolve in Planning. Non-blocking.
 
+- **Q-A6 (TASK 007 — decide BEFORE R-6.6 planning): query idempotency hash content.** Should the `source_state` `value` hash the **question only** or **question + the ordered retrieved `project/slug` set**?
+  - **Default assumption**: hash question + retrieved-slug-set, so a re-query after the corpus changed re-synthesises (defines UC-17 `is_unchanged` semantics + whether the compounding loop picks up new sources). Borderline-blocking — finalise in Planning.
+
+- **Q-A7 (TASK 007): `cites:` identifier format.** Bare `slug` vs `project/slug`?
+  - **Default assumption**: `project/slug` (disambiguates course-tier vs vault-tier; matches the `wiki-search` link shape; is the grounding comparison key). Non-blocking.
+
+- **Q-A8 (TASK 007): body citation rendering.** Inline `[[project/slug]]`, a trailing `## Sources` list, or both?
+  - **Default assumption**: a trailing `## Sources` list of `[[project/slug]]` wikilinks (Obsidian-native backlinks); `cites:` frontmatter remains the machine-readable source of truth. Non-blocking — interacts with Q-A9.
+
+- **Q-A9 (TASK 007 — Task Reviewer O-2 / Arch-Reviewer M-1/M-2): dual ref-type coexistence + reindex mechanism.** A query page rendering both `cites:` (→ `'cited'` via R-6.5e) and body `## Sources` wikilinks (→ `'mentioned'` via `extract_wiki_links`) produces two `page_entity_refs` rows to the same target with different `ref_type`.
+  - **Resolved (design):** allowed and consistent — the composite PK keeps the two rows distinct. **Mechanism (M-1):** both ref-types are written in the page's **single** `replace_refs` call (the `cited` refs are unioned into Step 2's `out.refs`) — never a second `replace_refs`, which is delete-all-then-insert and would clobber. **AM-3 (M-2):** Step 2.5 canonicalizes `cited` refs' `entity_slug` through the alias map just like `mentioned` refs (a merged-away cited target still resolves), rewriting `entity_slug` only — `ref_type` is preserved, so `cited` never degrades to `mentioned` (UC-20 holds structurally). `find_orphan_links`/backlink consumers key on the canonical slug and are unaffected. Whether to render body wikilinks at all (Q-A8) is the only residual sub-choice (`cites:` frontmatter is already authoritative). Non-blocking.
+
 ---
 
 ## Verification Map
 
-Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), wiki-ingest Vendoring (R-45..R-57), and Entity Resolver (R-4 + R-5, TASK 005).
+Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), wiki-ingest Vendoring (R-45..R-57), Entity Resolver (R-4 + R-5, TASK 005), and RAG Query Layer (R-6, TASK 007).
 
 → [details](./architectures/verification-map.md)
 
@@ -194,6 +213,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Security**: AuthN — N/A (single-user); AuthZ — file permissions; path-traversal + SQL-injection protections explicit (§7.3). `validate_inside_vault` applied to every `_concepts/` write path AND every operator-supplied path (source-page, candidates-file).
 - [x] **Multi-vault**: every operation carries a `vault_id` predicate or is scoped to `vault_root`. Vendored `ingest()` accepts `vault_id` as explicit kwarg; no hash-fallback.
 - [x] **Stub-First**: TASK 005 Entity Resolver is designed Stub-First (DAL signatures + RED tests before logic); `resolve_entity` is promoted from deferred stub → implemented (R-4.5).
+- [x] **RAG Query Layer (TASK 007)**: `wiki-query` designed as a deterministic `prepare`/`apply` skill (Decision-17, no LLM in Python); query page is a first-class compounding `type=query` artifact; durability secured by the R-6.5e `cites:`→`'cited'` reindex read-side (the §D8 gate, mirroring R-5.3); zero schema DDL; grounding enforced in Python (`CITATION_NOT_RETRIEVED` / `NO_CONTEXT`).
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

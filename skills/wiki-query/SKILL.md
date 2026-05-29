@@ -1,0 +1,127 @@
+<!-- Sync with scripts/wiki_skills/wiki_query.py argparse on every change. -->
+---
+name: wiki-query
+description: >-
+  RAG over FTS5 + entity graph (TASK 007 / R-6). Two deterministic subcommands —
+  `prepare` (alias-expanded retrieval → context envelope) and `apply`
+  (grounding-checked write-back of `_queries/<slug>.md` + self-index). The
+  orchestrator owns the synthesis between them (Decision-17): no `import
+  anthropic`. Triggers: "ask the wiki", "rag query", "wiki-query".
+tier: 2
+version: 1.0
+---
+
+# wiki-query (R-6)
+
+**Purpose**: the read/synthesis half of Karpathy's loop — ask a natural-language
+question, retrieve grounded context, synthesise a **cited** answer, and file it
+back as a durable, indexed, back-linked `_queries/<slug>.md` page so the next
+question can find it ("query → page" compounding).
+
+Like `wiki-extract-concepts`, this is a **deterministic two-pass skill**
+(Decision-17): the LLM synthesis lives in the calling agent's context via the
+[`wiki-query-synthesis`](../wiki-query-synthesis/SKILL.md) prompt skill. There is
+no `import anthropic`, no `--model` / `--max-tokens` flag. End-to-end recipe:
+[`workflows/wiki-query.md`](../../workflows/wiki-query.md).
+
+## `prepare` subcommand
+
+```bash
+wiki-query prepare "<question>" \
+    --vault <vault-id> \
+    --vault-root <path> \
+    [--vaults <id,id|all>] [--types <t,t>] [--project <p>] \
+    [--limit <N>] [--no-expand-aliases] [--slug <kebab>] \
+    [--min-hits <N>] [--db-path <override>]
+```
+
+Deterministic retrieval (alias-expanded FTS5, same engine as `wiki-search`). No
+LLM call. Output envelope (exit 0):
+
+```json
+{
+  "vault_id": "...", "question": "...", "query_slug": "...",
+  "question_hash": "<sha256>", "is_unchanged": false,
+  "retrieved_count": 7,
+  "hits": [{"vault_id":"...","slug":"...","project":"_vault_","type":"concept",
+            "title":"...","bm25_score":-3.14,"snippet":"..."}]
+}
+```
+
+| Flag | Notes |
+|---|---|
+| `--vaults` | search scope; `all` = every vault. **Default: the home `--vault`** (a query defaults to its own vault, unlike `wiki-search`'s all-vaults default). |
+| `--limit` | default **10** (Karpathy's "10-15 pages", trimmed for synthesis budget; `wiki-search`'s default is 20). |
+| `--no-expand-aliases` | disable alias OR-expansion (else on by default, R-5.5 reuse). |
+| `--slug` | override the derived `slugify(question)` query slug (kebab-case). |
+| `--min-hits` | default **1**; below it → `NO_CONTEXT` (refuse to synthesise from nothing). |
+
+**Default-excludes `type=query` pages** from retrieval (a RAG answer grounds on
+primary sources, not prior answers; keeps re-querying idempotent). Opt in with
+`--types query`.
+
+## `apply` subcommand
+
+```bash
+echo "$ANSWER" | wiki-query apply \
+    --vault <vault-id> --vault-root <path> \
+    --query-slug <slug-from-prepare> \
+    --question "<question>" \
+    --question-hash <hash-from-prepare> \
+    --answer-stdin \
+    --citations-file <path-to-cites.json> \
+    [--vaults … --types … --project … --limit … --no-expand-aliases] \
+    [--orchestrator-id <id>] [--force] [--db-path <override>]
+```
+
+Grounding-checked write-back + self-index. No LLM call.
+
+- `--question-hash HEX` — **required**; the value `prepare` emitted, verbatim
+  (64 lowercase hex). `apply` re-runs the same retrieval and recomputes it;
+  mismatch → `QUESTION_CHANGED` (exit 2 — corpus changed mid-pipeline; re-run).
+- **Retrieval-scope flags MUST mirror `prepare`** so `apply` reproduces the same
+  retrieval/hash. Pass the identical `--vaults`/`--types`/`--project`/`--limit`/
+  `--no-expand-aliases` values.
+- `--answer-stdin | --answer-file` (mutex) — the synthesised markdown answer
+  (≤256 KiB; file form vault-inside + `O_NOFOLLOW`).
+- `--citations-stdin | --citations-file` (mutex) — a JSON array of
+  `"project/slug"` strings; **every entry must be a retrieved hit** (grounding
+  gate) → else `CITATION_NOT_RETRIEVED` (exit 4). (Both payloads can't share
+  stdin — pipe one, file the other.)
+- `--orchestrator-id` — regex `^[a-z0-9._:@-]{1,64}$`; default `"orchestrator"`.
+- `--force` — re-file even when the rendered page is byte-identical (else a
+  content-hash skip returns `action:"unchanged"`).
+
+Success envelope: `{"vault_id","query_slug","cites":[…],"page_indexed":true,"action":"filed"|"unchanged"}`.
+
+The query page is written Class A (`_queries/<slug>.md`: `type: query`,
+`question:`, `date:`, `cites: [project/slug,…]`, `tags: [query]`, sanitised
+answer body + a `## Sources` `[[slug]]` list), then **self-indexed via direct
+`upsert_page` + `replace_refs`** (NOT the manifest/`main(argv)` N+1) — a `pages`
+row (`type=query`) + `cited` `page_entity_refs` + a `query` log event. It is
+FTS-searchable immediately, and `wiki-reindex --full` rebuilds the `cited` refs
+from the `cites:` frontmatter (R-6.5e — the §D8 durability spine).
+
+## Exit codes
+
+| Code | `error` | Cause |
+|---|---|---|
+| 0 | — (envelope / manifest / `is_unchanged` / `unchanged`) | success / short-circuit |
+| 1 | — (argparse) | missing flag / no subcommand |
+| 2 | `INVALID_QUESTION` / `INVALID_SLUG` / `INVALID_QUERY` | bad question / slug / FTS expression |
+| 2 | `NO_CONTEXT` | retrieved hits `< --min-hits` (prepare) |
+| 2 | `QUESTION_CHANGED` / `INVALID_QUESTION_HASH` / `INVALID_VAULT_ROOT` | apply hash mismatch / malformed hash / bad vault root |
+| 4 | `ANSWER_TOO_LARGE` / `INVALID_ANSWER_PATH` | answer payload too large / not a vault-inside regular file |
+| 4 | `INVALID_CITATIONS` / `CITATION_NOT_RETRIEVED` | citations payload malformed / a citation not in the retrieved set |
+| 4 | `INVALID_QUERY_PAGE` | target `_queries/<slug>.md` is a symlink (refused) |
+
+**Universal envelope invariant** (CWE-117/209): error envelopes carry `{error,
+field?, reason}` only — never the offending question/answer/citation value.
+
+## Related
+
+- [`workflows/wiki-query.md`](../../workflows/wiki-query.md) — end-to-end orchestrator recipe.
+- [`skills/wiki-query-synthesis/SKILL.md`](../wiki-query-synthesis/SKILL.md) — the synthesis prompt + answer/citations contract.
+- `wiki-search` — shares the alias-expanded FTS retrieval (`scripts/wiki_skills/_retrieval.py`); finds filed query pages (compounding).
+- `docs/ARCHITECTURE.md` §2 RAG Query Layer + §4 Data Model (query page, `cited` refs, R-6.5e).
+- ROADMAP **R-7 `wiki-research`** / **R-8 `wiki-verify-multi`** — deferred, layer on this loop.

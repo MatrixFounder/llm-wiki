@@ -55,6 +55,11 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
   `wiki-alias` (register/remove/list alias surface-strings; `wiki-search`
   expands through them by default), and `wiki-merge` (fold a duplicate entity
   into the canonical one — the alias table is the durable redirect).
+  The **Epic 7 RAG layer** (TASK 007): `wiki-query` (RAG over FTS5 + entity
+  graph — a two-pass `prepare`/`apply` skill, Decision-17: deterministic
+  retrieval → orchestrator-owned cited synthesis → a first-class compounding
+  `_queries/<slug>.md` page that is indexed, FTS-searchable, `cited`-back-linked,
+  and §D8-durable).
   Plus a neutral sub-layer module `_manifest_consumer.py` shared by
   `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
 - **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —

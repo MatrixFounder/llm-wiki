@@ -21,7 +21,7 @@ from scripts.wiki_index.layout import (
     VAULT_TIER_PROJECT,
 )
 from scripts.wiki_index.logfile import parse_log_md
-from scripts.wiki_index.models import Entity, LogEvent, Page
+from scripts.wiki_index.models import Entity, LogEvent, Page, PageRef
 from scripts.wiki_index.normalization import (
     BodyNormalizationError,
     UnmappedTypeError,
@@ -86,6 +86,65 @@ def discover_pages(vault_root: Path) -> list[tuple[Path, str, str]]:
                         if f.is_file():
                             out.append((f, f.stem, proj))
     return out
+
+
+def _cited_refs_from_frontmatter(
+    updated_fm: dict[str, Any], vault_id: str, page_slug: str,
+    page_project: str, cite_skipped: list[dict[str, Any]],
+) -> list[PageRef]:
+    """TASK 007 / R-6.5e — the §D8 durability read-side for query pages.
+
+    Parse a ``type=query`` page's ``cites:`` frontmatter list into
+    ``ref_type='cited'`` ``PageRef``s so a query page's citation backlinks
+    survive a full DB rebuild from Class A markdown alone (the body-only
+    ``extract_wiki_links`` path can only produce ``'mentioned'`` refs).
+
+    Each ``cites:`` entry is a ``"<project>/<slug>"`` string; only the **slug**
+    is persisted as ``entity_slug`` — the cited target's project is parsed for
+    shape-validation only, not stored (mirroring how body-wikilink ``mentioned``
+    refs and ``wiki-query apply`` store refs, so the reindex-rebuilt row and the
+    apply-written row are byte-identical). ``line_start``/``line_end``/
+    ``source_quote`` are ``None`` (a frontmatter cite has no body line);
+    ``trust_level='medium'`` (rides an LLM-synthesised answer).
+
+    The caller **unions the returned refs into the page's single
+    ``replace_refs`` ref-set** (NOT a second ``replace_refs`` — that is
+    delete-all-then-insert and would clobber the body ``mentioned`` refs). The
+    composite PK ``(vault_id, page_slug, page_project, entity_slug, ref_type)``
+    keeps a ``cited`` and a ``mentioned`` ref to the same target distinct.
+
+    Malformed / empty entries are recorded in ``cite_skipped``
+    (report-and-skip — never silent-drop, never raise; the ``reason`` never
+    echoes the offending value, CWE-117/209). De-dups on ``entity_slug``.
+    """
+    raw = updated_fm.get("cites")
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    refs: list[PageRef] = []
+    for entry in raw:
+        if not isinstance(entry, str) or "/" not in entry:
+            cite_skipped.append({
+                "page_slug": page_slug,
+                "reason": "malformed cites entry (expected 'project/slug' string)",
+            })
+            continue
+        proj, _, cslug = entry.rpartition("/")
+        cslug = cslug.strip()
+        if not proj.strip() or not cslug:
+            cite_skipped.append({
+                "page_slug": page_slug,
+                "reason": "malformed cites entry (empty project or slug)",
+            })
+            continue
+        if cslug in seen:
+            continue
+        seen.add(cslug)
+        refs.append(PageRef(
+            vault_id=vault_id, page_slug=page_slug, page_project=page_project,
+            entity_slug=cslug, ref_type="cited", trust_level="medium",
+        ))
+    return refs
 
 
 def _build_page(out: Any, vault_id: str, db_type: str,
@@ -243,6 +302,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     aliases_count = 0
     skipped: list[dict[str, Any]] = []
     alias_collisions: list[dict[str, Any]] = []
+    cite_skipped: list[dict[str, Any]] = []
     try:
         # Step 1: wipe existing rows in a short atomic transaction.
         conn.execute("BEGIN IMMEDIATE")
@@ -269,8 +329,20 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
                 repo.upsert_page(page)
+                # R-6.5e: for a query page, union the `cites:` frontmatter
+                # `cited` refs into the SINGLE replace_refs call alongside the
+                # body-wikilink `mentioned` refs (replace_refs is
+                # delete-all-then-insert — a second call would clobber the body
+                # refs). Step 2.5 (AM-3) below canonicalizes all refs' targets
+                # through the alias map, ref_type preserved.
+                all_refs = list(out.refs)
+                if db_type == "query":
+                    all_refs.extend(_cited_refs_from_frontmatter(
+                        updated_fm, vault_id, out.page_slug, out.project,
+                        cite_skipped,
+                    ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
-                                  out.refs)
+                                  all_refs)
                 pages_count += 1
                 # Register entity row for _concepts/_entities files.
                 # entities.type follows the frontmatter's `type:` field
@@ -443,6 +515,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         "log_events": log_events_count,
         "aliases": aliases_count,
         "alias_collisions": alias_collisions,
+        "cite_skipped": cite_skipped,
         "skipped": skipped,
         "duration_seconds": round(duration, 3),
     }

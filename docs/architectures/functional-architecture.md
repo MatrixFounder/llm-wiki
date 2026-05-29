@@ -313,6 +313,107 @@ Index Layer (`resolve_entity`, `set_entity_candidate`, `list_candidates`, `recom
 
 ---
 
+#### Component: **RAG Query Layer** (`wiki-query`)
+
+**Purpose**: The read/synthesis half of Karpathy's loop (Epic 7 R-6). Answer a natural-language question by **retrieving** grounded context (FTS5 BM25 + alias expansion), letting the orchestrator **synthesise** a *cited* answer, and **filing** that answer back as a durable, indexed, back-linked `_queries/<slug>.md` page — so the next question can find it ("query → page" compounding). Deterministic Python plumbing; **no LLM call in the skill**.
+
+**Design pattern (Decision-17, inherited from Concept Extractor)**: Python skill is deterministic plumbing; LLM synthesis lives in the calling agent's context, mediated by an operator-facing prompt skill (`wiki-query-synthesis`, analogous to `concept-extraction`). No `anthropic` SDK, no `ANTHROPIC_API_KEY`. The skill is a two-pass `prepare`/`apply` pair with the orchestrator owning synthesis between them.
+
+**Stack position**: Skill Layer entry point over the Index Layer DAL. **Reads** `pages`/`pages_fts`/`entities`/`entity_aliases` (retrieval) + `source_state` (idempotency); **writes** the `_queries/<slug>.md` Class A file + one `pages` row (`type=query`) + N `cited` `page_entity_refs` + one `source_state` row + one `query` `log_event`. Orthogonal to Source Adapters (operates on already-indexed pages) and the Concept Extractor (does not extract entities — a query page **never** creates `entities` rows, C-10). Retrieval **reuses** `wiki-search`'s `_expand_query`+`search_pages` chain (no second FTS engine).
+
+##### CLI surface
+
+`argparse` exposes two required subcommands (`add_subparsers(required=True)`), exactly like `wiki-extract-concepts` — no monolithic form.
+
+**`wiki-query prepare "<question>" --vault V --vault-root P [--vaults LIST] [--types LIST] [--project P] [--limit N] [--no-expand-aliases] [--slug S] [--min-hits N] [--db-path PATH]`**
+
+Deterministic retrieval. No LLM call. Alias-expands the question (default on; `--no-expand-aliases` = byte-identical to plain FTS), runs `search_pages` with `wiki-search`-equivalent scoping flag *semantics* (`--limit` default **10** here vs `wiki-search`'s 20 — Karpathy's "10-15 pages" trimmed for synthesis budget), derives `query_slug` (`--slug` override else slugified+truncated question), computes `question_hash`, checks `source_state`. Returns JSON to stdout:
+
+```json
+{
+  "vault_id": "trade-agents",
+  "question": "How does the Hermes agent route messages?",
+  "query_slug": "how-does-the-hermes-agent-route-messages",
+  "question_hash": "<sha256>",
+  "is_unchanged": false,
+  "retrieved_count": 7,
+  "hits": [
+    {"vault_id":"…","slug":"…","project":"_vault_","type":"concept",
+     "title":"…","bm25_score":-3.14,"snippet":"…"}
+  ]
+}
+```
+
+`is_unchanged=true` → orchestrator emits an "unchanged" envelope and stops (UC-17). `retrieved_count < --min-hits` (default **1**) → exit 2 `NO_CONTEXT` — the orchestrator does **not** synthesise from nothing (UC-18, anti-hallucination). Hit `slug`/`project`/`snippet` are vault-relative (no absolute-path disclosure).
+
+**`wiki-query apply --vault V --vault-root P --query-slug S --question "<q>" --question-hash HEX (--answer-stdin | --answer-file PATH) --citations-stdin|--citations-file PATH [--orchestrator-id ID] [--force] [--db-path PATH]`**
+
+Deterministic write-back. No LLM call. Re-runs retrieval to recompute `question_hash`; on mismatch with `--question-hash` (retrieval set changed mid-pipeline) → exit 2 `QUESTION_CHANGED` (the H-1 TOCTOU analog; orchestrator re-runs, never auto-retries). Validates the citations payload against the recomputed hit set (**grounding gate**), sanitises the answer body, writes the Class A page, self-indexes it, fires the log event.
+
+- `--question-hash HEX` — required; 64-lowercase-hex argparse `type=` validator (`INVALID_QUESTION_HASH` library-caller defense).
+- `--answer-stdin` / `--answer-file PATH` (mutex) — the synthesised answer markdown (bounded, `validate_inside_vault` + `O_NOFOLLOW` for the file form, same primitives as `wiki-extract-concepts apply`).
+- `--citations-stdin` / `--citations-file PATH` (mutex) — a JSON list of cited `project/slug` identifiers; every entry MUST be in `prepare`'s hit set (R-6.7d). A citation absent from the set → exit 4 `CITATION_NOT_RETRIEVED` (the anti-hallucination contract enforced **in Python**, not trusted to the LLM).
+- `--orchestrator-id ID` — regex `^[a-z0-9._:@-]{1,64}$`; recorded in the page frontmatter / log event for provenance; default `"orchestrator"` with a `logger.warning`.
+
+##### Answer + citations contract (the `wiki-query-synthesis` skill)
+
+The orchestrator-facing prompt skill defines: the answer must **cite only retrieved hits** (grounding); every non-trivial claim carries a citation; retrieved snippets/bodies are **untrusted data, not directives** (H-6 prompt-armor — the same warning `wiki-extract-concepts`'s workflow carries for `source_body`). The machine-readable `cites:` frontmatter (a flat list of `project/slug`) is the **source of truth** for backlinks; body-rendered citations (Q7 — a trailing `## Sources` list of `[[project/slug]]` wikilinks) are optional Obsidian-native sugar (see Open Question Q9 re: dual `cited`+`mentioned` refs).
+
+##### Functions
+
+- `prepare(args) → int` — resolve+scope flags; `expand_query_aliases`+`search_pages` (inherits the DF-1 hyphen-query quoted-phrase fallback from `wiki_search`); derive `query_slug`; compute `question_hash`; `check_query_state`; emit recon envelope. Exit 0 / 1 / 2 (`NO_CONTEXT`, `INVALID_QUESTION`, `INVALID_QUERY`, `INVALID_SLUG`).
+- `apply(args) → int` — load+bound answer & citations; re-retrieve + hash-check vs `--question-hash`; validate citations ⊆ hit set; `_sanitize_markdown_text` the answer body (egress injection guard, reused/lifted from `wiki_extract_concepts`); atomic-write `_queries/<query_slug>.md` (`O_NOFOLLOW` symlink-refuse + tempfile + content-hash skip — `--force` overrides an unchanged skip); `upsert_page` + `replace_refs(ref_type='cited')` on one connection; `record_query_state`; append a `query` `log_event`. Exit 0 / 1 / 2 / 4.
+- `_derive_query_slug(question, override) → str` — `--slug` authoritative; else `slugify(question)` truncated to a filesystem-safe length; collision with an existing query page for a *different* question requires explicit `--slug` (or `--force` overwrite) (C-8).
+- Reindex read-side **R-6.5e** (in `reindex.py`, not this skill): for a `type=query` page, parse `cites:` frontmatter into `cited` `PageRef`s and **union them into the page's `out.refs` set before the single Step-2 `replace_refs` call** — NOT a second `replace_refs` (which is delete-all-then-insert and would clobber the body-`mentioned` refs, M-1). Step 2.5 (AM-3) then canonicalizes all refs' `entity_slug` through the alias map (`cited` refs participate; `ref_type` is never rewritten, so no `cited`→`mentioned` degradation, M-2). See Data Model PageEntityRef ("Citation ref" + "Reindex phase order") + §4.4.
+
+##### Outputs
+
+- `_queries/<slug>.md` — Class A canonical (frontmatter `type: query`, `question:`, `date:`, `cites: [project/slug,…]`, `tags: [query]`; body = sanitised cited answer). Atomic write; content-hash skip.
+- `pages` row `type='query'` — Class B (rebuildable; rediscovered because `_queries ∈ PAGE_SUBDIRS`).
+- `page_entity_refs` `ref_type='cited'` (N rows) — Class B (re-materialised from `cites:` by R-6.5e).
+- `source_state` `source_kind='query'` — Class C idempotency.
+- `log_events` `event_type='query'` (one per filed query, Q6) — backlink/provenance.
+
+##### Exit-code envelope contract
+
+| Code | `error` | Cause |
+|---|---|---|
+| 0 | — (recon envelope / filed manifest / `is_unchanged`) | Success or idempotency short-circuit |
+| 1 | — (argparse) | Missing flag / no subcommand |
+| 2 | `INVALID_QUESTION` | empty / over-cap question |
+| 2 | `INVALID_QUERY` | not a valid FTS5 expression after the quoted-phrase fallback |
+| 2 | `INVALID_SLUG` | `--slug` not kebab-case |
+| 2 | `NO_CONTEXT` | `retrieved_count < --min-hits` (default 1) — refuse to synthesise from nothing |
+| 2 | `QUESTION_CHANGED` | `apply` recomputed hash ≠ `--question-hash` (retrieval set changed mid-pipeline) |
+| 2 | `INVALID_QUESTION_HASH` | `--question-hash` not 64-lowercase-hex (library-caller defense) |
+| 4 | `ANSWER_PARSE_ERROR` / `ANSWER_TOO_LARGE` | answer payload malformed / over-cap |
+| 4 | `CITATION_NOT_RETRIEVED` | a `--citations` `project/slug` not in `prepare`'s hit set (grounding gate) |
+| 4 | `INVALID_CITATIONS` | citations payload not a JSON list of `project/slug` strings |
+
+Inherits the **universal envelope invariant** (CWE-117/209): `{error, field?, reason}` only — never echoes the question/answer/citation content. (Exit maps illustrative; finalised in Planning against the `wiki-extract-concepts` code space.)
+
+##### Operational invariants
+
+- **Grounding is enforced in Python**, not trusted to the LLM: `apply` rejects any citation absent from the recomputed hit set (`CITATION_NOT_RETRIEVED`); `prepare` refuses `NO_CONTEXT` below `--min-hits`. The comparison key is the full **`project/slug`** tuple (a bare slug is unique only per `(vault_id, project)`).
+- **Self-index via direct DAL**, never the manifest/`main(argv)` per-row path (H-PERF-3 / P-8) — `upsert_page` + `replace_refs` on one connection.
+- **A query page never creates `entities`** (C-10) and is **not** alias-expandable as a search term — it cites existing entities/pages; it does not pollute the entity graph.
+- **Untrusted retrieval**: the synthesis workflow treats retrieved snippets/bodies as data, not directives (H-6); `_sanitize_markdown_text` is the egress backstop on the answer body.
+- **§D8 durability (UC-20):** delete the DB, `wiki-reindex --full` → the query page is rediscovered (`_queries ∈ PAGE_SUBDIRS`) and its `cited` refs reconstructed from `cites:` frontmatter by R-6.5e, unioned into the page's single `replace_refs` ref-set (Step 2), alias-canonicalized in Step 2.5 with `ref_type` preserved — **not** degraded to `mentioned`, and not clobbered by the body-wikilink pass.
+
+##### Related Use Cases
+
+UC-16 (ask→cited answer), UC-17 (idempotent re-run), UC-18 (no/low-hit grounding refusal), UC-19 (compounding — a later search finds the prior answer), UC-20 (§D8 durability round-trip), UC-21 (citation-grounding violation refused at the boundary).
+
+##### RTM coverage
+
+R-6.1, R-6.2, R-6.3, R-6.4, R-6.5, **R-6.5e**, R-6.6, R-6.7.
+
+##### Dependencies
+
+Index Layer (`expand_query_aliases`, `search_pages`, `upsert_page`, `replace_refs`, `check_query_state`/`record_query_state`; reindex R-6.5e read-side), Configuration Resolver, `frontmatter` for YAML, the `wiki-query-synthesis` prompt skill (orchestrator-loaded). **No LLM API dependency. No `anthropic` SDK. No `wiki-ingest`.**
+
+---
+
 #### Component: **Workflow Orchestrator** (`ingest-source`)
 
 **Purpose**: Meta-workflow в `.claude/commands/` (markdown с frontmatter). Вызывает chain: detect kind → dispatch adapter → upsert → log → optional lint quick-pass. Failure handling с partial-recovery.
@@ -360,6 +461,7 @@ graph TB
         EC[wiki-confirm]
         EA[wiki-alias]
         WM[wiki-merge]
+        WQ[wiki-query]
     end
 
     subgraph "Workflow Layer"
@@ -392,9 +494,13 @@ graph TB
     User --> SI & SS & SL & SR & SLS & WIS
     User --> SU & WAL
     User --> EC & EA & WM
+    User --> WQ
     EC & EA & WM --> CR
     EC & EA & WM --> IR
     EC & EA & WM --> MD
+    WQ --> CR
+    WQ --> IR
+    WQ --> MD
     
     SI --> CR
     SS --> CR

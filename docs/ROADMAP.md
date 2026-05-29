@@ -147,18 +147,32 @@ entity graph, gated on Epic 7).
 
 ## P1 — Epic 7 RAG layer
 
-### R-6. `wiki-query` (R-19) — RAG over FTS5 + entity graph
-Retrieve via `wiki-search` (BM25) + entity-aliased expansion → LLM
-synthesis with citations. Output filed back as `_queries/<slug>.md`
-(Karpathy "query → page" loop).
+### R-6. `wiki-query` (R-19) — RAG over FTS5 + entity graph ✅ DONE 2026-05-29 (TASK 007)
+Retrieve via `wiki-search` (BM25) + entity-aliased expansion → **orchestrator-
+owned** LLM synthesis with citations (Decision-17 `prepare`/`apply` split; no
+`import anthropic`) → output filed back as `_queries/<slug>.md`, a **first-class
+compounding page** (indexed `type=query`, FTS-searchable, `cited` backlinks,
+§D8-durable via the R-6.5e reindex read-side). Grounding enforced in Python
+(`NO_CONTEXT` refusal + `CITATION_NOT_RETRIEVED` keyed on `project/slug`).
+**Zero schema DDL** (`pages.type='query'`, `ref_type='cited'`,
+`event_type='query'`, generic `source_state` all pre-existed; `user_version`
+stays 4); two code-only changes — `layout.py` `_queries` (R-X1-forward role split
+`INGEST_SHARED_SUBDIRS`/`HOST_ONLY_SUBDIRS`) + the reindex `cites:`→`'cited'`
+read-side. **Shipped**: TASK 007 (10 beads, Stub-First green-throughout; 3 VDD
+gates APPROVED). See archived spec/plan at [tasks/task-007-*.md](tasks/) +
+[plans/plan-007-*.md](plans/).
 
-### R-7. `wiki-research` (R-20)
-Web enrichment of concept pages. Off by default; opt-in per concept.
+### R-7. `wiki-research` (R-20) — UNBLOCKED (gated on R-6, now shipped)
+Web enrichment of concept pages. Off by default; opt-in per concept. Layers on
+the `wiki-query` retrieval/synthesis loop (R-6) — now shipped, so R-7 is
+unblocked. Needs a web-access design (overlaps `deep-research`); still
+**off-by-default** + a separate TASK.
 
-### R-8. `wiki-verify-multi` (R-21)
-4-critic ensemble (logic, security, performance, factual) for
-high-stakes query responses. Off by default. Pairs with `/vdd-multi`
-infrastructure already in this repo.
+### R-8. `wiki-verify-multi` (R-21) — UNBLOCKED (gated on R-6, now shipped)
+4-critic ensemble (logic, security, performance, factual) for high-stakes query
+responses. Off by default. Pairs with the `/vdd-multi` infrastructure already in
+this repo. Layers on the `wiki-query` answer (R-6, shipped) → unblocked; still a
+separate, off-by-default TASK.
 
 ---
 

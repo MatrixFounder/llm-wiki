@@ -10,6 +10,8 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.models import PageHit
 from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._retrieval import expand_query as _expand_query
+from scripts.wiki_skills._retrieval import fts_quote as _fts_quote
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -27,34 +29,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         "that entity's canonical name + sibling aliases.")
     p.add_argument("--db-path", default=None)
     return p
-
-
-def _fts_quote(surface: str) -> str:
-    """Wrap a surface as an FTS5 phrase, doubling embedded double-quotes."""
-    return '"' + surface.replace('"', '""') + '"'
-
-
-def _expand_query(repo: object, query: str, vaults_list: list[str] | None) -> str:
-    """R-5.5: OR-expand `query` with the matched entity's canonical name +
-    sibling aliases, scoped to the searched vaults. No-op (returns `query`
-    unchanged) when the term resolves to no entity/alias in any scoped vault —
-    so default-on expansion never changes results for non-alias queries.
-
-    When `vaults_list` is None (the default all-vaults search), expand across
-    every registered vault — otherwise default-on expansion would silently
-    no-op for the most common invocation (vdd-multi F1)."""
-    if vaults_list:
-        target_vaults = vaults_list
-    else:
-        target_vaults = [v.vault_id for v in repo.list_vaults()]  # type: ignore[attr-defined]
-    surfaces: set[str] = set()
-    for vid in target_vaults:
-        for s in repo.expand_query_aliases(vid, query):  # type: ignore[attr-defined]
-            surfaces.add(s)
-    if not surfaces:
-        return query
-    surfaces.add(query)
-    return " OR ".join(_fts_quote(s) for s in sorted(surfaces))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -23,12 +23,37 @@ from __future__ import annotations
 SOURCES_SUBDIR: str = "_sources"
 CONCEPTS_SUBDIR: str = "_concepts"
 ENTITIES_SUBDIR: str = "_entities"
+QUERIES_SUBDIR: str = "_queries"
 RAW_SUBDIR: str = "_raw"
 
-# Page-bearing subdirectories under a vault root or course directory.
+# Subdirs shared with the vendored wiki-ingest file-synthesis layer
+# (`scripts/wiki_ingest/_vault.DEFAULT_SUBDIRS`). The vendored ingest module
+# produces ONLY these page kinds (source / concept / entity). These MUST stay
+# byte-identical to the vendored copy — §7.4 Vendoring Policy (upstream-first
+# on any rename); `tests/test_layout_invariants.py` guards the equality.
+INGEST_SHARED_SUBDIRS: tuple[str, ...] = (
+    SOURCES_SUBDIR, CONCEPTS_SUBDIR, ENTITIES_SUBDIR,
+)
+
+# Host-only page-bearing subdirs the wiki-ingest synthesis layer does NOT
+# produce. `_queries` (TASK 007 / R-6): RAG answer pages written by
+# `wiki-query`. The vendored ingest snapshot legitimately knows nothing about
+# these (they are not raw-source synthesis output), so they are NOT part of the
+# INGEST_SHARED_SUBDIRS contract.
+#
+# Forward note (ROADMAP R-X1 "universalise layout engine"): the shared-vs-
+# host-only split modelled here is the seam R-X1 will fold into the per-vault
+# layout config (`karpathy.yaml` / `dev-project.yaml` / ...). Until then this
+# is the explicit chokepoint; new host-only page subdirs join this tuple.
+HOST_ONLY_SUBDIRS: tuple[str, ...] = (
+    QUERIES_SUBDIR,
+)
+
+# All page-bearing subdirectories under a vault root or course directory —
+# the host superset = wiki-ingest-shared subdirs + host-only subdirs.
 # Walked by discover_pages, drift checks, and CLI render counts.
 PAGE_SUBDIRS: tuple[str, ...] = (
-    SOURCES_SUBDIR, CONCEPTS_SUBDIR, ENTITIES_SUBDIR,
+    *INGEST_SHARED_SUBDIRS, *HOST_ONLY_SUBDIRS,
 )
 
 # Top-level course tier directory name (per ADR-002 §D6).

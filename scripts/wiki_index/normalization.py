@@ -18,7 +18,11 @@ from typing import Any
 
 from slugify import slugify
 
-from scripts.wiki_index.layout import CONCEPTS_SUBDIR, ENTITIES_SUBDIR
+from scripts.wiki_index.layout import (
+    CONCEPTS_SUBDIR,
+    ENTITIES_SUBDIR,
+    QUERIES_SUBDIR,
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -106,6 +110,11 @@ def _slugify_concept(c: str) -> str:
 _PATH_TYPE_FALLBACK: dict[str, str] = {
     CONCEPTS_SUBDIR: "concept",
     ENTITIES_SUBDIR: "external",
+    # TASK 007 / R-6.5: a `_queries/<slug>.md` page missing an explicit
+    # `type:` infers `query` from its directory (defensive — wiki-query
+    # `apply` always writes `type: query`, but reindex of a hand-authored
+    # query page stays robust).
+    QUERIES_SUBDIR: "query",
 }
 
 

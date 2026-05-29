@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -436,6 +436,7 @@ class SQLiteRepository(IndexRepository):
         *,
         vaults: list[str] | None = None,
         types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         project: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
@@ -458,6 +459,12 @@ class SQLiteRepository(IndexRepository):
             clause, vals = self._in_clause("p.type", types)
             sql_parts.append(f" AND {clause}")
             params.extend(vals)
+        if exclude_types:
+            # TASK 007: applied in SQL BEFORE the LIMIT (not post-filtered) so an
+            # excluded type cannot consume a top-`limit` slot and evict a real hit.
+            placeholders = ",".join("?" * len(exclude_types))
+            sql_parts.append(f" AND p.type NOT IN ({placeholders})")
+            params.extend(exclude_types)
         if project is not None:
             sql_parts.append(" AND p.project = ?")
             params.append(project)
@@ -1005,6 +1012,36 @@ class SQLiteRepository(IndexRepository):
                 seen.add(surface)
                 out.append(surface)
         return out
+
+    def check_query_state(self, vault_id: str, query_slug: str) -> str | None:
+        """TASK 007 / R-6.6 — recorded `question_hash` for a filed query, or
+        None. Defensive NULL guard mirrors `check_idempotency` (L-V3.2)."""
+        row = self._connect().execute(
+            "SELECT value FROM source_state "
+            "WHERE vault_id = ? AND source_kind = 'query' AND scope = ? "
+            "AND key = 'question_hash'",
+            (vault_id, query_slug),
+        ).fetchone()
+        if row is None or row["value"] is None:
+            return None
+        return str(row["value"])
+
+    def record_query_state(
+        self, vault_id: str, query_slug: str, question_hash: str,
+    ) -> None:
+        """TASK 007 / R-6.6 — UPSERT the query-idempotency row in `source_state`
+        (`source_kind='query'`, `scope=query_slug`, `key='question_hash'`)."""
+        conn = self._connect()
+        now = datetime.now(timezone.utc).isoformat()
+        with conn:
+            conn.execute(
+                "INSERT INTO source_state "
+                "(vault_id, source_kind, scope, key, value, updated_at) "
+                "VALUES (?, 'query', ?, 'question_hash', ?, ?) "
+                "ON CONFLICT(vault_id, source_kind, scope, key) DO UPDATE SET "
+                "value = excluded.value, updated_at = excluded.updated_at",
+                (vault_id, query_slug, question_hash, now),
+            )
 
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """R-5.6: in-DB (legacy) + cross-table alias collisions. The Class A

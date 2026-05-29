@@ -92,5 +92,23 @@
 | R-5.5 (search alias expansion, default on) | §2.1 Skill Layer `wiki-search`; Index Layer `expand_query_aliases` | UC-12 AC (page w/ only "Hermes Framework" hit by "Hermes"; `--no-expand-aliases` byte-identical) |
 | R-5.6 (lint alias collision) | §2.1 Skill Layer `wiki-lint`; Index Layer `find_alias_collisions` + Lint-Layer frontmatter scan | UC-13 AC (in-table + cross-table + Class A frontmatter; `--json` parity) |
 
+### RAG Query Layer Requirements (TASK 007 — R-6 `wiki-query`)
+
+> Epic 7 RAG layer entry-point. Decision-17 `prepare`/`apply` split (no LLM in
+> Python). Query page = first-class compounding artifact. **Zero schema DDL**
+> (`user_version` stays 4); two code-only structural changes (`layout.py` +
+> R-6.5e reindex read-side). Scope = R-6 only (R-7/R-8 deferred + gated).
+
+| Requirement | Architecture coverage | Test / AC reference |
+|---|---|---|
+| R-6.1 (`prepare` deterministic retrieval) | §2.1 RAG Query Layer CLI surface (`prepare`) + `prepare(args)` fn; reuses Index Layer `expand_query_aliases`+`search_pages` | UC-16 AC (retrieval envelope; `--limit` default 10; alias expansion default-on) |
+| R-6.2 (orchestrator-owned synthesis, Decision-17) | §2.1 RAG Query Layer "Design pattern" + "Answer + citations contract (`wiki-query-synthesis`)"; §3 sequence (calling agent owns synthesis) | grounding contract: every cite ∈ retrieved set; H-6 untrusted-retrieval prompt-armor |
+| R-6.3 (`apply` writes Class A query page) | §2.1 RAG Query Layer CLI surface (`apply`) + `apply(args)` fn (atomic-write, `_sanitize_markdown_text`, `--question-hash` TOCTOU); §4.1 Page (query page Class A) | UC-16 AC (`type: query` + `cites:` written); `QUESTION_CHANGED` on hash mismatch |
+| R-6.4 (compounding — indexed + back-linked) | §2.1 RAG Query Layer Outputs + Operational invariants (self-index via direct `upsert_page`+`replace_refs`, **not** manifest/`main(argv)`); §4.1 PageEntityRef (`cited` ref) | UC-19 AC (filed query page returned by search; `cited` refs exist; `--types` filter) |
+| R-6.5 (`_queries/` discoverable) | §4.1 Page (layout change); §4.4 Migrations (v4 unchanged, code-only); [layout.py](../../scripts/wiki_index/layout.py) `_queries` in `PAGE_SUBDIRS`/`SCAFFOLD_DIRS`/`_PATH_TYPE_FALLBACK` | UC-20 AC (query page rediscovered + re-indexed `type=query`) |
+| **R-6.5e** (reindex `cites:`→`'cited'` read-side — §D8 fix) | §4.1 PageEntityRef "Citation ref" + "Reindex phase order" (union into Step-2 `out.refs`; Step-2.5 AM-3 preserves `ref_type`); §4.4 Migrations (code-only change #2); §2.1 RAG Query Layer "§D8 durability" + `reindex.py` type-aware branch | UC-20 is the binding §D8 gate (`cited` refs reconstructed from `cites:` frontmatter alone; **not** degraded to `mentioned`, not clobbered by the body-wikilink pass) |
+| R-6.6 (idempotency / re-run) | §2.1 Index Layer `check_query_state`/`record_query_state`; §4.1 SourceState (query reuse; Q-A6 hash-content) | UC-17 AC (unchanged re-query = no synthesis, no write; `--force` re-synthesises) |
+| R-6.7 (grounding / no-hit refusal) | §2.1 RAG Query Layer Operational invariants ("grounding enforced in Python"); CLI surface `--min-hits` + `CITATION_NOT_RETRIEVED`/`NO_CONTEXT` | UC-18 AC (no synthesis on empty retrieval); UC-21 AC (citation ∉ hit set refused at boundary, `project/slug` key) |
+
 ---
 

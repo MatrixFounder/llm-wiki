@@ -123,6 +123,7 @@ class IndexRepository(abc.ABC):
         *,
         vaults: list[str] | None = None,
         types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         project: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
@@ -133,6 +134,12 @@ class IndexRepository(abc.ABC):
                 special FTS operators).
             vaults: limit to these vault_ids; None = all registered vaults.
             types: limit to these `pages.type` values; None = all types.
+            exclude_types: drop these `pages.type` values **before** the LIMIT
+                (TASK 007 — applied in SQL, not post-filtered, so it composes
+                correctly with the LIMIT window). None = exclude nothing.
+                `wiki-query prepare` passes `['query']` so a RAG retrieval grounds
+                on primary sources and a self-indexed answer page can never evict
+                a real hit from the top-`limit` window (idempotency).
             project: limit to this project (e.g. '_vault_' or '<course-slug>');
                 None = all projects within the selected vaults.
             limit: max hits to return.
@@ -367,6 +374,26 @@ class IndexRepository(abc.ABC):
         """Given a surface term, return the matched entity's canonical name +
         sibling aliases for FTS OR-expansion (R-5.5). Bounded to the matched
         entity's own alias set (no transitive expansion). ``[]`` on no match."""
+        ...
+
+    @abc.abstractmethod
+    def check_query_state(self, vault_id: str, query_slug: str) -> str | None:
+        """TASK 007 / R-6.6 — return the recorded ``question_hash`` for a filed
+        query, or ``None`` if absent. Reads ``source_state`` with
+        ``source_kind='query'``, ``scope=query_slug``, ``key='question_hash'``.
+        Backs ``wiki-query prepare``'s ``is_unchanged`` short-circuit. Defensive
+        NULL guard: a corrupt ``value IS NULL`` row → ``None`` (re-synthesise)."""
+        ...
+
+    @abc.abstractmethod
+    def record_query_state(
+        self, vault_id: str, query_slug: str, question_hash: str,
+    ) -> None:
+        """TASK 007 / R-6.6 — UPSERT the query-idempotency row in
+        ``source_state`` (``source_kind='query'``, ``scope=query_slug``,
+        ``key='question_hash'``). Called by ``wiki-query apply`` after a
+        successful Class A write + self-index. No raw SQL in the skill — this is
+        the DAL access path (NFR-2)."""
         ...
 
     @abc.abstractmethod

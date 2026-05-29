@@ -75,6 +75,9 @@ from scripts.wiki_index.security import (
     validate_inside_vault,
 )
 from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import (
+    sanitize_markdown_text as _sanitize_markdown_text,
+)
 # TASK 003 I-7.0 + I-7.11 (Decisions 15+16): module-top import locks the
 # patch target as `scripts.wiki_skills.wiki_extract_concepts.<symbol>`.
 from scripts.wiki_skills._manifest_consumer import (
@@ -456,12 +459,6 @@ _NAME_ALLOWLIST = re.compile(
     r"^[\w\s\-.,:;()\'\"!?]{1,200}$", flags=re.UNICODE,
 )
 
-# H-4 (vdd-multi 2026-05-28): markdown-active characters that, when
-# appearing at start-of-line (after optional whitespace), trigger
-# block-level rendering. Escaped to `\X` to render as literal text.
-_LINE_LEADING_MD_ACTIVES = frozenset("#>|*+-~")
-
-
 def _sanitize_name(name: str) -> str:
     """Sanitize a concept name for safe embedding into the H1 + frontmatter.
 
@@ -480,57 +477,6 @@ def _sanitize_name(name: str) -> str:
                     "leading '#'/'-' and trimming whitespace"),
         )
     return stripped
-
-
-def _sanitize_markdown_text(text: str) -> str:
-    """Escape every markdown/HTML-active sequence so `text` renders as
-    literal plain prose.
-
-    H-4 (vdd-multi 2026-05-28): the v2 denylist approach missed
-    ``javascript:`` / ``data:`` URIs (via markdown link form), HTML
-    entity smuggling (``&#x3C;script&#x3E;``), Obsidian wikilink
-    injection (``[[evil]]``), code-span injection (`````), footnote
-    refs, and tag forms with leading whitespace. This text-only
-    allowlist replaces it.
-
-    Attacks closed:
-      * ``<tag>`` / ``</tag>`` / ``<!CDATA...>`` → ``&lt;...&gt;``
-      * ``&#x3C;`` / named entities → ``&amp;#x3C;``
-      * ``[text](javascript:...)`` / ``![img](data:...)`` → ``\\[text\\](javascript:...)``
-        (markdown does not render a link when the ``[`` is backslash-escaped)
-      * ``[[wikilink]]`` → ``\\[\\[wikilink\\]\\]``
-      * ```code``` / `````fence````` → ``\\`code\\```
-      * Leading-line ``#``/``>``/``|``/``*``/``+``/``-``/``~`` → ``\\X``
-        (closes header, blockquote-escape, table, list, strikethrough)
-
-    Markdown rendering: backslash-escaped chars render as literal
-    glyphs per CommonMark §2.4, so the on-page text looks unchanged
-    for legitimate content (the LLM rarely produces literal `[Sharpe
-    1966]` references that need to render as actual brackets — and if
-    it does, the escaped form `\\[Sharpe 1966\\]` still renders as
-    `[Sharpe 1966]` visually).
-    """
-    # 1. HTML escape: & FIRST (so subsequent &lt; / &gt; aren't double-
-    # escaped), then < and >. Closes tag injection, CDATA, entity smuggling.
-    s = (text
-         .replace("&", "&amp;")
-         .replace("<", "&lt;")
-         .replace(">", "&gt;"))
-    # 2. Escape backticks (code spans + fenced code blocks + Obsidian
-    # dataview / mermaid embedded blocks).
-    s = s.replace("`", "\\`")
-    # 3. Escape markdown link / Obsidian wikilink brackets. Both [[ ]]
-    # (wikilink) and [ ]( ) (markdown link) require unescaped [.
-    s = s.replace("[", "\\[").replace("]", "\\]")
-    # 4. Escape line-leading markdown actives (after optional whitespace).
-    out_lines: list[str] = []
-    for line in s.split("\n"):
-        stripped = line.lstrip()
-        if stripped and stripped[0] in _LINE_LEADING_MD_ACTIVES:
-            ws_len = len(line) - len(stripped)
-            line = f"{line[:ws_len]}\\{stripped[0]}{stripped[1:]}"
-        out_lines.append(line)
-    return "\n".join(out_lines)
 
 
 def _sanitize_definition(definition: str) -> str:

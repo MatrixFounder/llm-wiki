@@ -343,3 +343,77 @@ TOCTOU note) stay deferred with their triggers. Shipped via 6 beads
 **Still open in L-9** (not in this task's scope): F11 (confirm FM/DB divergence —
 recoverable), F12a (merge `--dry-run` count cosmetic), F12d (Class A/B alias-spelling),
 F3-residual (multi-tenant TOCTOU note).
+
+---
+
+## TASK 007 (Epic 7 RAG, `wiki-query`) — `/vdd-multi` deferred findings (2026-05-29)
+
+The multi-critic adversarial sweep on TASK 007 (logic + security + performance,
+each finding adversarially verified) surfaced **1 HIGH must-fix (fixed inline)**
++ 8 LOW. The HIGH and 3 LOW were fixed inline; the 4 LOW below are deferred —
+by-design trade-offs or accepted under the single-user-local threat model —
+recorded so a future polish bead can sweep them.
+
+**Fixed inline (not deferred):** the HIGH `type=query` exclusion was a post-LIMIT
+Python filter → a self-indexed query page could evict a real hit from the
+top-`limit` window, breaking `is_unchanged` idempotency + causing spurious
+`QUESTION_CHANGED` at ≥`limit` matching pages → **fixed** by pushing the
+exclusion into SQL (`search_pages(exclude_types=['query'])`) before the LIMIT
+(`tests/test_wiki_query_index.py::test_idempotency_holds_at_scale_above_limit`).
+Also fixed inline: both-`--*-stdin` conflict guard (`INVALID_ARGS`), `apply`
+question byte-cap (parity with `prepare`), and an `O_NOFOLLOW` content-hash read
+(closes the post-`is_symlink()` TOCTOU on the skip-read).
+
+## [2026-05-29] Q-007-1 `wiki-query apply` re-runs the full retrieval to recompute the hash [STATUS: open, SEV-3 by-design]
+
+- **Symptom**: `apply` re-runs the entire `prepare` retrieval (alias expansion +
+  FTS + row hydration) solely to recompute `question_hash` for the
+  `QUESTION_CHANGED` TOCTOU check — a second full FTS query per `apply`.
+- **Root cause**: by design — re-retrieving is the TOCTOU mechanism (detects a
+  corpus change between `prepare` and `apply`). Passing the hit set from
+  `prepare` to `apply` instead would defeat the detection.
+- **Affected**: `scripts/wiki_skills/wiki_query.py::apply` / `_retrieve`.
+- **Fix plan**: acceptable — one extra bounded FTS query per filed answer. If a
+  real vault shows latency, cache the retrieval signature. Pass at N=100.
+
+## [2026-05-29] Q-007-2 self-index re-reads the just-written query page [STATUS: open, SEV-3 by-design]
+
+- **Symptom**: `_index_query_page` re-reads + re-parses `_queries/<slug>.md` via
+  the `ManualSourceAdapter` rather than indexing the in-memory content `apply`
+  just wrote.
+- **Root cause**: deliberate — reusing the reindex page-build (`_build_page` +
+  `_cited_refs_from_frontmatter`) guarantees the apply-written `pages`/refs rows
+  are **byte-identical** to what `wiki-reindex --full` rebuilds (the UC-20 §D8
+  symmetry, `test_wiki_query_durability.py`). One extra file read per `apply`.
+- **Affected**: `scripts/wiki_skills/wiki_query.py::_index_query_page`.
+- **Fix plan**: keep — the durability-symmetry guarantee outweighs one re-read.
+
+## [2026-05-29] Q-007-3 `apply` QUESTION_CHANGED if a retrieval-scope flag is omitted [STATUS: documented]
+
+- **Symptom**: `apply` must be passed the **same** `--vaults`/`--types`/
+  `--project`/`--limit`/`--no-expand-aliases` the operator passed to `prepare`,
+  or it reproduces a different retrieval and the hash mismatches → a (correct
+  but surprising) `QUESTION_CHANGED`.
+- **Root cause**: inherent to the re-retrieval TOCTOU mechanism (Q-007-1).
+- **Affected**: `scripts/wiki_skills/wiki_query.py::apply`.
+- **Mitigation**: the workflow recipe (`workflows/wiki-query.md` Step 7) +
+  `skills/wiki-query/SKILL.md` instruct passing the identical scope flags;
+  the orchestrator drives both passes so it controls the flags. A future polish
+  could have `prepare` emit the scope and `apply` accept a single
+  `--from-prepare <json>` to eliminate the footgun.
+
+## [2026-05-29] Q-007-4 cited slug rendered into a `## Sources [[slug]]` wikilink unsanitized [STATUS: documented, accepted-in-scope]
+
+- **Symptom**: `_render_query_page` emits `- [[<slug>]]` for each citation; the
+  slug is not markdown-escaped (it can't be — escaping would break the Obsidian
+  link, which is the point).
+- **Root cause**: the slug is the slug-half of a citation that **passed the
+  grounding gate** (it equals a retrieved hit's `project/slug`), and retrieved
+  hit slugs are page slugs (kebab file stems from the index) — not arbitrary
+  operator input. So under the single-user-local threat model the surface is
+  index-constrained, not attacker-controlled.
+- **Affected**: `scripts/wiki_skills/wiki_query.py::_render_query_page`.
+- **Fix plan**: re-evaluate only if `wiki-query` is ever exposed multi-tenant /
+  via an MCP shim (same boundary as the F3-residual / D-1 notes). The answer
+  *body* is fully sanitized (`sanitize_markdown_text`); only the controlled
+  citation wikilinks are intentionally left navigable.
