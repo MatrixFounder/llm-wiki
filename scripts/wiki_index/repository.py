@@ -397,3 +397,11 @@ class IndexRepository(abc.ABC):
         it to locate the markdown for Class A write-back (skills never run raw
         SQL — this is the DAL read that backs that locate step)."""
         ...
+
+    @abc.abstractmethod
+    def find_entity_by_name(self, vault_id: str, name: str) -> str | None:
+        """Slug of the entity whose canonical ``name`` exactly equals ``name``,
+        or ``None``. Lets ``wiki-alias --add`` refuse a surface that would
+        *hijack* another entity's display name (DF-4) — `resolve_entity` only
+        catches slug/alias collisions, not name collisions."""
+        ...

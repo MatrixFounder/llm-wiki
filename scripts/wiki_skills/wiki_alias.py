@@ -101,12 +101,25 @@ def main(argv: list[str] | None = None) -> int:
                              "reason": "alias surface empty, too long, or has control chars"}, 2)
             if surface in repo.list_aliases(args.vault, slug):
                 return emit({"slug": slug, "alias": surface, "action": "unchanged"})
-            # cross-table / alias collision: surface already resolves elsewhere?
+            # Collision pre-check (resolve_entity = slug/alias; find_entity_by_name
+            # = display name). A surface that already resolves to / names a
+            # DIFFERENT entity would hijack that entity's resolution → refuse.
             conflict = repo.resolve_entity(args.vault, surface)
             if conflict is not None and conflict.slug != slug:
                 return emit({"error": "ALIAS_COLLISION", "field": "add",
                              "reason": f"surface already resolves to entity "
                                        f"{conflict.slug!r}"}, 5)
+            # DF-5: surface already resolves to THIS entity (own slug / own
+            # alias) → redundant self-alias, no-op rather than a duplicate row.
+            if conflict is not None and conflict.slug == slug:
+                return emit({"slug": slug, "alias": surface, "action": "unchanged"})
+            # DF-4: surface equals a DIFFERENT entity's canonical name → would
+            # hijack searches for that name. resolve_entity does not see names.
+            name_owner = repo.find_entity_by_name(args.vault, surface)
+            if name_owner is not None and name_owner != slug:
+                return emit({"error": "ALIAS_COLLISION", "field": "add",
+                             "reason": f"surface is the name of entity "
+                                       f"{name_owner!r}"}, 5)
             # Class A first, then DB mirror.
             _sync_alias_frontmatter(path, surface, add=True)
             try:

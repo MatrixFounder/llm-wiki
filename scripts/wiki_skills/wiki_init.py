@@ -85,11 +85,19 @@ def scaffold_new(args: argparse.Namespace) -> int:
     vault_root.mkdir(parents=True, exist_ok=True)
     for sub in SCAFFOLD_DIRS:
         (vault_root / sub).mkdir(parents=True, exist_ok=True)
+    # DF-3 (dogfood): the description renders into a *double-quoted* YAML scalar
+    # in the template (`description: "${description}"`). The old default
+    # `LLM Wiki vault: {vault_id}` had an unquoted colon → invalid YAML →
+    # MISSING_VAULT_ID on --register-existing (the §D8 rebuild-from-Class-A
+    # path). Quoting fixes the colon; sanitize embedded `"`/newlines so the
+    # quoted scalar stays well-formed even for an operator-supplied --description.
+    _desc = (args.description or f"LLM Wiki vault: {vault_id}")
+    _desc = _desc.replace('"', "'").replace("\n", " ").replace("\r", " ")
     placeholders = {
         "vault_id": vault_id,
         "language": args.language or "en",
         "layout": args.layout or "per-project",
-        "description": args.description or f"LLM Wiki vault: {vault_id}",
+        "description": _desc,
     }
     schema_path = vault_root / SCHEMA_FILE
     if not schema_path.exists() or args.force:

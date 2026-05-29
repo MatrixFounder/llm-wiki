@@ -263,3 +263,50 @@ recoverable-by-design — and recorded so a future polish bead can sweep them.
 - **F12d** `wiki-merge` sanitizes redirect surfaces (`sanitize_alias_surface`) on the Class A frontmatter egress (F4) but `merge_entities` step 3 inserts the raw `from_slug`/`from_name` into `entity_aliases` (Class B). After a merge the two layers could hold differently-spelled aliases; harmless (slugs/names are ingest-constrained, and `wiki-reindex --full` re-derives Class B from Class A) but worth a consistency pass. Affected: `scripts/wiki_index/sqlite_repository.py::merge_entities`.
 - **F3-residual (security contract note)**: `resolve_entity_file`'s `is_symlink()` refuse + `validate_inside_vault(strict=True)` close the leaf-symlink read/unlink vector and the static escape. A **parent-component symlink + sub-millisecond TOCTOU race** remains (same class as D-1's documented "no kernel-mediated walk" limit) — **accepted under the single-user-local threat model only**. If these CLIs are ever wrapped in an MCP server / web shim / multi-tenant context, this residual must be re-evaluated (FD-based `O_NOFOLLOW` mediated walk) before exposure.
 - **Fix plan**: batch into a future entity-resolution polish bead; none block ship (all recoverable / cosmetic / maintainability / accepted-in-scope).
+
+---
+
+## TASK 005 dogfood findings (2026-05-29)
+
+End-to-end dogfood of the Epic 7 CLIs through the real `bin/` entry points on a
+throwaway `/tmp` vault (scaffold → reindex → confirm → alias → search → merge →
+lint → §D8 rebuild). All entity-resolution CLIs behaved correctly; the durability
+gate reconstructed the merged state from markdown alone (hermes-agent confirmed +
+mentions=3 via AM-3, hermes-framework absent, 3 redirect aliases rebuilt, ref
+canonicalized, lint 0 issues). Two bugs found + fixed inline (regression tests in
+`tests/test_dogfood_fixes.py`), one behavioral note recorded.
+
+## [2026-05-29] DF-1 wiki-search crashes on a hyphenated bare query [STATUS: fixed 2026-05-29]
+
+- **Symptom**: `wiki-search "hermes-agent" --no-expand-aliases` raised an unhandled `sqlite3.OperationalError: no such column: agent` (exit 1 + stack trace). FTS5 reads the unquoted hyphen as a NOT/column operator. (The default path masks it — alias expansion quotes the terms.)
+- **Root cause**: the raw user query was passed to `search_pages` as an FTS5 MATCH expression with no escaping (pre-existing; `search_pages` docstring delegates escaping to the caller).
+- **Affected components**: `scripts/wiki_skills/wiki_search.py::main`.
+- **Resolution**: on `sqlite3.OperationalError`, retry the query as a literal quoted phrase (`_fts_quote`); a genuinely un-parseable query yields a clean `INVALID_QUERY` envelope (exit 2) instead of a stack trace. Regression: `tests/test_dogfood_fixes.py::test_df1_search_hyphenated_query_does_not_crash`.
+
+## [2026-05-29] DF-2 entity-resolution CLIs leave transient page-level Class B drift [STATUS: by-design / documented]
+
+- **Symptom**: after `wiki-confirm`/`wiki-alias`/`wiki-merge` (which edit Class A frontmatter), `wiki-lint` reports `hash-mismatch` (the edited entity page's `pages.file_hash` is stale) and, after a merge, `missing-on-disk` (the deleted `from` concept page's `pages` row lingers).
+- **Root cause**: the entity-resolution CLIs mutate Class A + mirror **entity/alias** Class B state, but do not re-index the **page** row (file_hash/body). By design — page-level Class B is reconciled by reindex (ADR-002 §D8 Class A canonical).
+- **Affected components**: `wiki_confirm.py`, `wiki_alias.py`, `wiki_merge.py` (all entity-resolution mutators).
+- **Resolution**: not a bug — `wiki-reindex --full` (verified) and `--delta` heal it to **0 lint issues**. Operator workflow: run `wiki-reindex --delta` after a batch of entity-resolution edits (the `MERGE_MIRROR_FAILED` envelope already advises this). A future polish could have the CLIs fire a targeted `wiki-index-upsert`/`delete_page` so lint stays clean between reindexes.
+
+## [2026-05-29] DF-3 wiki-init scaffold writes invalid-YAML WIKI_SCHEMA.md [STATUS: fixed 2026-05-29]
+
+- **Symptom**: `wiki-init --scaffold-new` produced a `WIKI_SCHEMA.md` whose frontmatter `description: LLM Wiki vault: <id>` had an **unquoted colon** → invalid YAML (`ScannerError`). `_split_frontmatter` swallowed the error → empty dict → `--register-existing` failed with `MISSING_VAULT_ID` for **every** scaffolded vault, breaking the §D8 rebuild-from-Class-A path. Pre-existing (Phase 3a wiki-init), surfaced by the TASK 005 dogfood.
+- **Root cause**: `templates/WIKI_SCHEMA.md.tmpl` rendered `description: ${description}` unquoted; the default description contains `": "`.
+- **Affected components**: `templates/WIKI_SCHEMA.md.tmpl`, `scripts/wiki_skills/wiki_init.py::scaffold_new`.
+- **Resolution**: template now renders `description: "${description}"` (quoted scalar) + `scaffold_new` sanitizes embedded `"`/newlines. Regression: `tests/test_dogfood_fixes.py::test_df3_scaffold_emits_valid_yaml_and_registers` (fresh scaffold parses + `--register-existing` succeeds).
+
+## [2026-05-29] DF-4 wiki-alias --add did not refuse a cross-NAME hijack [STATUS: fixed 2026-05-29]
+
+- **Symptom**: `wiki-alias <slug> --add "<surface>"` only refused a surface that resolved to a different entity's **slug or alias** (via `resolve_entity`). A surface equal to a different entity's canonical **name** was accepted, hijacking that name's resolution (e.g. adding `"Beta Engine"` — beta's name — to `alpha` routed searches for "Beta Engine" to alpha). `wiki-lint` flagged it as `cross_name` only after the fact.
+- **Root cause**: `resolve_entity` resolves slug/alias, not name; the add-time collision pre-check used only `resolve_entity` (the functional-architecture doc's stated `resolve_entity + find_alias_collisions` pre-check was not fully implemented).
+- **Affected components**: `scripts/wiki_skills/wiki_alias.py::main` (`--add`), `scripts/wiki_index/{repository,sqlite_repository}.py`.
+- **Resolution**: added DAL `find_entity_by_name(vault_id, name) → slug | None`; `--add` now refuses a surface equal to a *different* entity's name (`ALIAS_COLLISION`, exit 5, "surface is the name of entity '<slug>'"). An entity's *own* name is still allowed. Regression: `tests/test_dogfood_fixes.py::test_df4_add_refuses_cross_name_hijack` (+ `_allows_own_name`). Found via the thorough collision dogfood.
+
+## [2026-05-29] DF-5 wiki-alias --add created a redundant self-alias [STATUS: fixed 2026-05-29]
+
+- **Symptom**: `wiki-alias <slug> --add "<slug>"` (an entity's own slug as alias) inserted a redundant `slug -> slug` row (`action: added`) — harmless (resolution unaffected, no false lint positive) but noise.
+- **Root cause**: the add path only short-circuited when the surface already resolved to a *different* entity; a surface resolving to *this* entity (own slug / own alias) fell through to the insert.
+- **Affected components**: `scripts/wiki_skills/wiki_alias.py::main` (`--add`).
+- **Resolution**: a surface that resolves to THIS entity now returns `action: unchanged` (no row written). Regression: `tests/test_dogfood_fixes.py::test_df5_add_own_slug_is_unchanged_not_redundant_alias`.

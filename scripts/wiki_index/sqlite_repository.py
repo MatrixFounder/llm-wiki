@@ -1158,3 +1158,11 @@ class SQLiteRepository(IndexRepository):
             (vault_id, slug),
         ).fetchone()
         return row["file_path"] if row else None
+
+    def find_entity_by_name(self, vault_id: str, name: str) -> str | None:
+        row = self._connect().execute(
+            "SELECT slug FROM entities WHERE vault_id = ? AND name = ? "
+            "ORDER BY slug LIMIT 1",
+            (vault_id, name),
+        ).fetchone()
+        return row["slug"] if row else None

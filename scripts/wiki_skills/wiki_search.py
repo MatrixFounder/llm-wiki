@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
+from scripts.wiki_index.models import PageHit
 from scripts.wiki_skills._common import emit
 
 
@@ -74,10 +76,27 @@ def main(argv: list[str] | None = None) -> int:
         match_query = args.query
         if not args.no_expand_aliases:
             match_query = _expand_query(repo, args.query, vaults_list)
-        hits = repo.search_pages(
-            match_query, vaults=vaults_list, types=types_list,
-            project=args.project, limit=args.limit,
-        )
+
+        def _search(q: str) -> list[PageHit]:
+            return repo.search_pages(
+                q, vaults=vaults_list, types=types_list,
+                project=args.project, limit=args.limit,
+            )
+
+        # DF-1 (dogfood): a raw query with an FTS5-special char (e.g. the hyphen
+        # in a slug like `hermes-agent`, which FTS5 reads as a column/NOT
+        # operator) raised an unhandled sqlite3.OperationalError. Fall back to a
+        # literal quoted-phrase search; only a genuinely un-parseable query
+        # yields a clean INVALID_QUERY envelope (never a stack trace).
+        try:
+            hits = _search(match_query)
+        except sqlite3.OperationalError:
+            try:
+                hits = _search(_fts_quote(args.query))
+            except sqlite3.OperationalError:
+                return emit({"error": "INVALID_QUERY", "field": "query",
+                             "reason": "not a valid FTS5 expression; quote terms "
+                                       "containing special characters (e.g. hyphens)"}, 2)
         results = [{
             "vault_id": h.page.vault_id, "slug": h.page.slug,
             "project": h.page.project, "type": h.page.type,
