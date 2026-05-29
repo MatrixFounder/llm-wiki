@@ -52,8 +52,43 @@ hits a spurious `QUESTION_CHANGED`. Invisible at the 1-2-doc test scale.
   index-constrained `project/slug`), and escaping would break the navigable
   link; accepted under single-user-local (re-evaluate if exposed multi-tenant).
 
-## Gate
+## Gate (round 1)
 
 Post-fix: **595 pytest pass / 4 skip**, `mypy --strict` clean (60 files). The
 single HIGH correctness defect is closed with a scale regression; the deferred
 LOWs are by-design or threat-model-scoped with recorded triggers. PASS.
+
+---
+
+## Re-verification (round 2 — operator `/vdd-multi`, 2026-05-29)
+
+A second `/vdd-multi` pass (logic + security + performance + a **completeness**
+critic; each finding adversarially verified) re-checked the POST-FIX code and
+RTM/UC coverage. **Verdict: PASS** (0 must-fix). Logic / security / performance
+all **clean** (the round-1 SQL `exclude_types` fix confirmed correct — applied in
+the WHERE clause before `ORDER BY bm25 LIMIT`, composing with
+types/vaults/project). The completeness critic surfaced **2 genuine
+non-blocking gaps** — both **fixed inline** (operator asked to confirm "fully
+implemented"):
+
+- **MEDIUM — `reindex --delta` dropped a query page's `cited` refs** (R-6.5e was
+  unioned in `reindex_full` + `_index_query_page` but not `reindex_delta`, an
+  oversight once `_queries` joined `PAGE_SUBDIRS`). The binding UC-20 gate is
+  `--full`-scoped (so not a contract breach, self-heals on `--full`), but a
+  body-edit + `--delta` lost the `cited` refs. **Fixed**: mirrored the
+  `cites:`→`'cited'` union into `reindex_delta`. Regression:
+  `tests/test_reindex_cites.py::test_e2e_04_delta_unions_cited_refs`.
+- **LOW — `--orchestrator-id` was inert + unvalidated** (the 007-05 spec mandated
+  a `^[a-z0-9._:@-]{1,64}$` validator + provenance, but the flag was declared
+  with no `type=` and never read). **Fixed**: added the argparse validator and
+  recorded `orchestrator_id` in the `query` log event's `details_json` (the
+  spec's provenance intent). Regressions:
+  `test_wiki_query_index.py::test_orchestrator_id_recorded_in_query_log_event`
+  + `test_orchestrator_id_custom_value_and_validation`.
+
+## Gate (round 2 — final)
+
+**598 pytest pass / 4 skip**, `mypy --strict` clean (60 files), `bin/wiki-query`
+smoke green. Logic/security/performance clean; the 2 completeness gaps fixed +
+regression-tested. No must-fix outstanding. **PASS.**
+

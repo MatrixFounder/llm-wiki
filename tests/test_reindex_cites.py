@@ -14,6 +14,7 @@ from pathlib import Path
 from scripts.wiki_index.models import Vault
 from scripts.wiki_index.reindex import (
     _cited_refs_from_frontmatter,
+    reindex_delta,
     reindex_full,
 )
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
@@ -114,6 +115,31 @@ def test_e2e_03_malformed_cites_skip_and_report(tmp_path: Path) -> None:
     for entry in result["cite_skipped"]:
         assert entry["page_slug"] == "q"
         assert "malformed" in entry["reason"]
+    repo.close()
+
+
+def test_e2e_04_delta_unions_cited_refs(tmp_path: Path) -> None:
+    """vdd-multi-verify MEDIUM regression: `reindex --delta` must union a query
+    page's `cites:`→`'cited'` refs too (full/delta symmetry) — editing a query
+    page body + `--delta` must NOT drop its `cited` refs. (Old registered_at so
+    the file mtime always exceeds the delta cutoff.)"""
+    vault = tmp_path / "vault"
+    _write(
+        vault, "_queries/q.md",
+        "type: query\ntitle: Q\ndate: 2026-05-29\ntags: [query]\n"
+        'cites: ["_vault_/foo"]',
+        "# Answer\n\nSee [[bar]].",
+    )
+    repo = SQLiteRepository(tmp_path / "g.db")
+    repo.apply_schema()
+    repo.register_vault(Vault(
+        vault_id="test-vault", name="v", root_path=vault,
+        schema_version="4.0", registered_at=datetime(2000, 1, 1),
+    ))
+    reindex_delta(repo, "test-vault")
+    refs = _refs(repo)
+    assert ("q", "foo", "cited") in refs, "delta dropped the cites:-derived cited ref"
+    assert ("q", "bar", "mentioned") in refs
     repo.close()
 
 

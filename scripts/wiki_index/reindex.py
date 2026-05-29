@@ -228,8 +228,19 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
                 repo.upsert_page(page)
+                # R-6.5e (TASK 007 / vdd-multi-verify): mirror the query-page
+                # `cites:`→`'cited'` union into the delta path too, so editing a
+                # query page body + `wiki-reindex --delta` does NOT drop its
+                # `cited` refs (full/delta symmetry; matches reindex_full +
+                # _index_query_page). Cite-parse warnings fold into `skipped`.
+                delta_refs = list(out.refs)
+                if db_type == "query":
+                    delta_refs.extend(_cited_refs_from_frontmatter(
+                        updated_fm, vault_id, out.page_slug, out.project,
+                        skipped,
+                    ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
-                                  out.refs)
+                                  delta_refs)
                 touched += 1
             except (UnmappedTypeError, BodyNormalizationError) as e:
                 skipped.append({"path": str(path), "error": str(e)})

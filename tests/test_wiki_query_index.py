@@ -12,6 +12,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.wiki_index.models import Vault
 from scripts.wiki_index.reindex import reindex_full
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
@@ -120,6 +122,47 @@ def test_idempotency_state_recorded(tmp_path: Path) -> None:
     _c, prep2 = _run(["prepare", "Hermes routing", "--vault", "test-vault",
                       "--vault-root", str(vault), "--db-path", str(db)])
     assert prep2["is_unchanged"] is True
+
+
+def _log_details(db: Path) -> dict:
+    repo = SQLiteRepository(db)
+    try:
+        row = repo._connect().execute(
+            "SELECT details_json FROM log_events WHERE vault_id='test-vault' "
+            "AND event_type='query'").fetchone()
+        return json.loads(row["details_json"]) if row else {}
+    finally:
+        repo.close()
+
+
+def test_orchestrator_id_recorded_in_query_log_event(tmp_path: Path) -> None:
+    """vdd-multi-verify LOW regression: --orchestrator-id is now WIRED — the
+    `query` log event records it for provenance (was previously inert)."""
+    _vault, db, _prep, _applied = _file_query(tmp_path)  # default id
+    details = _log_details(db)
+    assert details.get("orchestrator_id") == "orchestrator"
+    assert details.get("cites") == 1
+
+
+def test_orchestrator_id_custom_value_and_validation(tmp_path: Path) -> None:
+    vault, db, prep, _applied = _file_query(tmp_path)
+    # re-file with a custom orchestrator-id (--force) → recorded verbatim
+    _c, _out = _run([
+        "apply", "--vault", "test-vault", "--vault-root", str(vault),
+        "--db-path", str(db), "--query-slug", prep["query_slug"],
+        "--question", "Hermes routing", "--question-hash", prep["question_hash"],
+        "--answer-file", str(vault / "answer.md"),
+        "--citations-file", str(vault / "cites.json"),
+        "--orchestrator-id", "claude-opus-4-8", "--force"])
+    assert _log_details(db).get("orchestrator_id") == "claude-opus-4-8"
+    # invalid orchestrator-id → argparse validation error (SystemExit, exit 2)
+    with pytest.raises(SystemExit) as e:
+        wiki_query.main([
+            "apply", "--vault", "test-vault", "--vault-root", str(vault),
+            "--query-slug", "q", "--question", "Q", "--question-hash", "0" * 64,
+            "--answer-stdin", "--citations-stdin",
+            "--orchestrator-id", "BAD ID WITH SPACES"])
+    assert e.value.code != 0
 
 
 def test_idempotency_holds_at_scale_above_limit(tmp_path: Path) -> None:

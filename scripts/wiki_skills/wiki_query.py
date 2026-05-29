@@ -45,6 +45,16 @@ _MAX_CITATIONS_BYTES = 64 * 1024  # 64 KiB
 _MAX_CITATIONS = 50
 _SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_ORCH_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+
+
+def _orchestrator_id(value: str) -> str:
+    """argparse validator for --orchestrator-id (007-05 spec regex). Defends a
+    library caller too; the CLI default 'orchestrator' passes."""
+    if not _ORCH_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            "must match ^[a-z0-9._:@-]{1,64}$")
+    return value
 
 
 class _InvalidQuery(Exception):
@@ -425,7 +435,11 @@ def apply(args: argparse.Namespace) -> int:
                 vault_id=args.vault, event_ts=_datetime.now(),
                 event_type="query", subject=args.query_slug,
                 pages_created_json=[], pages_updated_json=[],
-                details_json={"cites": len(citations)},
+                # Provenance: record which orchestrator filed the answer (the
+                # 007-05 spec's intent for --orchestrator-id; was previously
+                # inert — vdd-multi-verify LOW).
+                details_json={"cites": len(citations),
+                              "orchestrator_id": args.orchestrator_id},
             ))
             indexed = True
 
@@ -485,7 +499,8 @@ def _build_parser() -> argparse.ArgumentParser:
     g_cit = ap.add_mutually_exclusive_group(required=True)
     g_cit.add_argument("--citations-stdin", action="store_true")
     g_cit.add_argument("--citations-file", default=None)
-    ap.add_argument("--orchestrator-id", default="orchestrator")
+    ap.add_argument("--orchestrator-id", default="orchestrator",
+                    type=_orchestrator_id)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--db-path", default=None)
     ap.set_defaults(func=apply)
