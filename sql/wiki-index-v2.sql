@@ -124,11 +124,21 @@ CREATE TABLE IF NOT EXISTS entity_aliases (
                           'spelling_variant', 'translation', 'nickname',
                           'acronym', 'former_name', 'product_codename'
                       )),
-    PRIMARY KEY (vault_id, alias, entity_slug),
+    -- TASK 005 / R-5.4 (schema v3): PK is (vault_id, alias) — one alias
+    -- resolves to EXACTLY ONE entity per vault. Closes KNOWN_ISSUES L-4
+    -- (the old (vault_id, alias, entity_slug) PK let one alias point at
+    -- multiple entities). entity_slug is now a regular column.
+    PRIMARY KEY (vault_id, alias),
     FOREIGN KEY (vault_id, entity_slug) REFERENCES entities(vault_id, slug) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_aliases_lookup ON entity_aliases(vault_id, alias);
+-- TASK 005 / R-5.4: idx_aliases_lookup (vault_id, alias) was a duplicate of
+-- the PK's implicit index under the v3 PK → dropped (dead-weight, cf. P-5).
+-- idx_aliases_entity is the reverse lookup for list_aliases (R-5.2),
+-- sibling-alias gathering during search expansion (R-5.5), and alias
+-- re-pointing during merge (R-4.7) — the old composite PK put entity_slug
+-- as the 3rd column (not a usable index prefix).
+CREATE INDEX IF NOT EXISTS idx_aliases_entity ON entity_aliases(vault_id, entity_slug);
 
 -- ---------------------------------------------------------------------------
 -- 4. pages — wiki pages (sources, concept pages, queries, etc.)
@@ -420,7 +430,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- 13.2 PRAGMA user_version — migration gating marker (M-5 fix)
 -- Set unconditionally on every apply; idempotent. wiki-init reads this to
 -- decide whether to seed schema or run a migration step.
-PRAGMA user_version = 2;
+-- v3 (TASK 005 / R-5.4): entity_aliases PK (vault_id, alias) + idx swap.
+-- The DB is a Class B rebuildable cache, so the v2→v3 migration is a
+-- `wiki-reindex --full`, NOT an in-place ALTER (apply_schema's
+-- CREATE TABLE IF NOT EXISTS cannot mutate a live PK). See ADR-002 §D8
+-- amendment.
+PRAGMA user_version = 3;
 
 -- 13.3 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

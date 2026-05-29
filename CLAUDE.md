@@ -9,11 +9,16 @@ via `CLAUDE.local.md` → `CLAUDE.agentic.md`.
 Multi-vault SQLite-indexed knowledge base implementing Karpathy's llm-wiki
 pattern. Provides CLIs (`wiki-init`, `wiki-search`, `wiki-lint`,
 `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
-`wiki-enrich`) over an `IndexRepository` DAL (SQLite + FTS5 + WAL).
+`wiki-enrich`, `wiki-extract-concepts`, and the Epic 7 entity resolver
+`wiki-confirm` / `wiki-alias` / `wiki-merge`) over an `IndexRepository` DAL
+(SQLite + FTS5 + WAL).
 
 Phase 3a complete (2026-05-26). Phase 3b: TASK 003 v2 shipped 2026-05-28;
 TASK 003 v3.1 (Decision-17 deterministic refactor) shipped 2026-05-28
-(commit `43812f2`). No active task at HEAD. See `docs/ARCHITECTURE.md`,
+(commit `43812f2`); **TASK 005 (Epic 7 entity resolution — R-4 confirmed/
+candidate + `wiki-merge` + R-5 alias table) shipped 2026-05-29** (17 beads +
+`/vdd-multi` 8-fix hardening; 534 pytest, mypy strict; schema v2→v3 closes
+KNOWN_ISSUES L-4). No active task at HEAD. See `docs/ARCHITECTURE.md`,
 `docs/adr/`, and the archived task/plan pairs under `docs/tasks/` +
 `docs/plans/`.
 
@@ -57,8 +62,8 @@ state and user preferences, not domain knowledge.
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
 - `docs/tasks/` + `docs/plans/` — archived task/plan pairs (no
-  `docs/TASK.md` at HEAD — most recent: `task-003-v3.1-wiki-extract-concepts.md`
-  shipped 2026-05-28).
+  `docs/TASK.md` at HEAD — most recent: `task-005-entity-resolution.md`
+  shipped 2026-05-29; per-bead specs at `task-005-01..17-*.md`).
 - `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002,
   status header tracks Phase 3a/3b progress).
 - `docs/KNOWN_ISSUES.md` — deferred items, including perf SEV-1 set

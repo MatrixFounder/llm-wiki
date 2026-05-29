@@ -4,11 +4,14 @@
 > [docs/architectures/](./architectures/). Edit the relevant chunk and
 > keep the one-line summary on this page in sync.
 
-> **Status**: **TASK 005 active** — Epic 7 completion (R-4 confirmed/candidate
-> entity resolution incl. `wiki-merge` duplicate-fold + R-5 two-tier alias
-> table). ADRs 001 + 002 in effect; ADR-002 §D8 amended for the
-> `entity_aliases` PK change (schema v2→v3, closes L-4). Living document —
-> describes the current/target architecture, not the change history. For shipped task specs (history, decisions, hardening
+> **Status**: **TASK 005 SHIPPED 2026-05-29** — Epic 7 complete (R-4
+> confirmed/candidate entity resolution incl. `wiki-merge` duplicate-fold +
+> R-5 two-tier alias table; 17 beads + `/vdd-multi` 8-fix hardening; 534 pytest
+> pass, mypy `--strict` clean). No active task at HEAD. ADRs 001 + 002 in
+> effect; ADR-002 §D8 amended for the `entity_aliases` PK change (schema v2→v3,
+> closes L-4). Living document — describes the current architecture, not the
+> change history. Shipped task specs (history, decisions, deferred items) live
+> in [tasks/](./tasks/) + [plans/](./plans/) + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md). For shipped task specs (history, decisions, hardening
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >

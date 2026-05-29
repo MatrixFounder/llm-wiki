@@ -41,12 +41,20 @@ To be batched into a single cleanup PR before Phase 3a Exit. Tracked here per Pl
 - **Affected components**: SCHEMA-v2.sql §7 interactions table.
 - **Fix plan**: Drop synthetic `id` column; PK becomes `(vault_id, source_kind, source_id)`. Out-of-MVP (Epic 6) — defer fix until Epic 6 activates this table.
 
-## [2026-05-26] L-4 entity_aliases PK includes entity_slug (wrong) [STATUS: open]
+## [2026-05-26] L-4 entity_aliases PK includes entity_slug (wrong) [STATUS: fixed 2026-05-29]
 
 - **Symptom**: `entity_aliases` PK `(vault_id, alias, entity_slug)` allows the same alias to point at two different entity_slugs in one vault. Probably wrong — `"Sharpe ratio"` should resolve to a single entity.
 - **Root cause**: Schema design error.
 - **Affected components**: SCHEMA-v2.sql §3 entity_aliases.
-- **Fix plan**: PK → `(vault_id, alias)` with `entity_slug` as regular column. Run uniqueness check first on existing data (none yet in MVP).
+- **Resolution (TASK 005 / R-5.4, 005-01)**: PK changed to `(vault_id, alias)`; `entity_slug` is now a regular column; `idx_aliases_lookup` dropped (duplicate of the PK index), `idx_aliases_entity (vault_id, entity_slug)` added for the reverse lookup; `PRAGMA user_version` 2→3. The DB is Class B rebuildable, so the migration is `wiki-reindex --full` (no in-place ALTER) — documented in the ADR-002 §D8 amendment. Guarded by `tests/test_schema_v3.py::test_alias_pk_rejects_same_alias_two_slugs`.
+
+## [2026-05-29] L-8 reindex stores entities.name from frontmatter `title`, not `name` [STATUS: open, low]
+
+- **Symptom**: `reindex_full` registers an entity with `name = updated_fm.get("title", slug)` ([reindex.py](../scripts/wiki_index/reindex.py)). `write_concept_page` ([wiki_extract_concepts.py](../scripts/wiki_skills/wiki_extract_concepts.py)) emits `name:` (not `title:`), so a freshly-extracted concept page round-trips with `entities.name == slug` (the display name is lost on the DB side until the page also carries `title:`).
+- **Root cause**: Pre-existing field-name mismatch (predates TASK 005); reindex was written against `title`, the concept-extractor against `name`.
+- **Affected components**: `scripts/wiki_index/reindex.py` (entity registration), `scripts/wiki_skills/wiki_extract_concepts.py::write_concept_page`.
+- **Impact on Epic 7**: minor — `wiki-merge`'s name-based redirect alias degrades to the slug (already registered), so resolution is unaffected; only a human-readable display name is missing. Surfaced during TASK 005 005-16 acceptance.
+- **Fix plan**: either have reindex fall back `title or name or slug`, or have `write_concept_page` also emit `title:`. Defer — orthogonal to entity resolution; pick up in a docs/normalization polish bead.
 
 ## [2026-05-26] L-5 pages.type='log' is dead enum value [STATUS: open]
 
@@ -220,3 +228,38 @@ The deterministic refactor shipped 2026-05-28 (19 beads, ~436 pytest passed, myp
 - **Root cause**: Distinct envelopes chosen for operator UX clarity over information-hiding.
 - **Affected components**: `scripts/wiki_skills/wiki_extract_concepts.py::prepare`.
 - **Fix plan**: Collapse to a single `INVALID_SOURCE` envelope. Defer until multi-tenant scenarios emerge — current scope is operator-trusted; the differentiation is materially helpful for debugging.
+
+---
+
+## TASK 005 (Epic 7 entity resolution) — `/vdd-multi` deferred findings (2026-05-29)
+
+The `/vdd-multi` adversarial sweep on TASK 005 applied 8 must-fix items inline
+(F1 default-search alias expansion, F2 merge read-inside-tx, F3 symlink refuse,
+F4 merge surface sanitization, F5 lint CWE-117 strip, F6 `--threshold>=1` guard,
+F7 `MERGE_MIRROR_FAILED` logging, F8 reindex docstring honesty — all with green
+regression tests). The items below were explicitly deferred — scale-only perf or
+recoverable-by-design — and recorded so a future polish bead can sweep them.
+
+## [2026-05-29] P-10 wiki-lint frontmatter scan is a 2nd O(pages) YAML sweep [STATUS: open, SEV-2]
+
+- **Symptom**: `lint._scan_frontmatter_alias_collisions` calls `frontmatter.load()` (file read + PyYAML `safe_load`) on **every** `_concepts`/`_entities` page on every `wiki-lint` run — *in addition to* `check_drift` (P-3), which already reads + hashes + `safe_load`s every page. At 10k entity pages a single lint does the disk+YAML sweep twice (~seconds against the 30s SLO P-3 already flags as at-risk).
+- **Root cause**: R-5.6(e) Class A frontmatter scan implemented as an eager per-file YAML parse, independent of `check_drift`'s sweep.
+- **Affected components**: `scripts/wiki_index/lint.py:_scan_frontmatter_alias_collisions` + `run_all_checks`.
+- **Fix plan**: (a) detect frontmatter alias collisions from `pages.frontmatter_json` via SQL `json_each(...,'$.aliases')` GROUP BY (zero file I/O — the aliases are already mirrored), OR (b) share the single file-read pass with `check_drift` + use the P-3 regex fast-path instead of full PyYAML. Pass at N=100 today; wire only when a real vault crosses ~1k entity pages.
+
+## [2026-05-29] P-11 find_alias_collisions cross-name join on unindexed entities.name [STATUS: open, SEV-3]
+
+- **Symptom**: `find_alias_collisions` cross-name branch `JOIN entities e ON e.name = a.alias` has no index on `entities.name` (schema indexes type/project/email/telegram/is_candidate/last_updated + PK, not `name`). Worst-case nested-loop ≈ O(aliases × entities); at 10k×10k a lint run could blow up. The cross-*slug* branch (`e.slug = a.alias`) is PK-covered and fine.
+- **Root cause**: No `entities.name` index (deliberately — adding one taxes every write for a rare lint query, cf. the P-5 dead-index anti-pattern).
+- **Affected components**: `scripts/wiki_index/sqlite_repository.py::find_alias_collisions`.
+- **Fix plan**: `EXPLAIN QUERY PLAN` to confirm it's a single scan (likely) not a per-alias probe; if it regresses at scale, add a covering index or rewrite as a self-join keyed on the indexed columns. Lint-path only, once per vault. Defer until a real vault shows the regression.
+
+## [2026-05-29] L-9 entity-resolution minor logic/UX nits (deferred) [STATUS: open, low]
+
+- **F11** `wiki-confirm` single-mode frontmatter + DB writes are not transactional; a DB-write failure after the frontmatter write leaves them divergent. **Recoverable by design** (Class A is canonical → `wiki-reindex --full` reconciles); no rollback added. Affected: `scripts/wiki_skills/wiki_confirm.py`.
+- **F12a** `wiki-merge --dry-run` `aliases_absorbed` over-counts (does not subtract surfaces already on `into` or third-entity collisions that the real merge skips). Cosmetic preview drift. Affected: `scripts/wiki_skills/wiki_merge.py`.
+- **F12b** `lint._scan_frontmatter_alias_collisions` swallows unparseable-frontmatter (`except Exception: continue`) → a malformed entity page with a colliding alias is silently skipped. Consider surfacing parse failures as their own lint issue.
+- **F12c** the correlated `mentions_count` UPDATE is hand-copied in 4 places (reindex Step 3, `recompute_mentions`, `auto_promote_candidates`, `merge_entities`); extract one private helper so a future index change can't silently desync them. Maintainability, not a bug.
+- **F12d** `wiki-merge` sanitizes redirect surfaces (`sanitize_alias_surface`) on the Class A frontmatter egress (F4) but `merge_entities` step 3 inserts the raw `from_slug`/`from_name` into `entity_aliases` (Class B). After a merge the two layers could hold differently-spelled aliases; harmless (slugs/names are ingest-constrained, and `wiki-reindex --full` re-derives Class B from Class A) but worth a consistency pass. Affected: `scripts/wiki_index/sqlite_repository.py::merge_entities`.
+- **F3-residual (security contract note)**: `resolve_entity_file`'s `is_symlink()` refuse + `validate_inside_vault(strict=True)` close the leaf-symlink read/unlink vector and the static escape. A **parent-component symlink + sub-millisecond TOCTOU race** remains (same class as D-1's documented "no kernel-mediated walk" limit) — **accepted under the single-user-local threat model only**. If these CLIs are ever wrapped in an MCP server / web shim / multi-tenant context, this residual must be re-evaluated (FD-based `O_NOFOLLOW` mediated walk) before exposure.
+- **Fix plan**: batch into a future entity-resolution polish bead; none block ship (all recoverable / cosmetic / maintainability / accepted-in-scope).

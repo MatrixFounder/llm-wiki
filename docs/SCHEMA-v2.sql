@@ -144,11 +144,17 @@ CREATE TABLE IF NOT EXISTS entity_aliases (
                           'spelling_variant', 'translation', 'nickname',
                           'acronym', 'former_name', 'product_codename'
                       )),
-    PRIMARY KEY (vault_id, alias, entity_slug),
+    -- TASK 005 / R-5.4 (schema v3): PK is (vault_id, alias) — one alias
+    -- resolves to EXACTLY ONE entity per vault. Closes KNOWN_ISSUES L-4.
+    -- entity_slug is now a regular column.
+    PRIMARY KEY (vault_id, alias),
     FOREIGN KEY (vault_id, entity_slug) REFERENCES entities(vault_id, slug) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_aliases_lookup ON entity_aliases(vault_id, alias);
+-- TASK 005 / R-5.4: idx_aliases_lookup dropped (duplicate of the v3 PK index);
+-- idx_aliases_entity added — reverse lookup for list_aliases (R-5.2),
+-- search-expansion sibling gathering (R-5.5), merge re-pointing (R-4.7).
+CREATE INDEX IF NOT EXISTS idx_aliases_entity ON entity_aliases(vault_id, entity_slug);
 
 -- ---------------------------------------------------------------------------
 -- 4. pages — wiki pages (sources, concept pages, queries, etc.)
@@ -503,9 +509,9 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 
 -- Seeded on first init by wiki-init:
---   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '2.0', <ISO-8601>);
+--   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '3.0', <ISO-8601>);
 --   INSERT INTO schema_meta(key, value, updated_at) VALUES ('created_at',     <ISO-8601>, <ISO-8601>);
---   PRAGMA user_version = 2;
+--   PRAGMA user_version = 3;   -- v3 (TASK 005 / R-5.4): entity_aliases PK swap; migration = wiki-reindex --full
 --
 -- 13.2 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

@@ -20,6 +20,47 @@ class LintIssue:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+def _safe_surface(s: str) -> str:
+    """CWE-117 (F5, vdd-multi): strip control chars + cap an untrusted alias
+    surface before it enters an operator-facing lint report (markdown / JSON
+    sidecar). The surface originates from `_raw/`-derived frontmatter and is
+    only edge-stripped at ingest."""
+    return "".join(c for c in s if ord(c) >= 32)[:200]
+
+
+def _scan_frontmatter_alias_collisions(vault_root: Any) -> list[dict[str, Any]]:
+    """Class A frontmatter scan (R-5.6e): a surface claimed by ≥2 entity pages'
+    `aliases:` blocks. Post-hard-PK the DB can hold only one row per alias, so
+    this file-layer check is the authoritative source-of-truth detector."""
+    import frontmatter
+
+    from scripts.wiki_index.layout import CONCEPTS_SUBDIR, ENTITIES_SUBDIR
+
+    surface_to_slugs: dict[str, list[str]] = {}
+    for sub in (CONCEPTS_SUBDIR, ENTITIES_SUBDIR):
+        base = vault_root / sub
+        if not base.is_dir():
+            continue
+        for f in base.rglob("*.md"):
+            if not f.is_file():
+                continue
+            try:
+                meta = frontmatter.load(str(f)).metadata
+            except Exception:
+                continue
+            raw = meta.get("aliases")
+            if not isinstance(raw, list):
+                continue
+            for a in raw:
+                if isinstance(a, str) and a.strip():
+                    surface_to_slugs.setdefault(a.strip(), []).append(f.stem)
+    return [
+        {"alias": alias, "slugs": sorted(set(slugs))}
+        for alias, slugs in surface_to_slugs.items()
+        if len(set(slugs)) > 1
+    ]
+
+
 def run_all_checks(
     repo: "IndexRepository", *, vaults: list[str] | None = None,
     strict: bool = False,
@@ -72,6 +113,23 @@ def run_all_checks(
                 vault_id=vid, page_slug=slug,
                 details={"project": project,
                          "file_type": file_type, "db_type": db_type},
+            ))
+        # Alias collisions (TASK 005 / R-5.6): DB (legacy in-table + cross-table
+        # alias==another entity's slug/name) + Class A frontmatter scan (two
+        # entity pages claiming the same surface — post-hard-PK the only place a
+        # canonical conflict can still co-exist).
+        sev: Severity = "error" if strict else "warning"
+        for col in repo.find_alias_collisions(vid):
+            issues.append(LintIssue(
+                category="alias-collision", severity=sev, vault_id=vid,
+                details={"alias": _safe_surface(col.alias), "slugs": col.slugs,
+                         "kind": col.kind},
+            ))
+        for fm_col in _scan_frontmatter_alias_collisions(v.root_path):
+            issues.append(LintIssue(
+                category="alias-collision", severity=sev, vault_id=vid,
+                details={"alias": _safe_surface(fm_col["alias"]),
+                         "slugs": fm_col["slugs"], "kind": "frontmatter"},
             ))
 
     # Cross-vault duplicates (R-29)

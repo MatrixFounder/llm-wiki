@@ -22,10 +22,13 @@ from typing import Any, Literal
 
 from scripts.wiki_index.layout import COURSE_TIER_DIR, PAGE_SUBDIRS
 from scripts.wiki_index.models import (
+    AliasCollision,
     BatchMode,
     BatchRun,
     DriftReport,
+    Entity,
     LogEvent,
+    MergeReport,
     OrphanLink,
     Page,
     PageHit,
@@ -44,6 +47,18 @@ class VaultRegistrationError(RuntimeError):
     """Raised on vault PK collision (duplicate vault_id) or UNIQUE violation
     (duplicate root_path). Wraps the underlying sqlite3.IntegrityError with a
     user-facing message."""
+
+
+class AliasCollisionError(RuntimeError):
+    """Raised by `add_alias` when the surface already resolves to a *different*
+    entity (the hard `(vault_id, alias)` PK, TASK 005 / R-5.1). Carries the
+    conflicting canonical slug so the CLI can name it in the error envelope —
+    the slug is a safe kebab identifier, NOT the operator-supplied surface (so
+    the CWE-117/209 never-echo-content invariant holds)."""
+
+    def __init__(self, conflicting_slug: str) -> None:
+        super().__init__(f"alias already resolves to entity {conflicting_slug!r}")
+        self.conflicting_slug = conflicting_slug
 
 
 def _stub(method_name: str, impl_task: str) -> "NotImplementedError":
@@ -471,13 +486,18 @@ class SQLiteRepository(IndexRepository):
     # =========================================================================
 
     def find_orphan_links(self, vault_id: str | None = None) -> list[OrphanLink]:
+        # R-4.5d (TASK 005): alias-aware. A ref whose target is a registered
+        # alias resolves to its canonical entity → NOT an orphan. This is what
+        # keeps a merged-away `from` slug (still `[[from-slug]]` in source bodies)
+        # from polluting lint after a `wiki-merge`.
         sql = (
             "SELECT r.vault_id, r.page_slug, r.page_project, r.entity_slug, "
             "r.line_start, r.source_quote "
             "FROM page_entity_refs r "
             "LEFT JOIN entities e ON e.vault_id = r.vault_id AND e.slug = r.entity_slug "
             "LEFT JOIN pages p ON p.vault_id = r.vault_id AND p.slug = r.entity_slug "
-            "WHERE e.slug IS NULL AND p.slug IS NULL"
+            "LEFT JOIN entity_aliases a ON a.vault_id = r.vault_id AND a.alias = r.entity_slug "
+            "WHERE e.slug IS NULL AND p.slug IS NULL AND a.alias IS NULL"
         )
         params: list[Any] = []
         if vault_id is not None:
@@ -782,3 +802,359 @@ class SQLiteRepository(IndexRepository):
                 (vault_id, slug, name, type, is_candidate,
                  canonicalized_by, first_seen, last_updated, file_path),
             )
+
+    # =========================================================================
+    # Entity resolution — Epic 7 (TASK 005, R-4 + R-5)
+    # =========================================================================
+
+    def _row_to_entity(self, conn: sqlite3.Connection, row: sqlite3.Row) -> Entity:
+        aliases = [
+            r["alias"] for r in conn.execute(
+                "SELECT alias FROM entity_aliases "
+                "WHERE vault_id = ? AND entity_slug = ? ORDER BY alias",
+                (row["vault_id"], row["slug"]),
+            ).fetchall()
+        ]
+        return Entity(
+            vault_id=row["vault_id"],
+            slug=row["slug"],
+            type=row["type"],
+            name=row["name"],
+            aliases=aliases,
+            description=row["definition"],
+            is_external=bool(row["is_external"]),
+        )
+
+    def resolve_entity(self, vault_id: str, slug: str) -> Entity | None:
+        """R-4.5: resolve a canonical slug OR an alias surface → its Entity.
+
+        Tries the entities table first; on miss, treats `slug` as an
+        `entity_aliases.alias` and resolves through it. None on both misses
+        (no raise — retires the Epic-7 NotImplementedError stub)."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT * FROM entities WHERE vault_id = ? AND slug = ?",
+            (vault_id, slug),
+        ).fetchone()
+        if row is None:
+            arow = conn.execute(
+                "SELECT entity_slug FROM entity_aliases "
+                "WHERE vault_id = ? AND alias = ?",
+                (vault_id, slug),
+            ).fetchone()
+            if arow is None:
+                return None
+            row = conn.execute(
+                "SELECT * FROM entities WHERE vault_id = ? AND slug = ?",
+                (vault_id, arow["entity_slug"]),
+            ).fetchone()
+            if row is None:
+                return None
+        return self._row_to_entity(conn, row)
+
+    def set_entity_candidate(
+        self, vault_id: str, slug: str, is_candidate: int
+    ) -> bool:
+        """R-4.2/4.3: explicit confirm/undo setter; bypasses the MIN() guard.
+
+        Returns True iff the stored value changed (False = already in target
+        state → idempotent). The caller pre-checks existence (resolve_entity);
+        a missing row returns False defensively."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT is_candidate FROM entities WHERE vault_id = ? AND slug = ?",
+            (vault_id, slug),
+        ).fetchone()
+        if row is None or row["is_candidate"] == is_candidate:
+            return False
+        conn.execute(
+            "UPDATE entities SET is_candidate = ?, last_updated = ?, "
+            "canonicalized_by = 'human' WHERE vault_id = ? AND slug = ?",
+            (is_candidate, datetime.now().isoformat(), vault_id, slug),
+        )
+        return True
+
+    def list_candidates(self, vault_id: str) -> list[Entity]:
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT * FROM entities WHERE vault_id = ? AND is_candidate = 1 "
+            "ORDER BY slug",
+            (vault_id,),
+        ).fetchall()
+        return [self._row_to_entity(conn, r) for r in rows]
+
+    def recompute_mentions(self, vault_id: str) -> None:
+        conn = self._connect()
+        conn.execute(
+            "UPDATE entities SET mentions_count = ("
+            "  SELECT COUNT(*) FROM page_entity_refs r "
+            "  WHERE r.vault_id = entities.vault_id "
+            "    AND r.entity_slug = entities.slug"
+            ") WHERE vault_id = ?",
+            (vault_id,),
+        )
+
+    def auto_promote_candidates(self, vault_id: str, threshold: int) -> list[str]:
+        """R-4.4: recompute mentions, then promote candidates with
+        mentions_count >= threshold. Returns promoted slugs. Atomic."""
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "UPDATE entities SET mentions_count = ("
+                "  SELECT COUNT(*) FROM page_entity_refs r "
+                "  WHERE r.vault_id = entities.vault_id "
+                "    AND r.entity_slug = entities.slug"
+                ") WHERE vault_id = ?",
+                (vault_id,),
+            )
+            promoted = [
+                r["slug"] for r in conn.execute(
+                    "SELECT slug FROM entities WHERE vault_id = ? "
+                    "AND is_candidate = 1 AND mentions_count >= ? ORDER BY slug",
+                    (vault_id, threshold),
+                ).fetchall()
+            ]
+            if promoted:
+                conn.execute(
+                    "UPDATE entities SET is_candidate = 0, last_updated = ?, "
+                    "canonicalized_by = 'auto:mentions' WHERE vault_id = ? "
+                    "AND is_candidate = 1 AND mentions_count >= ?",
+                    (datetime.now().isoformat(), vault_id, threshold),
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        return promoted
+
+    def preview_promotable(self, vault_id: str, threshold: int) -> list[str]:
+        """Read-only would-promote set (R-4.4 --dry-run). Fresh COUNT via a
+        sub-SELECT; no UPDATE, no mutation."""
+        conn = self._connect()
+        return [
+            r["slug"] for r in conn.execute(
+                "SELECT slug FROM entities e WHERE e.vault_id = ? "
+                "AND e.is_candidate = 1 AND ("
+                "  SELECT COUNT(*) FROM page_entity_refs r "
+                "  WHERE r.vault_id = e.vault_id AND r.entity_slug = e.slug"
+                ") >= ? ORDER BY slug",
+                (vault_id, threshold),
+            ).fetchall()
+        ]
+
+    def add_alias(
+        self, vault_id: str, alias: str, entity_slug: str,
+        alias_type: str = "spelling_variant",
+    ) -> None:
+        """R-5.1: register a Class B alias mirror. Idempotent same-target re-add;
+        raises AliasCollisionError if the surface already maps to a different
+        entity (the hard (vault_id, alias) PK)."""
+        conn = self._connect()
+        existing = conn.execute(
+            "SELECT entity_slug FROM entity_aliases WHERE vault_id = ? AND alias = ?",
+            (vault_id, alias),
+        ).fetchone()
+        if existing is not None:
+            if existing["entity_slug"] == entity_slug:
+                return  # idempotent
+            raise AliasCollisionError(existing["entity_slug"])
+        conn.execute(
+            "INSERT INTO entity_aliases (vault_id, alias, entity_slug, alias_type) "
+            "VALUES (?, ?, ?, ?)",
+            (vault_id, alias, entity_slug, alias_type),
+        )
+
+    def remove_alias(self, vault_id: str, alias: str) -> bool:
+        conn = self._connect()
+        cur = conn.execute(
+            "DELETE FROM entity_aliases WHERE vault_id = ? AND alias = ?",
+            (vault_id, alias),
+        )
+        return cur.rowcount > 0
+
+    def list_aliases(self, vault_id: str, entity_slug: str) -> list[str]:
+        conn = self._connect()
+        return [
+            r["alias"] for r in conn.execute(
+                "SELECT alias FROM entity_aliases "
+                "WHERE vault_id = ? AND entity_slug = ? ORDER BY alias",
+                (vault_id, entity_slug),
+            ).fetchall()
+        ]
+
+    def expand_query_aliases(self, vault_id: str, term: str) -> list[str]:
+        """R-5.5: canonical name + sibling aliases for the entity `term` resolves
+        to. Bounded to that entity's own alias set (no transitive expansion).
+        [] on no match. Order-stable, de-duplicated."""
+        ent = self.resolve_entity(vault_id, term)
+        if ent is None:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for surface in [ent.name, *ent.aliases]:
+            if surface and surface not in seen:
+                seen.add(surface)
+                out.append(surface)
+        return out
+
+    def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
+        """R-5.6: in-DB (legacy) + cross-table alias collisions. The Class A
+        frontmatter scan lives in the Lint Layer."""
+        conn = self._connect()
+        out: list[AliasCollision] = []
+        # in-table (only reachable on a legacy / pre-v3 DB; the v3 PK prevents
+        # new ones): same alias → >1 entity_slug.
+        for r in conn.execute(
+            "SELECT alias, GROUP_CONCAT(entity_slug) AS slugs FROM entity_aliases "
+            "WHERE vault_id = ? GROUP BY alias HAVING COUNT(DISTINCT entity_slug) > 1",
+            (vault_id,),
+        ).fetchall():
+            out.append(AliasCollision(
+                vault_id=vault_id, alias=r["alias"],
+                slugs=sorted((r["slugs"] or "").split(",")), kind="in_table",
+            ))
+        # cross-slug: alias equals a DIFFERENT entity's slug.
+        for r in conn.execute(
+            "SELECT a.alias, a.entity_slug, e.slug AS other FROM entity_aliases a "
+            "JOIN entities e ON e.vault_id = a.vault_id AND e.slug = a.alias "
+            "WHERE a.vault_id = ? AND e.slug != a.entity_slug",
+            (vault_id,),
+        ).fetchall():
+            out.append(AliasCollision(
+                vault_id=vault_id, alias=r["alias"],
+                slugs=sorted([r["entity_slug"], r["other"]]), kind="cross_slug",
+            ))
+        # cross-name: alias equals a DIFFERENT entity's name.
+        for r in conn.execute(
+            "SELECT a.alias, a.entity_slug, e.slug AS other FROM entity_aliases a "
+            "JOIN entities e ON e.vault_id = a.vault_id AND e.name = a.alias "
+            "WHERE a.vault_id = ? AND e.slug != a.entity_slug",
+            (vault_id,),
+        ).fetchall():
+            out.append(AliasCollision(
+                vault_id=vault_id, alias=r["alias"],
+                slugs=sorted([r["entity_slug"], r["other"]]), kind="cross_name",
+            ))
+        return out
+
+    _TRUST_RANK = {"high": 3, "medium": 2, "low": 1}
+
+    def merge_entities(
+        self, vault_id: str, from_slug: str, into_slug: str
+    ) -> MergeReport:
+        """R-4.7: fold `from` into `into` in one transaction. See ABC docstring.
+
+        Caller (`wiki-merge`) does the Class A mutations first (C-8)."""
+        conn = self._connect()
+        refs_repointed = 0
+        aliases_absorbed = 0
+        aliases_skipped: list[str] = []
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # F2 (vdd-multi): read from_name INSIDE the tx — sampling it in
+            # autocommit was a TOCTOU window on the shared multi-vault DB. Raise
+            # if the row vanished so the DAL is self-consistent (the CLI's
+            # resolve_entity pre-check is itself outside this tx).
+            from_row = conn.execute(
+                "SELECT name FROM entities WHERE vault_id = ? AND slug = ?",
+                (vault_id, from_slug),
+            ).fetchone()
+            if from_row is None:
+                raise ValueError(f"merge source entity {from_slug!r} not found")
+            from_name = from_row["name"]
+            # 1. re-point page_entity_refs, dedup on the PK keeping higher trust.
+            from_refs = conn.execute(
+                "SELECT rowid AS rid, page_slug, page_project, ref_type, "
+                "trust_level FROM page_entity_refs "
+                "WHERE vault_id = ? AND entity_slug = ?",
+                (vault_id, from_slug),
+            ).fetchall()
+            for fr in from_refs:
+                existing = conn.execute(
+                    "SELECT rowid AS rid, trust_level FROM page_entity_refs "
+                    "WHERE vault_id = ? AND page_slug = ? AND page_project = ? "
+                    "AND entity_slug = ? AND ref_type = ?",
+                    (vault_id, fr["page_slug"], fr["page_project"],
+                     into_slug, fr["ref_type"]),
+                ).fetchone()
+                if existing is None:
+                    conn.execute(
+                        "UPDATE page_entity_refs SET entity_slug = ? WHERE rowid = ?",
+                        (into_slug, fr["rid"]),
+                    )
+                else:
+                    if (self._TRUST_RANK.get(fr["trust_level"], 0)
+                            > self._TRUST_RANK.get(existing["trust_level"], 0)):
+                        conn.execute(
+                            "UPDATE page_entity_refs SET trust_level = ? "
+                            "WHERE rowid = ?",
+                            (fr["trust_level"], existing["rid"]),
+                        )
+                    conn.execute(
+                        "DELETE FROM page_entity_refs WHERE rowid = ?", (fr["rid"],)
+                    )
+                refs_repointed += 1
+
+            # 2. re-point from's existing aliases to into (alias PK unique → no
+            #    collision possible; simple set-based UPDATE).
+            cur = conn.execute(
+                "UPDATE entity_aliases SET entity_slug = ? "
+                "WHERE vault_id = ? AND entity_slug = ?",
+                (into_slug, vault_id, from_slug),
+            )
+            aliases_absorbed += cur.rowcount
+
+            # 3. register the durable redirect: from's slug + name as
+            #    former_name aliases of into. Skip+report on a third-entity PK
+            #    collision (never silent).
+            for surface in [s for s in (from_slug, from_name) if s]:
+                ex = conn.execute(
+                    "SELECT entity_slug FROM entity_aliases "
+                    "WHERE vault_id = ? AND alias = ?",
+                    (vault_id, surface),
+                ).fetchone()
+                if ex is not None:
+                    if ex["entity_slug"] != into_slug:
+                        aliases_skipped.append(surface)
+                    continue
+                conn.execute(
+                    "INSERT INTO entity_aliases "
+                    "(vault_id, alias, entity_slug, alias_type) "
+                    "VALUES (?, ?, ?, 'former_name')",
+                    (vault_id, surface, into_slug),
+                )
+                aliases_absorbed += 1
+
+            # 4. delete the from entity row.
+            conn.execute(
+                "DELETE FROM entities WHERE vault_id = ? AND slug = ?",
+                (vault_id, from_slug),
+            )
+
+            # 5. recompute into.mentions_count within the same tx.
+            conn.execute(
+                "UPDATE entities SET mentions_count = ("
+                "  SELECT COUNT(*) FROM page_entity_refs r "
+                "  WHERE r.vault_id = entities.vault_id "
+                "    AND r.entity_slug = entities.slug"
+                ") WHERE vault_id = ? AND slug = ?",
+                (vault_id, into_slug),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        return MergeReport(
+            refs_repointed=refs_repointed,
+            aliases_absorbed=aliases_absorbed,
+            aliases_skipped=aliases_skipped,
+        )
+
+    def get_entity_file_path(self, vault_id: str, slug: str) -> str | None:
+        row = self._connect().execute(
+            "SELECT file_path FROM entities WHERE vault_id = ? AND slug = ?",
+            (vault_id, slug),
+        ).fetchone()
+        return row["file_path"] if row else None

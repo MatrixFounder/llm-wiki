@@ -305,3 +305,45 @@ class DriftReport:
     type_mismatch: list[tuple[str, str, str, str]]
     """File frontmatter `type:` doesn't match `pages.type` after §6.1 mapping.
     Tuple: (slug, project, file_frontmatter_type, db_type)."""
+
+
+# -----------------------------------------------------------------------------
+# AliasCollision — one wiki-lint alias-collision finding (TASK 005, R-5.6).
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AliasCollision:
+    """One alias-collision finding from `find_alias_collisions` / the lint scan.
+
+    `kind`:
+      - 'in_table'    — the same alias maps to >1 entity_slug in the DB
+        (only reachable on a legacy / pre-v3-migration DB; the v3 PK
+        `(vault_id, alias)` prevents new ones).
+      - 'cross_slug'  — an alias string equals a *different* entity's `slug`.
+      - 'cross_name'  — an alias string equals a *different* entity's `name`.
+      - 'frontmatter' — two entity-page `aliases:` frontmatter blocks claim the
+        same surface (file-layer; produced by the Lint Layer, not the DAL).
+    """
+
+    vault_id: str
+    alias: str
+    slugs: list[str]
+    """The conflicting entity slugs (sorted)."""
+    kind: str
+
+
+# -----------------------------------------------------------------------------
+# MergeReport — result of merge_entities (TASK 005, R-4.7).
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MergeReport:
+    """Summary of a `merge_entities(from, into)` duplicate-fold."""
+
+    refs_repointed: int
+    aliases_absorbed: int
+    aliases_skipped: list[str]
+    """Surfaces that could not be registered as `into` aliases because they
+    already resolve to a *third* entity (reported, never silently dropped)."""

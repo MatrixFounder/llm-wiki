@@ -651,6 +651,10 @@ def write_concept_page(
         "name": safe_name,
         "date": today.isoformat() if isinstance(today, date) else str(today),
         "tags": ["concept", "candidate"],
+        # R-4.6 (TASK 005) LOAD-BEARING PIN: is_candidate is Class A canonical.
+        # reindex_full reads it back (R-4.1 / reindex._coerce_is_candidate), so a
+        # freshly-applied candidate survives `wiki-reindex --full` as a candidate.
+        # Guarded by tests/test_extract_concepts_candidate_regression.py.
         "is_candidate": True,
         "source_page": source_slug,
         "trust_level": "medium",

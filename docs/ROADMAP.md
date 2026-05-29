@@ -119,19 +119,29 @@ Architectural decisions shipped:
   calls. **BREAKING CHANGE**: legacy single-command invocation rejected
   at argparse.
 
-### R-4. Confirmed / candidate entity resolution (R-18, cybos pattern)
+### R-4. Confirmed / candidate entity resolution (R-18, cybos pattern) ✅ DONE 2026-05-29 (TASK 005)
 `entities.is_candidate = 1` for LLM-proposed entities; promotion to
-`is_candidate = 0` requires operator approval (CLI: `wiki-confirm <slug>`)
-or automatic on N mentions. Resolves the "Hermes" / "Hermes Agent" /
-"Hermes Framework" duplication problem.
+`is_candidate = 0` via operator approval (`wiki-confirm <slug>`) or
+`wiki-confirm --auto --threshold N` (default 3). `is_candidate` is now Class A
+(frontmatter) round-tripped through `wiki-reindex --full` (R-4.1, was silently
+reset). `resolve_entity` resolves slug-or-alias; `find_orphan_links` is
+alias-aware. **`wiki-merge <from> <into>`** (R-4.7) folds the "Hermes / Hermes
+Agent / Hermes Framework" duplicates into one canonical entity (the alias table
+is the durable redirect; reindex canonicalizes refs — AM-3).
 
-### R-5. Two-tier alias table (already in schema, needs CLI)
-`entity_aliases` exists; needs:
-- `wiki-alias <slug> --add "Hermes"` CLI to register aliases
-- `wiki-search` updated to expand query through aliases
-- `wiki-lint` to detect alias-collision (one alias → multiple slugs)
+### R-5. Two-tier alias table ✅ DONE 2026-05-29 (TASK 005)
+`entity_aliases` activated: PK fixed to `(vault_id, alias)` (closes **L-4**;
+schema v2→v3); `wiki-alias <slug> --add/--remove/--list` writes Class A
+frontmatter + DB mirror; `wiki-reindex --full` mirrors `aliases:` frontmatter
+(report-and-skip on collision); `wiki-search` expands queries through aliases
+by default (`--no-expand-aliases` opt-out); `wiki-lint` detects alias collisions
+(in-DB + cross-table + Class A frontmatter scan; `--strict` advisory exit).
 
-Estimated effort: P1 cluster = 2–4 weeks of focused work. High value.
+**Shipped**: TASK 005 (17 beads, Stub-First, green-throughout). See archived
+spec/plan at [tasks/task-005-*.md](tasks/) + [plans/plan-005-*.md](plans/) and
+the §D8 durability acceptance (UC-14/UC-15) in
+`tests/test_entity_resolution_durability.py`. **Unblocks R-X5** (cross-project
+entity graph, gated on Epic 7).
 
 ---
 

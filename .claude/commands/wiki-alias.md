@@ -1,0 +1,1 @@
+../../commands/wiki-alias.md

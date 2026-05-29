@@ -43,12 +43,16 @@ def main(argv: list[str] | None = None) -> int:
         counts: dict[str, int] = {}
         for i in issues:
             counts[i.category] = counts.get(i.category, 0) + 1
+        # R-5.6(d): --strict raises a non-zero advisory exit when issues exist;
+        # default mode reports only (exit 0). No prior test relied on a strict
+        # exit, so this establishes the gating policy.
+        exit_code = 1 if (args.strict and issues) else 0
         return emit({
             "action": "linted",
             "vault": args.vault,
             "total_issues": len(issues),
             "by_category": counts,
-        })
+        }, exit_code)
     finally:
         repo.close()
 

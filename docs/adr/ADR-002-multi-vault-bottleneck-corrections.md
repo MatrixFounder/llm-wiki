@@ -184,6 +184,26 @@ Single-user personal scale (5-10 vaults × 1K concepts текущие 12-18 ме
 
 **Core invariant**: vault (markdown) = canonical source of truth; DB = 100% rebuildable cache. Алгоритм `wiki-reindex --full` восстанавливает всю функциональность БД из файлов без потери семантики. Единственное исключение — `vaults.registered_at` (approximated from earliest `log_events.event_ts`).
 
+> **Amendment (TASK 005, schema v2→v3 — 2026-05-29).** Epic 7 R-4/R-5 add
+> two Class-A facts to entity-page frontmatter and one DB-schema change:
+> - **`is_candidate: true|false`** and **`aliases: [...]`** in `_concepts/`/`_entities/`
+>   frontmatter are **Class A canonical**; the `entities.is_candidate` column and
+>   the `entity_aliases` table are their **Class B mirrors** (rebuilt by
+>   `wiki-reindex --full`, which now *reads* both — closing a prior round-trip gap
+>   where reindex reset every candidate to confirmed and never mirrored aliases).
+> - **`entity_aliases` PK `(vault_id, alias, entity_slug)` → `(vault_id, alias)`**
+>   (closes KNOWN_ISSUES **L-4**; `idx_aliases_lookup` dropped, `idx_aliases_entity`
+>   added; `PRAGMA user_version` 2→3). Because the DB is a Class B rebuildable cache,
+>   the migration is a **`wiki-reindex --full`**, NOT an in-place `ALTER`
+>   (`apply_schema`'s `CREATE TABLE IF NOT EXISTS` cannot mutate a live PK). On
+>   rebuild, aliases reconstruct from Class A frontmatter under the new PK; any
+>   surviving collision is surfaced (report-and-skip, never silent `INSERT OR IGNORE`).
+> - **Merge** (`wiki-merge`, R-4.7) is expressed entirely in Class A — the duplicate
+>   page is deleted and its surfaces become aliases of the survivor — so it needs no
+>   merge-ledger table and survives a full rebuild. Reindex canonicalizes
+>   `page_entity_refs.entity_slug` through the alias table at build time (AM-3) so
+>   mention counts / backlinks stay correct across a rebuild.
+
 Все данные классифицируются по трём классам с чётким правилом расположения:
 
 #### Class A — Vault-only (semantic canonical, никогда не дублируется в БД as semantic)

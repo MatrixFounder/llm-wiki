@@ -185,15 +185,21 @@ def test_unit_01_method_raises_notimplemented(
 
 
 # =============================================================================
-# Sanity: resolve_entity inherited stub also raises (Epic 7)
+# resolve_entity — implemented in TASK 005 / R-4.5 (Epic 7 stub retired)
 # =============================================================================
 
 
-def test_resolve_entity_inherited_stub_raises(repo):
-    """`resolve_entity` is not abstract — inherited NotImplementedError stub
-    from IndexRepository. Phase 3a code MUST NOT call it."""
-    with pytest.raises(NotImplementedError, match=r"Epic 7"):
-        repo.resolve_entity("v", "s")
+def test_resolve_entity_implemented_returns_none_on_miss(repo):
+    """`resolve_entity` is implemented as of TASK 005 (R-4.5): it resolves a
+    slug or alias to an Entity, or returns None on a miss — it no longer raises
+    the Epic-7 NotImplementedError stub. Full behaviour is covered in
+    tests/test_entity_resolution_dal.py::TestResolveEntity."""
+    repo.apply_schema()
+    repo.register_vault(Vault(
+        vault_id="test-vault", name="v", root_path=repo.db_path.parent,
+        schema_version="3.0", registered_at=datetime(2026, 5, 29),
+    ))
+    assert repo.resolve_entity("test-vault", "nope") is None
 
 
 # =============================================================================

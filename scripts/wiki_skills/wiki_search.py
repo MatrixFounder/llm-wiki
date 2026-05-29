@@ -19,8 +19,40 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project", default=None)
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--format", choices=["markdown", "json"], default="json")
+    p.add_argument("--no-expand-aliases", action="store_true",
+                   help="Disable alias expansion (TASK 005 / R-5.5). By default "
+                        "a query that resolves to an entity is OR-expanded with "
+                        "that entity's canonical name + sibling aliases.")
     p.add_argument("--db-path", default=None)
     return p
+
+
+def _fts_quote(surface: str) -> str:
+    """Wrap a surface as an FTS5 phrase, doubling embedded double-quotes."""
+    return '"' + surface.replace('"', '""') + '"'
+
+
+def _expand_query(repo: object, query: str, vaults_list: list[str] | None) -> str:
+    """R-5.5: OR-expand `query` with the matched entity's canonical name +
+    sibling aliases, scoped to the searched vaults. No-op (returns `query`
+    unchanged) when the term resolves to no entity/alias in any scoped vault —
+    so default-on expansion never changes results for non-alias queries.
+
+    When `vaults_list` is None (the default all-vaults search), expand across
+    every registered vault — otherwise default-on expansion would silently
+    no-op for the most common invocation (vdd-multi F1)."""
+    if vaults_list:
+        target_vaults = vaults_list
+    else:
+        target_vaults = [v.vault_id for v in repo.list_vaults()]  # type: ignore[attr-defined]
+    surfaces: set[str] = set()
+    for vid in target_vaults:
+        for s in repo.expand_query_aliases(vid, query):  # type: ignore[attr-defined]
+            surfaces.add(s)
+    if not surfaces:
+        return query
+    surfaces.add(query)
+    return " OR ".join(_fts_quote(s) for s in sorted(surfaces))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,8 +71,11 @@ def main(argv: list[str] | None = None) -> int:
         config["db_path"] = args.db_path
     repo = make_repo(config)
     try:
+        match_query = args.query
+        if not args.no_expand_aliases:
+            match_query = _expand_query(repo, args.query, vaults_list)
         hits = repo.search_pages(
-            args.query, vaults=vaults_list, types=types_list,
+            match_query, vaults=vaults_list, types=types_list,
             project=args.project, limit=args.limit,
         )
         results = [{

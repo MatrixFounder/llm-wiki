@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from datetime import date as date_cls
 from datetime import datetime
@@ -36,6 +37,29 @@ from scripts.wiki_source.manual import ManualSourceAdapter
 
 if TYPE_CHECKING:
     from scripts.wiki_index.repository import IndexRepository
+
+
+def _coerce_is_candidate(fm: dict[str, Any]) -> int:
+    """Map an entity-page frontmatter ``is_candidate`` value → the DB column.
+
+    TASK 005 / R-4.1: ``is_candidate`` is **Class A canonical** (entity-page
+    frontmatter, written by ``write_concept_page``). ``reindex_full`` previously
+    omitted the column from its ``INSERT OR IGNORE`` → it defaulted to the schema
+    ``0`` (confirmed), silently confirming every candidate on a full rebuild.
+    This reads the flag back so a candidate survives ``wiki-reindex --full``.
+
+    Truthy (``True`` / ``"true"`` / ``1`` / ``"yes"`` / ``"on"``) → ``1``
+    (candidate); missing or falsey → ``0`` (confirmed) — the latter keeps
+    back-compat with pre-TASK-005 vaults that have no ``is_candidate`` key.
+    """
+    val = fm.get("is_candidate")
+    if isinstance(val, bool):
+        return 1 if val else 0
+    if isinstance(val, int):
+        return 1 if val else 0
+    if isinstance(val, str):
+        return 1 if val.strip().lower() in ("true", "1", "yes", "on") else 0
+    return 0
 
 
 def discover_pages(vault_root: Path) -> list[tuple[Path, str, str]]:
@@ -195,7 +219,13 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
 
 
 def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
-    """Rebuild all DB rows for `vault_id` from filesystem. Atomic single-tx."""
+    """Rebuild all DB rows for `vault_id` from filesystem.
+
+    NOT a single atomic transaction (F8, vdd-multi): Step 1 wipes + commits,
+    then Steps 2/2.5/3 run in autocommit (each `upsert_page`/`replace_refs`
+    owns its own short tx — see Step 2 note). A mid-rebuild crash leaves the
+    index half-populated; recovery is to re-run `reindex --full`. This is the
+    documented Phase-3a SLO trade-off (KNOWN_ISSUES P-1), not atomicity."""
     from scripts.wiki_index.sqlite_repository import SQLiteRepository
     if not isinstance(repo, SQLiteRepository):
         raise NotImplementedError("reindex_full supports SQLiteRepository only")
@@ -210,7 +240,9 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     conn = repo._connect()
     adapter = ManualSourceAdapter()
     pages_count = entities_count = log_events_count = 0
+    aliases_count = 0
     skipped: list[dict[str, Any]] = []
+    alias_collisions: list[dict[str, Any]] = []
     try:
         # Step 1: wipe existing rows in a short atomic transaction.
         conn.execute("BEGIN IMMEDIATE")
@@ -261,17 +293,52 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                     else:
                         e_type = "external"
                     ts_iso = datetime.now().isoformat()
+                    # R-4.1: read is_candidate from Class A frontmatter (was
+                    # omitted → schema default 0, which silently confirmed every
+                    # candidate on a full rebuild).
                     conn.execute(
                         "INSERT OR IGNORE INTO entities (vault_id, slug, "
-                        "type, name, project, first_seen, last_updated, "
-                        "file_path, mentions_count, metadata_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                        "type, name, project, is_candidate, first_seen, "
+                        "last_updated, file_path, mentions_count, metadata_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                         (vault_id, out.page_slug, e_type,
                          updated_fm.get("title", out.page_slug),
-                         out.project, ts_iso, ts_iso,
+                         out.project, _coerce_is_candidate(updated_fm),
+                         ts_iso, ts_iso,
                          str(path.relative_to(vault_root)), "{}"),
                     )
                     entities_count += 1
+                    # R-5.3: mirror Class A `aliases:` frontmatter → entity_aliases
+                    # (Class B). Report-and-skip on the hard PK (vault_id, alias)
+                    # collision — NEVER a silent INSERT OR IGNORE: two pages
+                    # claiming the same surface is operator-visible data the lint
+                    # layer must see. The flat Obsidian list carries no type, so
+                    # the mirror defaults to 'spelling_variant' (C-4 limitation).
+                    raw_aliases = updated_fm.get("aliases")
+                    if isinstance(raw_aliases, list):
+                        for _alias in raw_aliases:
+                            if not isinstance(_alias, str) or not _alias.strip():
+                                continue
+                            alias = _alias.strip()
+                            try:
+                                conn.execute(
+                                    "INSERT INTO entity_aliases "
+                                    "(vault_id, alias, entity_slug, alias_type) "
+                                    "VALUES (?, ?, ?, 'spelling_variant')",
+                                    (vault_id, alias, out.page_slug),
+                                )
+                                aliases_count += 1
+                            except sqlite3.IntegrityError:
+                                kept = conn.execute(
+                                    "SELECT entity_slug FROM entity_aliases "
+                                    "WHERE vault_id = ? AND alias = ?",
+                                    (vault_id, alias),
+                                ).fetchone()
+                                alias_collisions.append({
+                                    "alias": alias,
+                                    "kept_slug": kept["entity_slug"] if kept else None,
+                                    "skipped_slug": out.page_slug,
+                                })
             except (UnmappedTypeError, BodyNormalizationError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
             except Exception as e:
@@ -297,6 +364,45 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 except Exception:
                     # Skip events with unknown event_type (CHECK violations)
                     continue
+
+        # Step 2.5 (AM-3): canonicalize page_entity_refs.entity_slug through the
+        # alias table. A raw `[[surface]]` whose target is a registered alias is
+        # re-pointed to the canonical entity, establishing the invariant "a ref
+        # names the canonical entity whenever its raw target is a known alias".
+        # This keeps recompute_mentions / get_backlinks (which key on
+        # entity_slug = entities.slug) correct after a FULL rebuild — the merge
+        # §D8 durability gate (UC-15) depends on it (else a `wiki-merge` would be
+        # silently un-done on the next reindex). Built once from an in-memory map
+        # (no per-ref SQL for resolution); only the rare alias-refs get a write.
+        # On a (page, canonical, ref_type) PK collision the alias-ref is dropped —
+        # the canonical ref already covers that mention.
+        alias_map = {
+            r["alias"]: r["entity_slug"]
+            for r in conn.execute(
+                "SELECT alias, entity_slug FROM entity_aliases WHERE vault_id = ?",
+                (vault_id,),
+            ).fetchall()
+        }
+        if alias_map:
+            for ref in conn.execute(
+                "SELECT rowid AS rid, entity_slug FROM page_entity_refs "
+                "WHERE vault_id = ?",
+                (vault_id,),
+            ).fetchall():
+                canon = alias_map.get(ref["entity_slug"])
+                if canon is None or canon == ref["entity_slug"]:
+                    continue
+                try:
+                    conn.execute(
+                        "UPDATE page_entity_refs SET entity_slug = ? "
+                        "WHERE rowid = ?",
+                        (canon, ref["rid"]),
+                    )
+                except sqlite3.IntegrityError:
+                    conn.execute(
+                        "DELETE FROM page_entity_refs WHERE rowid = ?",
+                        (ref["rid"],),
+                    )
 
         # Step 3: recompute entities.mentions_count (I-5 invariant).
         conn.execute(
@@ -336,6 +442,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         "pages": pages_count,
         "entities": entities_count,
         "log_events": log_events_count,
+        "aliases": aliases_count,
+        "alias_collisions": alias_collisions,
         "skipped": skipped,
         "duration_seconds": round(duration, 3),
     }

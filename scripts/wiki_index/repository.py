@@ -23,11 +23,13 @@ from pathlib import Path
 from typing import Literal
 
 from scripts.wiki_index.models import (
+    AliasCollision,
     BatchMode,
     BatchRun,
     DriftReport,
     Entity,
     LogEvent,
+    MergeReport,
     OrphanLink,
     Page,
     PageHit,
@@ -296,4 +298,102 @@ class IndexRepository(abc.ABC):
         Phase 3a stub `resolve_entity` is the read counterpart (still
         ``NotImplementedError`` until R-4 ships).
         """
+        ...
+
+    # =========================================================================
+    # Entity resolution — Epic 7 (TASK 005, R-4 + R-5)
+    # =========================================================================
+
+    @abc.abstractmethod
+    def set_entity_candidate(
+        self, vault_id: str, slug: str, is_candidate: int
+    ) -> bool:
+        """Explicit confirm/undo setter (R-4.2/4.3). **Bypasses** the
+        ``upsert_entity`` ``MIN()`` downgrade-guard — operator intent is
+        authoritative. Writes the Class B mirror only (the caller writes Class A
+        frontmatter first). Returns ``True`` iff the stored value changed
+        (``False`` = already in the target state ⇒ idempotent ``changed:false``)."""
+        ...
+
+    @abc.abstractmethod
+    def list_candidates(self, vault_id: str) -> list[Entity]:
+        """All ``is_candidate=1`` entities in the vault (drives ``--auto`` +
+        operator review)."""
+        ...
+
+    @abc.abstractmethod
+    def recompute_mentions(self, vault_id: str) -> None:
+        """Set-based ``UPDATE entities.mentions_count = COUNT(page_entity_refs)``
+        (R-4.4 freshness; identical query to reindex Step 3)."""
+        ...
+
+    @abc.abstractmethod
+    def auto_promote_candidates(self, vault_id: str, threshold: int) -> list[str]:
+        """Recompute mentions, then promote every candidate with
+        ``mentions_count >= threshold`` to confirmed. Returns the promoted
+        slugs (R-4.4)."""
+        ...
+
+    @abc.abstractmethod
+    def preview_promotable(self, vault_id: str, threshold: int) -> list[str]:
+        """**Read-only** counterpart of ``auto_promote_candidates`` for
+        ``--dry-run`` (R-4.4): candidates whose *freshly-counted* mentions
+        ``>= threshold``, computed with a sub-SELECT and **no writes** (the AC
+        requires ``--dry-run`` to mutate neither DB nor frontmatter)."""
+        ...
+
+    @abc.abstractmethod
+    def add_alias(
+        self, vault_id: str, alias: str, entity_slug: str,
+        alias_type: str = "spelling_variant",
+    ) -> None:
+        """Register a Class B alias mirror (R-5.1). Idempotent for a same-target
+        re-add; raises ``AliasCollisionError`` if the surface already resolves to
+        a *different* entity (the hard ``(vault_id, alias)`` PK)."""
+        ...
+
+    @abc.abstractmethod
+    def remove_alias(self, vault_id: str, alias: str) -> bool:
+        """Drop an alias mirror (R-5.2). Returns ``True`` iff a row was removed."""
+        ...
+
+    @abc.abstractmethod
+    def list_aliases(self, vault_id: str, entity_slug: str) -> list[str]:
+        """All alias surfaces registered for an entity (R-5.2)."""
+        ...
+
+    @abc.abstractmethod
+    def expand_query_aliases(self, vault_id: str, term: str) -> list[str]:
+        """Given a surface term, return the matched entity's canonical name +
+        sibling aliases for FTS OR-expansion (R-5.5). Bounded to the matched
+        entity's own alias set (no transitive expansion). ``[]`` on no match."""
+        ...
+
+    @abc.abstractmethod
+    def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
+        """In-DB (legacy/pre-migration) + cross-table (alias == a *different*
+        entity's ``slug``/``name``) alias collisions (R-5.6). The Class A
+        frontmatter scan lives in the Lint Layer (it reads files)."""
+        ...
+
+    @abc.abstractmethod
+    def merge_entities(
+        self, vault_id: str, from_slug: str, into_slug: str
+    ) -> MergeReport:
+        """Fold the duplicate ``from`` into the canonical ``into`` in a single
+        transaction (R-4.7): re-point ``page_entity_refs`` (PK-dedup, keep higher
+        ``trust_level``); re-point ``from``'s aliases to ``into``; register
+        ``from``'s slug + name as ``former_name`` aliases of ``into`` (skip+report
+        on a third-entity collision); delete the ``from`` entity row; recompute
+        ``into.mentions_count``. The caller (``wiki-merge``) performs the Class A
+        mutations (append ``into.aliases`` + delete the ``from`` page) **before**
+        this call (C-8 write-order)."""
+        ...
+
+    @abc.abstractmethod
+    def get_entity_file_path(self, vault_id: str, slug: str) -> str | None:
+        """The entity's Class A ``file_path`` (relative to vault root), or
+        ``None`` if the entity does not exist. The confirm/alias/merge CLIs need
+        it to locate the markdown for Class A write-back (skills never run raw
+        SQL — this is the DAL read that backs that locate step)."""
         ...

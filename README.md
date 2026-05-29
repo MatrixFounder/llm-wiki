@@ -10,10 +10,13 @@ rebuildable derivative cache.
 > shipped 2026-05-27; TASK 003 v2 (wiki-extract-concepts) shipped
 > 2026-05-28; **TASK 003 v3.1** (Decision-17 deterministic refactor +
 > `/vdd-multi` 22-finding hardening) shipped 2026-05-28 (commit
-> `43812f2`) — 450 pytest pass + 4 skipped, mypy `--strict` clean
-> (55 files). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
-> living architecture and the status header pointing at archived task
-> specs under [docs/tasks/](docs/tasks/).
+> `43812f2`); **TASK 005** (Epic 7 entity resolution — R-4 confirmed/candidate
+> + `wiki-merge` + R-5 alias table) shipped 2026-05-29 — 17 beads +
+> `/vdd-multi` 8-fix hardening, **534 pytest pass + 4 skipped, mypy `--strict`
+> clean (58 files)**, schema v2→v3 (closes KNOWN_ISSUES L-4). See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
+> the status header pointing at archived task specs under
+> [docs/tasks/](docs/tasks/).
 
 ---
 
@@ -40,13 +43,18 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
 - **DAL** (`scripts/wiki_index/`) — `IndexRepository` ABC + `SQLiteRepository`
   with multi-vault partitioning, FTS5, WAL, atomic upserts (M-4 contract),
   bi-directional `log.md ↔ log_events` sync, drift detection.
-- **CLIs** (`scripts/wiki_skills/`) — nine thin entry points wrapping the
+- **CLIs** (`scripts/wiki_skills/`) — twelve thin entry points wrapping the
   DAL: `wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`,
   `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
   `wiki-enrich` (bridge to `wiki-ingest`, see [External dependency](#external-dependency-wiki-ingest)),
-  and `wiki-extract-concepts` (Epic 7 entry-point — LLM-driven concept
+  `wiki-extract-concepts` (Epic 7 entry-point — LLM-driven concept
   extraction from an already-indexed source page; emits a wiki-ingest v1.1
-  manifest, optionally dispatches in-process to the indexer via `--ingest`).
+  manifest, optionally dispatches in-process to the indexer via `--ingest`),
+  and the **Epic 7 entity resolver** (TASK 005): `wiki-confirm`
+  (candidate→confirmed promotion, `--undo`, `--auto --threshold N`),
+  `wiki-alias` (register/remove/list alias surface-strings; `wiki-search`
+  expands through them by default), and `wiki-merge` (fold a duplicate entity
+  into the canonical one — the alias table is the durable redirect).
   Plus a neutral sub-layer module `_manifest_consumer.py` shared by
   `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
 - **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —
