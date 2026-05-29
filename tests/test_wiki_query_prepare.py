@@ -84,6 +84,17 @@ def test_prepare_retrieval_envelope(tmp_path: Path) -> None:
     assert h0["slug"] == "routing-note"
 
 
+def test_natural_language_question_retrieves(tmp_path: Path) -> None:
+    """dogfood DF-Q1 regression: a real natural-language question (with
+    stopwords / question-words) must retrieve via keyword OR-of-terms, NOT fail
+    as an implicit-AND phrase. Before the fix this returned 0 hits → NO_CONTEXT."""
+    vault, db = _seed(tmp_path)  # body: "Hermes routes messages between trading agents."
+    code, env = _run_prepare(vault, db, "How does the Hermes agent route messages?")
+    assert code == 0, f"NL question wrongly refused: {env}"
+    assert env["retrieved_count"] >= 1
+    assert any(h["slug"] == "routing-note" for h in env["hits"])
+
+
 def test_prepare_no_context_refuses(tmp_path: Path) -> None:
     vault, db = _seed(tmp_path)
     code, env = _run_prepare(vault, db, "quantumchromodynamics")

@@ -35,8 +35,12 @@ wiki-query prepare "<question>" \
     [--min-hits <N>] [--db-path <override>]
 ```
 
-Deterministic retrieval (alias-expanded FTS5, same engine as `wiki-search`). No
-LLM call. Output envelope (exit 0):
+Deterministic **keyword** retrieval: the natural-language question is tokenised
+into an FTS5 **OR-of-terms** query (match-any, BM25-ranked — NOT an
+implicit-AND phrase, which a real question with stopwords would never match),
+each token alias-expanded through the entity table (shares
+`scripts/wiki_skills/_retrieval.fts_quote` + the `expand_query_aliases` DAL with
+`wiki-search`). No LLM call. Output envelope (exit 0):
 
 ```json
 {

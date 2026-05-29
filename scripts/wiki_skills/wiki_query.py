@@ -36,7 +36,7 @@ from scripts.wiki_skills._common import (
     emit,
     sanitize_markdown_text,
 )
-from scripts.wiki_skills._retrieval import expand_query, fts_quote
+from scripts.wiki_skills._retrieval import fts_quote
 
 _MAX_QUESTION_LEN = 1000
 _MAX_SLUG_LEN = 80
@@ -115,14 +115,44 @@ def _scope(args: argparse.Namespace) -> tuple[list[str] | None, list[str] | None
     return vaults_list, types_list
 
 
+def _build_match_query(
+    repo: IndexRepository, question: str, vaults_list: list[str] | None,
+    expand: bool,
+) -> str:
+    """Turn a natural-language QUESTION into an FTS5 OR-of-terms query (keyword
+    retrieval — match-any, BM25-ranked), NOT a raw phrase.
+
+    A raw question passed straight to FTS5 MATCH is an **implicit AND over every
+    token** (incl. stopwords / question-words like 'how'/'does'/'the'), so a real
+    question almost never matches any document → spurious NO_CONTEXT (dogfood
+    DF-Q1). OR-of-terms + BM25 is the standard RAG-over-FTS retrieval: documents
+    matching the salient content tokens rank highest; stopwords that match
+    nothing contribute nothing. Tokenisation is Unicode-aware (no hardcoded
+    English stopword list — the vault may be multilingual / Cyrillic).
+
+    When `expand`, each token is alias-expanded through the entity table
+    (`expand_query_aliases`) so a surface like 'hermes' also pulls in its
+    canonical name + sibling aliases (R-5.5 reuse, at token granularity)."""
+    tokens = list(dict.fromkeys(re.findall(r"[^\W_]+", question.lower())))
+    if not tokens:
+        return fts_quote(question)
+    surfaces: set[str] = set(tokens)
+    if expand:
+        targets = vaults_list or [v.vault_id for v in repo.list_vaults()]
+        for vid in targets:
+            for tok in tokens:
+                surfaces.update(repo.expand_query_aliases(vid, tok))
+    return " OR ".join(fts_quote(s) for s in sorted(surfaces))
+
+
 def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) -> list[PageHit]:
-    """Alias-expanded FTS retrieval shared by `prepare` AND `apply` — so `apply`
-    reproduces `prepare`'s exact retrieval to recompute `question_hash` (the
-    QUESTION_CHANGED TOCTOU check). Raises `_InvalidQuery` on an un-parseable
-    expression after the DF-1 quoted-phrase fallback."""
+    """Alias-expanded keyword FTS retrieval shared by `prepare` AND `apply` — so
+    `apply` reproduces `prepare`'s exact retrieval to recompute `question_hash`
+    (the QUESTION_CHANGED TOCTOU check). Raises `_InvalidQuery` on an
+    un-parseable expression after the DF-1 quoted-phrase fallback."""
     vaults_list, types_list = _scope(args)
-    match_query = (question if args.no_expand_aliases
-                   else expand_query(repo, question, vaults_list))
+    match_query = _build_match_query(
+        repo, question, vaults_list, not args.no_expand_aliases)
 
     # Default-exclude prior query answers from RAG retrieval: a synthesised
     # answer grounds on PRIMARY sources, not on other answers (avoids circular

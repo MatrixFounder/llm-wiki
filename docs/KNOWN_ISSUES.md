@@ -417,3 +417,57 @@ question byte-cap (parity with `prepare`), and an `O_NOFOLLOW` content-hash read
   via an MCP shim (same boundary as the F3-residual / D-1 notes). The answer
   *body* is fully sanitized (`sanitize_markdown_text`); only the controlled
   citation wikilinks are intentionally left navigable.
+
+---
+
+## TASK 007 dogfood findings (2026-05-29)
+
+End-to-end dogfood of `wiki-query` through the real `bin/` entry points on two
+throwaway `/tmp` vaults built from **real operator content** (38 agent-persona
+md files from a dev project + 362 demand-generation course md files), sharing
+one DB (multi-vault). Flow: scaffold → ingest real md → reindex → prepare →
+(operator synthesises a cited answer) → apply → search → idempotency →
+§D8 `--full` rebuild → `--delta` → lint → cross-vault search → NO_CONTEXT +
+grounding-violation negatives. **One real bug found + fixed inline** (DF-Q1, the
+single most valuable find of the task); everything else worked first-try.
+
+## [2026-05-29] DF-Q1 natural-language questions returned NO_CONTEXT [STATUS: fixed 2026-05-29]
+
+- **Symptom**: `wiki-query prepare "How does the Hermes agent route messages?"`
+  returned `NO_CONTEXT` (0 hits) on a vault that clearly contains the answer.
+- **Root cause**: `prepare` passed the raw question straight to FTS5 `MATCH`,
+  which is an **implicit AND over every token** (incl. stopwords/question-words
+  "how"/"does"/"the") — so a real natural-language question almost never matches
+  any document. The in-process tests passed only because they used queries where
+  *all* tokens are present ("Hermes routing"); the `/vdd-multi` critics reviewed
+  code logic, not a live NL question — so only real-content dogfooding surfaced
+  it. This broke the **core RAG use case** (UC-16's own example question).
+- **Affected**: `scripts/wiki_skills/wiki_query.py::_retrieve`.
+- **Resolution**: added `_build_match_query` — tokenises the question (Unicode-
+  aware, no hardcoded stopword list → multilingual/Cyrillic-safe) and builds an
+  FTS5 **OR-of-terms** query (keyword retrieval, match-any, BM25-ranked); each
+  token is alias-expanded through the entity table. Documents matching the
+  salient content tokens rank highest; stopwords that match nothing contribute
+  nothing. Regression: `tests/test_wiki_query_prepare.py::test_natural_language_question_retrieves`.
+  Verified on real content: the question above retrieves the correct top hit by
+  a wide BM25 margin in both dogfood vaults.
+
+## [2026-05-29] DF-Q-OBS observations (no fix needed)
+
+- **Reindex robustness**: `wiki-reindex --full` indexed 400 real, messy markdown
+  files (varied original frontmatter) with **0 skipped / 0 errors**.
+- **Lint is clean** after a `wiki-query apply` — **0 issues**, no transient
+  Class-B drift (unlike the TASK 005 entity-resolution CLIs, DF-2): `apply`
+  fully self-indexes the query page (page row + refs), so no hash-mismatch /
+  orphan drift. A cited *source-page* target resolves as a page, so
+  `find_orphan_links` correctly does not flag it.
+- **Egress sanitiser confirmed**: an inline `[[wikilink]]` placed in the
+  synthesised answer body is escaped to `\[\[...\]\]` (literal text); the
+  authoritative navigable backlinks live in the apply-appended `## Sources`
+  list built from `cites:`. (The `wiki-query-synthesis` skill already tells the
+  orchestrator not to hand-write `## Sources`.)
+- **§D8 + delta + multi-vault all hold on real content**: the `cited`+`mentioned`
+  dual-ref to the cited target survives both `--full` and `--delta`; a
+  cross-vault `--types query` search returns the filed query pages from both
+  vaults; `is_unchanged` short-circuits a re-query; `--orchestrator-id`
+  provenance lands in the `query` log event's `details_json`.

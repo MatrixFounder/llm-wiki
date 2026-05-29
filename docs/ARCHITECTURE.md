@@ -15,8 +15,9 @@
 > `INGEST_SHARED_SUBDIRS`/`HOST_ONLY_SUBDIRS`), and a type-aware reindex read-side
 > parses `cites:`→`'cited'` (R-6.5e, the §D8 fix mirroring R-5.3). Scope = R-6
 > only; R-7 (`wiki-research`) + R-8 (`wiki-verify-multi`) unblocked + deferred.
-> 10 beads (Stub-First, green-throughout; 3 VDD gates APPROVED); 590 pytest, mypy
-> strict clean. Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
+> 10 beads (Stub-First, green-throughout; 3 VDD gates APPROVED + `/vdd-multi` ×2
+> + real-content dogfood — DF-Q1 keyword-OR retrieval fix); **599 pytest**, mypy
+> strict clean (60 files). Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
 > v3→v4 hygiene changes. Living document — current architecture, not change
