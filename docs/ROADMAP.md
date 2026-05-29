@@ -270,9 +270,18 @@ at N=100 (current default benchmark) but flag risk at 10k pages.
 | **P-2** | `reindex_delta`: full filesystem walk on no-op | mtime/size short-circuit |
 | **P-3** | `check_drift`: re-hashes every file | mtime/size first-pass; streaming hash |
 | **P-4** | Benchmark default `n=100` only | CI mode with `--scale all --enforce-slos` |
-| **P-5** | Dead `idx_pages_vault_tags` JSON-expr index | Drop; add `pages_tags(vault_id, slug, tag)` join table if needed |
+| **P-5** | ~~Dead `idx_pages_vault_tags` JSON-expr index~~ ✅ DONE 2026-05-29 (TASK 006, schema v4) | Dropped. |
 
 Trigger: real vault crosses 1k pages and operations slow down.
+
+> **TASK 006 (consolidation/hardening) shipped 2026-05-29** — schema **v3→v4**
+> (drop dead `idx_pages_vault_tags` P-5 + `event_date` GENERATED L-2; `'log'`
+> enum L-5 already-absent), reindex name fallback (L-8), `_recompute_mentions`
+> dedup (F12c), `wiki-lint` frontmatter scan from `pages.frontmatter_json`
+> (P-10+F12b — removes a 2nd O(N) YAML sweep), + doc clarifications (L-1/6/7).
+> Scale-gated perf (P-1/2/3/4/6/7/8/9/11, H-PERF-3) + threat-gated security
+> (D-1/D-2/H-5/H-6/Q17) remain deferred with their triggers. See
+> `docs/tasks/task-006-*.md`.
 
 ---
 

@@ -302,7 +302,11 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                         "last_updated, file_path, mentions_count, metadata_json) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                         (vault_id, out.page_slug, e_type,
-                         updated_fm.get("title", out.page_slug),
+                         # L-8 (TASK 006): concept pages emit `name:`, not
+                         # `title:` — fall back title→name→slug so the entity's
+                         # display name survives reindex (was: slug).
+                         (updated_fm.get("title") or updated_fm.get("name")
+                          or out.page_slug),
                          out.project, _coerce_is_candidate(updated_fm),
                          ts_iso, ts_iso,
                          str(path.relative_to(vault_root)), "{}"),
@@ -405,14 +409,9 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                     )
 
         # Step 3: recompute entities.mentions_count (I-5 invariant).
-        conn.execute(
-            "UPDATE entities SET mentions_count = ("
-            "  SELECT COUNT(*) FROM page_entity_refs r "
-            "  WHERE r.vault_id = entities.vault_id "
-            "    AND r.entity_slug = entities.slug"
-            ") WHERE vault_id = ?",
-            (vault_id,),
-        )
+        # F12c (TASK 006): one shared helper (repo is a SQLiteRepository — checked
+        # at function top) instead of a 4th hand-copied correlated UPDATE.
+        repo._recompute_mentions(conn, vault_id)
 
         # Step 4: synthetic reindex log event
         repo.append_log_event(LogEvent(

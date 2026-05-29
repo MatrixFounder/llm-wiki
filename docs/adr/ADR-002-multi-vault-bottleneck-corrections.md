@@ -203,6 +203,20 @@ Single-user personal scale (5-10 vaults × 1K concepts текущие 12-18 ме
 >   merge-ledger table and survives a full rebuild. Reindex canonicalizes
 >   `page_entity_refs.entity_slug` through the alias table at build time (AM-3) so
 >   mention counts / backlinks stay correct across a rebuild.
+>
+> **Amendment (TASK 006, schema v3→v4 — 2026-05-29).** Three Class-B DDL hygiene
+> changes, same rebuild contract (no in-place `ALTER`; migrate via
+> `wiki-reindex --full`; bump `PRAGMA user_version` 3→4):
+> - **Drop** the dead `idx_pages_vault_tags` functional index (P-5 — indexed a
+>   JSON-array string nothing queried; tags route through `pages_fts.tags`).
+> - **`log_events.event_date`** becomes a **STORED generated column**
+>   (`GENERATED ALWAYS AS (substr(event_ts,1,10)) STORED`, L-2) — a schema-level
+>   guarantee replacing inserter discipline. It is **Class B** (still rederived on
+>   reindex from `event_ts`); `idx_log_vault_date` indexes the generated column.
+>   A STORED generated column cannot be `ALTER`-added to a populated table, so the
+>   rebuild path is mandatory (reinforces the no-ALTER rule). (L-5 — the dead
+>   `pages.type='log'` enum value — was already absent from the current schema;
+>   no change needed, ledger entry closed.)
 
 Все данные классифицируются по трём классам с чётким правилом расположения:
 
@@ -256,7 +270,7 @@ Single-user personal scale (5-10 vaults × 1K concepts текущие 12-18 ме
 | ❌ Anti-pattern | Почему плохо | Правильно |
 |---|---|---|
 | Хранить concept-page body только в DB | Markdown теряет source-of-truth статус; Obsidian → viewer-only | Body всегда в файле; DB хранит excerpt |
-| Wiki-links только в БД через JOIN | Obsidian рендерит граф из файлов → пустой граф | `[[links]]` в body (canonical) + mirror в `page_entity_refs` |
+| Wiki-links только в БД через JOIN | Obsidian рендерит граф из файлов → пустой граф | `[[links]]` в body (canonical) + mirror в `page_entity_refs` (**L-7: verified consistent with the `page_entity_refs` Class-B design — not an anti-pattern violation, 2026-05-29**) |
 | Contradictions только в DB | Operator не видит в Obsidian → не сможет resolve | `## Contradictions` блок в page body + flag в DB |
 | Frontmatter только в DB | Файл перестаёт быть self-describing | YAML в файле + parsed JSON в DB cache |
 | `wiki-ingest` write directly to DB без файла | Нарушение Karpathy canon | Always write file first → manifest emit → DB indexer следующим |

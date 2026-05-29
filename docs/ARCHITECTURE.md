@@ -4,14 +4,17 @@
 > [docs/architectures/](./architectures/). Edit the relevant chunk and
 > keep the one-line summary on this page in sync.
 
-> **Status**: **TASK 005 SHIPPED 2026-05-29** — Epic 7 complete (R-4
-> confirmed/candidate entity resolution incl. `wiki-merge` duplicate-fold +
-> R-5 two-tier alias table; 17 beads + `/vdd-multi` 8-fix hardening; 534 pytest
-> pass, mypy `--strict` clean). No active task at HEAD. ADRs 001 + 002 in
-> effect; ADR-002 §D8 amended for the `entity_aliases` PK change (schema v2→v3,
-> closes L-4). Living document — describes the current architecture, not the
-> change history. Shipped task specs (history, decisions, deferred items) live
-> in [tasks/](./tasks/) + [plans/](./plans/) + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md). For shipped task specs (history, decisions, hardening
+> **Status**: **TASK 006 SHIPPED 2026-05-29** — consolidation/hardening sweep
+> (schema **v3→v4**: drop dead `idx_pages_vault_tags` P-5 + `event_date`
+> GENERATED L-2; `'log'` enum already-absent; reindex name fallback L-8;
+> `_recompute_mentions` dedup F12c; `wiki-lint` frontmatter scan from
+> `pages.frontmatter_json` P-10+F12b; doc clarifications L-1/6/7; 6 beads +
+> `/vdd-multi` 1-fix + dogfood; 546 pytest, mypy clean). No active task at HEAD.
+> Predecessor: **TASK 005** (`8a6491e`) — Epic 7 entity resolution. ADRs 001 +
+> 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
+> v3→v4 hygiene changes. Living document — current architecture, not change
+> history. Shipped specs live in [tasks/](./tasks/) + [plans/](./plans/) +
+> [KNOWN_ISSUES.md](./KNOWN_ISSUES.md). For shipped task specs (history, decisions, hardening
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >

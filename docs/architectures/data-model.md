@@ -109,6 +109,7 @@
 - **entity_aliases PK `(vault_id, alias)`** (TASK 005) — alias→entity lookup (R-5.5 expansion entry point). The pre-existing `idx_aliases_lookup ON entity_aliases(vault_id, alias)` becomes a **redundant duplicate of the PK index** under the v2→v3 PK change → **drop it** (dead-weight hygiene, cf. P-5).
 - **`idx_aliases_entity (vault_id, entity_slug)`** — **NEW (TASK 005, R-5)**: reverse lookup for `list_aliases` (R-5.2) + sibling-alias gathering during search expansion (R-5.5) + alias re-pointing during merge (R-4.7). The old composite PK put `entity_slug` as the 3rd column (not a usable index prefix), so these paths would otherwise table-scan.
 - **Merge (R-4.7) needs no new index or DDL** — it is pure DML (UPDATE/DELETE) over existing tables; re-pointing uses `idx_refs_entity` + `idx_aliases_entity`, both already present after the v3 revision.
+- **`idx_pages_vault_tags` — DROPPED in v4 (TASK 006 / P-5)**: the functional index `ON pages(vault_id, json_extract(frontmatter_json,'$.tags'))` indexed a JSON array (string-compared) that no query path uses — tag selectivity routes through `pages_fts.tags`. It was dead weight maintained on every page write; removed.
 
 ### 4.3. Data Model Diagram
 
@@ -196,6 +197,7 @@ erDiagram
 - Markdown — single source of truth → DB можно дропнуть и пересобрать в любой момент. Migration в worst case = `wiki-reindex --full`.
 - v1 → v2 migration описан в [MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md).
 - **v2 → v3 (TASK 005):** `entity_aliases` PK `(vault_id, alias, entity_slug)` → `(vault_id, alias)` (closes L-4). Because the DB is a Class B rebuildable cache, this is **not** an in-place `ALTER` — bump `PRAGMA user_version 2→3` (+ `schema_meta`) in the DDL and rebuild via `wiki-reindex --full`. Operators on an existing DB run one full reindex; aliases reconstruct from Class A frontmatter under the new PK, with any collisions surfaced per R-5.6. `apply_schema` (`CREATE TABLE IF NOT EXISTS`) cannot mutate an existing table's PK, so the rebuild path is mandatory — documented in the migration note + ADR-002 amendment (or ADR-003 stub). The same DDL revision **drops** the now-redundant `idx_aliases_lookup` and **adds** `idx_aliases_entity (vault_id, entity_slug)` (see §4.2).
+- **v3 → v4 (TASK 006 — consolidation/hardening):** three Class-B DDL hygiene changes — (a) **drop** the dead `idx_pages_vault_tags` functional index (P-5); (b) **drop** the unused `'log'` value from the `pages.type` CHECK enum (L-5; no code emits it); (c) `log_events.event_date` → `TEXT GENERATED ALWAYS AS (substr(event_ts,1,10)) STORED` (L-2 — schema-level guarantee; `append_log_event` stops setting it; the existing `idx_log_vault_date` indexes the STORED generated column; no FTS trigger touches `log_events`). Same Class-B contract: bump `PRAGMA user_version 3→4` (+ `schema_meta`), migrate via `wiki-reindex --full`, **no in-place `ALTER`** (a STORED generated column can't be ALTER-added to a populated table — the rebuild path is mandatory). SQLite ≥3.31 supports STORED generated columns (runtime is 3.51). Verified: no `CREATE TRIGGER` references `event_date`.
 
 ---
 

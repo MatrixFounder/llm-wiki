@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from scripts.wiki_index.models import Vault
+from scripts.wiki_index.reindex import reindex_full
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 from scripts.wiki_skills import wiki_lint
 
@@ -69,13 +70,28 @@ def test_cross_table_collision_detected(tmp_path: Path) -> None:
 
 
 def test_frontmatter_scan_collision(tmp_path: Path) -> None:
+    # P-10 (TASK 006): the frontmatter-collision scan now reads
+    # pages.frontmatter_json from the DB (not the files), so the pages must be
+    # indexed first (operator workflow: reindex → lint).
     vault, db = _setup(tmp_path)
     (vault / "_concepts" / "a.md").write_text(
-        '---\ntype: concept\ntitle: A\naliases: ["Dup"]\n---\n# A\n', encoding="utf-8")
+        '---\ntype: concept\nslug: a\ntitle: A\ndate: 2026-05-29\naliases: ["Dup"]\n---\n# A\n',
+        encoding="utf-8")
     (vault / "_concepts" / "b.md").write_text(
-        '---\ntype: concept\ntitle: B\naliases: ["Dup"]\n---\n# B\n', encoding="utf-8")
+        '---\ntype: concept\nslug: b\ntitle: B\ndate: 2026-05-29\naliases: ["Dup"]\n---\n# B\n',
+        encoding="utf-8")
+    repo = SQLiteRepository(db)
+    reindex_full(repo, VAULT_ID)
+    repo.close()
     code, out = _run(["--vault", VAULT_ID, "--db-path", str(db)])
     assert out["by_category"].get("alias-collision", 0) >= 1
+    # confirm it's the frontmatter kind, sourced from the DB
+    import json as _json
+    sidecar = tmp_path / "fm.json"
+    _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
+    kinds = {e["details"]["kind"] for e in _json.loads(sidecar.read_text())
+             if e["category"] == "alias-collision"}
+    assert "frontmatter" in kinds
 
 
 def test_json_sidecar_parity(tmp_path: Path) -> None:
@@ -104,3 +120,39 @@ def test_strict_advisory_exit(tmp_path: Path) -> None:
     repo.close()
     code, _ = _run(["--vault", VAULT_ID, "--strict", "--db-path", str(db)])
     assert code == 1  # --strict + issues → non-zero advisory exit
+
+
+def test_frontmatter_collision_only_counts_entity_pages(tmp_path: Path) -> None:
+    """vdd-multi MED fix: the frontmatter-collision scan joins `entities`, so a
+    legal `aliases:` shared between a `_sources/` summary page and an entity page
+    is NOT a collision (only entity pages count) — matching the reindex
+    alias-mirror's `_concepts`/`_entities` tier gate."""
+    import json as _json
+    vault, db = _setup(tmp_path)
+    (vault / "_sources").mkdir(exist_ok=True)
+    (vault / "_concepts" / "ent-a.md").write_text(
+        '---\ntype: concept\nslug: ent-a\ntitle: Ent A\ndate: 2026-05-29\naliases: ["Shared"]\n---\n# Ent A\n',
+        encoding="utf-8")
+    (vault / "_sources" / "src-note.md").write_text(
+        '---\ntype: summary\nslug: src-note\ntitle: Src\ndate: 2026-05-29\naliases: ["Shared"]\n---\n# Src\n',
+        encoding="utf-8")
+    repo = SQLiteRepository(db)
+    reindex_full(repo, VAULT_ID)
+    repo.close()
+    sidecar = tmp_path / "s.json"
+    _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
+    fm = [e for e in _json.loads(sidecar.read_text())
+          if e["category"] == "alias-collision" and e["details"]["kind"] == "frontmatter"]
+    assert fm == [], f"a source-page alias must not trigger a frontmatter collision: {fm}"
+
+    # Now add a SECOND entity page claiming "Shared" → that IS a collision.
+    (vault / "_concepts" / "ent-b.md").write_text(
+        '---\ntype: concept\nslug: ent-b\ntitle: Ent B\ndate: 2026-05-29\naliases: ["Shared"]\n---\n# Ent B\n',
+        encoding="utf-8")
+    repo = SQLiteRepository(db)
+    reindex_full(repo, VAULT_ID)
+    repo.close()
+    _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
+    fm = [e for e in _json.loads(sidecar.read_text())
+          if e["category"] == "alias-collision" and e["details"]["kind"] == "frontmatter"]
+    assert any(e["details"]["alias"] == "Shared" for e in fm), "two entity pages → collision"

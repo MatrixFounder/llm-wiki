@@ -653,16 +653,17 @@ class SQLiteRepository(IndexRepository):
 
     def append_log_event(self, event: LogEvent) -> int:
         conn = self._connect()
-        event_date = event.event_ts.date().isoformat()
+        # TASK 006 / L-2: event_date is a STORED generated column
+        # (substr(event_ts,1,10)) as of schema v4 — do NOT supply it (inserting
+        # into a generated column raises); the DB derives it from event_ts.
         cur = conn.execute(
-            "INSERT INTO log_events (vault_id, event_ts, event_date, event_type, "
+            "INSERT INTO log_events (vault_id, event_ts, event_type, "
             "subject, pages_created_json, pages_touched_json, contradictions_count, "
             "details_json, log_md_byte_offset) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event.vault_id,
                 event.event_ts.isoformat(),
-                event_date,
                 event.event_type,
                 event.subject,
                 json.dumps(event.pages_created_json),
@@ -883,16 +884,30 @@ class SQLiteRepository(IndexRepository):
         ).fetchall()
         return [self._row_to_entity(conn, r) for r in rows]
 
-    def recompute_mentions(self, vault_id: str) -> None:
-        conn = self._connect()
-        conn.execute(
+    def _recompute_mentions(
+        self, conn: sqlite3.Connection, vault_id: str, slug: str | None = None
+    ) -> None:
+        """F12c (TASK 006): the single correlated `mentions_count` recompute,
+        issued on the caller's `conn` (the caller owns the transaction). `slug`
+        scopes to one entity (merge); None recomputes the whole vault (reindex
+        Step 3 / `recompute_mentions` / `auto_promote_candidates`). Replaces the
+        4 hand-copied UPDATEs so a future index change can't silently desync them.
+        """
+        sql = (
             "UPDATE entities SET mentions_count = ("
             "  SELECT COUNT(*) FROM page_entity_refs r "
             "  WHERE r.vault_id = entities.vault_id "
             "    AND r.entity_slug = entities.slug"
-            ") WHERE vault_id = ?",
-            (vault_id,),
+            ") WHERE vault_id = ?"
         )
+        params: list[Any] = [vault_id]
+        if slug is not None:
+            sql += " AND slug = ?"
+            params.append(slug)
+        conn.execute(sql, params)
+
+    def recompute_mentions(self, vault_id: str) -> None:
+        self._recompute_mentions(self._connect(), vault_id)
 
     def auto_promote_candidates(self, vault_id: str, threshold: int) -> list[str]:
         """R-4.4: recompute mentions, then promote candidates with
@@ -900,14 +915,7 @@ class SQLiteRepository(IndexRepository):
         conn = self._connect()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "UPDATE entities SET mentions_count = ("
-                "  SELECT COUNT(*) FROM page_entity_refs r "
-                "  WHERE r.vault_id = entities.vault_id "
-                "    AND r.entity_slug = entities.slug"
-                ") WHERE vault_id = ?",
-                (vault_id,),
-            )
+            self._recompute_mentions(conn, vault_id)
             promoted = [
                 r["slug"] for r in conn.execute(
                     "SELECT slug FROM entities WHERE vault_id = ? "
@@ -1036,6 +1044,31 @@ class SQLiteRepository(IndexRepository):
                 vault_id=vault_id, alias=r["alias"],
                 slugs=sorted([r["entity_slug"], r["other"]]), kind="cross_name",
             ))
+        # frontmatter (P-10/F12b, TASK 006): a surface claimed by ≥2 *entity*
+        # pages' Class A `aliases:` blocks — read from pages.frontmatter_json
+        # (already in the DB) via json_each, NOT a 2nd O(N) file+YAML sweep. The
+        # frontmatter_json is always valid (json.dumps at upsert), so there is no
+        # swallowed-parse case (F12b) — a malformed source file is recorded in the
+        # reindex `skipped` report, never silently dropped here.
+        # vdd-multi MED fix: JOIN entities to restrict to *entity* pages only —
+        # the deleted file-scan walked only `_concepts`/`_entities` (the same
+        # tier the reindex alias-mirror gates on). Without this join the scan
+        # would also flag legal `aliases:` shared between `_sources/` summary
+        # pages — a false collision (and an error under `--strict`).
+        for r in conn.execute(
+            "SELECT je.value AS alias, GROUP_CONCAT(DISTINCT p.slug) AS slugs "
+            "FROM pages p "
+            "JOIN entities e ON e.vault_id = p.vault_id AND e.slug = p.slug "
+            "JOIN json_each(p.frontmatter_json, '$.aliases') je "
+            "WHERE p.vault_id = ? "
+            "  AND json_type(p.frontmatter_json, '$.aliases') = 'array' "
+            "GROUP BY je.value HAVING COUNT(DISTINCT p.slug) > 1",
+            (vault_id,),
+        ).fetchall():
+            out.append(AliasCollision(
+                vault_id=vault_id, alias=str(r["alias"]),
+                slugs=sorted((r["slugs"] or "").split(",")), kind="frontmatter",
+            ))
         return out
 
     _TRUST_RANK = {"high": 3, "medium": 2, "low": 1}
@@ -1133,15 +1166,8 @@ class SQLiteRepository(IndexRepository):
                 (vault_id, from_slug),
             )
 
-            # 5. recompute into.mentions_count within the same tx.
-            conn.execute(
-                "UPDATE entities SET mentions_count = ("
-                "  SELECT COUNT(*) FROM page_entity_refs r "
-                "  WHERE r.vault_id = entities.vault_id "
-                "    AND r.entity_slug = entities.slug"
-                ") WHERE vault_id = ? AND slug = ?",
-                (vault_id, into_slug),
-            )
+            # 5. recompute into.mentions_count within the same tx (F12c helper).
+            self._recompute_mentions(conn, vault_id, slug=into_slug)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS entities (
     mentions_count    INTEGER NOT NULL DEFAULT 0,
     metadata_json     TEXT,                            -- frontmatter snapshot (Class B cache)
     PRIMARY KEY (vault_id, slug),
+    -- L-1 (TASK 006): file_path UNIQUE per (vault_id) — two entities can't share
+    -- a file. entity_aliases FKs only to (vault_id, slug); an alias-target's
+    -- file_path is governed transitively via that FK, not duplicated here.
     UNIQUE (vault_id, file_path)
 );
 
@@ -206,7 +209,8 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_vault_type         ON pages(vault_id, type);
 CREATE INDEX IF NOT EXISTS idx_pages_vault_project_date ON pages(vault_id, project, date DESC);
 CREATE INDEX IF NOT EXISTS idx_pages_vault_date         ON pages(vault_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_pages_vault_tags         ON pages(vault_id, json_extract(frontmatter_json, '$.tags'));
+-- TASK 006 / P-5 (schema v4): idx_pages_vault_tags DROPPED (dead JSON-array
+-- functional index, no query used it; tags route through pages_fts.tags).
 
 -- ---------------------------------------------------------------------------
 -- 5. page_entity_refs — M:N page ↔ entity references (with provenance v1.1)
@@ -258,7 +262,8 @@ CREATE TABLE IF NOT EXISTS log_events (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     vault_id          TEXT NOT NULL REFERENCES vaults(vault_id) ON UPDATE CASCADE ON DELETE CASCADE,
     event_ts          TEXT NOT NULL,                   -- ISO-8601 with timezone
-    event_date        TEXT NOT NULL,                   -- 'YYYY-MM-DD' substring of event_ts for grouping
+    -- TASK 006 / L-2 (schema v4): STORED generated column — no inserter discipline.
+    event_date        TEXT GENERATED ALWAYS AS (substr(event_ts, 1, 10)) STORED,
     event_type        TEXT NOT NULL CHECK (event_type IN (
                           'ingest', 'query', 'lint', 'reindex',
                           'promote', 'demote',
@@ -509,9 +514,9 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 
 -- Seeded on first init by wiki-init:
---   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '3.0', <ISO-8601>);
+--   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '4.0', <ISO-8601>);
 --   INSERT INTO schema_meta(key, value, updated_at) VALUES ('created_at',     <ISO-8601>, <ISO-8601>);
---   PRAGMA user_version = 3;   -- v3 (TASK 005 / R-5.4): entity_aliases PK swap; migration = wiki-reindex --full
+--   PRAGMA user_version = 4;   -- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5) + event_date GENERATED (L-2); migration = wiki-reindex --full
 --
 -- 13.2 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

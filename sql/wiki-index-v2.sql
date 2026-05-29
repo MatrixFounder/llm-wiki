@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS entities (
     mentions_count    INTEGER NOT NULL DEFAULT 0,
     metadata_json     TEXT,
     PRIMARY KEY (vault_id, slug),
+    -- L-1 (TASK 006): file_path is UNIQUE per (vault_id) — two entities in one
+    -- vault cannot share a markdown file. entity_aliases FKs only to
+    -- (vault_id, slug); an alias-target's file_path is governed transitively via
+    -- that FK, never duplicated against this UNIQUE key.
     UNIQUE (vault_id, file_path)
 );
 
@@ -174,7 +178,9 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_vault_type         ON pages(vault_id, type);
 CREATE INDEX IF NOT EXISTS idx_pages_vault_project_date ON pages(vault_id, project, date DESC);
 CREATE INDEX IF NOT EXISTS idx_pages_vault_date         ON pages(vault_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_pages_vault_tags         ON pages(vault_id, json_extract(frontmatter_json, '$.tags'));
+-- TASK 006 / P-5 (schema v4): idx_pages_vault_tags DROPPED — it indexed a JSON
+-- array (string-compared) that no query path used; tag selectivity routes
+-- through pages_fts.tags. Dead weight on every page write; removed.
 
 -- ---------------------------------------------------------------------------
 -- 5. page_entity_refs — M:N page ↔ entity references (with provenance v1.1)
@@ -212,7 +218,10 @@ CREATE TABLE IF NOT EXISTS log_events (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     vault_id          TEXT NOT NULL REFERENCES vaults(vault_id) ON UPDATE CASCADE ON DELETE CASCADE,
     event_ts          TEXT NOT NULL,
-    event_date        TEXT NOT NULL,
+    -- TASK 006 / L-2 (schema v4): event_date is a STORED generated column —
+    -- always substr(event_ts,1,10), no inserter discipline needed (was a plain
+    -- TEXT column the caller had to set). idx_log_vault_date indexes it.
+    event_date        TEXT GENERATED ALWAYS AS (substr(event_ts, 1, 10)) STORED,
     event_type        TEXT NOT NULL CHECK (event_type IN (
                           'ingest', 'query', 'lint', 'reindex',
                           'promote', 'demote',
@@ -393,6 +402,10 @@ CREATE VIEW IF NOT EXISTS index_meta AS
      WHERE is_candidate = 0;
 
 -- known_concepts — for wiki-ingest --known-concepts-stdin injection (B2 resolver).
+-- L-6 (TASK 006) cold-call cost: the `json_group_array(alias)` correlated
+-- subquery is recomputed per row (read-performant but unindexed/uncached). Fine
+-- for the ingest known-concepts payload; if it ever shows latency, materialise
+-- via a trigger-maintained table.
 CREATE VIEW IF NOT EXISTS known_concepts AS
     SELECT vault_id, slug, name, definition,
            (SELECT json_group_array(alias)
@@ -431,11 +444,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- Set unconditionally on every apply; idempotent. wiki-init reads this to
 -- decide whether to seed schema or run a migration step.
 -- v3 (TASK 005 / R-5.4): entity_aliases PK (vault_id, alias) + idx swap.
--- The DB is a Class B rebuildable cache, so the v2→v3 migration is a
--- `wiki-reindex --full`, NOT an in-place ALTER (apply_schema's
--- CREATE TABLE IF NOT EXISTS cannot mutate a live PK). See ADR-002 §D8
--- amendment.
-PRAGMA user_version = 3;
+-- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5); event_date GENERATED
+-- STORED (L-2). The DB is a Class B rebuildable cache, so every vN→vN+1
+-- migration is a `wiki-reindex --full`, NOT an in-place ALTER (apply_schema's
+-- CREATE TABLE IF NOT EXISTS cannot mutate a live PK, and a STORED generated
+-- column cannot be ALTER-added to a populated table). See ADR-002 §D8 amendment.
+PRAGMA user_version = 4;
 
 -- 13.3 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

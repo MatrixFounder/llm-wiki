@@ -20,14 +20,14 @@ Tracking ledger for low-priority cleanups and post-discovery bugs.
 
 To be batched into a single cleanup PR before Phase 3a Exit. Tracked here per Plan Reviewer feedback I-4 to ensure they don't get dropped.
 
-## [2026-05-26] L-1 entities.file_path UNIQUE invariant not explicit [STATUS: open]
+## [2026-05-26] L-1 entities.file_path UNIQUE invariant not explicit [STATUS: fixed 2026-05-29]
 
 - **Symptom**: Architecture review noted `entities.file_path UNIQUE per (vault_id, file_path)` (SCHEMA-v2.sql line 116) but `entity_aliases` has no FK back to a unique key on entities other than `(vault_id, slug)`. Invariant that file_path may not collide with another entity's alias-target path is implicit.
 - **Root cause**: Documentation gap, not behavior bug.
 - **Affected components**: `docs/SCHEMA-v2.sql` (header comment), `sql/wiki-index-v2.sql` (when created via task-001-01).
 - **Fix plan**: Add inline comment in SCHEMA-v2.sql + sql/wiki-index-v2.sql clarifying the invariant.
 
-## [2026-05-26] L-2 log_events.event_date should be GENERATED ALWAYS column [STATUS: open]
+## [2026-05-26] L-2 log_events.event_date should be GENERATED ALWAYS column [STATUS: fixed 2026-05-29]
 
 - **Symptom**: `log_events.event_date` is currently a regular TEXT column populated by inserter logic. Drift risk if inserter forgets to set it to `substr(event_ts, 1, 10)`.
 - **Root cause**: Schema design — Class B (denorm) column without storage discipline.
@@ -48,7 +48,7 @@ To be batched into a single cleanup PR before Phase 3a Exit. Tracked here per Pl
 - **Affected components**: SCHEMA-v2.sql §3 entity_aliases.
 - **Resolution (TASK 005 / R-5.4, 005-01)**: PK changed to `(vault_id, alias)`; `entity_slug` is now a regular column; `idx_aliases_lookup` dropped (duplicate of the PK index), `idx_aliases_entity (vault_id, entity_slug)` added for the reverse lookup; `PRAGMA user_version` 2→3. The DB is Class B rebuildable, so the migration is `wiki-reindex --full` (no in-place ALTER) — documented in the ADR-002 §D8 amendment. Guarded by `tests/test_schema_v3.py::test_alias_pk_rejects_same_alias_two_slugs`.
 
-## [2026-05-29] L-8 reindex stores entities.name from frontmatter `title`, not `name` [STATUS: open, low]
+## [2026-05-29] L-8 reindex stores entities.name from frontmatter `title`, not `name` [STATUS: fixed 2026-05-29]
 
 - **Symptom**: `reindex_full` registers an entity with `name = updated_fm.get("title", slug)` ([reindex.py](../scripts/wiki_index/reindex.py)). `write_concept_page` ([wiki_extract_concepts.py](../scripts/wiki_skills/wiki_extract_concepts.py)) emits `name:` (not `title:`), so a freshly-extracted concept page round-trips with `entities.name == slug` (the display name is lost on the DB side until the page also carries `title:`).
 - **Root cause**: Pre-existing field-name mismatch (predates TASK 005); reindex was written against `title`, the concept-extractor against `name`.
@@ -56,21 +56,21 @@ To be batched into a single cleanup PR before Phase 3a Exit. Tracked here per Pl
 - **Impact on Epic 7**: minor — `wiki-merge`'s name-based redirect alias degrades to the slug (already registered), so resolution is unaffected; only a human-readable display name is missing. Surfaced during TASK 005 005-16 acceptance.
 - **Fix plan**: either have reindex fall back `title or name or slug`, or have `write_concept_page` also emit `title:`. Defer — orthogonal to entity resolution; pick up in a docs/normalization polish bead.
 
-## [2026-05-26] L-5 pages.type='log' is dead enum value [STATUS: open]
+## [2026-05-26] L-5 pages.type='log' is dead enum value [STATUS: fixed 2026-05-29 (already absent)]
 
 - **Symptom**: `pages.type` enum includes `'log'` (SCHEMA-v2.sql line 167) but log content lives in `log.md` (Class A file rendered by wiki-ingest), not as a page row.
 - **Root cause**: Leftover from v1 design; unused.
 - **Affected components**: SCHEMA-v2.sql pages.type CHECK, task-001-26 (wiki-index-render).
 - **Fix plan**: Remove `'log'` from enum. Verify task-001-26 doesn't create log-type pages.
 
-## [2026-05-26] L-6 known_concepts view has cold-call cost [STATUS: open]
+## [2026-05-26] L-6 known_concepts view has cold-call cost [STATUS: fixed 2026-05-29 (documented)]
 
 - **Symptom**: `known_concepts` view (SCHEMA-v2.sql line 470) uses `json_group_array(alias)` correlated subquery. Performant for read but unindexed.
 - **Root cause**: Trade-off — correlated subquery is concise but uncached.
 - **Affected components**: SCHEMA-v2.sql `known_concepts` view; task-001-17 search-pages impl (if it uses known_concepts).
 - **Fix plan**: Document cold-call cost in view header comment. If wiki-ingest v1.1 known-concepts injection causes latency issue, materialise as a table populated by trigger.
 
-## [2026-05-26] L-7 ADR-002 §D8 anti-pattern table correctness re-verify [STATUS: open]
+## [2026-05-26] L-7 ADR-002 §D8 anti-pattern table correctness re-verify [STATUS: fixed 2026-05-29]
 
 - **Symptom**: Architecture review §4 L-7 noted ADR-002 §D8 anti-pattern row "Wiki-links только в БД через JOIN" — schema correctly mirrors to `page_entity_refs` (Class B), not anti-pattern. No fix needed; just confirming.
 - **Root cause**: Documentation accuracy check.
@@ -111,7 +111,7 @@ All flagged as SEV-1 by `critic-performance` but defer-justified: pass at N=100 
 - **Affected components**: `scripts/benchmark.py`, CI workflow (not yet created).
 - **Fix plan**: Add `--scale all` mode (loops 100/1000/10000 + `--enforce-slos`); wire `--n 1000 --enforce-slos` into CI; mark `--n 10000` as nightly/manual. Document expected runtime per bucket.
 
-## [2026-05-26] P-5 idx_pages_vault_tags is dead-weight functional index [STATUS: open]
+## [2026-05-26] P-5 idx_pages_vault_tags is dead-weight functional index [STATUS: fixed 2026-05-29]
 
 - **Symptom**: `idx_pages_vault_tags ON pages(vault_id, json_extract(frontmatter_json, '$.tags'))` is maintained on every upsert but indexes a JSON array (compared as string), which provides no useful query path. Tag queries should route through `pages_fts.tags`.
 - **Root cause**: Speculative index added during schema design; never used by any query.
@@ -240,7 +240,7 @@ F7 `MERGE_MIRROR_FAILED` logging, F8 reindex docstring honesty — all with gree
 regression tests). The items below were explicitly deferred — scale-only perf or
 recoverable-by-design — and recorded so a future polish bead can sweep them.
 
-## [2026-05-29] P-10 wiki-lint frontmatter scan is a 2nd O(pages) YAML sweep [STATUS: open, SEV-2]
+## [2026-05-29] P-10 wiki-lint frontmatter scan is a 2nd O(pages) YAML sweep [STATUS: fixed 2026-05-29]
 
 - **Symptom**: `lint._scan_frontmatter_alias_collisions` calls `frontmatter.load()` (file read + PyYAML `safe_load`) on **every** `_concepts`/`_entities` page on every `wiki-lint` run — *in addition to* `check_drift` (P-3), which already reads + hashes + `safe_load`s every page. At 10k entity pages a single lint does the disk+YAML sweep twice (~seconds against the 30s SLO P-3 already flags as at-risk).
 - **Root cause**: R-5.6(e) Class A frontmatter scan implemented as an eager per-file YAML parse, independent of `check_drift`'s sweep.
@@ -310,3 +310,36 @@ canonicalized, lint 0 issues). Two bugs found + fixed inline (regression tests i
 - **Root cause**: the add path only short-circuited when the surface already resolved to a *different* entity; a surface resolving to *this* entity (own slug / own alias) fell through to the insert.
 - **Affected components**: `scripts/wiki_skills/wiki_alias.py::main` (`--add`).
 - **Resolution**: a surface that resolves to THIS entity now returns `action: unchanged` (no row written). Regression: `tests/test_dogfood_fixes.py::test_df5_add_own_slug_is_unchanged_not_redundant_alias`.
+
+---
+
+## TASK 006 (consolidation/hardening) — closures (2026-05-29)
+
+Operator-selected scope "Hygiene + correctness + lint perf"; scale-gated perf
+(P-1/2/3/4/6/7/8/9/11, H-PERF-3) and threat-gated security (D-1/D-2/H-5/H-6/Q17,
+TOCTOU note) stay deferred with their triggers. Shipped via 6 beads
+(`docs/tasks/task-006-*.md`), green-throughout.
+
+- **P-5** — dropped the dead `idx_pages_vault_tags` functional index (schema v4).
+- **L-5** — the `'log'` `pages.type` value was already absent from the current
+  schema (the L-5 line reference was stale); verified + closed, no change needed.
+- **L-2** — `log_events.event_date` is now `GENERATED ALWAYS AS (substr(event_ts,1,10)) STORED`
+  (schema v4); `append_log_event` no longer sets it. `tests/test_schema_v4.py`.
+- **L-8** — `reindex_full` entity name now falls back `title → name → slug`
+  (`tests/test_reindex_alias_mirror.py::test_l8_entity_name_falls_back_to_frontmatter_name`).
+- **F12c** (within L-9) — the 4 hand-copied `mentions_count` UPDATEs are now one
+  `SQLiteRepository._recompute_mentions(conn, vault_id, slug=None)` helper.
+- **P-10 + F12b** (F12b within L-9) — `wiki-lint`'s frontmatter-alias collision
+  scan reads `pages.frontmatter_json` via `json_each` in `find_alias_collisions`
+  (DAL) instead of re-`frontmatter.load()`-ing every file; the file-scan helper
+  was removed. No swallowed-parse (frontmatter_json is always valid JSON;
+  malformed source files are recorded in the reindex `skipped` report).
+- **L-1 / L-6 / L-7** — doc/schema-comment clarifications added (entities.file_path
+  UNIQUE invariant; known_concepts cold-call cost; ADR-002 §D8 anti-pattern row
+  "verified consistent" note).
+- **Schema v3 → v4** — `PRAGMA user_version` 3→4; migration = `wiki-reindex --full`
+  (Class B, no ALTER); ADR-002 §D8 amendment added.
+
+**Still open in L-9** (not in this task's scope): F11 (confirm FM/DB divergence —
+recoverable), F12a (merge `--dry-run` count cosmetic), F12d (Class A/B alias-spelling),
+F3-residual (multi-tenant TOCTOU note).

@@ -48,7 +48,7 @@ def db(tmp_path):
 
 
 def test_e2e_01_schema_applies_and_pragmas(db):
-    """Schema applies; ≥10 tables, ≥1 view; WAL + foreign_keys + user_version=3."""
+    """Schema applies; ≥10 tables, ≥1 view; WAL + foreign_keys + user_version=4."""
     n_tables = db.execute(
         "SELECT count(*) FROM sqlite_master WHERE type='table'"
     ).fetchone()[0]
@@ -62,8 +62,9 @@ def test_e2e_01_schema_applies_and_pragmas(db):
     assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     # M-5 fix — must be set unconditionally by the DDL (§13.2).
-    # v3 (TASK 005 / R-5.4): entity_aliases PK swap bumped user_version 2→3.
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+    # v3 (TASK 005 / R-5.4): entity_aliases PK swap → 3.
+    # v4 (TASK 006): drop idx_pages_vault_tags + event_date GENERATED → 4.
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 # =============================================================================

@@ -112,3 +112,22 @@ def test_e2e_03_alias_collision_reported_not_silent(tmp_path: Path) -> None:
     assert len(result["alias_collisions"]) == 1
     assert result["alias_collisions"][0]["alias"] == "Hermes"
     repo.close()
+
+
+def test_l8_entity_name_falls_back_to_frontmatter_name(tmp_path: Path) -> None:
+    """L-8 (TASK 006): a concept page with `name:` and no `title:` reindexes to
+    its display name, not the slug (title→name→slug fallback)."""
+    vault = tmp_path / "vault"
+    _write(
+        vault, "_concepts/foo-bar.md",
+        "type: concept\nslug: foo-bar\nname: Foo Bar\n"
+        "date: 2026-05-29\ntags: [concept]\nis_candidate: false",
+        "# Foo Bar\n\nNo title key here.",
+    )
+    repo = _repo(tmp_path, vault)
+    reindex_full(repo, "test-vault")
+    name = repo._connect().execute(
+        "SELECT name FROM entities WHERE vault_id='test-vault' AND slug='foo-bar'"
+    ).fetchone()[0]
+    assert name == "Foo Bar"   # was the slug 'foo-bar' before L-8
+    repo.close()

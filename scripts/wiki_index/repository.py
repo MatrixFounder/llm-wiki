@@ -371,9 +371,13 @@ class IndexRepository(abc.ABC):
 
     @abc.abstractmethod
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
-        """In-DB (legacy/pre-migration) + cross-table (alias == a *different*
-        entity's ``slug``/``name``) alias collisions (R-5.6). The Class A
-        frontmatter scan lives in the Lint Layer (it reads files)."""
+        """All alias collisions (R-5.6), each tagged by ``AliasCollision.kind``:
+        ``in_table`` (legacy/pre-migration), ``cross_slug``/``cross_name`` (alias
+        == a *different* entity's slug/name), and ``frontmatter`` (≥2 *entity*
+        pages claim the same ``aliases:`` surface). As of TASK 006 / P-10 the
+        frontmatter check reads ``pages.frontmatter_json`` here in the DAL (via
+        ``json_each``, restricted to entity pages) — it no longer re-parses files
+        in the Lint Layer."""
         ...
 
     @abc.abstractmethod
