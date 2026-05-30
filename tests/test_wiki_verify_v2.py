@@ -65,3 +65,8 @@ def test_v2_baseline_grading_reproducible() -> None:
 
 def test_v2_enriched_grading_reproducible() -> None:
     _reproduces("enriched-run-outputs.json", "enriched-grading.json")
+
+
+def test_v3_enriched_grading_reproducible() -> None:
+    # the L-009-4 security-lens fix re-run (security-overreach 10 -> 0)
+    _reproduces("enriched-v3-run-outputs.json", "enriched-v3-grading.json")
