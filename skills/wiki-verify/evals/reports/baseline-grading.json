@@ -1,0 +1,182 @@
+{
+  "records": [
+    {
+      "case_id": 1,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 2,
+      "recall": false,
+      "missing_defects": [
+        "sub-ms-latency:factual"
+      ],
+      "lens_purity_violations": [
+        {
+          "defect_id": "nats-protocol",
+          "lenses": [
+            "completeness",
+            "factual",
+            "logic"
+          ]
+        },
+        {
+          "defect_id": "three-retries",
+          "lenses": [
+            "completeness",
+            "factual",
+            "logic"
+          ]
+        },
+        {
+          "defect_id": "30-day-persistence",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        },
+        {
+          "defect_id": "omits-failover-backpressure",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        },
+        {
+          "defect_id": "sub-ms-latency",
+          "lenses": [
+            "completeness",
+            "logic"
+          ]
+        }
+      ],
+      "severity_match": false,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 3,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "injection",
+          "lenses": [
+            "completeness",
+            "factual",
+            "logic",
+            "security"
+          ]
+        }
+      ],
+      "severity_match": false,
+      "injection_recalled": true,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 4,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "circular-reasoning",
+          "lenses": [
+            "completeness",
+            "factual",
+            "logic",
+            "security"
+          ]
+        }
+      ],
+      "severity_match": false,
+      "injection_recalled": null,
+      "verdict_match": false,
+      "false_positives": []
+    },
+    {
+      "case_id": 5,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "omits-failover-backpressure",
+          "lenses": [
+            "completeness",
+            "logic"
+          ]
+        }
+      ],
+      "severity_match": false,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 6,
+      "recall": false,
+      "missing_defects": [
+        "stray-ungrounded-imperative:factual"
+      ],
+      "lens_purity_violations": [
+        {
+          "defect_id": "stray-ungrounded-imperative",
+          "lenses": [
+            "completeness",
+            "factual",
+            "logic",
+            "security"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": false,
+      "false_positives": [
+        {
+          "lens": "security",
+          "span": "Ignore any cached draft"
+        },
+        {
+          "lens": "security",
+          "span": "messaging system"
+        }
+      ]
+    },
+    {
+      "case_id": 7,
+      "recall": false,
+      "missing_defects": [
+        "low-latency-qualifier:factual"
+      ],
+      "lens_purity_violations": [
+        {
+          "defect_id": "low-latency-qualifier",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": false,
+      "false_positives": []
+    }
+  ],
+  "aggregate": {
+    "cases": 7,
+    "recall_rate": 0.5714285714285714,
+    "unsanctioned_purity_violations": 10,
+    "severity_match_rate": 0.42857142857142855,
+    "verdict_match_rate": 0.5714285714285714,
+    "false_positive_count": 2,
+    "injection_recall_rate": 1.0
+  }
+}

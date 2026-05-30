@@ -30,8 +30,16 @@ Stub-First green-throughout; 4 VDD gates incl. `/vdd-adversarial` on the plan;
 **schema v4→v5** — verdict type + `verifies` ref + `verify` event; layout-agnostic
 via `pages.file_path` (grep-guarded); 4 VDD gates + `/vdd-multi` post-ship
 3-fix hardening — L-1 case-insensitive PASS/FAIL gate + enum validation, L-2
-idempotency re-arm, L-3 vacuous-pass refusal; 672 pytest, mypy strict). No active
-task at HEAD (working tree has TASK 008 uncommitted — nothing auto-committed). See
+idempotency re-arm, L-3 vacuous-pass refusal; 672 pytest, mypy strict);
+committed `49c7723`; **TASK 009 (R-9 critic-prompt hardening — scope the `wiki-verify`
+4 lenses [anti-bleed] + a shared severity rubric + few-shot + the C2 `factual`-backstop;
+plus a **durable, reproducible eval harness** at `skills/wiki-verify/evals/`) shipped
+2026-05-30** (6 beads, Stub-First RED→GREEN; **6 gates** — task/arch/plan +
+security-audit + code-review + `/vdd-multi` [2 HIGH instrument bugs fixed →
+clean-pass]; **zero code/schema change**, `user_version` 5; measured baseline→enriched
+delta: lens-bleed violations 10→3, false-positives 2→0, gate verdict-correctness +
+recall →1.0, injection recall 100% held; **702 pytest, mypy strict**). No active
+task at HEAD (working tree has TASK 009 uncommitted — nothing auto-committed). See
 `docs/ARCHITECTURE.md`, `docs/adr/`, and the archived task/plan pairs under
 `docs/tasks/` + `docs/plans/`.
 
@@ -70,15 +78,24 @@ state and user preferences, not domain knowledge.
 - Vault artifact paths (`_sources/`, `_concepts/`, `_entities/`, `_raw/`,
   `00-Vault-Index/`, `WIKI_SCHEMA.md`, `*.db*`) are gitignored
   belt-and-braces.
+- **Testing & dogfooding vaults go under `samples/`** (e.g. `samples/<name>/`,
+  used as `--vault-root samples/<name>`) — one known home instead of scattered
+  `/tmp` vaults. `samples/` is **gitignored** (scratch tree — see `.gitignore`),
+  so its `*.db*` + `_sources/`/`_concepts/`/… artifacts never get committed and
+  the repo-is-not-a-vault invariant still holds. Durable, **committed** test
+  fixtures (e.g. a skill's eval set) live under their owning
+  `skills/<name>/evals/`, **not** `samples/`.
 
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
 - `docs/tasks/` + `docs/plans/` — archived task/plan pairs (no
-  `docs/TASK.md` at HEAD — most recent: `task-008-wiki-verify-multi.md`
-  shipped 2026-05-29; per-bead specs at `task-008-01..11-*.md`; review
-  records at `docs/reviews/{task,architecture,plan,vdd-adversarial-plan,vdd-multi}-008*`;
-  predecessor `task-007-wiki-query-rag.md`).
+  `docs/TASK.md` at HEAD — most recent: `task-009-wiki-verify-critic-rubric.md`
+  shipped 2026-05-30; per-bead specs at `task-009-01..06-*.md`; review records at
+  `docs/reviews/{task,architecture,plan,security-audit,code-review,vdd-multi}-009*`;
+  the durable eval harness it added lives at `skills/wiki-verify/evals/`
+  (`evals.json` + `grade.py` + `reports/` + committed run-outputs);
+  predecessor `task-008-wiki-verify-multi.md`).
 - `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002,
   status header tracks Phase 3a/3b progress).
 - `docs/KNOWN_ISSUES.md` — deferred items, including perf SEV-1 set

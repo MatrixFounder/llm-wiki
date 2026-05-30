@@ -134,5 +134,24 @@
 | R-8.10 (off-by-default opt-in) | §2.1 Verification Layer Purpose + Design pattern ("`wiki-query` never invokes it"); `workflows/wiki-verify-multi.md` recipe | regression: `wiki-query apply` does not call `wiki-verify-multi`; `wiki-query` behaviour unchanged |
 | C-8/NFR-7 (layout-agnostic — binding R-X1/R-X2-compat) | §2.1 Verification Layer Stack position + Operational invariants ("layout-agnostic source access"); §4.1 Page (role-split); reads via `pages.file_path`, verdict surface only in `layout.py` | UC-28 AC (cited source resolved on non-Karpathy layout) + grep guard (no `PAGE_SUBDIRS` literal in `wiki_verify_multi.py`) |
 
+### Critic-Prompt Hardening Requirements (TASK 009 — R-9 `wiki-verify-critic-rubric`)
+
+> Quality hardening on the shipped R-8 (**R-8 stays DONE**; not a new ROADMAP epic).
+> **Prompt + committed eval assets only — zero code/schema change** (`user_version` 5;
+> verdict contract + lens/severity vocab + grounding gate + FAIL rule byte-stable;
+> Decision-17 preserved). Motivated by the 2026-05-29 real-content dogfood (lens-bleed:
+> same defect reported by 3–4 lenses; uncalibrated severity). No Data Model / Interface
+> / schema change.
+
+| Requirement | Architecture coverage | Test / AC reference |
+|---|---|---|
+| R-9.1 (anti-bleed lens scoping) | §2.1 Verification Layer "Critic-prompt scoping + calibration" (exclusive lens domains; non-FAIL lenses banned from re-reporting injections) | UC-1 (lens-purity metric) + UC-2/UC-3 AC (no *unsanctioned* finding under two lenses) |
+| R-9.2 (severity rubric) | §2.1 "Critic-prompt scoping + calibration" (one shared anchored scale; same defect → same severity; vocab pinned to `{low,medium,high,critical}`) | eval severity-match metric (the same hallucination no longer `high`-vs-`critical` split) |
+| R-9.3 (per-lens definitions + few-shot) | §2.1 "Critic-prompt scoping + calibration" (supported/unsupported defs; **defanged** few-shot; skill-creator inline-block limits) | review: examples carry no live directive; SECURITY audit clean |
+| R-9.4 (durable committed eval set) | §2.1 "Eval harness" (`skills/wiki-verify/evals/evals.json` + fixtures; recall/lens-purity/severity expectations; C2 overlap excluded) | committed `evals.json` diff; cases cover the dogfood matrix + edge cases (logic-only, omission-only, false-positive guard, borderline overclaim) |
+| R-9.5 (baseline-vs-enriched measurement) | §2.1 "Eval harness" (orchestrator-graded Workflow+grader; one-time delta; **NOT** pytest; `run_eval.py` unused — trigger-eval only) | recorded baseline→enriched delta: lens-purity↑, severity-match↑, **recall non-regression (injection 100%)** |
+| R-9.6 (invariants preserved) | §2.1 "Critic-prompt scoping + calibration" ("zero code/schema change; verdict contract byte-stable"); the C2 backstop; Decision-17 | existing deterministic `tests/test_wiki_verify_*` green; `user_version` 5; no `import anthropic`; SECURITY audit + code review clean |
+| **C2** (security FAIL-redundancy — binding) | §2.1 "The C2 backstop" (`factual`+`security` both MAY flag an injection — the one sanctioned overlap; lens-purity excludes it) | adversarial eval case: "the `security` lens under-reports the injection" still FAILs via `factual` (a FAIL-lens) |
+
 ---
 

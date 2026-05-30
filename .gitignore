@@ -36,6 +36,7 @@ npm-debug.log*
 # Local fixtures / scratch dirs
 tmp*
 Reference/
+samples
 
 # Framework symlink: installer's managed block only has `/.agentic-development/`
 # (dir-only pattern), but on disk it's a symlink. Slashless form catches both.

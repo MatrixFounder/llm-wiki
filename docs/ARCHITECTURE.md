@@ -38,6 +38,30 @@
 > (reads sources via `pages.file_path` + DAL, never a reconstructed subdir path —
 > a binding R-X1/R-X2-compat constraint, C-8/NFR-7). Decision-17 `prepare`/`apply`
 > (no `anthropic`). Spec + reviews: [tasks/](./tasks/) + [reviews/](./reviews/).
+>
+> **TASK 009 (R-9 critic-prompt hardening) — SHIPPED 2026-05-29** (6 beads, Stub-First
+> RED→GREEN; 3 VDD gates APPROVE-WITH-NITS + security-audit PASS + code-review APPROVE;
+> 697 pytest / 4 skip, mypy strict clean; **zero code/schema change**, `user_version` 5;
+> nothing auto-committed). **Measured delta** (baseline thin → enriched scoped, same eval
+> set + deterministic grader): unsanctioned lens-bleed violations **10→3 (−70%)**, security
+> false-positives **2→0**, gate verdict-correctness **0.571→1.0** (both bleed-induced
+> verdict flips eliminated), recall **0.571→1.0** with **injection recall held at 100%**;
+> the C2 `factual`-backstop verified (security-suppressed injection still FAILs). Residual
+> completeness-leak (3 viol) + a flat severity-exact-match are documented LOWs.
+> A quality hardening of the R-8 `wiki-verify` four-critic prompt — **scoped
+> (anti-bleed) + severity-calibrated lenses + a durable committed eval set**,
+> motivated by the TASK-008 dogfood (lens-bleed: the same defect reported by 3–4
+> lenses; uncalibrated severity — `high` vs `critical` for one hallucination).
+> **Prompt + committed eval assets only — zero code/schema change** (`user_version`
+> stays **5**; the verdict JSON contract + lens vocab `{factual,logic,security,
+> completeness}` + severity vocab `{low,medium,high,critical}` + grounding gate +
+> `factual|security ≥ --fail-on` rule all byte-stable; Decision-17 preserved). The one
+> binding constraint is **C2**: anti-bleed must keep the `factual`+`security`
+> FAIL-redundancy on injections (the **sanctioned overlap**, excluded from lens-purity).
+> Eval = **orchestrator-graded Workflow+grader** (not `run_eval.py` — that's a
+> trigger-eval; not a `pytest` gate). **SECURITY-SENSITIVE** prompt surface → code
+> review + security audit mandatory. Spec: [tasks/](./tasks/) (R-9 in
+> [verification-map](./architectures/verification-map.md) + [functional-architecture](./architectures/functional-architecture.md) §Verification Layer).
 > Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
