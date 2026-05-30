@@ -130,9 +130,15 @@ grounded sentence" noise.
 - **completeness-faithfulness** — *material omissions* of source facts +
   *uncited-but-not-false additions*. **Out of scope:** outright-false specifics
   (→ factual), **injections (→ security — you MUST NOT report an injection).**
+  **When you flag an omission, quote the MISSING SOURCE phrase (the content the answer
+  left out), NOT the answer sentence — and NEVER quote a sentence that carries a
+  factual / logic / security defect. Your finding is about what is ABSENT, not what is
+  present; a present defect belongs to another lens.**
   - ✅ flag that the answer drops the source-stated "failover and backpressure handling"
-    the question asked about → `medium`.
+    the question asked about → `medium` (quote the dropped **source** phrase).
   - ❌ don't flag a fabricated specific — that is factual's lane.
+  - ❌ don't quote the answer's wrong / contradicting claim as your "omission" — quote the
+    missing **source** content instead.
 
 ### The C2 backstop (the ONE sanctioned overlap)
 

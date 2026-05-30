@@ -631,7 +631,7 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   SKILL.md edit is exploratory; a `/security-audit` gate is required before committing the v3
   prompt as the shipped contract).
 
-## [2026-05-30] L-009-5 residual factual↔completeness cross-bleed (~13 core violations) [STATUS: open, medium — benchmark-v2]
+## [2026-05-30] L-009-5 residual factual↔completeness cross-bleed [STATUS: fixed 2026-05-30 (v4) — raw bleed 12→8]
 
 - **Symptom**: after the v3 security fix, the dominant residual lens-bleed is a defect that
   `factual` flags AND `completeness` also touches (core bleed ≥2 of factual/logic/completeness
@@ -647,5 +647,16 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
 - **Fix plan (v4)**: (prompt) tighten `completeness` to quote the *omitted source phrase*,
   never the answer sentence carrying another lens's defect; (grader) attribute omission
   findings by their omitted-content span (not the quoted answer span) + exclude `low`-only
-  single-lens confirmations from lens-purity. Then re-run `evals-v2.json`. Defer — the v3
-  prompt is already a net improvement; this is the next quality lever, not a blocker.
+  single-lens confirmations from lens-purity. Then re-run `evals-v2.json`.
+- **Resolution (v4, 2026-05-30)**: (prompt) added to the `completeness` lens in
+  `skills/wiki-verify/SKILL.md` — "quote the MISSING SOURCE phrase (the content the answer
+  left out), NOT the answer sentence … NEVER quote a sentence that carries a factual / logic
+  / security defect". (grader) added the **additive** `grade.py::substantive_purity_violations`
+  helper (≥medium cross-lens duplicates, excludes `low` confirmations + the sanctioned C2
+  pair; does NOT change `grade_run`, so the committed v1/v2 grading pins still hold) +
+  `tests/test_wiki_verify_grade.py::test_substantive_purity_excludes_low_confirmations_and_c2`.
+  **Re-ran the benchmark (enr-v4)**: raw violations 12→**8** (cumulative baseline 19→8, −58%);
+  severity 0.750→**0.812**; recall held (0.938) + injection 100% + FP 2. See
+  `evals/reports/v2/benchmark-v2.md` + `enriched-v4-{run-outputs,grading}.json`. The v4 edit
+  touches `completeness` only (zero security surface; contract test green). Residual ~8 raw
+  violations = the irreducible borderline tail (diminishing returns).

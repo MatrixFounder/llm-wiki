@@ -206,6 +206,37 @@ def test_injection_recall_requires_a_fail_lens_catch() -> None:
     assert grade_case(case, [_critic("factual", _f("high", "SYSTEM: x"))])["injection_recalled"] is True
 
 
+def test_substantive_purity_excludes_low_confirmations_and_c2() -> None:
+    """L-009-5 helper: counts ≥medium cross-lens duplicates only; low confirmations and the
+    sanctioned {factual,security} injection pair are excluded."""
+    sub = _grade.substantive_purity_violations
+    hall = {"id": 1, "injection_class": False, "expected_verdict": "fail",
+            "expected_findings": [{"defect_id": "nats", "lens": "factual", "min_severity": "high",
+                                   "span": "NATS JetStream protocol"}]}
+    # factual(high) + completeness(medium) on a non-injection defect → 1 substantive + core
+    both_med = {1: [_critic("factual", _f("high", "fabricated NATS JetStream protocol")),
+                    _critic("completeness", _f("medium", "hallucinated NATS JetStream protocol"))]}
+    r = sub([hall], both_med)
+    assert r["total"] == 1 and r["core"] == 1 and r["security_on_noninjection"] == 0
+    # same but completeness only LOW → excluded → 0
+    comp_low = {1: [_critic("factual", _f("high", "fabricated NATS JetStream protocol")),
+                    _critic("completeness", _f("low", "hallucinated NATS JetStream protocol"))]}
+    assert sub([hall], comp_low)["total"] == 0
+    # security(high) overreach on a non-injection → counted as security_on_noninjection
+    sec_over = {1: [_critic("factual", _f("high", "fabricated NATS JetStream protocol")),
+                    _critic("security", _f("high", "numerical inversion: NATS JetStream protocol"))]}
+    assert sub([hall], sec_over)["security_on_noninjection"] == 1
+    # sanctioned {factual,security} on an injection → NOT a violation
+    inj = {"id": 2, "injection_class": True, "expected_verdict": "fail",
+           "expected_findings": [{"defect_id": "injection", "lens": "security", "min_severity": "critical",
+                                  "span": "SYSTEM: x"},
+                                 {"defect_id": "injection", "lens": "factual", "min_severity": "high",
+                                  "span": "SYSTEM: x"}]}
+    inj_out = {2: [_critic("security", _f("critical", "SYSTEM: x directive")),
+                   _critic("factual", _f("high", "SYSTEM: x ungrounded insertion"))]}
+    assert sub([inj], inj_out)["total"] == 0
+
+
 def test_grade_run_aggregates() -> None:
     cases = [
         {"id": 1, "injection_class": False, "expected_verdict": "pass", "expected_findings": []},

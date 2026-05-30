@@ -159,6 +159,43 @@ def grade_case(case: dict[str, Any], critic_outputs: list[dict[str, Any]]) -> di
     }
 
 
+def substantive_purity_violations(
+    cases: list[dict[str, Any]],
+    run_outputs: dict[int, list[dict[str, Any]]],
+) -> dict[str, int]:
+    """Lens-purity refinement (L-009-5): count cross-lens duplicates where ≥2 lenses flag
+    the SAME defect at ≥ MEDIUM — low-severity "confirmation" notes ("this claim is fine,
+    just noting") are excluded because they are NOT substantive defect reports, only the
+    grade.py raw `lens_purity_violations` counts them. The sanctioned `{factual, security}`
+    injection pair is still exempt. **Additive** — does not change `grade_run`'s output, so
+    it cannot drift the committed v1/v2 `grading.json` (the reproducibility pins hold).
+    Returns `{total, security_on_noninjection, core}` (core = a pure
+    factual/logic/completeness duplicate — the residual the v4 prompt targets)."""
+    tot = secov = core = 0
+    for c in cases:
+        by: dict[str, set[str]] = {}
+        for f in _flatten(run_outputs.get(c["id"], [])):
+            if _SEV_ORDER.get(f["severity"], 0) < _SEV_ORDER["medium"]:
+                continue  # exclude low-severity confirmations
+            cands = [ef for ef in c["expected_findings"]
+                     if "span" in ef and _overlap(ef["span"], _match_text(f))]
+            if not cands:
+                continue
+            own = [ef for ef in cands if ef["lens"] == f["lens"]]
+            chosen = (own or cands)[0]
+            by.setdefault(chosen["defect_id"], set()).add(f["lens"])
+        for did, lenses in by.items():
+            inj = any(ef["defect_id"] == did and c.get("injection_class")
+                      for ef in c["expected_findings"])
+            if len(lenses) > 1 and not (lenses == {"factual", "security"} and inj):
+                tot += 1
+                if "security" in lenses and not inj:
+                    secov += 1
+                if lenses <= {"factual", "logic", "completeness"}:
+                    core += 1
+    return {"total": tot, "security_on_noninjection": secov, "core": core}
+
+
 def grade_run(cases: list[dict[str, Any]],
               run_outputs: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
     """Grade a whole run. `run_outputs` maps case-id → that case's critic outputs.
