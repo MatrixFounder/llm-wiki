@@ -700,7 +700,7 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   contract. Report: `reports/v3/conflict-rule-ab.md`; raw data `reports/v3/conflict-ab-runs.json`.
   Contract pins (`tests/test_wiki_verify_skill_contract.py`) green; full suite green.
 
-## [2026-05-31] D-010-2 completeness-omission bleed on inversion defects (v3-quantified) [STATUS: open, tracked]
+## [2026-05-31] D-010-2 completeness-omission bleed on inversion defects (v3-quantified) [STATUS: mitigated 2026-06-01]
 
 - **Symptom**: On inversion-type FAIL cases (temporal / negation / composition mis-join /
   entity swap / fabrication), the `completeness` critic adds a "the answer omitted the true
@@ -726,3 +726,18 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   (PLAN §"Regression safety"); v3 is the standing "before" measurement.
 - **Prevention**: `tests/test_wiki_verify_v3.py` + the committed `reports/v3/` pin the
   current residual so a future fix can show the delta and prove no v1/v2 regression.
+- **Resolution (2026-06-01, mitigated)**: shipped the deferred prompt fix — a
+  "**Misstatement is NOT omission**" block in the `completeness-faithfulness` lens
+  (`skills/wiki-verify/SKILL.md` v1.1→1.2): a fact the answer states *wrongly* (a value a
+  source contradicts) is `factual`'s inversion, not a completeness omission; completeness
+  fires only on *wholly-silent* facts. An anti-dilution clause preserves omission breadth.
+  **Evidence** (`reports/v3/completeness-bleed-d010-2.md`; completeness-only re-run, factual/
+  logic/security held fixed): full-corpus no-degradation A/B **PASS** (v1/v2/v3 non-degrading;
+  v2 completeness-recall 0.906→0.938). v3 **multi-rep** (5 samples/arm, 220 sub-agents):
+  unsanctioned purity mean **4.8→2.8 (≈ −42%)** with **recall 1.0 and FP 0 in all 10 reps**.
+  **Mitigated, not eliminated** — the bleed is noise-dominated (v1.1 purity varies 4–9), so
+  the reduction is real-in-expectation, not deterministic; a full deterministic fix would need
+  a `grade.py` attribution change (re-pins every committed grading + alters the lens-purity
+  metric semantics) and is not worth it for a noise-only metric. **Gate-neutral by
+  construction** (`completeness ∉ _FAIL_LENSES` → no verdict can flip). Gates: security-audit
+  + code-review on the v1.2 prompt.
