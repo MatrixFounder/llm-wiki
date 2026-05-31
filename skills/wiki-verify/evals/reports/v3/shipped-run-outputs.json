@@ -1,0 +1,629 @@
+{
+  "33": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Aril-7 bus is the active platform for the Meridian Earth-observation constellation.",
+          "source": "_vault_/aril-7-bus",
+          "note": "Inverts the source. The examined source states the Aril-7 'served as the platform for the Meridian Earth-observation constellation until it was decommissioned in 2021 and replaced by the Aril-9 bus,' and that 'all Meridian follow-on missions fly on the Aril-9.' Claiming it is the 'active platform' directly contradicts the source's decommissioned/replaced status."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "it was decommissioned in 2021 and replaced by the Aril-9 bus",
+          "source": "_vault_/aril-7-bus",
+          "note": "The question asks for operational status, and the source's core status fact -- that the Aril-7 was decommissioned in 2021 and replaced by the Aril-9 -- is entirely absent from the answer. This is a material omission of the source fact the question directly asked about."
+        },
+        {
+          "severity": "medium",
+          "claim": "Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021",
+          "source": "_vault_/aril-7-bus",
+          "note": "The source's end-of-procurement status (no new Aril-7 procurements accepted after 2021; all Meridian follow-on missions fly on the Aril-9) is dropped from the answer, omitting a status fact directly relevant to the operational-status question."
+        }
+      ]
+    }
+  ],
+  "34": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Vanta RS is the current homologated entry in the Endurance GT championship.",
+          "source": "_vault_/vanta-rs-chassis",
+          "note": "Inverts the source. The examined source states the RS 'served as Vanta Corse's homologated entry until the end of the 2022 season, after which homologation lapsed and the marque switched to the Vanta GT chassis for 2023.' So the RS is NOT the current homologated entry; per the source, homologation lapsed and the current entry is the Vanta GT. The answer's central claim contradicts the only source — a misstatement that inverts it."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "after which homologation lapsed and the marque switched to the Vanta GT chassis for 2023",
+          "source": "_vault_/vanta-rs-chassis",
+          "note": "The question asks specifically for the CURRENT homologation status. The source's central fact answering this — that homologation lapsed after the end of the 2022 season and the marque moved to the Vanta GT chassis for 2023 — is entirely omitted from the answer. This is a material omission of the source fact the question directly asked about (the answer leaves the reader with no notion that homologation ended). Note: the answer's own contrary 'current homologated entry' claim is an inversion that belongs to the factual lens; this finding flags only the ABSENT source content."
+        }
+      ]
+    }
+  ],
+  "35": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9",
+          "source": "_vault_/aril-7-bus",
+          "note": "The question asks for OPERATIONAL STATUS. The source explicitly states the procurement-closure fact ('no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9'), which is a core status detail the answer omits entirely. Material omission for the question asked."
+        }
+      ]
+    }
+  ],
+  "36": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "In patients with severe renal impairment, veltrazine can be co-administered with potassium-sparing diuretics.",
+          "source": "_vault_/veltrazine",
+          "note": "Inverts the source. The examined source states veltrazine CANNOT be co-administered with potassium-sparing diuretics in severe renal impairment ('the combination produces life-threatening hyperkalaemia; the label carries a boxed contraindication for this pairing'). The answer asserts the exact opposite ('can be co-administered'), a safety-inverting misstatement."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "It is cleared 80 percent renally, so dose adjustment is required below a creatinine clearance of 30 millilitres per minute",
+          "source": "_vault_/veltrazine",
+          "note": "The question asks specifically for renal dosing guidance, yet the answer omits the central renal dose-adjustment trigger: 80% renal clearance and the requirement to adjust dose below CrCl 30 mL/min. This is the core fact the question asked about."
+        },
+        {
+          "severity": "medium",
+          "claim": "The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams",
+          "source": "_vault_/veltrazine",
+          "note": "The answer drops the actual dosing figures (20 mg starting dose, 80 mg maximum) that a renal-dosing summary should carry. Material omission for the question asked."
+        }
+      ]
+    }
+  ],
+  "37": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Online shard-group resizing while writes are in flight is permitted in Quorvex.",
+          "source": "_vault_/quorvex-store",
+          "note": "Inverts the examined source. quorvex-store states online resizing while writes are in flight is PROHIBITED ('Online shard-group resizing while writes are in flight is prohibited in Quorvex'); the operator must quiesce and drain the write queue first because an in-flight resize would corrupt the rebalance cursor. The answer asserts the exact opposite ('permitted'), a misstatement that inverts the source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "the operator must first quiesce the affected group, drain its write queue, and only then trigger the resize",
+          "source": "_vault_/quorvex-store",
+          "note": "The question asks whether resizing during in-flight writes is possible. The source answers this by describing the mandatory pre-resize procedure (quiesce the group, drain its write queue, then trigger the resize) and the underlying reason (an in-flight resize would corrupt the rebalance cursor). The answer omits this entire operator procedure and rationale that the source provides as the substance of the answer to the question asked. (The answer also inverts permitted/prohibited, but that inversion is factual's lane, not completeness's.)"
+        }
+      ]
+    }
+  ],
+  "38": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "dose adjustment is required below a creatinine clearance of 30 millilitres per minute",
+          "source": "_vault_/veltrazine",
+          "note": "The question asks specifically for renal DOSING guidance. The source gives the central dose-adjustment trigger (CrCl < 30 mL/min) but the answer omits it entirely, dropping the most directly relevant renal-dosing fact. Material omission for the question asked -> medium."
+        },
+        {
+          "severity": "medium",
+          "claim": "It is cleared 80 percent renally",
+          "source": "_vault_/veltrazine",
+          "note": "The source states the renal-clearance basis (80 percent renal) that motivates renal dosing; the answer omits it. This is the source fact that explains WHY renal dosing matters, asked about by the question -> medium omission."
+        },
+        {
+          "severity": "low",
+          "claim": "The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams",
+          "source": "_vault_/veltrazine",
+          "note": "The source gives the dosing range (20 mg start, 80 mg max). The answer omits the dose numbers; minor for a strictly renal-adjustment summary but relevant to 'dosing guidance' -> low/advisory."
+        }
+      ]
+    }
+  ],
+  "39": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Acme Robotics has existed as a company since 2018.",
+          "source": "_vault_/acme-robotics",
+          "note": "The only examined source dating Acme states it was 'incorporated in 2009 in Dortmund.' The answer's specific founding year of 2018 contradicts that source. 2018 is actually Globex Industries' founding year (per _vault_/globex-industries 'founded in 2018') — the answer cross-wires a number belonging to a different entity onto Acme, inverting the grounded fact."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "incorporated in 2009 in Dortmund",
+          "source": "_vault_/acme-robotics",
+          "note": "The question asks how long Acme Robotics has existed, and the source states the founding fact 'incorporated in 2009'. The answer omits this source-stated incorporation year entirely (it gives a different year, but the completeness defect is the absence of the 2009 founding fact the question directly asked about). Quoting the missing SOURCE phrase per lens rules; the answer's wrong-year claim itself is factual's lane."
+        }
+      ]
+    }
+  ],
+  "40": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Tessaract has been a Globex subsidiary since 2018",
+          "source": "_vault_/tessaract-systems",
+          "note": "The answer dates the subsidiary relationship to 2018, but every examined source states the acquisition occurred in 2021 (tessaract-systems: 'Globex Industries acquired Tessaract in 2021'; globex-industries: 'adding Tessaract Systems to its portfolio in 2021'). The specific year 2018 for the relationship is unsupported and inverts the sourced 2021 figure. (The 'because Globex was founded in 2018' inference itself is a logic-lens concern; here I flag only the ungrounded/inverted factual date.)"
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Because Globex was founded in 2018, Tessaract has been a Globex subsidiary since 2018.",
+          "source": null,
+          "note": "Non-sequitur: the answer's own premise (Globex's founding year) cannot support its conclusion (the subsidiary-since date). A parent company's founding date does not entail when it acquired a subsidiary; the 'because ... therefore' inference is internally broken regardless of sourcing."
+        }
+      ]
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Globex Industries acquired Tessaract in 2021, folding it into Globex's perception division",
+          "source": "_vault_/tessaract-systems",
+          "note": "The answer omits the actual acquisition year (2021) and the acquisition mechanism, which are the core of the relationship the question asks about. The source states Globex acquired Tessaract in 2021 and folded it into Globex's perception division; the answer drops both facts."
+        },
+        {
+          "severity": "medium",
+          "claim": "Tessaract continues to operate under its own brand",
+          "source": "_vault_/tessaract-systems",
+          "note": "A source-stated fact about the present nature of the Tessaract-Globex relationship (post-acquisition autonomy under its own brand) is absent from the answer, which is material to a question explicitly asking to explain that relationship."
+        },
+        {
+          "severity": "low",
+          "claim": "Globex grew by acquisition, adding Tessaract Systems to its portfolio in 2021",
+          "source": "_vault_/globex-industries",
+          "note": "The globex-industries source independently corroborates the 2021 acquisition date; the answer omits this portfolio/acquisition framing. Minor relative to the primary 2021-acquisition omission already flagged."
+        }
+      ]
+    }
+  ],
+  "41": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "42": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded",
+          "source": "_vault_/quorvex-release-notes-3",
+          "note": "Material omission for the question asked. The question is 'How many shards does a default Quorvex deployment use?' The answer states only 256 shards, but the release-notes-3 source states the default was changed to 512 shards in version 3.0 (256 retained only by pre-3.0 deployments unless re-sharded). The answer drops the version qualification and the current default of 512, making it incomplete for the question's thrust."
+        }
+      ]
+    }
+  ],
+  "43": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "44": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "A default Quorvex deployment partitions the keyspace into 384 shards.",
+          "source": "_vault_/quorvex-tuning-guide",
+          "note": "The specific shard count 384 appears in no examined source. The tuning guide states the default is 256 shards; the v3.0 release notes state the default was changed to 512 (256 retained for pre-3.0). 384 is neither value — a fabricated specific numeric claim with no grounding in any examined source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded",
+          "source": "_vault_/quorvex-release-notes-3",
+          "note": "The question asks how many shards a default deployment uses, but the answer drops the version-dependent default entirely: release notes state the default changed to 512 at version 3.0 (with pre-3.0 deployments retaining 256). This is a material omission for the question asked. (The answer's competing '384' figure is a factual defect, not mine to flag.)"
+        },
+        {
+          "severity": "medium",
+          "claim": "a default deployment partitions the keyspace into 256 shards, sized so that each shard holds roughly four gigabytes at the recommended ceiling",
+          "source": "_vault_/quorvex-tuning-guide",
+          "note": "The tuning guide's source-stated default of 256 shards (the legacy/pre-3.0 default) is omitted from the answer. Given the two sources disagree on the default (256 vs 512), the answer materially omits both source-stated counts that directly answer the question."
+        }
+      ]
+    }
+  ],
+  "45": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Vanta RS produces 620 horsepower at the homologated restrictor.",
+          "source": "_vault_/vanta-chassis-family",
+          "note": "Misstatement that inverts the source. The examined source states the Vanta RS produces 540 horsepower (4.0-litre flat-six); 620 horsepower is the figure for the newer Vanta GT (twin-turbo). The answer misattributes the GT's output to the RS, directly contradicting the only examined source for the question asked."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "4.0-litre flat-six",
+          "source": "_vault_/vanta-chassis-family",
+          "note": "The question asks about the engine of the Vanta RS, but the answer omits the engine configuration/displacement the source states for the RS: a '4.0-litre flat-six'. This is a material omission of a source fact directly relevant to the question (the answer reports only a horsepower figure). The horsepower mismatch itself is a factual-lens concern, not flagged here."
+        }
+      ]
+    }
+  ],
+  "46": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Sereth North Ridge has a summer climbing window of only 9 days in early August.",
+          "source": "_vault_/sereth-north-ridge",
+          "note": "Inverts/misstates the named source. The sereth-north-ridge source states the window is 'about 26 days from mid-July to early August.' The '9 days in early August' figure is the sereth-east-couloir source's window, mis-attributed to the North Ridge. Specific number (9 days) that contradicts the only source describing the North Ridge."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "about 26 days from mid-July to early August",
+          "source": "_vault_/sereth-north-ridge",
+          "note": "The question asks for the Sereth North Ridge summer climbing window. The source states it 'runs for about 26 days from mid-July to early August, after which rockfall risk rises sharply.' The answer omits these source-stated window figures (26 days; mid-July to early August) and the rockfall-risk caveat for the route the question is about. (The answer's own '9 days in early August' value is a wrong/inverted specific — the East Couloir's figure — which belongs to the factual lens, so I quote the MISSING North Ridge source content here, not the answer sentence.)"
+        }
+      ]
+    }
+  ],
+  "47": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "4.0-litre flat-six",
+          "source": "_vault_/vanta-chassis-family",
+          "note": "The question asks about the engine output of the Vanta RS. The source describes the RS engine as a '4.0-litre flat-six producing 540 horsepower', but the answer states only the 540 hp figure and omits the source-stated engine type and displacement (4.0-litre flat-six) — a material omission of a source fact about the very engine the question asked about."
+        }
+      ]
+    }
+  ],
+  "48": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Sereth West Pillar is currently open to climbers.",
+          "source": "_vault_/sereth-west-pillar",
+          "note": "Inverts the examined source, which states the route 'has been closed to all climbing since 2019' after a rockfall and that 'the regional authority has not reopened it.' The answer's open-status claim is supported by no examined source and contradicts the only source covering the question."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "closed to all climbing since 2019 after a major rockfall destabilised the upper headwall; the regional authority has not reopened it",
+          "source": "_vault_/sereth-west-pillar",
+          "note": "The question asks specifically whether the West Pillar is open to climbers. The source's central fact answering that question — that it has been closed to all climbing since 2019 (rockfall destabilised the upper headwall; never reopened) — is entirely omitted from the answer. This is a material omission of the source fact the question directly asked about. (The answer's affirmative 'currently open' claim inverts the source; that inversion belongs to the factual lens, so I quote the dropped SOURCE phrase here, not the answer sentence.)"
+        }
+      ]
+    }
+  ],
+  "49": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Its propellant tank can be re-pressurised in orbit if the cold-gas charge runs low.",
+          "source": "_vault_/aril-7-thruster",
+          "note": "Inverts the examined source, which states the propellant tank CANNOT be re-pressurised in orbit and the backup becomes permanently unavailable once depleted. The answer asserts the exact opposite, a misstatement that contradicts the only source on this question."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "once the cold-gas charge is depleted the backup is permanently unavailable, so mission planners budget its use conservatively across the spacecraft's life",
+          "source": "_vault_/aril-7-thruster",
+          "note": "The answer omits the source's material consequence facts about the thruster's availability: that once depleted the backup is permanently unavailable and that mission planners therefore budget its use conservatively. For a question about re-pressurisability/availability in orbit, this dropped source context is material. (The answer's inverted re-pressurisation claim itself is a factual-lens defect, not reported here.)"
+        }
+      ]
+    }
+  ],
+  "50": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "51": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "52": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "53": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "54": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ]
+}

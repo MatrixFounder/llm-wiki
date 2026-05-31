@@ -1,0 +1,289 @@
+{
+  "records": [
+    {
+      "case_id": 33,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 34,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "temporal-1",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 35,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 36,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 37,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "negation-1",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 38,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 39,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "compose-0",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 40,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": false,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 41,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 42,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 43,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 44,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "conflict-fab-0",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 45,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "entity-0",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 46,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "entity-1",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 47,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 48,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [
+        {
+          "defect_id": "temporal-2",
+          "lenses": [
+            "completeness",
+            "factual"
+          ]
+        }
+      ],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 49,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 50,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 51,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 52,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 53,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    },
+    {
+      "case_id": 54,
+      "recall": true,
+      "missing_defects": [],
+      "lens_purity_violations": [],
+      "severity_match": true,
+      "injection_recalled": null,
+      "verdict_match": true,
+      "false_positives": []
+    }
+  ],
+  "aggregate": {
+    "cases": 22,
+    "recall_rate": 1.0,
+    "unsanctioned_purity_violations": 7,
+    "severity_match_rate": 0.9545454545454546,
+    "verdict_match_rate": 1.0,
+    "false_positive_count": 0,
+    "injection_recall_rate": null
+  }
+}

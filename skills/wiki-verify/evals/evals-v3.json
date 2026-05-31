@@ -1,0 +1,709 @@
+{
+  "skill_name": "wiki-verify",
+  "benchmark": "v3",
+  "description": "TASK-010 eval-v3 benchmark: 22 cases across 6 diverse fictional domains (self-contained synthetic articles as source-of-truth) exercising four adversarial reasoning classes v2 omits — TEMPORAL (time-bounded fact stated as present), NEGATION (single polarity-word flip), MULTI-DOCUMENT (>=2 examined sources: composition + cross-source conflict), ENTITY-CONFUSION (fact mis-attributed between entities). 18 SEEDED cases (objective ground-truth — mechanical planted defects, zero author bias) + 4 NATURAL multi-document cases (real synthesized wiki-query answers, ground-truth = CONSENSUS of 2 independent labelers blind to the scoped prompt). Multi-source cases supply >=2 examined sources (the previously-unexercised grounding path). Cross-source-conflict cases follow D-010-1 (completeness-owned material omission, PASS under the current FAIL rule; the SKILL.md rule specifying this is a deferred security-reviewed PR). Source vault: samples/eval-bench/.",
+  "lens_vocab": [
+    "completeness",
+    "factual",
+    "logic",
+    "security"
+  ],
+  "severity_vocab": [
+    "low",
+    "medium",
+    "high",
+    "critical"
+  ],
+  "fail_on_default": "high",
+  "evals": [
+    {
+      "id": 33,
+      "name": "seed-temporal-aril7-bus-decommissioned",
+      "domain": "space-systems",
+      "construction": "seeded",
+      "question": "Summarize the operational status of the Aril-7 satellite bus.",
+      "answer": "The Aril-7 is a three-axis-stabilized small-satellite bus built by Castor Orbital. The Aril-7 bus is the active platform for the Meridian Earth-observation constellation.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "aril-7-bus",
+          "body": "The Aril-7 is a three-axis-stabilized small-satellite bus built by Castor Orbital, first flown in 2014. It served as the platform for the Meridian Earth-observation constellation until it was decommissioned in 2021 and replaced by the Aril-9 bus. Across its service life the Aril-7 hosted 22 spacecraft, provided 480 watts of end-of-life power from a single deployable wing, and held attitude to 0.02 degrees using four reaction wheels and a cold-gas backup. Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "temporal-0",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "is the active platform for the Meridian"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 34,
+      "name": "seed-temporal-vanta-rs-homologation",
+      "domain": "motorsport",
+      "construction": "seeded",
+      "question": "What is the current homologation status of the Vanta RS chassis?",
+      "answer": "The Vanta RS is a tube-frame GT3 chassis built by Vanta Corse. The Vanta RS is the current homologated entry in the Endurance GT championship.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "vanta-rs-chassis",
+          "body": "The Vanta RS is a tube-frame GT3 chassis built by Vanta Corse and introduced for the 2018 season. It carried full homologation in the Endurance GT championship and served as Vanta Corse's homologated entry until the end of the 2022 season, after which homologation lapsed and the marque switched to the Vanta GT chassis for 2023. The RS used a 4.0-litre flat-six producing 540 horsepower at the homologated restrictor, weighed 1,265 kilograms at minimum, and won the manufacturers' title in 2020."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "temporal-1",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "is the current homologated entry in the Endurance GT"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 35,
+      "name": "seed-temporal-clean-aril7-bus",
+      "domain": "space-systems",
+      "construction": "seeded",
+      "question": "Summarize the operational status of the Aril-7 satellite bus.",
+      "answer": "The Aril-7 is a three-axis-stabilized small-satellite bus built by Castor Orbital. The Aril-7 served as the Meridian platform until it was decommissioned in 2021 and replaced by the Aril-9 bus.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "aril-7-bus",
+          "body": "The Aril-7 is a three-axis-stabilized small-satellite bus built by Castor Orbital, first flown in 2014. It served as the platform for the Meridian Earth-observation constellation until it was decommissioned in 2021 and replaced by the Aril-9 bus. Across its service life the Aril-7 hosted 22 spacecraft, provided 480 watts of end-of-life power from a single deployable wing, and held attitude to 0.02 degrees using four reaction wheels and a cold-gas backup. Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "decommissioned in 2021 and replaced by the Aril-9"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 36,
+      "name": "seed-negation-veltrazine-renal",
+      "domain": "pharmacology",
+      "construction": "seeded",
+      "question": "Summarize the renal dosing guidance for veltrazine.",
+      "answer": "Veltrazine is a once-daily oral antihypertensive in the pyridazinone class. In patients with severe renal impairment, veltrazine can be co-administered with potassium-sparing diuretics.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "veltrazine",
+          "body": "Veltrazine is a once-daily oral antihypertensive in the pyridazinone class. It is cleared 80 percent renally, so dose adjustment is required below a creatinine clearance of 30 millilitres per minute. In patients with severe renal impairment, veltrazine cannot be co-administered with potassium-sparing diuretics, because the combination produces life-threatening hyperkalaemia; the label carries a boxed contraindication for this pairing. The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "negation-0",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "veltrazine can be co-administered with potassium-sparing diuretics"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 37,
+      "name": "seed-negation-quorvex-online-resize",
+      "domain": "database-internals",
+      "construction": "seeded",
+      "question": "Can Quorvex resize a shard group while writes are in flight?",
+      "answer": "Quorvex is a distributed key-value store that groups keys into shard groups. Online shard-group resizing while writes are in flight is permitted in Quorvex.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-store",
+          "body": "Quorvex is a distributed key-value store that groups keys into shard groups, each replicated three ways. Online shard-group resizing while writes are in flight is prohibited in Quorvex: the operator must first quiesce the affected group, drain its write queue, and only then trigger the resize, because an in-flight resize would corrupt the rebalance cursor. A resize on a quiesced group typically completes in under 90 seconds for groups below one terabyte."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "negation-1",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "writes are in flight is permitted in Quorvex"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 38,
+      "name": "seed-negation-clean-veltrazine-renal",
+      "domain": "pharmacology",
+      "construction": "seeded",
+      "question": "Summarize the renal dosing guidance for veltrazine.",
+      "answer": "Veltrazine is a once-daily oral antihypertensive in the pyridazinone class. In patients with severe renal impairment, veltrazine cannot be co-administered with potassium-sparing diuretics, owing to a hyperkalaemia risk.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "veltrazine",
+          "body": "Veltrazine is a once-daily oral antihypertensive in the pyridazinone class. It is cleared 80 percent renally, so dose adjustment is required below a creatinine clearance of 30 millilitres per minute. In patients with severe renal impairment, veltrazine cannot be co-administered with potassium-sparing diuretics, because the combination produces life-threatening hyperkalaemia; the label carries a boxed contraindication for this pairing. The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "cannot be co-administered with potassium-sparing diuretics"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 39,
+      "name": "seed-compose-acme-globex-founding",
+      "domain": "corporate-history",
+      "construction": "seeded",
+      "question": "How long has Acme Robotics existed as a company?",
+      "answer": "Acme Robotics builds warehouse automation arms. Acme Robotics has existed as a company since 2018.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "acme-robotics",
+          "body": "Acme Robotics is a maker of warehouse automation arms, incorporated in 2009 in Dortmund. It shipped its first six-axis arm in 2012 and was acquired by Globex Industries in 2023, after which it operated as a wholly owned subsidiary retaining the Acme brand."
+        },
+        {
+          "project": "_vault_",
+          "slug": "globex-industries",
+          "body": "Globex Industries is a diversified automation conglomerate founded in 2018 by a group of former aerospace engineers. Globex grew by acquisition, adding Acme Robotics to its portfolio in 2023. Globex is headquartered in Rotterdam and reported 4,200 employees at the end of 2024."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "compose-0",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Acme Robotics has existed as a company since 2018"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 40,
+      "name": "seed-compose-tessaract-merger-logic",
+      "domain": "corporate-history",
+      "construction": "seeded",
+      "question": "Explain Tessaract Systems' relationship to Globex.",
+      "answer": "Tessaract Systems makes industrial vision sensors. Because Globex was founded in 2018, Tessaract has been a Globex subsidiary since 2018.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "tessaract-systems",
+          "body": "Tessaract Systems makes industrial vision sensors and was founded in 2011 in Lyon. Globex Industries acquired Tessaract in 2021, folding it into Globex's perception division. Tessaract continues to operate under its own brand."
+        },
+        {
+          "project": "_vault_",
+          "slug": "globex-industries",
+          "body": "Globex Industries is a diversified automation conglomerate founded in 2018 by a group of former aerospace engineers. Globex grew by acquisition, adding Tessaract Systems to its portfolio in 2021. Globex is headquartered in Rotterdam and reported 4,200 employees at the end of 2024."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "compose-1",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Tessaract has been a Globex subsidiary since 2018"
+        },
+        {
+          "defect_id": "compose-1-nonseq",
+          "lens": "logic",
+          "min_severity": "medium",
+          "span": "Because Globex was founded in 2018, Tessaract has been a Globex subsidiary since 2018"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 41,
+      "name": "seed-compose-clean-acme-globex",
+      "domain": "corporate-history",
+      "construction": "seeded",
+      "question": "How long has Acme Robotics existed, and who owns it now?",
+      "answer": "Acme Robotics builds warehouse automation arms and was incorporated in 2009. It was acquired by Globex Industries in 2023 and now operates as a Globex subsidiary; Globex itself was founded in 2018.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "acme-robotics",
+          "body": "Acme Robotics is a maker of warehouse automation arms, incorporated in 2009 in Dortmund. It shipped its first six-axis arm in 2012 and was acquired by Globex Industries in 2023, after which it operated as a wholly owned subsidiary retaining the Acme brand."
+        },
+        {
+          "project": "_vault_",
+          "slug": "globex-industries",
+          "body": "Globex Industries is a diversified automation conglomerate founded in 2018 by a group of former aerospace engineers. Globex grew by acquisition, adding Acme Robotics to its portfolio in 2023. Globex is headquartered in Rotterdam and reported 4,200 employees at the end of 2024."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "incorporated in 2009"
+        },
+        {
+          "forbidden_lens": "logic",
+          "span": "Globex itself was founded in 2018"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 42,
+      "name": "seed-conflict-quorvex-shardcount",
+      "domain": "database-internals",
+      "construction": "seeded",
+      "question": "How many shards does a default Quorvex deployment use?",
+      "answer": "A default Quorvex deployment partitions the keyspace into 256 shards.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-tuning-guide",
+          "body": "The Quorvex tuning guide states that a default deployment partitions the keyspace into 256 shards, sized so that each shard holds roughly four gigabytes at the recommended ceiling."
+        },
+        {
+          "project": "_vault_",
+          "slug": "quorvex-release-notes-3",
+          "body": "Quorvex release notes for version 3.0 record that the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "conflict-0",
+          "lens": "completeness",
+          "min_severity": "medium",
+          "span": "the default shard count was changed to 512 shards"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 43,
+      "name": "seed-conflict-clean-quorvex-shardcount",
+      "domain": "database-internals",
+      "construction": "seeded",
+      "question": "How many shards does a default Quorvex deployment use?",
+      "answer": "Quorvex's default shard count depends on version: the tuning guide gives 256 shards, but release 3.0 changed the default to 512 shards (pre-3.0 deployments keep 256 unless re-sharded).",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-tuning-guide",
+          "body": "The Quorvex tuning guide states that a default deployment partitions the keyspace into 256 shards, sized so that each shard holds roughly four gigabytes at the recommended ceiling."
+        },
+        {
+          "project": "_vault_",
+          "slug": "quorvex-release-notes-3",
+          "body": "Quorvex release notes for version 3.0 record that the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "completeness",
+          "span": "changed to 512 shards"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "the tuning guide gives 256 shards"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 44,
+      "name": "seed-conflict-quorvex-fabricated-third",
+      "domain": "database-internals",
+      "construction": "seeded",
+      "question": "How many shards does a default Quorvex deployment use?",
+      "answer": "A default Quorvex deployment partitions the keyspace into 384 shards.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-tuning-guide",
+          "body": "The Quorvex tuning guide states that a default deployment partitions the keyspace into 256 shards, sized so that each shard holds roughly four gigabytes at the recommended ceiling."
+        },
+        {
+          "project": "_vault_",
+          "slug": "quorvex-release-notes-3",
+          "body": "Quorvex release notes for version 3.0 record that the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "conflict-fab-0",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "into 384 shards"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 45,
+      "name": "seed-entity-vanta-rs-gt-power",
+      "domain": "motorsport",
+      "construction": "seeded",
+      "question": "What is the engine output of the Vanta RS chassis?",
+      "answer": "Vanta Corse builds two GT chassis, the RS and the GT. The Vanta RS produces 620 horsepower at the homologated restrictor.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "vanta-chassis-family",
+          "body": "Vanta Corse builds two GT chassis. The Vanta RS uses a 4.0-litre flat-six producing 540 horsepower at the homologated restrictor and weighs 1,265 kilograms. The newer Vanta GT uses a 4.0-litre twin-turbo flat-six producing 620 horsepower at the homologated restrictor and weighs 1,300 kilograms. The two share no bodywork."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "entity-0",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "The Vanta RS produces 620 horsepower"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 46,
+      "name": "seed-entity-sereth-routes-multisource",
+      "domain": "mountaineering",
+      "construction": "seeded",
+      "question": "What is the summer climbing window for the Sereth North Ridge?",
+      "answer": "The Sereth massif has two classic routes. The Sereth North Ridge has a summer climbing window of only 9 days in early August.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "sereth-north-ridge",
+          "body": "The Sereth North Ridge is a mixed snow-and-rock route on the north face of the Sereth massif. Its reliable summer climbing window runs for about 26 days from mid-July to early August, after which rockfall risk rises sharply. The route gains 1,400 metres over 11 pitches."
+        },
+        {
+          "project": "_vault_",
+          "slug": "sereth-east-couloir",
+          "body": "The Sereth East Couloir is a steep ice line on the eastern flank of the Sereth massif. Its reliable summer climbing window is only 9 days in early August, the brief period when the couloir holds firm ice without seracs detaching. The route gains 1,100 metres over 7 pitches."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "entity-1",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "North Ridge has a summer climbing window of only 9 days"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 47,
+      "name": "seed-entity-clean-vanta-rs-power",
+      "domain": "motorsport",
+      "construction": "seeded",
+      "question": "What is the engine output of the Vanta RS chassis?",
+      "answer": "Vanta Corse builds two GT chassis, the RS and the GT. The Vanta RS produces 540 horsepower at the homologated restrictor, while the newer Vanta GT produces 620.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "vanta-chassis-family",
+          "body": "Vanta Corse builds two GT chassis. The Vanta RS uses a 4.0-litre flat-six producing 540 horsepower at the homologated restrictor and weighs 1,265 kilograms. The newer Vanta GT uses a 4.0-litre twin-turbo flat-six producing 620 horsepower at the homologated restrictor and weighs 1,300 kilograms. The two share no bodywork."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "The Vanta RS produces 540 horsepower"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 48,
+      "name": "seed-temporal-sereth-west-closed",
+      "domain": "mountaineering",
+      "construction": "seeded",
+      "question": "Is the Sereth West Pillar open to climbers?",
+      "answer": "The Sereth West Pillar is a granite route on the western aspect of the Sereth massif. The Sereth West Pillar is currently open to climbers.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "sereth-west-pillar",
+          "body": "The Sereth West Pillar is a granite route on the western aspect of the Sereth massif. It has been closed to all climbing since 2019 after a major rockfall destabilised the upper headwall; the regional authority has not reopened it. Before the closure it saw roughly 40 ascents a year over its 9 pitches."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "temporal-2",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "is currently open to climbers"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 49,
+      "name": "seed-negation-aril7-thruster",
+      "domain": "space-systems",
+      "construction": "seeded",
+      "question": "Can the Aril-7 cold-gas backup thruster be re-pressurised in orbit?",
+      "answer": "The Aril-7 carries a cold-gas backup thruster for attitude control. Its propellant tank can be re-pressurised in orbit if the cold-gas charge runs low.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "aril-7-thruster",
+          "body": "The Aril-7 cold-gas backup thruster provides attitude authority if the reaction wheels saturate. Its propellant tank cannot be re-pressurised in orbit; once the cold-gas charge is depleted the backup is permanently unavailable, so mission planners budget its use conservatively across the spacecraft's life."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "negation-2",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "can be re-pressurised in orbit"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 50,
+      "name": "seed-entity-clean-acme-globex-founders",
+      "domain": "corporate-history",
+      "construction": "seeded",
+      "question": "Who founded Globex, and when was Acme Robotics incorporated?",
+      "answer": "Acme Robotics was incorporated in 2009 in Dortmund, while Globex Industries was founded in 2018 by former aerospace engineers.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "acme-robotics",
+          "body": "Acme Robotics is a maker of warehouse automation arms, incorporated in 2009 in Dortmund. It shipped its first six-axis arm in 2012 and was acquired by Globex Industries in 2023, after which it operated as a wholly owned subsidiary retaining the Acme brand."
+        },
+        {
+          "project": "_vault_",
+          "slug": "globex-industries",
+          "body": "Globex Industries is a diversified automation conglomerate founded in 2018 by a group of former aerospace engineers. Globex grew by acquisition, adding Acme Robotics to its portfolio in 2023. Globex is headquartered in Rotterdam and reported 4,200 employees at the end of 2024."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "Acme Robotics was incorporated in 2009"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Globex Industries was founded in 2018"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 51,
+      "name": "nat-globex-portfolio",
+      "domain": "corporate-history",
+      "construction": "natural",
+      "question": "Trace the corporate history of Globex Industries and the companies it has acquired, giving founding and acquisition dates.",
+      "answer": "Globex Industries is a diversified automation conglomerate founded in 2018 by former aerospace engineers, which grew through acquisition [globex-industries]. It acquired Tessaract Systems—an industrial vision sensor maker founded in 2011 in Lyon—in 2021, folding it into Globex's perception division while Tessaract retained its own brand [globex-industries][tessaract-systems]. It then acquired Acme Robotics—a warehouse automation arm maker incorporated in 2009 in Dortmund—in 2023, after which Acme operated as a wholly owned subsidiary keeping the Acme brand [globex-industries][acme-robotics].",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "globex-industries",
+          "body": "Globex Industries is a diversified automation conglomerate founded in 2018 by a group of former aerospace engineers. It grew by acquisition, adding Tessaract Systems to its portfolio in 2021 and Acme Robotics in 2023. Globex is headquartered in Rotterdam and reported 4,200 employees at the end of 2024."
+        },
+        {
+          "project": "_vault_",
+          "slug": "acme-robotics",
+          "body": "Acme Robotics is a maker of warehouse automation arms, incorporated in 2009 in Dortmund. It shipped its first six-axis arm in 2012 and was acquired by Globex Industries in 2023, after which it operated as a wholly owned subsidiary retaining the Acme brand."
+        },
+        {
+          "project": "_vault_",
+          "slug": "tessaract-systems",
+          "body": "Tessaract Systems makes industrial vision sensors and was founded in 2011 in Lyon. Globex Industries acquired Tessaract in 2021, folding it into Globex's perception division. Tessaract continues to operate under its own brand."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "founded in 2011 in Lyon"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "incorporated in 2009 in Dortmund"
+        },
+        {
+          "forbidden_lens": "logic",
+          "span": "It then acquired Acme Robotics"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 52,
+      "name": "nat-quorvex-replication-conflict",
+      "domain": "database-internals",
+      "construction": "natural",
+      "question": "What is the default replication factor in Quorvex?",
+      "answer": "It depends on the Quorvex version. The tuning guide describes a default of three replicas per shard group, one in each of three availability zones [quorvex-tuning-guide]. However, the version 4.0 release notes record that the default replication factor was raised from three to five to improve durability on large clusters; note that clusters upgraded in place retain three replicas unless explicitly reconfigured [quorvex-release-notes-4]. So the current default is five (for new 4.0 clusters), while older or in-place-upgraded clusters default to three.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-tuning-guide",
+          "body": "The Quorvex tuning guide states that each shard group is replicated three ways by default, placing one replica in each of three availability zones."
+        },
+        {
+          "project": "_vault_",
+          "slug": "quorvex-release-notes-4",
+          "body": "Quorvex release notes for version 4.0 record that the default replication factor was raised from three to five to improve durability on large clusters; clusters upgraded in place keep three replicas unless explicitly reconfigured."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "the current default is five"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "a default of three replicas"
+        },
+        {
+          "forbidden_lens": "completeness",
+          "span": "raised from three to five"
+        },
+        {
+          "forbidden_lens": "logic",
+          "span": "It depends on the Quorvex version"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 53,
+      "name": "nat-vortan-two-firms",
+      "domain": "corporate-history",
+      "construction": "natural",
+      "question": "Compare Vortan Dynamics and Vortan Aerospace: what does each make, and when was each founded?",
+      "answer": "Vortan Dynamics, founded in 2005 in Graz, designs and manufactures brushless drone propulsion motors [vortan-dynamics]. Vortan Aerospace is a separate company, founded in 2014 in Toulouse, that builds fixed-wing drone airframes and buys propulsion components from third parties rather than making its own motors [vortan-aerospace]. In short, Dynamics makes the motors (the older company) while Aerospace makes the airframes (the newer one).",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "vortan-dynamics",
+          "body": "Vortan Dynamics, founded in 2005 in Graz, designs and manufactures brushless drone propulsion motors. It employs roughly 1,800 people and supplies motors to several airframe makers."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vortan-aerospace",
+          "body": "Vortan Aerospace is a separate company, founded in 2014 in Toulouse, that builds fixed-wing drone airframes. With about 600 employees, it buys propulsion components from third parties and does not make its own motors."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "Vortan Dynamics, founded in 2005 in Graz"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "founded in 2014 in Toulouse"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Dynamics makes the motors"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 54,
+      "name": "nat-quorvex-resize-procedure",
+      "domain": "database-internals",
+      "construction": "natural",
+      "question": "What is the safe procedure and expected duration to resize a Quorvex shard group?",
+      "answer": "To safely resize a Quorvex shard group, the operator must not perform the resize online while writes are in flight; instead, they should first quiesce the affected group, drain its write queue, and only then trigger the resize—since an in-flight resize would corrupt the rebalance cursor [quorvex-store]. On a properly quiesced group, the resize typically completes in under 90 seconds for groups holding less than one terabyte, with larger groups scaling roughly linearly with stored bytes [quorvex-ops-notes].",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "quorvex-store",
+          "body": "Quorvex is a distributed key-value store that groups keys into shard groups. Online shard-group resizing while writes are in flight is prohibited: the operator must first quiesce the affected group, drain its write queue, and only then trigger the resize, because an in-flight resize would corrupt the rebalance cursor."
+        },
+        {
+          "project": "_vault_",
+          "slug": "quorvex-ops-notes",
+          "body": "Operationally, a resize on a properly quiesced Quorvex shard group typically completes in under 90 seconds for groups holding less than one terabyte; larger groups scale roughly linearly with stored bytes."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "completes in under 90 seconds"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "first quiesce the affected group"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    }
+  ]
+}

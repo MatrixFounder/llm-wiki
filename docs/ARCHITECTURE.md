@@ -62,6 +62,27 @@
 > trigger-eval; not a `pytest` gate). **SECURITY-SENSITIVE** prompt surface → code
 > review + security audit mandatory. Spec: [tasks/](./tasks/) (R-9 in
 > [verification-map](./architectures/verification-map.md) + [functional-architecture](./architectures/functional-architecture.md) §Verification Layer).
+>
+> **TASK 010 (R-9 follow-on — `wiki-verify` eval-v3, adversarial reasoning extension)
+> — IN PROGRESS:** widens the committed benchmark to four classes v2 never tested —
+> **temporal**, **negation/polarity-flip**, **multi-document** (composition +
+> cross-source conflict), **entity-confusion** — as a self-contained
+> `evals-v3.json` (22 cases: 18 seeded + 4 natural multi-doc; 6 new fictional
+> domains). **Fixtures + test + recorded `reports/v3/` measurement only — ZERO
+> code/schema change** (`user_version` stays **5**; `grade.py` is **source-blind**
+> so multi-source is free for the grader; v3 is a separate file so the v1/v2
+> reproducibility pins stay byte-identical). Motivated by the external v2 audit:
+> all 32 v2 cases have exactly **one** `examined` source, leaving the
+> `examined[]`/grounding-gate multi-source audit path **unexercised**. **Decision
+> D-010-1 (cross-source conflict → `completeness`):** an unreconciled conflict
+> between examined sources that the answer hides is a **material omission**
+> (`completeness`/`medium`, PASS under the current FAIL rule) — NOT `factual`
+> (each value is grounded in *a* source) and NOT `logic` (the inconsistency is
+> across sources, not within the answer). The `SKILL.md` sentence specifying this
+> is **deferred** to a separate security-reviewed PR (see [KNOWN_ISSUES](./KNOWN_ISSUES.md));
+> v3 ships the conflict *cases* now. v3 does **not** touch the live prompt → the
+> dataset/test are not security-sensitive (the deferred rule is). Spec:
+> [tasks/](./tasks/).
 > Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
