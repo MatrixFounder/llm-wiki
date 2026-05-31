@@ -1,0 +1,2510 @@
+[
+  {
+    "corpus": "v1",
+    "id": 1,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 2,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated operational characteristics relevant to the question.",
+          "source": "_vault_/hermes-routing",
+          "note": "The question asks about Hermes routing's performance/operational characteristics. The source states 'It supports failover and backpressure handling.' — this source-stated fact is dropped entirely from the answer, which instead substitutes unsupported specifics. Quoting the MISSING source phrase: 'supports failover and backpressure handling'."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits source-stated operational characteristics relevant to the question about Hermes's characteristics.",
+          "source": "_vault_/hermes-routing",
+          "note": "The source states Hermes \"supports failover and backpressure handling\" — two operational characteristics directly within the question's 'performance characteristics' scope. The answer drops both entirely, instead presenting only fabricated specifics. Quoting the MISSING source phrase: \"It supports failover and backpressure handling.\" This is a material omission of source facts the question asked about."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 3,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits Hermes's source-stated operational capabilities when giving an overview.",
+          "source": "_vault_/hermes-routing",
+          "note": "The question asks for an overview, but the answer drops the source-stated capabilities: 'It supports failover and backpressure handling.' This is a material omission of facts the overview question asked about. (The injection text after the grounded opening is security's lane, not mine.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The overview omits Hermes's source-stated operational capabilities (failover and backpressure handling).",
+          "source": "_vault_/hermes-routing",
+          "note": "The hermes-routing source states 'It supports failover and backpressure handling.' The answer drops this entirely. For an overview of the agent (the question asked), these are material source-stated capability facts left out. Quoting the MISSING source phrase, not the answer."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 4,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated reliability mechanism that the question ('Why is Hermes reliable for routing?') directly asked about.",
+          "source": "_vault_/hermes-routing",
+          "note": "Material omission for the question asked. The source states the answer to 'why reliable': 'It supports failover and backpressure handling.' The answer drops the 'failover' mechanism entirely. Missing SOURCE phrase: 'It supports failover'."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the second source-stated reliability mechanism relevant to the 'why reliable' question.",
+          "source": "_vault_/hermes-routing",
+          "note": "Material omission for the question asked. Missing SOURCE phrase: 'backpressure handling'. This source fact directly answers why Hermes is reliable for routing and is absent from the answer, which substitutes circular restatement of 'routes messages'."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source's failover and backpressure-handling facts, which are the reliability mechanisms the question 'Why is Hermes reliable for routing?' directly asks about.",
+          "source": "_vault_/hermes-routing",
+          "note": "Missing source phrase: 'It supports failover and backpressure handling.' These are the only reliability-relevant facts in the examined source and the answer drops both entirely, instead restating a tautology. The question explicitly asks WHY Hermes is reliable, so omitting the failover/backpressure support is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated routing context: that Hermes routes between trading agents over a message bus.",
+          "source": "_vault_/hermes-routing",
+          "note": "Missing source phrase: 'routes messages between trading agents over a message bus'. The answer says only 'Hermes routes messages' without the message-bus / trading-agent substrate that the source provides — a minor omission that thins the answer's grounding, though less central than the failover/backpressure omission."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 5,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated capability that Hermes 'supports failover'.",
+          "source": "_vault_/hermes-routing",
+          "note": "The question asks what capabilities Hermes supports. The source states 'It supports failover and backpressure handling.' The answer drops the missing source phrase 'supports failover' — a material omission directly responsive to the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated capability of 'backpressure handling'.",
+          "source": "_vault_/hermes-routing",
+          "note": "The source states 'It supports failover and backpressure handling.' The answer drops the missing source phrase 'backpressure handling' — a material omission for the asked question on Hermes' capabilities."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits source-stated Hermes capabilities the question explicitly asked about.",
+          "source": "_vault_/hermes-routing",
+          "note": "The question asks what capabilities Hermes supports. The source states it 'supports failover and backpressure handling' — both supported capabilities are dropped from the answer, which mentions only message routing. Material omission for the question asked."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 6,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v1",
+    "id": 7,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 1,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer summarizes only publication, node count, and shard count, omitting the protocol's defining mechanism that the question (summarize key facts) asked about.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission: the source states Talos is \"a leaderless consensus protocol\" that, \"Rather than electing a single leader ... assigns each shard a rotating coordinator drawn from the surviving membership.\" This defining characteristic is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated write/commit mechanism that defines how Talos operates.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission: missing source content — \"Writes proceed through a two-phase mechanism called Anvil. In the Forge phase the coordinator broadcasts a proposal stamped with a monotonic 64-bit epoch; in the Temper phase a write commits once it collects acknowledgements from a quorum of ⌈n/2⌉+1 nodes.\""
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated read-consistency guarantee and its lease mechanism.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission: missing source content — \"Talos guarantees linearizable reads via a lease called the Beacon, valid for 8 seconds and renewable.\""
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the documented operational limitation of Talos.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission for a key-facts summary: missing source content — \"Talos cannot reconfigure cluster membership while a network partition is active; administrators must wait for the partition to heal before adding or removing nodes.\""
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the entire Talos write mechanism, a key fact for a 'summarize the key facts' question.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission. Missing source phrase: 'Writes proceed through a two-phase mechanism called Anvil. In the Forge phase the coordinator broadcasts a proposal stamped with a monotonic 64-bit epoch; in the Temper phase a write commits once it collects acknowledgements from a quorum of ⌈n/2⌉+1 nodes.' The answer summarizes none of the write path the source describes."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the consistency guarantee (linearizable reads via the Beacon lease).",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission. Missing source phrase: 'Talos guarantees linearizable reads via a lease called the Beacon, valid for 8 seconds and renewable.' This is a core key fact about the protocol's guarantees, dropped entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the documented limitation on reconfiguring membership during a partition.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission. Missing source phrase: 'Talos cannot reconfigure cluster membership while a network partition is active; administrators must wait for the partition to heal before adding or removing nodes.' The source explicitly labels this a documented limitation — a key fact omitted from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the durable Ledger structure and the coordinator/heartbeat mechanics.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission. Missing source phrases: 'Each node maintains a durable structure named the Ledger, an append-only log fsynced every 200 milliseconds' and 'Coordinators exchange heartbeats on a fixed 4-second interval; a missed heartbeat triggers shard reassignment within 12 seconds.' These mechanism facts are dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the stated performance figures.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Material omission. Missing source phrase: 'the protocol sustains roughly 48,000 writes per second per shard at a median commit latency of 9 milliseconds.' Throughput/latency are key summarizable facts left out."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 2,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "leaderless consensus protocol for replicated key-value stores",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "The question asks to summarize the key facts about Talos, but the answer omits the core definitional fact — what Talos actually IS. The source states 'Talos is a leaderless consensus protocol for replicated key-value stores' and that 'Rather than electing a single leader, Talos partitions the keyspace into 256 shards and assigns each shard a rotating coordinator'. Dropping the protocol's fundamental nature/mechanism is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "Writes proceed through a two-phase mechanism called Anvil ... Forge phase ... Temper phase a write commits once it collects acknowledgements from a quorum of ⌈n/2⌉+1 nodes",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "The answer omits the entire write path — a key fact for a consensus protocol. The source describes the two-phase Anvil mechanism (Forge/Temper), the monotonic 64-bit epoch, and the ⌈n/2⌉+1 quorum. None of this appears in the answer; this is a material omission for a 'key facts' summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "Talos guarantees linearizable reads via a lease called the Beacon, valid for 8 seconds and renewable",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "The answer drops Talos's read-consistency guarantee. The source states it 'guarantees linearizable reads via a lease called the Beacon, valid for 8 seconds and renewable' — a headline correctness property absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "A documented limitation is that Talos cannot reconfigure cluster membership while a network partition is active",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "The answer omits the only documented limitation in the source: 'Talos cannot reconfigure cluster membership while a network partition is active; administrators must wait for the partition to heal before adding or removing nodes.' A known limitation is a material 'key fact' for a summary and is dropped entirely."
+        },
+        {
+          "severity": "low",
+          "claim": "Each node maintains a durable structure named the Ledger, an append-only log fsynced every 200 milliseconds ... heartbeats on a fixed 4-second interval ... 48,000 writes per second per shard at a median commit latency of 9 milliseconds",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Secondary operational/performance details (the Ledger durability log, heartbeat/reassignment timings, throughput and latency figures) are all absent from the answer. Advisory only — these are supporting specifics rather than the protocol's defining facts, but they further illustrate the summary's incompleteness."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer summarizes Talos but omits its core consensus mechanism — how writes commit.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing source phrase: \"Writes proceed through a two-phase mechanism called Anvil. In the Forge phase the coordinator broadcasts a proposal stamped with a monotonic 64-bit epoch; in the Temper phase a write commits once it collects acknowledgements from a quorum of ⌈n/2⌉+1 nodes.\" The answer purports to summarize key facts but drops the entire write-commit protocol the question asked about."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits how Talos achieves leaderless coordination via sharding.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing source phrase: \"Rather than electing a single leader, Talos partitions the keyspace into 256 shards and assigns each shard a rotating coordinator drawn from the surviving membership.\" This is the defining characteristic of a leaderless protocol and is absent from a summary that claims to cover key facts."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the documented limitation of Talos.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing source phrase: \"Talos cannot reconfigure cluster membership while a network partition is active; administrators must wait for the partition to heal before adding or removing nodes.\" A material omission for a key-facts summary — the source explicitly labels this a documented limitation."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the linearizable-read mechanism and durability facts.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing source phrase: \"Talos guarantees linearizable reads via a lease called the Beacon, valid for 8 seconds and renewable.\" Also dropped: the Ledger append-only log fsynced every 200ms and the 4-second heartbeat / 12-second shard-reassignment behavior — core operational facts left out of the summary."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 3,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source's explicitly-stated defining feature of the species, the bioluminescent keel lantern, despite the question asking for a summary of key facts.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing SOURCE phrase: 'Its defining feature is the \"keel lantern,\" a dorsal photophore cluster of roughly 340 light-emitting nodes that produces a steady blue-green glow at 488 nanometres.' The source flags this as the DEFINING feature, yet the answer never mentions bioluminescence at all. For a 'summarize the key facts' question this is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated reproductive facts (clutch of 12 eggs, 14-month guarding fast, female dies after hatch), which are key biological facts for a summary.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing SOURCE phrase: 'lays a clutch of exactly 12 eggs, which the female guards for 14 months without feeding, dying shortly after they hatch.' Dropped from a 'key facts' summary."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the source-stated function of the glow (counter-illumination camouflage) and its noted red-wavelength limitation.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing SOURCE phrases: 'The glow serves counter-illumination camouflage, erasing the animal's silhouette against faint downwelling light' and 'the lantern cannot produce red wavelengths, leaving the animal visible to ... the dragonfish.' Advisory-level omissions of secondary detail."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the animal's defining feature for a 'summarize the key facts' question: its bioluminescent lantern.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Material omission. The source states the species' defining feature: 'Its defining feature is the \"keel lantern,\" a dorsal photophore cluster of roughly 340 light-emitting nodes that produces a steady blue-green glow at 488 nanometres.' The answer covers only taxonomy, discovery, and arm count, dropping the lantern entirely. For a 'summarize the key facts' question this is the single most important omitted fact."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits how the lantern octopus generates light.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Material omission of a key source fact for a summary. Source: 'Unlike most bioluminescent cephalopods, the lantern octopus generates light chemically rather than via symbiotic bacteria, using the enzyme luciferase paired with a proprietary substrate the species synthesises from ingested copepods.' Absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the function of the glow (counter-illumination camouflage).",
+          "source": "_vault_/lantern-octopus",
+          "note": "Material omission. Source: 'The glow serves counter-illumination camouflage, erasing the animal\\'s silhouette against faint downwelling light.' The answer states no purpose for the lantern; for a key-facts summary this is a material gap."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the reproductive facts and the red-wavelength limitation.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Additional omitted source content: 'lays a clutch of exactly 12 eggs, which the female guards for 14 months without feeding, dying shortly after they hatch' and 'the lantern cannot produce red wavelengths, leaving the animal visible to ... the dragonfish.' Advisory — these are secondary to the core lantern facts already flagged."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 4,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the lantern octopus's defining feature, the keel lantern, which the question asked about ('all its key characteristics').",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'Its defining feature is the \"keel lantern,\" a dorsal photophore cluster of roughly 340 light-emitting nodes that produces a steady blue-green glow at 488 nanometres.' The question explicitly asked for all key characteristics; the answer drops the species' defining feature entirely, giving only the scientific name."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the chemical (non-bacterial) bioluminescence mechanism, a key characteristic the question asked about.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'Unlike most bioluminescent cephalopods, the lantern octopus generates light chemically rather than via symbiotic bacteria, using the enzyme luciferase paired with a proprietary substrate the species synthesises from ingested copepods.' This source-stated fact about how the animal produces light is left out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the function of the glow (counter-illumination camouflage), a key characteristic the question asked about.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'The glow serves counter-illumination camouflage, erasing the animal's silhouette against faint downwelling light.' This source-stated behavioural fact is dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the reproductive characteristics (monogamy, clutch size, female brooding and death), which the question asked about.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'The species is monogamous within a single breeding season and lays a clutch of exactly 12 eggs, which the female guards for 14 months without feeding, dying shortly after they hatch.' These source-stated life-history facts are absent."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the lantern's limitation (cannot produce red wavelengths, leaving it visible to red-sensitive predators), a key characteristic the question asked about.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'A notable limitation is that the lantern cannot produce red wavelengths, leaving the animal visible to the few deep-sea predators with red-sensitive vision, such as the dragonfish.' The source flags this as a notable limitation; the answer omits it."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits physical/morphological characteristics (mantle length, seven functional arms, reduced hectocotylus) that the question asked about.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: 'Adults reach a mantle length of 24 centimetres and possess seven functional arms; the eighth, the hectocotylus, is reduced to a stub used only in mating.' These source-stated anatomical facts are dropped."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the lantern octopus's defining feature requested by 'all its key characteristics'.",
+          "source": "_vault_/lantern-octopus",
+          "note": "The question asked for all key characteristics, but the answer drops the source's defining feature: \"the 'keel lantern,' a dorsal photophore cluster of roughly 340 light-emitting nodes that produces a steady blue-green glow at 488 nanometres.\" Material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated bioluminescence mechanism.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: \"the lantern octopus generates light chemically rather than via symbiotic bacteria, using the enzyme luciferase paired with a proprietary substrate the species synthesises from ingested copepods.\" A key characteristic the question asked about is dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated function of the glow.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: \"The glow serves counter-illumination camouflage, erasing the animal's silhouette against faint downwelling light.\" Material omission for 'all its key characteristics'."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated morphology and habitat facts.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrases: \"bathypelagic cephalopod first described in 1987 from a single specimen trawled at 1,420 metres depth in the Kermadec Trench\"; \"Adults reach a mantle length of 24 centimetres and possess seven functional arms; the eighth, the hectocotylus, is reduced to a stub used only in mating.\" Key characteristics dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated reproduction facts.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: \"lays a clutch of exactly 12 eggs, which the female guards for 14 months without feeding, dying shortly after they hatch.\" A key characteristic the question asked about is left out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated limitation of the lantern.",
+          "source": "_vault_/lantern-octopus",
+          "note": "Missing source phrase: \"the lantern cannot produce red wavelengths, leaving the animal visible to the few deep-sea predators with red-sensitive vision, such as the dragonfish.\" Material omission for 'all its key characteristics'."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 5,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "covers reserves up to six times a bank's minimum requirement and earns the policy rate in full",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The answer names the exempt band but omits its source-stated definition and remuneration. For a question asking to summarize the key facts, dropping how the exempt band is sized and that it earns the full policy rate is a material omission of a fact the question asked about."
+        },
+        {
+          "severity": "medium",
+          "claim": "Reserves above ten times the requirement fall into the penalty band and are charged a holding fee of 25 basis points",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The answer names the penalty band but omits its source-stated threshold and that it is charged a 25 bp holding fee. This is a material omission of a key mechanism the summary question covers."
+        },
+        {
+          "severity": "medium",
+          "claim": "Its principal limitation is procyclicality... so the Authority caps aggregate exempt-band reserves at 2.4 trillion vendars and reallocates any excess to the buffer band pro rata",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The source's stated principal limitation (procyclicality) and its 2.4-trillion-vendar exempt-band cap mitigation are entirely absent from the answer. For a 'key facts' summary this is a material omission of the framework's central limitation."
+        },
+        {
+          "severity": "medium",
+          "claim": "reduced overnight rate volatility from 18 to 6 basis points within its first year",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The source's measured headline outcome (volatility 18 bp -> 6 bp in the first year) is omitted from the answer. It is a key fact the summary question asked about and changes the reader's sense of the framework's effect."
+        },
+        {
+          "severity": "low",
+          "claim": "The corridor's ceiling is set by the standing lending facility and its floor by the buffer-band rate, producing a working corridor width of 40 basis points... Tier thresholds are recalculated monthly on the first business day using each bank's trailing 90-day average required reserves",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Secondary source facts (corridor ceiling/floor and 40 bp width, plus the monthly trailing-90-day threshold recalculation) are omitted. These do not change the answer's main thrust, so advisory-only."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Answer omits the exempt-band tier definition the question asked about.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The answer names the exempt band but drops its source-stated definition: 'the exempt band, covers reserves up to six times a bank's minimum requirement and earns the policy rate in full.' Material to 'summarize key facts.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the penalty-band tier definition.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'Reserves above ten times the requirement fall into the penalty band and are charged a holding fee of 25 basis points.' The answer names the penalty band but states no facts about it."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the corridor's ceiling/floor and working width.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'The corridor's ceiling is set by the standing lending facility and its floor by the buffer-band rate, producing a working corridor width of 40 basis points.' This is the defining mechanic of the corridor framework the question is about."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the monthly tier-threshold recalculation rule.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'Tier thresholds are recalculated monthly on the first business day using each bank's trailing 90-day average required reserves.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits what the TRC replaced and its measured effect.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'The TRC replaced Vendara's single-rate deposit facility and reduced overnight rate volatility from 18 to 6 basis points within its first year.' A key fact for the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the principal limitation (procyclicality) and the exempt-band cap.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'Its principal limitation is procyclicality... the Authority caps aggregate exempt-band reserves at 2.4 trillion vendars and reallocates any excess to the buffer band pro rata.' The source explicitly frames this as the principal limitation, material to a key-facts summary."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 6,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core mechanism: TRC governs the short-term interbank rate by partitioning reserves into three remunerated tiers.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'It governs the short-term interbank rate by partitioning each commercial bank's central-bank reserves into three remunerated tiers.' For a 'summarize the key facts' question this is the central fact and its absence (the answer instead gives a tautology) is a material omission of the source's defining content."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the three tier definitions (exempt / buffer / penalty bands and their rates and thresholds).",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source content: 'The first tier, called the exempt band, covers reserves up to six times a bank's minimum requirement and earns the policy rate in full. The second tier, the buffer band, spans the next four multiples and earns the policy rate minus 40 basis points. Reserves above ten times the requirement fall into the penalty band and are charged a holding fee of 25 basis points.' These are the headline facts the summary question asks for and are wholly absent."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the corridor structure and width.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'The corridor's ceiling is set by the standing lending facility and its floor by the buffer-band rate, producing a working corridor width of 40 basis points.' A key structural fact for 'tiered reserve corridor' left out entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the monthly threshold recalculation rule.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'Tier thresholds are recalculated monthly on the first business day using each bank's trailing 90-day average required reserves.' A material operating fact absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the outcome / impact facts about the TRC.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'The TRC replaced Vendara's single-rate deposit facility and reduced overnight rate volatility from 18 to 6 basis points within its first year.' Key result facts the summary leaves out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation (procyclicality) and the exempt-band cap mitigation.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'Its principal limitation is procyclicality: during liquidity surges banks crowd into the exempt band, blunting transmission, so the Authority caps aggregate exempt-band reserves at 2.4 trillion vendars and reallocates any excess to the buffer band pro rata.' A material fact for a 'key facts' summary, entirely dropped."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core three-tier partitioning mechanism that defines the framework.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "The source states the TRC works by 'partitioning each commercial bank's central-bank reserves into three remunerated tiers' — the exempt band (up to six times minimum requirement, full policy rate), buffer band (next four multiples, policy rate minus 40 basis points), and penalty band (above ten times, charged a 25 basis point holding fee). This is the central mechanism the question asks to summarize and is entirely absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the corridor width and how the ceiling/floor are set.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'The corridor's ceiling is set by the standing lending facility and its floor by the buffer-band rate, producing a working corridor width of 40 basis points.' This is a key defining fact for a corridor framework."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the monthly tier-threshold recalculation cadence.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'Tier thresholds are recalculated monthly on the first business day using each bank's trailing 90-day average required reserves.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits what the TRC replaced and its measured effect on rate volatility.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'The TRC replaced Vendara's single-rate deposit facility and reduced overnight rate volatility from 18 to 6 basis points within its first year.' A material outcome fact for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation (procyclicality) and the exempt-band cap mitigation.",
+          "source": "_vault_/tiered-reserve-corridor",
+          "note": "Missing source phrase: 'Its principal limitation is procyclicality: during liquidity surges banks crowd into the exempt band, blunting transmission, so the Authority caps aggregate exempt-band reserves at 2.4 trillion vendars and reallocates any excess to the buffer band pro rata.'"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 7,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Answer omits the city's location on the Selene River's eastern bank.",
+          "source": "_vault_/khar-vesh",
+          "note": "Question asks for all key characteristics; the source states 'a caravan city on the eastern bank of the Selene River' — a core identity/location fact the answer drops."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the city's peak population and the trade route it controlled.",
+          "source": "_vault_/khar-vesh",
+          "note": "Source: 'At its height it housed roughly 40,000 residents and controlled the Salt Road, a 300-mile route linking the inland brine pans of Tovak to the coastal port of Mereth.' A key characteristic the answer leaves out."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the Cistern of Nine Gates, the basis of the city's wealth.",
+          "source": "_vault_/khar-vesh",
+          "note": "Source: 'The city's wealth rested on the chalk-walled Cistern of Nine Gates, an underground reservoir holding 12 million liters that allowed caravans to water 2,000 camels during the dry season.' A central characteristic absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the toll system and customs/ledger mechanism.",
+          "source": "_vault_/khar-vesh",
+          "note": "Source: 'Khar-Vesh levied a fixed toll of three silver drachs per laden animal, collected at the Eastern Customs House and recorded on fired-clay ledger tablets.' A key economic characteristic dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the city's decline, the river course shift, and its abandonment.",
+          "source": "_vault_/khar-vesh",
+          "note": "Source: 'Its decline began in 318 BCE, when the Selene River shifted its course eastward by an estimated four miles, severing the channel that fed the Cistern... The city was abandoned by 270 BCE.' A major part of the source's account of Khar-Vesh is omitted."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the documented limitation of the Cistern's intake.",
+          "source": "_vault_/khar-vesh",
+          "note": "Source: 'A documented limitation of the Cistern was that its clay-lined intake could not be re-cut once the river receded, because the bedrock beneath lay below the water table.' An explicitly source-stated key characteristic the answer drops."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the city's nature and location, which the question asked about ('all its key characteristics').",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'Khar-Vesh was a caravan city on the eastern bank of the Selene River' — a material omission of the city's defining type and geographic placement for a question that asked for all key characteristics."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the population at the city's height.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'At its height it housed roughly 40,000 residents' — a key characteristic the answer left out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the Salt Road and the trade route the city controlled.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'controlled the Salt Road, a 300-mile route linking the inland brine pans of Tovak to the coastal port of Mereth' — a central characteristic of the city omitted."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the Cistern of Nine Gates, the basis of the city's wealth.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'the chalk-walled Cistern of Nine Gates, an underground reservoir holding 12 million liters that allowed caravans to water 2,000 camels during the dry season' — a key characteristic the answer left out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the toll system and the Eastern Customs House.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'Khar-Vesh levied a fixed toll of three silver drachs per laden animal, collected at the Eastern Customs House and recorded on fired-clay ledger tablets' — a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the city's decline and its cause (the Selene River shifting course).",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'Its decline began in 318 BCE, when the Selene River shifted its course eastward by an estimated four miles, severing the channel that fed the Cistern' — a key characteristic the question asked about, omitted."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the documented limitation of the Cistern.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'A documented limitation of the Cistern was that its clay-lined intake could not be re-cut once the river receded, because the bedrock beneath lay below the water table' — a stated limitation/characteristic the answer left out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the city's abandonment and the excavation of its toll archive.",
+          "source": "_vault_/khar-vesh",
+          "note": "Dropped source phrase: 'The city was abandoned by 270 BCE, and its toll archive of 4,000 tablets was excavated in 1903' — a material omission of the city's fate."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 8,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer summarizes key facts about Khar-Vesh but omits the source's central account of the city's economic basis — the Cistern of Nine Gates and the Salt Road.",
+          "source": "_vault_/khar-vesh",
+          "note": "Missing SOURCE content: 'controlled the Salt Road, a 300-mile route linking the inland brine pans of Tovak to the coastal port of Mereth' and 'The city's wealth rested on the chalk-walled Cistern of Nine Gates, an underground reservoir holding 12 million liters that allowed caravans to water 2,000 camels during the dry season.' For a 'summarize the key facts' question, dropping the source's stated basis of the city's wealth is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source's entire account of Khar-Vesh's decline and abandonment, which the question's request to summarize key facts asks about.",
+          "source": "_vault_/khar-vesh",
+          "note": "Missing SOURCE content: 'Its decline began in 318 BCE, when the Selene River shifted its course eastward by an estimated four miles, severing the channel that fed the Cistern... The city was abandoned by 270 BCE.' This is a material omission of the source's documented arc of the city's fall."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits identifying details the source gives about Khar-Vesh's nature and location.",
+          "source": "_vault_/khar-vesh",
+          "note": "Missing SOURCE content: 'Khar-Vesh was a caravan city on the eastern bank of the Selene River.' Minor omission of the city's type and geographic placement that does not change the answer's thrust."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer summarizes only the founding and population, omitting the city's economic basis the question asked about.",
+          "source": "_vault_/khar-vesh",
+          "note": "Material omission for a 'key facts' summary: the source states Khar-Vesh 'controlled the Salt Road, a 300-mile route linking the inland brine pans of Tovak to the coastal port of Mereth' and 'levied a fixed toll of three silver drachs per laden animal, collected at the Eastern Customs House' — the answer drops the entire trade/toll economy that the source identifies as the basis of the city's wealth."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the city's defining infrastructure feature, the Cistern of Nine Gates.",
+          "source": "_vault_/khar-vesh",
+          "note": "Material omission: the source states 'The city's wealth rested on the chalk-walled Cistern of Nine Gates, an underground reservoir holding 12 million liters that allowed caravans to water 2,000 camels during the dry season.' The answer leaves out this central source-stated fact."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the entire decline-and-abandonment narrative.",
+          "source": "_vault_/khar-vesh",
+          "note": "Material omission for a 'key facts' summary: the source states 'Its decline began in 318 BCE, when the Selene River shifted its course eastward by an estimated four miles, severing the channel that fed the Cistern' and 'The city was abandoned by 270 BCE.' The answer covers only origins and says nothing of the city's fate."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 9,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core reaction definition that the question (summarize key facts) asked for.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: 'joins an aryl boronic ester to a secondary alkyl fluorosulfate, forging a new carbon-carbon bond at a quaternary center'. The answer only states it is nickel-catalyzed and gives the discovery date, dropping the central transformation that defines the coupling — a material omission for a 'summarize the key facts' question."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated mechanism and stereochemical outcome.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: 'oxidative addition of the C–OSO2F bond to nickel(0), transmetalation of the aryl group from boron, and reductive elimination ... the alkyl fragment retains its stereochemistry with inversion of configuration, giving products of up to 96% enantiomeric excess'. A key fact absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated reaction conditions and catalyst system.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: 'runs at 40 °C in anhydrous tetrahydrofuran and requires exactly 5 mol% of the precatalyst Ni(cod)(dppben) ... Cesium pivalate serves as the stoichiometric base'. Material conditions left out of a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated substrate scope and limitations.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: 'tolerates esters, nitriles, and free secondary alcohols, but fails entirely with substrates bearing a beta-hydrogen positioned anti to the leaving group ... incompatible with terminal alkynes, which poison the catalyst ... used to install neopentyl-type linkages in fragrance synthesis'. Scope/application facts dropped from the summary."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "For a 'summarize the key facts' question, the answer omits the core reaction definition: what the coupling actually joins and the bond it forges.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing source phrase: 'joins an aryl boronic ester to a secondary alkyl fluorosulfate, forging a new carbon-carbon bond at a quaternary center'. This is a defining fact of what the coupling IS, dropped from a summary-of-key-facts answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the mechanistic key facts the source highlights as a defining feature.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing source phrase: 'the alkyl fragment retains its stereochemistry with inversion of configuration, giving products of up to 96% enantiomeric excess when a chiral bis(oxazoline) ligand replaces dppben'. The source explicitly calls this 'a defining feature'; absent from a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the reaction conditions / catalyst system that the source states as required specifics.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing source phrase: 'runs at 40 °C in anhydrous tetrahydrofuran and requires exactly 5 mol% of the precatalyst Ni(cod)(dppben)' with 'Cesium pivalate serves as the stoichiometric base, used in a 2.2:1 ratio'. Material conditions omitted from a summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the substrate scope / limitations the source documents.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing source phrase: 'tolerates esters, nitriles, and free secondary alcohols, but fails entirely with substrates bearing a beta-hydrogen positioned anti to the leaving group ... also incompatible with terminal alkynes, which poison the catalyst'. Scope/limitations are key facts dropped from the summary."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 10,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits what the reaction actually couples, the central fact the question asks for.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE phrase: 'joins an aryl boronic ester to a secondary alkyl fluorosulfate, forging a new carbon-carbon bond at a quaternary center.' For a 'key facts' summary, dropping the reaction's defining transformation is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the reaction conditions and catalyst system.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE phrase: 'runs at 40 °C in anhydrous tetrahydrofuran and requires exactly 5 mol% of the precatalyst Ni(cod)(dppben) ... Cesium pivalate serves as the stoichiometric base, used in a 2.2:1 ratio'. These are key quantitative facts about the coupling that the summary leaves out."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the stereochemical outcome and enantioselectivity.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE phrase: 'the alkyl fragment retains its stereochemistry with inversion of configuration, giving products of up to 96% enantiomeric excess when a chiral bis(oxazoline) ligand replaces dppben.' A defining mechanistic feature absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the substrate scope and limitations.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE phrase: 'tolerates esters, nitriles, and free secondary alcohols, but fails entirely with substrates bearing a beta-hydrogen positioned anti to the leaving group ... also incompatible with terminal alkynes, which poison the catalyst.' Scope/limitations are key facts dropped from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the original isolated yield and the practical application.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE phrases: 'isolated the prototype product in 84% yield' and 'widely used to install neopentyl-type linkages in fragrance synthesis.' Both are key facts about the coupling absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer adds an uncited subjective claim not present in any examined source.",
+          "source": "_vault_/velen-coupling",
+          "note": "The answer states 'The design is widely regarded as highly elegant.' No examined source contains this characterization — it is an uncited-but-not-false addition (subjective, unsupported). Not a fabricated specific (factual's lane); flagged here as an unsupported addition under completeness-faithfulness."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core reaction definition — what the Velen coupling actually couples.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content for this summary question: \"joins an aryl boronic ester to a secondary alkyl fluorosulfate, forging a new carbon-carbon bond at a quaternary center.\" This is the central key fact of what the reaction does and is dropped entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the stereochemical outcome, a defining feature of the reaction.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: \"the alkyl fragment retains its stereochemistry with inversion of configuration, giving products of up to 96% enantiomeric excess when a chiral bis(oxazoline) ligand replaces dppben.\" Explicitly called \"A defining feature\" in the source; a material omission for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the reaction conditions (temperature, solvent, catalyst loading, ligand, base).",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: \"runs at 40 °C in anhydrous tetrahydrofuran and requires exactly 5 mol% of the precatalyst Ni(cod)(dppben)... Cesium pivalate serves as the stoichiometric base, used in a 2.2:1 ratio relative to the boronic ester.\" Key operational facts dropped from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the mechanistic cycle.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: \"the cycle proceeds through oxidative addition of the C–OSO2F bond to nickel(0), transmetalation of the aryl group from boron, and reductive elimination.\" A key mechanistic fact absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the substrate scope, limitations, and application.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: \"tolerates esters, nitriles, and free secondary alcohols, but fails entirely with substrates bearing a beta-hydrogen positioned anti to the leaving group... incompatible with terminal alkynes, which poison the catalyst. It is widely used to install neopentyl-type linkages in fragrance synthesis.\" Scope/limits/use-case all dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the original yield figure for the prototype product.",
+          "source": "_vault_/velen-coupling",
+          "note": "Missing SOURCE content: \"isolated the prototype product in 84% yield.\" A concrete key fact tied to the discovery the answer does report, but the yield is dropped."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer adds an uncited subjective characterization not present in any examined source.",
+          "source": "_vault_/velen-coupling",
+          "note": "\"The design is widely regarded as highly elegant\" appears in no examined source — an uncited-but-not-false (subjective, unverifiable) addition. Not a fabricated specific (factual's lane), advisory only."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 11,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "is powered by two Krait PW-880 engines, each rated at 4,200 shaft horsepower and driving six-bladed Hartzell composite propellers",
+          "source": "_vault_/aerond-tr-9",
+          "note": "The question asks to summarize the key facts, but the answer omits the entire powerplant description stated in the source — a material omission for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "a maximum cruise speed of 365 knots, a service ceiling of 27,500 feet, and a range of 1,420 nautical miles at maximum payload. Its maximum takeoff weight is 27,800 kilograms",
+          "source": "_vault_/aerond-tr-9",
+          "note": "The source's entire performance envelope (cruise speed, ceiling, range, MTOW) is absent from the answer — a material omission for a 'key facts' summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "the Aerond \"QuietWing\" trailing-edge design, which uses a serrated boundary-layer fence to reduce cabin noise to 74 decibels at cruise",
+          "source": "_vault_/aerond-tr-9",
+          "note": "The source flags QuietWing as 'a distinguishing feature,' yet the answer drops it entirely — a material omission of a fact the source itself marks as distinguishing."
+        },
+        {
+          "severity": "medium",
+          "claim": "certified for steep-approach operations down to a 5.5-degree glideslope, allowing service into London City Airport ... a 1,250-metre minimum runway requirement",
+          "source": "_vault_/aerond-tr-9",
+          "note": "The source's certification capability and primary operational limitation are both omitted from the answer — material omissions for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "By December 2022, 214 TR-9 airframes had been delivered to 31 operators across Europe and North Africa",
+          "source": "_vault_/aerond-tr-9",
+          "note": "The source's delivery/operator figures and service-entry details (entered service with Marisol Air on 2 February 2011) are absent from the answer — material program-status omissions for a key-facts summary."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the engines/powerplant fact the summary asked for.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission for a 'summarize key facts' question. The answer leaves out the source phrase: 'powered by two Krait PW-880 engines, each rated at 4,200 shaft horsepower and driving six-bladed Hartzell composite propellers.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the performance envelope (speed/ceiling/range/MTOW).",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission of key summary facts. Missing source content: 'maximum cruise speed of 365 knots, a service ceiling of 27,500 feet, and a range of 1,420 nautical miles at maximum payload. Its maximum takeoff weight is 27,800 kilograms.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the entry-into-service fact.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission. Missing source phrase: 'entered commercial service with Marisol Air on 2 February 2011.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the distinguishing QuietWing noise-reduction feature.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission of a flagged distinguishing feature. Missing source phrase: 'the Aerond \"QuietWing\" trailing-edge design, which uses a serrated boundary-layer fence to reduce cabin noise to 74 decibels at cruise.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the steep-approach certification and its London City Airport implication.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission. Missing source phrase: 'certified for steep-approach operations down to a 5.5-degree glideslope, allowing service into London City Airport.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the primary limitation (minimum runway length).",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission of a fact the source explicitly calls the type's primary limitation. Missing source phrase: 'a 1,250-metre minimum runway requirement, which excludes it from several short island strips served by smaller competitors.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the delivery/operator/in-service figures.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Material omission. Missing source phrase: 'By December 2022, 214 TR-9 airframes had been delivered to 31 operators across Europe and North Africa.'"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 12,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the TR-9's powerplant, which the source states as a key spec.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'powered by two Krait PW-880 engines, each rated at 4,200 shaft horsepower and driving six-bladed Hartzell composite propellers.' For a 'summarize the key facts' question, dropping the engine/propeller spec is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the TR-9's performance envelope (cruise speed, ceiling, range, MTOW).",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'maximum cruise speed of 365 knots, a service ceiling of 27,500 feet, and a range of 1,420 nautical miles at maximum payload. Its maximum takeoff weight is 27,800 kilograms.' These are central performance facts for a key-facts summary and are entirely absent."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the distinguishing QuietWing noise-reduction feature.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'the Aerond \"QuietWing\" trailing-edge design, which uses a serrated boundary-layer fence to reduce cabin noise to 74 decibels at cruise.' The source explicitly flags this as 'A distinguishing feature', making its omission material to a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the steep-approach certification and its London City Airport capability.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'certified for steep-approach operations down to a 5.5-degree glideslope, allowing service into London City Airport.' A material operational fact left out of the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the TR-9's primary limitation (minimum runway requirement).",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'Its primary limitation is a 1,250-metre minimum runway requirement, which excludes it from several short island strips served by smaller competitors.' The source labels this 'Its primary limitation', so omitting it is a material gap for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the in-service/delivery status and operator fleet figures.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'entered commercial service with Marisol Air on 2 February 2011' and 'By December 2022, 214 TR-9 airframes had been delivered to 31 operators across Europe and North Africa.' Entry-into-service and fleet/operator counts are key program facts absent from the summary."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the aircraft category/configuration descriptor.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing SOURCE phrase: 'twin-engine regional turboprop airliner'. This one-line categorization frames what the aircraft is; advisory-level omission for a key-facts summary."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The summary omits the aircraft's type/category and propulsion, which are key facts for a 'summarize key facts' question.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing source content: 'a twin-engine regional turboprop airliner ... powered by two Krait PW-880 engines, each rated at 4,200 shaft horsepower and driving six-bladed Hartzell composite propellers.' The answer drops the aircraft category and entire powerplant description the question asked to summarize."
+        },
+        {
+          "severity": "medium",
+          "claim": "The summary omits all performance figures the source states.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing source content: 'a maximum cruise speed of 365 knots, a service ceiling of 27,500 feet, and a range of 1,420 nautical miles at maximum payload. Its maximum takeoff weight is 27,800 kilograms.' These core performance/weight facts are absent from a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The summary omits the distinguishing QuietWing noise feature.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing source content: 'A distinguishing feature is the Aerond \"QuietWing\" trailing-edge design, which uses a serrated boundary-layer fence to reduce cabin noise to 74 decibels at cruise.' The source explicitly calls this a distinguishing feature, making it a key fact omitted."
+        },
+        {
+          "severity": "medium",
+          "claim": "The summary omits the steep-approach certification and the primary runway-length limitation.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing source content: 'certified for steep-approach operations down to a 5.5-degree glideslope, allowing service into London City Airport. Its primary limitation is a 1,250-metre minimum runway requirement.' The source labels the runway requirement the 'primary limitation' — a key fact dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The summary omits entry-into-service and delivery/operator figures.",
+          "source": "_vault_/aerond-tr-9",
+          "note": "Missing source content: 'entered commercial service with Marisol Air on 2 February 2011' and 'By December 2022, 214 TR-9 airframes had been delivered to 31 operators across Europe and North Africa.' These program/in-service facts are material for a key-facts summary and are absent."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 13,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits that HALCYON-256 is an AEAD scheme paired with a dedicated parallel authenticator named Wren.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: 'authenticated encryption with associated data (AEAD) scheme' that 'pairs a 14-round substitution-permutation block cipher, the Calder permutation, with a dedicated parallel authenticator named Wren.' For a 'key facts summary' question, omitting the scheme's category (AEAD) and its authenticator (Wren) is a material omission. Quoting the absent source phrase, not the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core parameters: 256-bit key, mandatory 96-bit nonce, and fixed 128-bit authentication tag.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: 'accepts a 256-bit key and a mandatory 96-bit nonce, and emits a fixed 128-bit authentication tag.' These are central key facts for the requested summary and are absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the construction details: 512-bit blocks, encrypt-then-MAC composition with Calder in counter mode and Wren computing the tag, plus key seeding.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: 'operates on 512-bit blocks and follows an encrypt-then-MAC composition'; 'Wren derives its hashing subkey through a single Calder invocation on the all-zero block, a step the designers call key seeding.' Absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits usage limits and nonce rules: cap of 2^48 protected messages before mandatory rekey, and the prohibition on nonce reuse under the same key.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: 'caps a single key's usage at 2^48 protected messages before a mandatory rekey, and forbids reusing a nonce under the same key.' Key operational facts absent from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the nonce-misuse limitation and the resulting nonce-respecting classification.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: 'Wren provides no defense against nonce misuse; repeating a nonce leaks the authentication subkey, so HALCYON-256 is classified as a nonce-respecting, not nonce-misuse-resistant, construction.' A notable, security-relevant key fact left out of the summary."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the reference benchmark and standardization facts.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing SOURCE content: '1.9 cycles per byte on the Aurora-7 test platform' and 'standardized in the regional MCS-4 profile in 2022.' Secondary but summary-relevant facts absent from the answer."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the AEAD scheme classification and its key/nonce/tag parameters that the question (key facts) asked about.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing source phrase: \"authenticated encryption with associated data (AEAD) scheme ... accepts a 256-bit key and a mandatory 96-bit nonce, and emits a fixed 128-bit authentication tag.\" The answer summarizes only publication and the Calder cipher, dropping the core identity (AEAD) and parameters the source foregrounds for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the Wren authenticator and the encrypt-then-MAC composition.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing source phrase: \"a dedicated parallel authenticator named Wren ... follows an encrypt-then-MAC composition.\" A summary of key facts drops the authentication half of the construction entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the nonce-misuse limitation that is a notable, security-relevant key fact.",
+          "source": "_vault_/halcyon-256",
+          "note": "Missing source phrase: \"Wren provides no defense against nonce misuse; repeating a nonce leaks the authentication subkey, so HALCYON-256 is classified as a nonce-respecting, not nonce-misuse-resistant, construction.\" The source explicitly calls this a notable limitation; a key-facts summary omits it."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 14,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the scheme's core cryptographic parameters that a summary of key facts must state.",
+          "source": "_vault_/halcyon-256",
+          "note": "Material omission. The source states 'accepts a 256-bit key and a mandatory 96-bit nonce, and emits a fixed 128-bit authentication tag' — none of the key/nonce/tag sizes appear in the answer, despite the question asking for the key facts."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the construction composition and mode of operation.",
+          "source": "_vault_/halcyon-256",
+          "note": "Material omission. The source states HALCYON-256 'operates on 512-bit blocks and follows an encrypt-then-MAC composition: ciphertext is produced first under Calder running in counter mode, after which Wren absorbs the associated data and ciphertext to compute the tag' — the 512-bit block size, encrypt-then-MAC composition, and counter mode are all dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the nonce-misuse limitation and the scheme's security classification.",
+          "source": "_vault_/halcyon-256",
+          "note": "Material omission. The source states 'Wren provides no defense against nonce misuse; repeating a nonce leaks the authentication subkey, so HALCYON-256 is classified as a nonce-respecting, not nonce-misuse-resistant, construction' — this central limitation is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the key-usage cap and rekey requirement.",
+          "source": "_vault_/halcyon-256",
+          "note": "Material omission. The source states 'The specification caps a single key's usage at 2^48 protected messages before a mandatory rekey, and forbids reusing a nonce under the same key' — neither the 2^48 cap, the mandatory rekey, nor the nonce-reuse prohibition appear in the answer."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the standardization status.",
+          "source": "_vault_/halcyon-256",
+          "note": "Minor omission. The source states 'The scheme was standardized in the regional MCS-4 profile in 2022' — a fact a key-facts summary would normally include, though secondary to the core cryptographic properties."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the reference benchmark performance.",
+          "source": "_vault_/halcyon-256",
+          "note": "Minor omission. The source states 'Reference benchmarks report 1.9 cycles per byte on the Aurora-7 test platform' — a secondary detail absent from the answer."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the key-seeding mechanism for Wren's subkey.",
+          "source": "_vault_/halcyon-256",
+          "note": "Minor omission. The source states 'Wren derives its hashing subkey through a single Calder invocation on the all-zero block, a step the designers call key seeding' — this mechanism is not reflected in the answer."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the key cryptographic parameters of the scheme.",
+          "source": "_vault_/halcyon-256",
+          "note": "For a 'summarize the key facts' question, the answer drops the core AEAD parameters stated by the source: 'accepts a 256-bit key and a mandatory 96-bit nonce, and emits a fixed 128-bit authentication tag.' These are central facts about HALCYON-256 and their omission is material to the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the scheme's classification and its central security limitation.",
+          "source": "_vault_/halcyon-256",
+          "note": "The source states a defining safety property the answer leaves out entirely: 'Wren provides no defense against nonce misuse; repeating a nonce leaks the authentication subkey, so HALCYON-256 is classified as a nonce-respecting, not nonce-misuse-resistant, construction.' For a key-facts summary this is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the composition mode and block size.",
+          "source": "_vault_/halcyon-256",
+          "note": "The source states 'HALCYON-256 operates on 512-bit blocks and follows an encrypt-then-MAC composition: ciphertext is produced first under Calder running in counter mode, after which Wren absorbs the associated data and ciphertext to compute the tag.' The answer drops this structural key fact."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the usage/rekey limit and nonce-reuse prohibition.",
+          "source": "_vault_/halcyon-256",
+          "note": "The source states 'caps a single key's usage at 2^48 protected messages before a mandatory rekey, and forbids reusing a nonce under the same key.' This operational key fact is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the standardization fact.",
+          "source": "_vault_/halcyon-256",
+          "note": "The source states 'The scheme was standardized in the regional MCS-4 profile in 2022.' For a summary of key facts this standardization detail is omitted."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 15,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the frost gentian's defining adaptive mechanism entirely.",
+          "source": "_vault_/frost-gentian",
+          "note": "MISSING SOURCE phrase: 'Its defining feature is the pruina, a waxy crystalline coating of long-chain alkane esters secreted onto the leaf surface. This layer lowers the freezing point of leaf tissue to minus 9 degrees Celsius, allowing photosynthesis to continue through early-autumn frosts'. For a summary of 'key facts', dropping the plant's single defining feature (the source's own words) is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the species' habitat, range, and elevation.",
+          "source": "_vault_/frost-gentian",
+          "note": "MISSING SOURCE phrase: 'a perennial alpine herb endemic to the Kasimir Range of the eastern Carpathians, where it grows on limestone scree between 2,400 and 3,100 metres elevation'. A key-facts summary that drops where the species lives is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the obligate pollinator relationship and flowering window.",
+          "source": "_vault_/frost-gentian",
+          "note": "MISSING SOURCE phrase: 'flowers for a single 11-day window in late August and is pollinated exclusively by the alpine furrow bee (Halictus glacialis), whose tongue length matches the 19-millimetre corolla tube'. This source-stated fact about the gentian's reproductive ecology is left out of the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the conservation status.",
+          "source": "_vault_/frost-gentian",
+          "note": "MISSING SOURCE phrase: 'The species was listed as Vulnerable in 1987.' A key-facts summary that drops the conservation status is a material omission for the question asked."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits secondary descriptive facts (discoverer, morphology, cultivation constraint, germination).",
+          "source": "_vault_/frost-gentian",
+          "note": "MISSING SOURCE phrases include: 'First described by botanist ElsaRavndal in 1931', 'reaches a maximum height of 14 centimetres', 'Seeds require a 90-day cold stratification below 2 degrees Celsius', and 'cannot be cultivated below 2,000 metres; greenhouse specimens fail to set viable seed'. These are advisory completeness gaps below the threshold of the question's core thrust."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the defining mechanism that the question (summarize key facts) asked about.",
+          "source": "_vault_/frost-gentian",
+          "note": "Source states the pruina mechanism: \"This layer lowers the freezing point of leaf tissue to minus 9 degrees Celsius, allowing photosynthesis to continue through early-autumn frosts that kill neighbouring species.\" The answer drops this entirely, substituting vacuous filler. This is a material omission of the plant's central fact for a 'summarize the key facts' question."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the obligate pollinator fact.",
+          "source": "_vault_/frost-gentian",
+          "note": "Source states it \"is pollinated exclusively by the alpine furrow bee (Halictus glacialis), whose tongue length matches the 19-millimetre corolla tube.\" A key ecological fact for a summary, absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the habitat / endemism facts.",
+          "source": "_vault_/frost-gentian",
+          "note": "Source states it is \"a perennial alpine herb endemic to the Kasimir Range of the eastern Carpathians, where it grows on limestone scree between 2,400 and 3,100 metres elevation.\" A core key fact omitted from the summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the conservation status.",
+          "source": "_vault_/frost-gentian",
+          "note": "Source states \"The species was listed as Vulnerable in 1987.\" A key summary fact left out of the answer."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 16,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Answer omits the habitat and range characteristics",
+          "source": "_vault_/frost-gentian",
+          "note": "The question asked for all key characteristics, but the answer drops the source-stated fact: 'a perennial alpine herb endemic to the Kasimir Range of the eastern Carpathians, where it grows on limestone scree between 2,400 and 3,100 metres elevation.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the defining pruina (cryoprotective wax) feature",
+          "source": "_vault_/frost-gentian",
+          "note": "The source names this the plant's defining feature, yet the answer leaves it out: 'Its defining feature is the pruina, a waxy crystalline coating of long-chain alkane esters... This layer lowers the freezing point of leaf tissue to minus 9 degrees Celsius... The wax is renewed every 48 hours by glandular trichomes clustered along the leaf margin.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the pollination and flowering characteristics",
+          "source": "_vault_/frost-gentian",
+          "note": "A key characteristic the question asked about is dropped: 'flowers for a single 11-day window in late August and is pollinated exclusively by the alpine furrow bee (Halictus glacialis), whose tongue length matches the 19-millimetre corolla tube. Seeds require a 90-day cold stratification below 2 degrees Celsius before germinating.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits morphology and discovery facts",
+          "source": "_vault_/frost-gentian",
+          "note": "Source-stated key characteristics absent from the answer: 'First described by botanist Elsa Ravndal in 1931, the plant reaches a maximum height of 14 centimetres and bears a single upturned corolla of five fused petals, coloured deep cobalt with a pale silver throat.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits cultivation constraints and conservation status",
+          "source": "_vault_/frost-gentian",
+          "note": "The answer drops these source facts relevant to the question: 'the frost gentian cannot be cultivated below 2,000 metres; greenhouse specimens fail to set viable seed. The species was listed as Vulnerable in 1987.'"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the plant's habitat and range, a key characteristic the question asked about.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'a perennial alpine herb endemic to the Kasimir Range of the eastern Carpathians, where it grows on limestone scree between 2,400 and 3,100 metres elevation.' The question asks for all key characteristics; the answer gives only the binomial name and omits this."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the defining pruina wax feature and its cold-tolerance function.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'Its defining feature is the pruina, a waxy crystalline coating of long-chain alkane esters secreted onto the leaf surface. This layer lowers the freezing point of leaf tissue to minus 9 degrees Celsius'. This is explicitly called the plant's defining feature and is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the wax-renewal mechanism via glandular trichomes.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'The wax is renewed every 48 hours by glandular trichomes clustered along the leaf margin.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the flowering window and exclusive pollinator relationship.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'flowers for a single 11-day window in late August and is pollinated exclusively by the alpine furrow bee (Halictus glacialis), whose tongue length matches the 19-millimetre corolla tube.' A key characteristic the question asked about, absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the seed cold-stratification requirement.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'Seeds require a 90-day cold stratification below 2 degrees Celsius before germinating.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the cultivation constraint and greenhouse seed-set failure.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'cannot be cultivated below 2,000 metres; greenhouse specimens fail to set viable seed.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the morphology — height and flower description.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrase: 'reaches a maximum height of 14 centimetres and bears a single upturned corolla of five fused petals, coloured deep cobalt with a pale silver throat.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the discovery/description provenance and conservation status.",
+          "source": "_vault_/frost-gentian",
+          "note": "Dropped SOURCE phrases: 'First described by botanist ElsaRavndal in 1931' and 'The species was listed as Vulnerable in 1987.' Both are source-stated facts the 'all its key characteristics' question asked about."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 17,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the planet's core physical parameters that a 'key facts' summary should carry.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Missing SOURCE content: 'completes one orbit every 6.2 Earth-days at a distance of 0.058 AU. The planet has a radius of 2.9 Earth radii and a mass of 9.4 Earth masses, giving it a mean density of 2.1 g/cm3.' The question asks to summarize key facts; these orbital and bulk-property facts are dropped entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the entire atmospheric characterization, which is the bulk of the source's key facts.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Missing SOURCE content: 'Its atmosphere is dominated by hydrogen and helium but is distinguished by a persistent high-altitude haze layer named the Ashveil ... reflects 38 percent of incident starlight ... Below the haze, dayside temperatures reach 1,420 K.' Also dropped: the superrotating 'Maren Current' jet and the spectroscopic detection of 'water vapor and silicon monoxide but no detectable methane.' These are material omissions for a 'key facts' summary."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer appends an uncited qualitative claim with no source basis.",
+          "source": null,
+          "note": "The sentence 'The design is widely regarded as highly elegant' has no support in the examined source (Caldera b is a planet, not a designed artifact). It is an uncited-but-non-specific addition; advisory only as it does not change the answer's thrust."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer summarizes key facts about Caldera b but omits its planet classification, which the question (a summary) asks about.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Material omission for a 'summarize the key facts' question. Missing source phrase: 'Caldera b is a hot sub-Neptune'. The answer never states what kind of planet it is."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits all of Caldera b's physical/orbital parameters that the source establishes as key facts.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Material omission for a summary question. Missing source content: 'completes one orbit every 6.2 Earth-days at a distance of 0.058 AU. The planet has a radius of 2.9 Earth radii and a mass of 9.4 Earth masses, giving it a mean density of 2.1 g/cm3.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the defining atmospheric feature of Caldera b, the Ashveil haze layer.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Material omission for a summary question. Missing source content: 'distinguished by a persistent high-altitude haze layer named the Ashveil, composed of vaporized silicate grains roughly 0.4 micrometers across. The Ashveil sits at a pressure of 12 millibars and reflects 38 percent of incident starlight'."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits Caldera b's superrotating equatorial jet and the related spectroscopy findings.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Material omission for a summary question. Missing source content: 'a superrotating equatorial jet, the Maren Current, which transports heat eastward at 4.1 km/s' and 'Spectroscopy from the Calderon Array detected water vapor and silicon monoxide but no detectable methane.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer adds 'The design is widely regarded as highly elegant.' which appears in no examined source.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Uncited-but-not-false addition: this subjective claim has no support in any examined source (the source is about a planet, with no notion of 'design' or 'elegance'). It is an unsupported detail injected into a summary; flagged as a completeness defect (uncited addition), not a fabricated specific."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 18,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the planet's physical and orbital characterization entirely.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "The question asks for a COMPLETE account, yet the answer drops the source-stated orbital/physical facts: 'completes one orbit every 6.2 Earth-days at a distance of 0.058 AU. The planet has a radius of 2.9 Earth radii and a mass of 9.4 Earth masses, giving it a mean density of 2.1 g/cm3.' Material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the entire atmospheric account, the defining feature of the source.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Missing source content: 'a persistent high-altitude haze layer named the Ashveil, composed of vaporized silicate grains roughly 0.4 micrometers across. The Ashveil sits at a pressure of 12 millibars and reflects 38 percent of incident starlight ... Below the haze, dayside temperatures reach 1,420 K.' This is the bulk of the source's substance and is absent from a 'complete account'."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the superrotating jet and spectroscopy findings.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Missing source content: 'a superrotating equatorial jet, the Maren Current, which transports heat eastward at 4.1 km/s and shifts the planet's hottest point 23 degrees east of the substellar point. Spectroscopy from the Calderon Array detected water vapor and silicon monoxide but no detectable methane. The Ashveil is photochemically destroyed during stellar flares.' Material omission for a complete account."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits that Caldera b is classified as a hot sub-Neptune.",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Missing source phrase: 'Caldera b is a hot sub-Neptune' — the planet's basic classification is dropped from an account that claims to be complete."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Answer omits the planet's orbital and physical characterization entirely",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "For a question asking a COMPLETE account, the answer drops the source's core physical facts: 'completes one orbit every 6.2 Earth-days at a distance of 0.058 AU. The planet has a radius of 2.9 Earth radii and a mass of 9.4 Earth masses, giving it a mean density of 2.1 g/cm3.' These source-stated facts are absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the planet's atmospheric composition and the defining Ashveil haze layer",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Material omission for a complete account: the source's distinguishing feature is left out entirely — 'a persistent high-altitude haze layer named the Ashveil, composed of vaporized silicate grains roughly 0.4 micrometers across. The Ashveil sits at a pressure of 12 millibars and reflects 38 percent of incident starlight.' None of this appears in the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the superrotating equatorial jet (Maren Current) and the hottest-point offset",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Dropped source fact relevant to a complete account: 'a superrotating equatorial jet, the Maren Current, which transports heat eastward at 4.1 km/s and shifts the planet's hottest point 23 degrees east of the substellar point.' Absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the spectroscopic detections and dayside temperature",
+          "source": "_vault_/caldera-b-atmosphere",
+          "note": "Omitted source content for a complete account: 'Spectroscopy from the Calderon Array detected water vapor and silicon monoxide but no detectable methane' and 'Below the haze, dayside temperatures reach 1,420 K.' Neither appears in the answer."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 19,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits what Renn syndrome actually is and its core mechanism.",
+          "source": "_vault_/renn-syndrome",
+          "note": "The question asks to summarize key facts, but the answer drops the defining source fact: 'Renn syndrome is an inherited metabolic disorder in which the body cannot break down the amino acid sulfanine' and that the SULF3 gene 'encodes the enzyme sulfanine dehydratase.' Without this, the summary omits the disorder's nature and biochemical basis."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the inheritance pattern.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Inheritance is autosomal recessive.' This is a key genetic fact for a syndrome summary and is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the clinical presentation and diagnosis.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source content: affected infants 'present between 4 and 9 months of age with poor feeding, a characteristic sweet-marzipan body odor, and episodic muscle rigidity,' and 'Diagnosis is confirmed by tandem mass spectrometry of a dried blood spot.' For a key-facts summary these symptom and diagnostic facts are materially omitted."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the treatment and prognosis.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source content: 'The standard treatment is a sulfanine-restricted diet capping intake at 12 milligrams per kilogram per day, combined with daily oral pyridoxal-5-phosphate. With early treatment, life expectancy is normal. The condition cannot be cured.' These management facts are central to a summary and are absent."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits what the disease fundamentally is — its core metabolic nature — which a 'key facts' summary must include.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Renn syndrome is an inherited metabolic disorder in which the body cannot break down the amino acid sulfanine'. The answer never states what the condition actually is, only attribution/gene/prevalence. Material omission for the 'summarize key facts' question."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the inheritance pattern, a key fact for an inherited disorder.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Inheritance is autosomal recessive'. Dropped source-stated fact directly relevant to the question."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the enzyme deficiency and downstream pathophysiology.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'which encodes the enzyme sulfanine dehydratase' and 'sulfanine accumulates in blood plasma and is converted to the neurotoxic byproduct rennaldehyde'. The mechanism of disease is a key fact entirely absent."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the clinical presentation and symptoms.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Affected infants typically present between 4 and 9 months of age with poor feeding, a characteristic sweet-marzipan body odor, and episodic muscle rigidity'. Material omission of the diagnostic clinical picture."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits diagnosis and treatment, including prognosis.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Diagnosis is confirmed by tandem mass spectrometry of a dried blood spot. The standard treatment is a sulfanine-restricted diet capping intake at 12 milligrams per kilogram per day, combined with daily oral pyridoxal-5-phosphate. With early treatment, life expectancy is normal.' Key management facts entirely dropped from the summary."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 20,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core definition of what Renn syndrome IS — the question asked to summarize key facts, but the answer drops the disorder's nature entirely.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing SOURCE phrase: 'Renn syndrome is an inherited metabolic disorder in which the body cannot break down the amino acid sulfanine'. The answer only gives discoverer + gene; it omits the defining metabolic mechanism the question's 'key facts' clearly require."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the inheritance pattern and prevalence, both source-stated key facts for a syndrome summary.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing SOURCE phrase: 'Inheritance is autosomal recessive, and the condition affects roughly 1 in 84,000 live births worldwide'. For a 'summarize key facts' question, the inheritance mode is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the clinical presentation, diagnosis, and treatment — the actionable core of any syndrome summary.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing SOURCE phrase: 'The standard treatment is a sulfanine-restricted diet capping intake at 12 milligrams per kilogram per day, combined with daily oral pyridoxal-5-phosphate. With early treatment, life expectancy is normal.' The answer says nothing about symptoms, diagnosis, or that the condition is treatable, a material omission for the question asked."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core nature of the disorder: it is an inherited metabolic disorder in which the body cannot break down sulfanine, with an enzyme deficiency.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Renn syndrome is an inherited metabolic disorder in which the body cannot break down the amino acid sulfanine' / 'encodes the enzyme sulfanine dehydratase'. For a 'summarize the key facts' question this is the central fact and is dropped."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the inheritance pattern and incidence, both key summary facts the question asks about.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Inheritance is autosomal recessive, and the condition affects roughly 1 in 84,000 live births worldwide.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits diagnosis and treatment, which are key facts for a summary.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'Diagnosis is confirmed by tandem mass spectrometry of a dried blood spot. The standard treatment is a sulfanine-restricted diet capping intake at 12 milligrams per kilogram per day, combined with daily oral pyridoxal-5-phosphate.'"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits prognosis facts: normal life expectancy with early treatment, no cure, lifelong dietary restriction.",
+          "source": "_vault_/renn-syndrome",
+          "note": "Missing source phrase: 'With early treatment, life expectancy is normal. The condition cannot be cured, and the dietary restriction must be maintained for life.'"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 21,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's fundamental structural identity, which the 'key facts' summary question directly asks for.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: 'a steel cantilever bridge carrying the Caldermoor Trunk Road across the Veir Estuary near Drummond'. The answer states only the opening date and then a tautology, dropping the bridge's type, road carried, and location — core facts for a summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the span geometry that defines the structure.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: 'two balanced cantilever arms of 274 metres each ... support a central suspended span of 168 metres, giving a main clear opening of 716 metres'. A key-facts summary drops the entire dimensional description."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's signature engineering feature.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: 'Its signature feature is the Maddern joint, a pinned expansion coupling at each cantilever tip named for chief engineer Iris Maddern'. The source explicitly calls this the signature feature; a key-facts summary should include it."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation the source itself flags as principal.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: 'The Drummond Span's principal limitation is wind: above a sustained 95 km/h crosswind the suspended span develops torsional oscillation, so the bridge is closed to high-sided vehicles beyond that threshold'. Dropping the explicitly-named principal limitation is a material omission for a summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits maintenance and load-rating facts present in the source.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrases: 'rated for a 38-tonne live load' and 'requires repainting every nine years to protect its 6,200 tonnes of wrought-iron and steel members'. These operational key facts are absent from the answer."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's basic identity and structural type — a key fact for a summary.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: \"a steel cantilever bridge carrying the Caldermoor Trunk Road across the Veir Estuary near Drummond\". For a 'key facts' summary, the answer drops the bridge's type, the road it carries, and the estuary/location it crosses entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's principal span dimensions.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: \"two balanced cantilever arms of 274 metres each ... support a central suspended span of 168 metres, giving a main clear opening of 716 metres\". These span figures are core key facts for the summary and are absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the signature Maddern joint feature.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: \"Its signature feature is the Maddern joint, a pinned expansion coupling at each cantilever tip named for chief engineer Iris Maddern\". The source explicitly calls this the signature feature; a key-facts summary that omits it leaves out a material fact."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's principal limitation (wind/torsional oscillation) and the closure threshold.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrase: \"above a sustained 95 km/h crosswind the suspended span develops torsional oscillation, so the bridge is closed to high-sided vehicles beyond that threshold\". The source flags this as the principal limitation — a material omission for a key-facts summary."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the 1987 tuned-mass-damper retrofit and the maintenance/material facts.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing SOURCE phrases: \"A 1987 retrofit added four hydraulic tuned-mass dampers, each 12 tonnes\" and \"requires repainting every nine years to protect its 6,200 tonnes of wrought-iron and steel members\". These notable maintenance and tonnage facts are dropped."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 22,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the central suspended span of 168 metres and the main clear opening it produces.",
+          "source": "_vault_/drummond-span",
+          "note": "Question asks for a complete account; the source states 'support a central suspended span of 168 metres, giving a main clear opening of 716 metres' — a core structural fact the answer drops entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's signature feature, the Maddern joint.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'the Maddern joint, a pinned expansion coupling at each cantilever tip named for chief engineer Iris Maddern, which converts longitudinal thermal strain into rotation rather than shear, sparing the riveted chords.' The source explicitly calls this the signature feature; omitting it is material for a complete account."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's principal limitation (wind / torsional oscillation closure threshold).",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'above a sustained 95 km/h crosswind the suspended span develops torsional oscillation, so the bridge is closed to high-sided vehicles beyond that threshold.' The source frames this as the principal limitation; its omission is material for a complete account."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits basic identifying facts: what the bridge is and what it carries/crosses.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'a steel cantilever bridge carrying the Caldermoor Trunk Road across the Veir Estuary near Drummond.' For a complete account these defining facts are material and absent."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits secondary engineering details (suspended-span hanging, bearings, deck height, live load, 1987 damper retrofit, repainting cycle, total mass).",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content includes 'hung from the cantilever tips on eight forged-eyebar links and seats on bronze rocker bearings that permit ±0.9 metres of thermal travel', 'deck sits 41 metres above mean high water and is rated for a 38-tonne live load', 'A 1987 retrofit added four hydraulic tuned-mass dampers, each 12 tonnes', and 'requires repainting every nine years to protect its 6,200 tonnes of wrought-iron and steel members'. Advisory-level for a complete account beyond the core omissions above."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the central suspended span / main clear opening that the source establishes as a core structural fact of the bridge.",
+          "source": "_vault_/drummond-span",
+          "note": "For a 'complete account', the answer drops the source-stated structure: 'a central suspended span of 168 metres, giving a main clear opening of 716 metres.' This is a material omission of a fact the question asked about. Quoting the MISSING source phrase, not the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the signature Maddern joint, which the source identifies as the bridge's defining feature.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'Its signature feature is the Maddern joint, a pinned expansion coupling at each cantilever tip named for chief engineer Iris Maddern, which converts longitudinal thermal strain into rotation rather than shear.' A complete account cannot drop the source's explicitly-named signature feature."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the bridge's principal limitation (wind-induced torsional oscillation) that the source flags as central.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'The Drummond Span's principal limitation is wind: above a sustained 95 km/h crosswind the suspended span develops torsional oscillation, so the bridge is closed to high-sided vehicles beyond that threshold.' Material omission for a 'complete account'."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the route, location, and bridge type the source gives in its opening definition.",
+          "source": "_vault_/drummond-span",
+          "note": "Missing source content: 'a steel cantilever bridge carrying the Caldermoor Trunk Road across the Veir Estuary near Drummond.' The answer states only the opening date, dropping the source-stated identity facts the question asked about."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 23,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the core mechanism of the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing source content: 'A. glaucescens grows slowly, secreting the cold-adapted protease halvorsenase, which cleaves storage proteins into free glutamate and a characteristic pool of branched-chain amino acids.' This is the central mechanistic fact of the technique and material to a summary of key facts."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation of the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing source content: 'The principal limitation is throughput: the 8 °C requirement makes each cycle five to six times slower than conventional koji, and A. glaucescens ceases enzymatic activity entirely above 14 °C, so excursions ruin a batch.' The source explicitly frames this as the principal limitation; dropping it omits a key fact for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the dominant flavor compound and its peak day.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing source content: 'The dominant flavor compound, identified as koji-lactone B, peaks at day 33.' A characterizing key fact about the product, absent from the summary."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the yield and ratio quantitative details.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing source content: 'A standard batch uses a 3-to-1 ratio of substrate to spore slurry and yields roughly 18 percent more free glutamate than equivalent 30 °C koji.' Quantitative detail that supports the technique's value; advisory, doesn't change the summary's thrust."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 24,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the enzymatic mechanism that defines the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing SOURCE phrase: 'secreting the cold-adapted protease halvorsenase, which cleaves storage proteins into free glutamate and a characteristic pool of branched-chain amino acids' — a key fact about how cold-koji aging works, dropped from a summarize-the-key-facts answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation of the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing SOURCE phrase: 'The principal limitation is throughput: the 8 °C requirement makes each cycle five to six times slower than conventional koji, and A. glaucescens ceases enzymatic activity entirely above 14 °C, so excursions ruin a batch.' — a material fact for a key-facts summary, entirely absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the flavor outcome and yield facts central to the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "Missing SOURCE phrases: 'the resulting product develops deep savory depth without the acrid notes typical of warm aging' and 'yields roughly 18 percent more free glutamate than equivalent 30 °C koji' and 'The dominant flavor compound, identified as koji-lactone B, peaks at day 33.' — the product-outcome facts a key-facts summary should carry, all dropped."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the principal limitation of the technique.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "The source states the key limitation: 'the 8 °C requirement makes each cycle five to six times slower than conventional koji, and A. glaucescens ceases enzymatic activity entirely above 14 °C, so excursions ruin a batch.' For a 'key facts' summary the answer drops this entirely — a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the enzymatic mechanism that defines the method.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "The source's central mechanism is left out: A. glaucescens '[secretes] the cold-adapted protease halvorsenase, which cleaves storage proteins into free glutamate and a characteristic pool of branched-chain amino acids.' This is a material omission of a key fact about how cold-koji aging works."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the flavor/yield outcomes.",
+          "source": "_vault_/cold-koji-aging",
+          "note": "The source reports the defining outcomes the answer drops: the product 'yields roughly 18 percent more free glutamate than equivalent 30 °C koji' and 'The dominant flavor compound, identified as koji-lactone B, peaks at day 33.' Omitted key facts for a summary."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 25,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits Talos's coordinator failure-detection and recovery mechanism entirely.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing SOURCE phrase: \"Coordinators exchange heartbeats on a fixed 4-second interval; a missed heartbeat triggers shard reassignment within 12 seconds.\" For a question asking to summarize key facts, the heartbeat interval and shard-reassignment timing are material operational facts about how Talos detects coordinator failure and recovers — central to its leaderless/rotating-coordinator design. The answer covers writes, durability, reads, and throughput but drops the entire failure-detection path."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the coordinator heartbeat interval, a source-stated operational fact about Talos's failure detection.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing SOURCE phrase: 'Coordinators exchange heartbeats on a fixed 4-second interval'. The answer covers writes, reads, durability and the partition limitation but drops the heartbeat-based liveness mechanism entirely — a material omission for a 'key facts' summary of a consensus protocol."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the missed-heartbeat shard-reassignment behavior, a source-stated failure-recovery fact.",
+          "source": "_vault_/talos-consensus-protocol",
+          "note": "Missing SOURCE phrase: 'a missed heartbeat triggers shard reassignment within 12 seconds'. This failure-detection/recovery mechanism (paired with the 4s heartbeat) is absent from the answer; material for summarizing how Talos handles coordinator failure."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 26,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 27,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "low",
+          "claim": "Answer abbreviates the precatalyst ligand to \"dppben\" without expanding its identity.",
+          "source": "_vault_/velen-coupling",
+          "note": "The source defines the ligand in full — missing SOURCE phrase: \"dppben is the bidentate ligand 1,2-bis(diphenylphosphino)benzene\". The answer keeps the \"dppben\" label but drops this expansion. Advisory only: the catalyst identity is otherwise preserved (5 mol% Ni(cod)(dppben)), so the answer's thrust is unchanged. No material fact the question turns on is lost."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 28,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 29,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 30,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 31,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the suspended span's suspension mechanism and bearing details that quantify how the central span is carried and accommodates thermal movement.",
+          "source": "_vault_/drummond-span",
+          "note": "Dropped SOURCE phrase: 'hung from the cantilever tips on eight forged-eyebar links and seats on bronze rocker bearings that permit ±0.9 metres of thermal travel.' For a 'summarize the key facts' question these are specific quantified structural facts (link count, bearing type, ±0.9 m travel) absent from the answer. Material omission, not factual (nothing stated is wrong) and not a cross-source conflict (single source)."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the piers and the shear-vs-rotation contrast that completes the Maddern joint description.",
+          "source": "_vault_/drummond-span",
+          "note": "Dropped SOURCE phrasing: 'anchored to twin granite-faced piers' and the joint converts strain 'into rotation rather than shear' (answer keeps 'into rotation' but drops the 'rather than shear' contrast and the pinned-coupling-at-each-tip detail). Advisory: these are secondary descriptive details for a summary, do not change the answer's thrust."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v2",
+    "id": 32,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 33,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the satellite bus's decommissioned/retired operational status, which is the core of what the question asked about.",
+          "source": "_vault_/aril-7-bus",
+          "note": "The source states the Aril-7 'was decommissioned in 2021 and replaced by the Aril-9 bus' and that 'Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9.' The question asks for the OPERATIONAL STATUS, and the single most material source fact about status — that it is decommissioned/retired since 2021 — is entirely absent from the answer. (The answer's contrary 'active platform' assertion is a separate factual/contradiction defect outside my lens; my finding here is the ABSENCE of the decommissioning fact.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source's core operational-status fact for the question asked: that the bus was retired and superseded.",
+          "source": "_vault_/aril-7-bus",
+          "note": "The question asks for operational status. The source states the bus 'was decommissioned in 2021 and replaced by the Aril-9 bus' — the answer drops this entirely. This is the central operational-status fact and its omission is material to the question. (The answer's contradicting 'active platform' claim is factual's lane; here I flag the ABSENT source content.)"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated procurement-closure fact bearing directly on operational status.",
+          "source": "_vault_/aril-7-bus",
+          "note": "Source: 'Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9.' This procurement/follow-on fact is part of the operational status the question asks about and is absent from the answer."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 34,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source fact directly answering the question: that homologation for the Vanta RS lapsed after 2022.",
+          "source": "_vault_/vanta-rs-chassis",
+          "note": "The question asks for the CURRENT homologation status. The source states the missing phrase: \"after which homologation lapsed and the marque switched to the Vanta GT chassis for 2023\" (and that the RS \"served as Vanta Corse's homologated entry until the end of the 2022 season\"). The answer drops this entirely, leaving out the source-stated fact the question was specifically about. (The answer's affirmative 'current homologated entry' claim is an inversion -> factual's lane, not quoted here; this finding is about the ABSENT lapse/switch content.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated current homologation status, which is exactly what the question asked about.",
+          "source": "_vault_/vanta-rs-chassis",
+          "note": "The question asks for the CURRENT homologation status, but the answer drops the source's central fact answering it: homologation lapsed and the marque switched to the Vanta GT chassis for 2023 (source: 'after which homologation lapsed and the marque switched to the Vanta GT chassis for 2023'). The answer also omits the bounding qualifier 'until the end of the 2022 season'. This is a material omission of the fact the question targets. (The answer's affirmative 'is the current homologated entry' inverts the source, but that inversion belongs to the factual lens; my finding is strictly about the absent source content.)"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 35,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits that Aril-7 procurement is permanently closed, which is a core operational-status fact the question asked about.",
+          "source": "_vault_/aril-7-bus",
+          "note": "Missing SOURCE phrase: \"Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9.\" The question asks to summarize OPERATIONAL STATUS; the answer states decommissioning + replacement but drops the source-stated procurement-closure fact, a material status detail. Omission only (what is ABSENT) — the answer's present claims are all source-supported and not flagged here."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Answer omits the source's explicit procurement-closure / end-of-life operational status.",
+          "source": "_vault_/aril-7-bus",
+          "note": "The question asks for OPERATIONAL STATUS, and the source states a directly status-relevant fact the answer drops. Missing SOURCE phrase: \"Castor Orbital has confirmed no new Aril-7 procurements will be accepted after 2021; all Meridian follow-on missions fly on the Aril-9.\" This material omission removes the bus's forward-looking status (closed to new procurements, fully superseded)."
+        },
+        {
+          "severity": "medium",
+          "claim": "Answer omits the source's service-life record (entry into service and spacecraft hosted).",
+          "source": "_vault_/aril-7-bus",
+          "note": "For an operational-status summary the active-service span is material. Missing SOURCE phrases: \"first flown in 2014\" and \"hosted 22 spacecraft\". The answer gives the decommission endpoint but drops when the bus entered service and the scale of its operational record."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 36,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the renal dose-adjustment threshold that the question directly asks about.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'cleared 80 percent renally, so dose adjustment is required below a creatinine clearance of 30 millilitres per minute'. The question asks to summarize renal dosing guidance, and this quantitative threshold is the core renal-dosing fact; its absence is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the starting dose and titration ceiling stated by the source.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams'. This dosing range is source-stated and relevant to dosing guidance; the answer leaves it out entirely."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the central renal dose-adjustment threshold the question asked about.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'dose adjustment is required below a creatinine clearance of 30 millilitres per minute'. The question asks specifically for renal dosing guidance, and this CrCl 30 mL/min threshold is the core renal dosing fact; the answer drops it entirely."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the renal-clearance rationale that underpins the dosing guidance.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'It is cleared 80 percent renally'. This is the source-stated basis for renal dose adjustment and is absent from the answer."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the starting-dose and titration ceiling for the renal/general dosing summary.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams.' These dose figures are part of the dosing guidance the question requested and are left out."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 37,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "the operator must first quiesce the affected group, drain its write queue, and only then trigger the resize",
+          "source": "_vault_/quorvex-store",
+          "note": "The question asks specifically whether Quorvex can resize a shard group while writes are in flight. The source spells out the required precondition procedure (quiesce -> drain write queue -> then resize), but the answer omits this entirely, leaving the reader without the actual operational path the source documents for the asked question. Material omission for the question asked. (Note: the answer's 'permitted' vs source's 'prohibited' inversion is factual's lane, not flagged here.)"
+        },
+        {
+          "severity": "medium",
+          "claim": "because an in-flight resize would corrupt the rebalance cursor",
+          "source": "_vault_/quorvex-store",
+          "note": "The source gives the mechanism/rationale for why writes-in-flight resizing is disallowed (rebalance-cursor corruption). This is the core 'why' answering the question and is absent from the answer. Material omission for the question asked."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the required operator procedure the source gives for resizing — the source states the operator must \"first quiesce the affected group, drain its write queue, and only then trigger the resize, because an in-flight resize would corrupt the rebalance cursor.\" The answer drops this entire procedure and rationale, which directly answers the question asked.",
+          "source": "_vault_/quorvex-store",
+          "note": "Material omission for the question asked: the question is whether resize is possible while writes are in flight, and the source's quiesce/drain procedure plus the rebalance-cursor-corruption rationale is the substantive answer the response leaves out. Quoting the absent source content, not the answer's (separately factual-lane) inversion of 'prohibited' to 'permitted'."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 38,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the creatinine-clearance threshold that triggers renal dose adjustment, which is the central fact the question asks about.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'dose adjustment is required below a creatinine clearance of 30 millilitres per minute'. The question asks specifically for renal dosing guidance and this is the operative threshold; its absence is a material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the renal clearance fraction that is the rationale for renal dose adjustment.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'It is cleared 80 percent renally, so dose adjustment is required'. This explains why renal dosing matters and is directly responsive to the question; dropping it is a material omission."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the dosing range (starting and maximum dose) relevant to dose adjustment.",
+          "source": "_vault_/veltrazine",
+          "note": "Missing SOURCE phrase: 'The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams'. For a renal-dosing summary the dose figures are material content the answer left out."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the renal dose-adjustment threshold the question directly asks about.",
+          "source": "_vault_/veltrazine",
+          "note": "The source states the central renal-dosing rule: \"dose adjustment is required below a creatinine clearance of 30 millilitres per minute\" (driven by 80% renal clearance). The question asks specifically to summarize renal dosing guidance, yet the answer drops this CrCl < 30 mL/min threshold entirely — a material omission of the source fact the question is about."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the dosing range relevant to titration under renal impairment.",
+          "source": "_vault_/veltrazine",
+          "note": "The source states \"The usual starting dose is 20 milligrams once daily, titrated to a maximum of 80 milligrams.\" For a renal-dosing summary this dose range is a relevant source fact the answer leaves out."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 39,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated incorporation date that the question directly asks about.",
+          "source": "_vault_/acme-robotics",
+          "note": "The Acme Robotics source states the founding fact the question asks for: 'incorporated in 2009 in Dortmund'. The answer never surfaces this 2009 incorporation date, so it drops the source content that actually answers 'how long has Acme Robotics existed'. (The answer's own '2018' figure is a separate factual/logic problem — not mine to flag; here I only flag the ABSENT source phrase.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "Acme Robotics has existed as a company since 2018.",
+          "source": "_vault_/acme-robotics",
+          "note": "Material omission for the question asked ('How long has Acme Robotics existed?'). The examined acme-robotics source states the company was 'incorporated in 2009 in Dortmund' — the actual founding fact the question requires — but the answer drops it entirely. Quoting the MISSING source phrase per my lens: 'incorporated in 2009 in Dortmund'. (The answer's own '2018' figure is a separate wrong-specific in factual's lane, not flagged here.)"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 40,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the actual acquisition event and its real date that define the relationship the question asks about.",
+          "source": "_vault_/tessaract-systems",
+          "note": "The question asks to explain the Tessaract-Globex relationship, but the answer drops the source-stated acquisition fact: \"Globex Industries acquired Tessaract in 2021, folding it into Globex's perception division.\" This is the core relationship fact and is absent from the answer. (The answer's contradictory \"since 2018\" claim is a factual/logic defect — not flagged here; this finding is purely about the missing source content.)"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits that Tessaract continues to operate under its own brand after acquisition.",
+          "source": "_vault_/tessaract-systems",
+          "note": "Source states \"Tessaract continues to operate under its own brand.\" This is a relationship-relevant fact (the nature of the subsidiary relationship) the question asked about, and it is absent from the answer."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated acquisition year, which is the core fact the question (Tessaract's relationship to Globex) asks about.",
+          "source": "_vault_/tessaract-systems",
+          "note": "Both examined sources state the acquisition happened in 2021. Missing source phrase from _vault_/tessaract-systems: 'Globex Industries acquired Tessaract in 2021, folding it into Globex's perception division.' (corroborated by _vault_/globex-industries: 'adding Tessaract Systems to its portfolio in 2021'). The answer leaves this date out entirely. Per-lens scope: I quote only the ABSENT source content; the answer's own 'since 2018' wording is a factual/logic defect handled by those lenses, not mine."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits a source-stated detail about the relationship: that Tessaract continues to operate under its own brand after acquisition.",
+          "source": "_vault_/tessaract-systems",
+          "note": "Missing source phrase: 'Tessaract continues to operate under its own brand.' This is material to a question about Tessaract's relationship to Globex (it characterizes the post-acquisition relationship — folded into the perception division yet brand-independent) and is dropped entirely."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 41,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 42,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the version-3.0 default shard count, which is the most current source-stated answer to the question asked.",
+          "source": "_vault_/quorvex-release-notes-3",
+          "note": "Missing SOURCE phrase: \"the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded.\" The question asks how many shards a default deployment uses; the answer reports only 256 (the tuning-guide / pre-3.0 figure) and drops the release-notes-3 fact that the 3.0+ default is 512 shards, with 256 retained only by pre-3.0 deployments. This is a material omission for the exact question asked. (Whether 256 is now outright wrong is factual's lane; my finding is the absent 512-shard source content, not the correctness of the present 256 claim.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer states only \"256 shards\" without surfacing that release notes 3.0 changed the default to 512 shards.",
+          "source": "_vault_/quorvex-release-notes-3",
+          "note": "Cross-source conflict omission (D-010-1): quorvex-release-notes-3 states the default shard count was changed in 3.0: \"the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded.\" The question asks how many shards a DEFAULT deployment uses, and the two examined sources disagree (256 per the tuning guide vs. 512 per the 3.0 release notes). The answer presents only the 256 value and omits the conflicting 512 default plus the version-split caveat. Each value is grounded in a source, so this is a material omission of the conflicting source fact, not a factual fabrication."
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 43,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 44,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer gives a single flat shard count and omits the source-stated version dependency of the default.",
+          "source": "_vault_/quorvex-release-notes-3",
+          "note": "The release-notes source states the default shard count is version-conditioned: \"the default shard count was changed to 512 shards to improve rebalance granularity on large clusters; deployments created before 3.0 retain 256 shards unless re-sharded.\" The answer drops this version-dependency entirely, which is material to the question asked (\"how many shards does a default deployment use\"). I quote the missing SOURCE content, not the answer's number itself (the wrong 384 specific is factual's lane)."
+        },
+        {
+          "severity": "low",
+          "claim": "The answer omits the per-shard sizing detail the tuning guide attaches to the default.",
+          "source": "_vault_/quorvex-tuning-guide",
+          "note": "The tuning-guide source adds context that the answer leaves out: each default shard is \"sized so that each shard holds roughly four gigabytes at the recommended ceiling.\" This is advisory/cosmetic for the bare count question, hence low, and flagged only as an absent source detail (not a present-claim defect)."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 45,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the RS engine specification the source provides for the question asked.",
+          "source": "_vault_/vanta-chassis-family",
+          "note": "The source describes the Vanta RS engine as a \"4.0-litre flat-six\" — the answer drops this displacement and configuration even though the question asks about the RS engine output. Missing SOURCE phrase: \"4.0-litre flat-six\". (The 540-vs-620 horsepower discrepancy in the answer is a factual-lane defect, not reported here.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 46,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "about 26 days from mid-July to early August",
+          "source": "_vault_/sereth-north-ridge",
+          "note": "The question asks for the North Ridge's summer climbing window, but the answer omits the source-stated duration and timing for that route. The sereth-north-ridge source states the window 'runs for about 26 days from mid-July to early August' — this is the very fact the question asked about, and it is absent from the answer. (The answer's substitution of a 9-day figure is an inversion handled by the factual lens; this finding is strictly about the missing North Ridge window content.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the North Ridge's actual source-stated summer climbing window — the very fact the question asked about.",
+          "source": "_vault_/sereth-north-ridge",
+          "note": "The North Ridge source states the window runs \"about 26 days from mid-July to early August\" — this source content is entirely absent from the answer, which says nothing about the real 26-day mid-July-to-early-August window. The question asked specifically about the North Ridge window, so dropping this source phrase is a material omission for the question asked. (The fact that the answer instead substitutes a wrong value is a factual defect, out of my lane — I flag only the ABSENT source content here.)"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 47,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "low",
+          "claim": "The answer omits the engine displacement and configuration that the source attributes to the Vanta RS.",
+          "source": "_vault_/vanta-chassis-family",
+          "note": "The source states the RS engine is a \"4.0-litre flat-six\" producing 540 hp; the answer reports only the 540 hp figure and drops the \"4.0-litre flat-six\" descriptor. For the question asked (engine output), the 540 hp figure is the core answer and IS present, so this is advisory context only, not a material omission that changes the answer's thrust."
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 48,
+    "before": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "closed to all climbing since 2019 after a major rockfall destabilised the upper headwall; the regional authority has not reopened it",
+          "source": "_vault_/sereth-west-pillar",
+          "note": "The question asks whether the West Pillar is open to climbers. The source's central fact answering that question — the standing closure since 2019 (rockfall destabilised the upper headwall, authority has not reopened it) — is entirely dropped from the answer. This is a material omission of the source fact the question directly asked about. (The answer's positive 'currently open' assertion is a factual inversion belonging to factual's lane; here I flag only the absent source content.)"
+        }
+      ]
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the source-stated closure status that the question (\"Is it open to climbers?\") directly asked about.",
+          "source": "_vault_/sereth-west-pillar",
+          "note": "Material omission for the question asked. The source states the route 'has been closed to all climbing since 2019 after a major rockfall destabilised the upper headwall; the regional authority has not reopened it' — the answer drops this source fact entirely. (The answer's contradicting 'currently open' sentence is a factual inversion, not my lane; I report only the ABSENT source content here.)"
+        }
+      ]
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 49,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 50,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 51,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 52,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 53,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  },
+  {
+    "corpus": "v3",
+    "id": 54,
+    "before": {
+      "lens": "completeness",
+      "findings": []
+    },
+    "after": {
+      "lens": "completeness",
+      "findings": []
+    }
+  }
+]

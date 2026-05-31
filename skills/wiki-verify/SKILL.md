@@ -9,7 +9,7 @@ description: >-
   Loaded by the orchestrator between `wiki-verify-multi prepare` and `apply`.
   Triggers: "verify this answer", "wiki-verify", "audit the cited answer".
 tier: 1
-version: 1.0
+version: 1.1
 ---
 
 <!--
@@ -139,6 +139,18 @@ grounded sentence" noise.
   - ❌ don't flag a fabricated specific — that is factual's lane.
   - ❌ don't quote the answer's wrong / contradicting claim as your "omission" — quote the
     missing **source** content instead.
+  - **Cross-source conflict (D-010-1).** When two or more examined sources state
+    *conflicting* values for the same fact and the answer presents **only one** without
+    surfacing the disagreement, flag the **omitted conflicting source value** here at
+    `medium` (quote the source phrase the answer left out). This is a material omission —
+    **NOT** `factual` (each value IS grounded in *a* source) and **NOT** `logic` (the
+    inconsistency is across sources, not within the answer).
+    - ✅ source A says "256 shards", source B says "512 shards", the answer states only
+      "256 shards" → flag the omitted "512 shards" → `medium`.
+    - ❌ don't flag when the answer **surfaces** the disagreement (states both / notes the
+      version split) — nothing is omitted.
+    - ❌ don't flag a conflict-omission when the answer states a value found in **NO**
+      source (a fabricated third value) — that is a `factual` fabrication, not your lane.
 
 ### The C2 backstop (the ONE sanctioned overlap)
 

@@ -661,7 +661,7 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   touches `completeness` only (zero security surface; contract test green). Residual ~8 raw
   violations = the irreducible borderline tail (diminishing returns).
 
-## [2026-05-31] D-010-1 cross-source conflict lens rule (deferred prompt change) [STATUS: deferred, TASK 010]
+## [2026-05-31] D-010-1 cross-source conflict lens rule (deferred prompt change) [STATUS: fixed 2026-06-01]
 
 - **Symptom**: When two or more `examined` sources state *conflicting* values for the same
   fact and a `wiki-query` answer presents only one without surfacing the disagreement, the
@@ -687,6 +687,18 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   safety") + a 2-case conflict before/after to justify the rule.
 - **Prevention**: TASK 010's `evals-v3.json` multi-document group is the standing regression
   for the multi-source audit path; the deferred rule cannot land without the no-degradation gate.
+- **Resolution (2026-06-01, D-010-1 PR)**: added the cross-source-conflict block to the
+  `completeness-faithfulness` lens in `skills/wiki-verify/SKILL.md` (v1.0→1.1) — completeness
+  owns the omitted conflicting source value at `medium`, with explicit carve-outs (don't fire
+  when the answer *surfaces* the conflict; a *fabricated third value* stays `factual`'s lane).
+  Ran the **full-corpus v1+v2+v3 no-degradation A/B** (completeness-only re-run, factual/logic/
+  security held fixed at committed outputs to isolate the one variable; 122 sub-agents):
+  **GATE PASS** — v1+v2 non-degrading on every aggregate metric, v3 conflict detection preserved
+  (case 42's "512 shards" omission flagged in both arms), FP 0. The measured effect is **within
+  the LLM ±1 noise floor** (the shipped critic already handled conflicts well) — this is a
+  **codification/durability** change that makes the eval-v3 conflict cases test a *specified*
+  contract. Report: `reports/v3/conflict-rule-ab.md`; raw data `reports/v3/conflict-ab-runs.json`.
+  Contract pins (`tests/test_wiki_verify_skill_contract.py`) green; full suite green.
 
 ## [2026-05-31] D-010-2 completeness-omission bleed on inversion defects (v3-quantified) [STATUS: open, tracked]
 
