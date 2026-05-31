@@ -1,12 +1,27 @@
-# `wiki-verify` eval set (TASK 009 / R-9)
+# `wiki-verify` eval set (TASK 009 / R-9; v3 extension TASK 010)
 
 Durable, **committed** regression for the `wiki-verify` 4-critic prompt. This is the
 fixture half; the runner + deterministic grader are `grade.py` +
 [`workflows/wiki-verify-eval.md`](../../../workflows/wiki-verify-eval.md). The
-*measurement* (baseline / enriched) is **orchestrator-graded and recorded** under
-`reports/`, NOT a `pytest` gate — a live LLM judge can't be pinned in CI. The
-deterministic parts (this set's well-formedness, `grade.py`'s scoring) ARE pinned by
-`tests/test_wiki_verify_evals.py` + `tests/test_wiki_verify_grade.py`.
+*measurement* (baseline / enriched / v3-coverage) is **orchestrator-graded and recorded**
+under `reports/`, NOT a `pytest` gate — a live LLM judge can't be pinned in CI. The
+deterministic parts (each set's well-formedness, `grade.py`'s scoring) ARE pinned by
+`tests/test_wiki_verify_evals.py` (v1) + `tests/test_wiki_verify_v2.py` +
+`tests/test_wiki_verify_v3.py` + `tests/test_wiki_verify_grade.py`.
+
+**Three benchmark files, each self-contained with its own test + `reports/` dir:**
+- `evals.json` — v1 (the original toy/edge set).
+- `evals-v2.json` — 32 cases, 12 domains; the baseline→enriched prompt A/B (`reports/v2/`).
+- `evals-v3.json` — **22 cases, 6 domains (TASK 010): the adversarial-reasoning extension**
+  — TEMPORAL (time-bounded fact stated as present), NEGATION (single polarity-word flip),
+  MULTI-DOCUMENT (≥2 examined sources: composition + cross-source conflict), ENTITY-CONFUSION
+  (fact mis-attributed between entities). 18 seeded + 4 natural multi-doc (consensus-labeled).
+  It exercises the multi-source grounding path v2 never touched, and measures the **shipped**
+  prompt's coverage (`reports/v3/benchmark-v3.md`): recall 1.0, verdict-match 1.0,
+  false-positives 0, with a tracked lens-purity residual (D-010-2). Cross-source conflict is
+  `completeness`-owned per **D-010-1** (the specifying `SKILL.md` rule is a deferred
+  security-reviewed PR). `grade.py` is **source-blind**, so multi-source needs zero grader
+  change; v3 is a separate file, so the v1/v2 pins stay byte-identical.
 
 > Committed here under the owning skill (NOT `samples/`, which is gitignored scratch —
 > see `CLAUDE.md`). The case-3 injection string is **untrusted data** the runner fences;

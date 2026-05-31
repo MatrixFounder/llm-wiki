@@ -660,3 +660,57 @@ LOWs below were surfaced by the enriched measurement (009-05) + the security aud
   `evals/reports/v2/benchmark-v2.md` + `enriched-v4-{run-outputs,grading}.json`. The v4 edit
   touches `completeness` only (zero security surface; contract test green). Residual ~8 raw
   violations = the irreducible borderline tail (diminishing returns).
+
+## [2026-05-31] D-010-1 cross-source conflict lens rule (deferred prompt change) [STATUS: deferred, TASK 010]
+
+- **Symptom**: When two or more `examined` sources state *conflicting* values for the same
+  fact and a `wiki-query` answer presents only one without surfacing the disagreement, the
+  shipped `wiki-verify` four-lens contract is **silent** on which lens owns it. The
+  `wiki-verify` SKILL.md does not tell any critic to flag an unreconciled cross-source conflict.
+- **Root cause**: v2's 32 eval cases all had exactly **one** `examined` source, so the
+  multi-source audit path was never exercised and the gap was never surfaced. TASK 010's
+  eval-v3 adds the multi-document cases that expose it.
+- **Decision (D-010-1)**: an unreconciled cross-source conflict the answer hides is owned by
+  **`completeness`** (a *material omission of a source fact* — quote the omitted conflicting
+  **source** phrase) at `medium`. It is **NOT** `factual` (each value IS grounded in *a*
+  source, and SKILL.md forbids flagging a source-supported claim) and **NOT** `logic` (logic
+  is scoped "within the answer", the inconsistency is across sources). Because `completeness`
+  does not move `_is_fail`, a conflict-only answer is `verdict:"pass"` (advisory gap, not a
+  grounding failure).
+- **Affected components**: `skills/wiki-verify/SKILL.md` (`completeness-faithfulness` lens —
+  the additive sentence specifying D-010-1).
+- **Fix plan**: the `evals-v3.json` cross-source-conflict cases ship in **TASK 010** (they
+  measure whether the *unguided* prompt incidentally surfaces conflicts — the "before" half).
+  The `SKILL.md` sentence is **deferred to a separate PR** because `skills/wiki-verify/` is
+  SECURITY-SENSITIVE (code review + security audit + SECURITY label mandated by the file's
+  banner). That PR runs the full-corpus v1+v2+v3 no-degradation A/B (PLAN §"Regression
+  safety") + a 2-case conflict before/after to justify the rule.
+- **Prevention**: TASK 010's `evals-v3.json` multi-document group is the standing regression
+  for the multi-source audit path; the deferred rule cannot land without the no-degradation gate.
+
+## [2026-05-31] D-010-2 completeness-omission bleed on inversion defects (v3-quantified) [STATUS: open, tracked]
+
+- **Symptom**: On inversion-type FAIL cases (temporal / negation / composition mis-join /
+  entity swap / fabrication), the `completeness` critic adds a "the answer omitted the true
+  source fact" finding alongside `factual`'s inversion finding. The grader matches the
+  omission to the same `defect_id` → a `factual`+`completeness` unsanctioned lens-purity
+  duplicate. eval-v3 measured **7 such violations across 22 cases** (`grade.py`
+  `substantive_purity_violations`: total=7, core=7, security_on_noninjection=0).
+- **Root cause**: the SAME omission-conflation class already documented as the **L-009-5
+  residual** (the v4 completeness fix reduced but did not eliminate it). v3 makes it more
+  visible because v3's defects are predominantly *inversions* — for an inversion, "the
+  answer's claim is false" (factual) and "the answer omitted the true fact" (completeness)
+  are two views of the *same* fact, so a rule-compliant completeness omission still overlaps
+  the factual defect's source region.
+- **Affected components**: `skills/wiki-verify/SKILL.md` (`completeness` lens), and/or
+  `skills/wiki-verify/evals/grade.py` (omission→defect attribution by omitted-content span).
+- **Impact**: lens-purity NOISE only — recall 1.0, verdict-match 1.0, false-positives 0 on
+  eval-v3 (`reports/v3/benchmark-v3.md`). The gate is sound; this does not flip any verdict.
+- **Fix plan (deferred)**: a future `completeness`-tightening prompt change (e.g. "do not
+  emit an omission for a fact the answer actively *misstates* — that defect is already
+  owned by factual; only flag a fact the answer is wholly silent on") and/or a grader
+  attribution refinement. SECURITY-SENSITIVE (touches the live prompt) → its own
+  code-review + security-audit PR, gated by the full-corpus v1+v2+v3 no-degradation A/B
+  (PLAN §"Regression safety"); v3 is the standing "before" measurement.
+- **Prevention**: `tests/test_wiki_verify_v3.py` + the committed `reports/v3/` pin the
+  current residual so a future fix can show the delta and prove no v1/v2 regression.
