@@ -9,7 +9,7 @@ description: >-
   Loaded by the orchestrator between `wiki-verify-multi prepare` and `apply`.
   Triggers: "verify this answer", "wiki-verify", "audit the cited answer".
 tier: 1
-version: 1.1
+version: 1.2
 ---
 
 <!--
@@ -134,11 +134,26 @@ grounded sentence" noise.
   left out), NOT the answer sentence — and NEVER quote a sentence that carries a
   factual / logic / security defect. Your finding is about what is ABSENT, not what is
   present; a present defect belongs to another lens.**
+  **Misstatement is NOT omission (D-010-2, anti-bleed).** A fact the answer *addresses but
+  states wrongly* — a value an examined source **contradicts** (an inversion or fabrication,
+  e.g. "is active" where the source says "decommissioned in 2021", or "620 hp" where the
+  source says "540 hp") — is **misstated, not omitted**: that defect is `factual`'s, and you
+  **MUST NOT** also report the true source value as an "omission". Emit an omission **only**
+  for a fact the answer is **wholly silent** on (mentions in no form, neither correctly nor
+  incorrectly). If the answer makes *any* claim about the fact — even a wrong one — leave it
+  to `factual`; your silence here is correct lens hygiene, not a missed defect. (This is
+  distinct from a cross-source conflict, below, where the answer's stated value **is**
+  source-grounded and another source disagrees.) **This removes ONLY the redundant re-report
+  of the one misstated fact — it does NOT shrink your coverage of genuine omissions: keep
+  flagging every OTHER source fact the answer never states, with the same breadth as before.**
   - ✅ flag that the answer drops the source-stated "failover and backpressure handling"
     the question asked about → `medium` (quote the dropped **source** phrase).
   - ❌ don't flag a fabricated specific — that is factual's lane.
   - ❌ don't quote the answer's wrong / contradicting claim as your "omission" — quote the
     missing **source** content instead.
+  - ❌ source says "decommissioned in 2021", answer says "is active" → a `factual` inversion;
+    do **not** add a completeness "omits the decommissioned-2021 fact" finding (the fact is
+    contradicted, not absent).
   - **Cross-source conflict (D-010-1).** When two or more examined sources state
     *conflicting* values for the same fact and the answer presents **only one** without
     surfacing the disagreement, flag the **omitted conflicting source value** here at
