@@ -86,10 +86,14 @@
 **MVP skills (Phase 3a):**
 - `wiki-init` (UC-01) — bootstrap.
 - `wiki-append-log` (UC-02 step 11) — chronological log + monthly rotation.
-- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls vendored `ingest()` in-process for file synthesis (subprocess fallback retained for the standalone-CLI path), then indexes the manifest into SQLite. `--source` is the sole input flag. Manifest-consumer functions (`validate_manifest`, `index_from_manifest`, `WikiIngestError`) live in the neutral module `scripts.wiki_skills._manifest_consumer`; `wiki_enrich.py` re-exports them for backward compat.
+- `wiki-enrich` (UC-06/UC-07 bridge, ADR-001 Option I) — calls vendored `ingest()` in-process for file synthesis (subprocess fallback retained for the standalone-CLI path), then indexes the manifest into SQLite. `--source` is the sole input flag. Manifest-consumer functions (`validate_manifest`, `index_from_manifest(manifest, vault_id, vault_root, db_path=None, repo=None)`, `WikiIngestError`) live in the neutral module `scripts.wiki_skills._manifest_consumer`; `wiki_enrich.py` re-exports them for backward compat. **TASK 015 / H-PERF-3 + P-8:** `index_from_manifest` now takes an optional `repo` parameter; when supplied, it reuses that connection for the upsert loop + log_event + does NOT close it (caller owns lifecycle); when absent, opens+closes its own. The upsert loop calls `upsert_one(…, repo)` instead of `main(argv)` — eliminates N argparse calls + N connection cycles per batch.
 - `wiki-extract-concepts` (UC-08, UC-09) — see dedicated Component section below.
 - `wiki-index-render` (UC-05 step 7) — projection из SQLite в `index.md`.
-- `wiki-index-upsert` (UC-02 step 7) — упрощённый wrapper над `Index Layer.upsert_page`.
+- `wiki-index-upsert` (UC-02 step 7) — wrapper над `Index Layer.upsert_page`. Exposes two
+  entry-points: `main(argv)` (CLI, argparse-full) and **`upsert_one(vault_id, src,
+  vault_root, repo) → dict`** (TASK 015 / H-PERF-3 programmatic path — no argparse, accepts
+  an already-open repo, returns the envelope dict directly; `main` delegates to
+  `upsert_one`). Library callers use `upsert_one`; CLI users hit `main` unchanged.
 - `wiki-lint` (UC-04, UC-13) — health-check через SQL; **+ alias-collision detection** (R-5.6: DB rows + Class A frontmatter scan + cross-table).
 - `wiki-search` (UC-03, UC-12) — FTS5 query + nice formatting; **alias expansion on by default** (R-5.5; `--no-expand-aliases` opt-out).
 - `wiki-confirm` (UC-09, UC-10) — candidate→confirmed promotion (operator + `--auto` mention-threshold). See **Entity Resolver** component below.
@@ -117,7 +121,8 @@
 
 `argparse` exposes two required subcommands via `add_subparsers(required=True)`. There is no monolithic "no subcommand" form — invoking `wiki-extract-concepts` without `prepare` or `apply` errors out at argparse with a usage line pointing at the two subcommands.
 
-**`wiki-extract-concepts prepare --vault V --vault-root P --source-page S [--db-path PATH]`**
+**`wiki-extract-concepts prepare --vault V --vault-root P --source-page S [--known-concepts-format {full,slugs-only}] [--db-path PATH]`**
+**`wiki-extract-concepts prepare --vault V --vault-root P --batch <slugs.json> [--known-concepts-format {full,slugs-only}] [--db-path PATH]`** *(TASK 015 / P-7)*
 
 Deterministic reconnaissance. No LLM call. Returns JSON to stdout:
 
@@ -135,7 +140,21 @@ Deterministic reconnaissance. No LLM call. Returns JSON to stdout:
 
 `source_path` is emitted **relative to `--vault-root`** so the envelope never discloses the operator's absolute filesystem layout. `is_unchanged=true` → calling agent emits an "unchanged" envelope and stops (no synthesis). `missing_concept_files: [...]` warns the operator about DB rows pointing to entity files that no longer exist on disk (disk/DB drift detection; see KNOWN_ISSUES P-9 for the deferred lazy variant).
 
+**TASK 015 / P-6 — `--known-concepts-format {full,slugs-only}`** (default `full`): `full` = existing `[{"slug","name","type","aliases":[…]},…]`; `slugs-only` = `["slug-a","slug-b",…]` plain string array — reduces payload from ~500 KB to ~30 KB at 1k entities. The orchestrator resolves full records on demand for collision detection.
+
+**TASK 015 / P-7 — `--batch <slugs.json>`** (mutex with `--source-page`): reads a JSON list of source-page slugs; loads `known_concepts` **once** (shared, `--known-concepts-format` applies); hashes + recon-checks each slug independently; returns a batch envelope where per-entry errors are non-fatal. Security model: the `--batch` slugs file may reside anywhere readable by the operator (no `validate_inside_vault` on the file itself — it contains only slug *strings*); vault-containment is enforced per-slug by `_resolve_source_inside_sources`, not on the batch file path.
+
+```json
+{
+  "batch": [
+    {"source_slug":"…","source_hash":"…","is_unchanged":false,"known_concepts":[…],"missing_concept_files":[],"source_path":"…"},
+    {"source_slug":"…","error":"SOURCE_NOT_FOUND","message":"…"}
+  ]
+}
+```
+
 **`wiki-extract-concepts apply --vault V --vault-root P --source-page S --source-hash HEX (--candidates-file PATH | --candidates-stdin) [--orchestrator-id STRING] [--ingest] [--db-path PATH]`**
+**`wiki-extract-concepts apply --vault V --vault-root P --batch-candidates <combined.json> [--orchestrator-id STRING] [--ingest] [--db-path PATH]`** *(TASK 015 / P-7)*
 
 Deterministic application. No LLM call. Reads candidates JSON from the operator, validates against the strict schema, writes pages + upserts entities + refs + manifest + optional indexer dispatch.
 
@@ -175,7 +194,7 @@ Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone
 - `check_idempotency(repo, vault_id, source_slug, current_hash) → bool` — queries `source_state` with `source_kind='extract-concepts'`; returns `True` iff the recorded hash equals `current_hash`. Defensive NULL guard for corrupted rows.
 - `update_idempotency_state(repo, vault_id, source_slug, new_hash) → None` — UPSERT on `source_state`. Called by `apply` at the END of the pipeline, gated on `summary["failed"]` being empty when `--ingest` is set, and wrapped in `_try_update_idempotency_state()` so a DB-side failure does not split the success/failure signal.
 - `build_manifest(vault_id, source_slug, source_hash, create_list, mention_list, log_event, vault_root) → dict` — produces wiki-ingest v1.1-compatible JSON manifest.
-- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path) → dict` — when `--ingest` passed, calls `validate_manifest(...)` then `index_from_manifest(...)` from the neutral module `scripts.wiki_skills._manifest_consumer` in-process. No subprocess.
+- `dispatch_to_indexer(manifest_dict, vault_id, vault_root, db_path, repo=None) → dict` — when `--ingest` passed, calls `validate_manifest(...)` then `index_from_manifest(manifest, vault_id, vault_root, db_path, repo=repo)` from the neutral module `scripts.wiki_skills._manifest_consumer` in-process. No subprocess. **TASK 015 / P-8:** passes `repo` through when the caller already holds an open connection (batch-apply path) so no extra connection is opened.
 
 ##### Outputs
 
@@ -191,7 +210,20 @@ Every DB query and every file-path write includes a `vault_id=?` predicate or is
 
 ##### Bulk-transaction semantics
 
-For one `apply` call, all DB writes — `upsert_entity` (N calls), `replace_refs` (1 call), `source_state` update (1 call) — execute under a **single `BEGIN IMMEDIATE` transaction**. Concept-file writes happen first (atomic per-file via tempfile + rename + content-hash skip + symlink refuse). The DB commit ties them together. On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical), and the next run replays via `source_state` mismatch — content-hash skip ensures files are not pointlessly rewritten if their content is already correct.
+For one **single-page** `apply` call, all DB writes — `upsert_entity` (N calls),
+`replace_refs` (1 call), `source_state` update (1 call) — execute under a **single
+`BEGIN IMMEDIATE` transaction**. Concept-file writes happen first (atomic per-file via
+tempfile + rename + content-hash skip + symlink refuse). The DB commit ties them together.
+On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical),
+and the next run replays via `source_state` mismatch — content-hash skip ensures files
+are not pointlessly rewritten if their content is already correct.
+
+**TASK 015 / P-7 — `apply --batch-candidates`:** each entry's DB writes execute under
+their **own independent `BEGIN IMMEDIATE` transaction** on the shared repo connection. A
+per-entry failure rolls back ONLY that entry; previously committed entries in the same
+batch are unaffected. The shared repo is opened once and closed once for the entire
+batch-apply invocation; individual entry transactions are committed (or rolled back) inside
+that single connection lifecycle.
 
 ##### Operator-supplied JSON → SQL safety
 

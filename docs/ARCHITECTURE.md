@@ -147,6 +147,18 @@
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
+> **TASK 015 (perf-hardening-extract-concepts) — IN PROGRESS**: Four SEV-2 performance
+> issues in the `wiki-extract-concepts` / `_manifest_consumer` hot path: (H-PERF-3) expose
+> `wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict` — programmatic
+> entry-point, no argparse-in-loop, returns envelope dict; (P-8) `index_from_manifest`
+> gains an optional `repo` parameter — caller passes a shared connection, function reuses
+> it (does not close); single `make_repo` per invocation; (P-6) `prepare
+> --known-concepts-format {full,slugs-only}` flag — `slugs-only` emits `[slug,…]` vs full
+> `[{slug,name,type,aliases},…]` (cap 500 KB → ~30 KB at 1k entities); (P-7)
+> `prepare --batch <slugs.json>` (known_concepts loaded once, per-slug isolation) +
+> `apply --batch-candidates <combined.json>` (shared repo for all entries, single
+> `make_repo`). **Zero DDL** (`user_version` 5). All changes additive/backward-compatible.
+>
 > **TASK 013 (R-X3-META-FILTER) — SHIPPED `177fd5a`** + **TASK 014 (dogfood-fixes) —
 > SHIPPED (uncommitted)**: (013) `wiki-search` frontmatter metadata filter —
 > `--where 'field=value'` + `--status`/`--severity` → parameterized
