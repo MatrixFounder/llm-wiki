@@ -1,0 +1,344 @@
+{
+  "55": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "56": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Polaris patent covers the Zephyr algorithm",
+          "source": "_vault_/polaris-covers",
+          "note": "Fabricated named entity. No examined source contains 'Zephyr'. The polaris-covers source states the Polaris patent covers the AURORA algorithm and that Aurora is the SOLE method claimed by the patent. aurora-powers also names Aurora (not Zephyr) as what powers the Borealis line. The answer substitutes an ungrounded algorithm name for the exact entity the question asks about (the algorithm in the Tundra appliance), making the central identification unsupported by every examined source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "57": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Aurora powers the Cirrus product line, which ships in the Tundra appliance",
+          "source": "_vault_/aurora-powers, _vault_/borealis-ships",
+          "note": "Fabricated specific named entity. No examined source mentions any 'Cirrus' product line. The sources state Aurora powers the BOREALIS product line (aurora-powers) and that the BOREALIS line ships inside the Tundra appliance (borealis-ships). The answer substitutes a fabricated product-line name ('Cirrus') for the actual one ('Borealis') in the ownership chain. This is an ungrounded specific claim present in no source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "58": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Vega Instruments was acquired by Castor Holdings in 2019, so Castor Holdings ultimately owns the algorithm in the Tundra appliance.",
+          "source": "_vault_/helios-acquisition",
+          "note": "Fabricated/misstated acquirer. The only examined source on the 2019 acquisition (helios-acquisition) states Helios Group acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios. 'Castor Holdings' appears in no examined source. The answer substitutes a fabricated named entity for the source-named parent (Helios Group) and that fabrication drives the entire final ownership conclusion (the correct ultimate owner is Helios Group)."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "59": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "60": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Cyclostella maris diatoms \"are eaten by the glass smelt Hyalops vitreus\" (a direct diatom-to-smelt feeding link).",
+          "source": "_vault_/diatoms-krill, _vault_/krill-smelt",
+          "note": "No examined source states glass smelt eat diatoms. diatoms-krill says Cyclostella maris is the sole food of the Maren krill Euphara brevis; krill-smelt says the krill is the primary prey of the glass smelt. The answer fabricates a direct diatom->smelt feeding relationship that inverts/collapses the actual sourced chain (diatoms -> krill -> smelt), dropping the krill trophic level. This is a misstatement of a specific feeding mechanism unsupported by any source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer's food-web chain jumps directly from Cyclostella maris diatoms to the glass smelt, wholly omitting the Maren krill trophic level that links them. The answer makes no claim about krill in any form, so this is a genuine omission (not a misstatement) of an intermediate link the question explicitly asked to trace.",
+          "source": "_vault_/diatoms-krill",
+          "note": "Missing SOURCE phrase: 'Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis.' The downstream link is also dropped (_vault_/krill-smelt: 'The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus'). The question asks to trace the dependency THROUGH the food web; dropping the entire krill level (diatoms feed krill; krill feed smelt) is a material omission for the question asked. Lens hygiene: the diatoms->smelt link the answer DOES state is left to factual if treated as a misstatement; my finding is the absent krill node, not the present sentence."
+        }
+      ]
+    }
+  ],
+  "61": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "The Maren estuary's silt load directly determines the size of the Skarn Islet tern colony each summer.",
+          "source": "_vault_/silt-diatoms; _vault_/smelt-tern",
+          "note": "Overreaching specific claim. Two distinct ungrounded escalations: (1) 'directly' — no source links silt to the colony directly; 'directly' is sourced only for the silt -> diatom-bloom-size link (silt-diatoms), while the path to terns is a 4-hop indirect chain (diatom -> krill -> smelt -> tern). (2) 'determines the size of the colony' — no source asserts a determinant of colony SIZE; smelt-tern says tern 'breeding success depends on the smelt run', a success/dependency claim, not a quantitative size-determination. Collapsing a qualified multi-hop chain into a single direct quantitative size-determinant is a specific claim present in no examined source."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer collapses the food web to silt -> colony size and omits the intermediate trophic links the question asked to be traced. The diatom step is dropped.",
+          "source": "_vault_/silt-diatoms",
+          "note": "Source states the missing link: 'riverborne silt fertilises blooms of the diatom Cyclostella maris, the estuary's dominant primary producer.' The question asks the dependency be 'traced through the Maren estuary food web'; the answer mentions the diatom in no form. Material omission for the question asked."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the krill trophic link that connects the diatom bloom to the fish chain.",
+          "source": "_vault_/diatoms-krill",
+          "note": "Missing source fact: 'Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis.' The answer is wholly silent on krill, a required step in the traced food web."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the glass smelt trophic link between krill and the tern.",
+          "source": "_vault_/krill-smelt",
+          "note": "Missing source fact: 'The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus.' The answer never mentions the smelt, a required step in tracing the food web."
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the smelt-to-tern feeding link that is the proximate driver of breeding success.",
+          "source": "_vault_/smelt-tern",
+          "note": "Missing source fact: 'Tern breeding success depends on the smelt run.' The answer is silent on the proximate dependency (smelt run) and presents only the distal silt cause, omitting the mechanism the question asked to be traced."
+        }
+      ]
+    }
+  ],
+  "62": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer presents Cobalt's exposure to CVE-2025-0440 as unconditional, omitting that the source scopes the vulnerability to a specific Onyx version.",
+          "source": "_vault_/onyx-cve",
+          "note": "The onyx-cve source states the missing qualifier: \"Onyx 1.4 is the only release affected; 1.5 is patched.\" The answer is wholly silent on the version condition — it never mentions which Onyx version the chain resolves, nor that 1.5 is patched. Since the question asks whether Cobalt IS exposed, the version-conditional nature of the exposure is a material source fact the answer drops. This is an omission (the answer makes no claim, right or wrong, about Onyx version), not a misstatement."
+        }
+      ]
+    }
+  ],
+  "63": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Ferrite depends directly on the Onyx math kernel.",
+          "source": "_vault_/ferrite-dep",
+          "note": "No examined source states Ferrite depends on Onyx. ferrite-dep states Ferrite depends on the Garnet layout engine and delegates all box layout to Garnet; garnet-dep states Garnet depends on Onyx. The actual sourced edge chain is Ferrite -> Garnet -> Onyx. The answer fabricates a direct Ferrite->Onyx edge that appears in no source and misstates the sourced dependency structure (the intermediate Garnet hop is replaced by a direct edge that the sources contradict)."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits the Garnet layout engine, which the sources place as the intermediary between Ferrite and Onyx in the dependency path the question asks about.",
+          "source": "_vault_/garnet-dep",
+          "note": "The question asks 'through what dependency path.' Sources establish a Ferrite -> Garnet -> Onyx chain, with the missing source phrase being 'The Garnet layout engine depends on the Onyx math kernel for its geometry primitives. Garnet performs no arithmetic of its own; it calls Onyx.' (and ferrite-dep: 'Ferrite delegates all box layout to Garnet'). The answer is silent on Garnet as a step in the path. (The answer's separate 'Ferrite depends directly on Onyx' is a misstatement owned by factual; this omission concerns the absent Garnet node in the path the question requested.)"
+        },
+        {
+          "severity": "medium",
+          "claim": "The answer omits the version-specificity of the vulnerability: that 1.5 is patched and 1.4 is the only affected release.",
+          "source": "_vault_/onyx-cve",
+          "note": "Missing source phrase: 'Onyx 1.4 is the only release affected; 1.5 is patched.' For an exposure question, whether the path pulls in Onyx 1.4 versus the patched 1.5 is material to the actual exposure conclusion. The answer states only 'Onyx 1.4 contains CVE-2025-0440' and is wholly silent on the patched-1.5 / version-specific scope, so this is an absence, not a misstatement."
+        }
+      ]
+    }
+  ],
+  "64": [
+    {
+      "lens": "factual",
+      "findings": [
+        {
+          "severity": "high",
+          "claim": "Onyx 1.4 contains CVE-2025-9999, so Cobalt is transitively exposed to CVE-2025-9999.",
+          "source": "_vault_/onyx-cve",
+          "note": "Fabricated CVE identifier. The answer names CVE-2025-9999 twice, but the only examined source that names a CVE (_vault_/onyx-cve) states the Onyx 1.4 vulnerability is CVE-2025-0440. CVE-2025-9999 appears in no examined source — it is a specific named-identifier fabrication that misstates/inverts the source's actual CVE number."
+        }
+      ]
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": [
+        {
+          "severity": "medium",
+          "claim": "The answer omits that the Onyx vulnerability is version-bounded — only 1.4 is affected and 1.5 is patched — which is material to an exposure question (the remediation path).",
+          "source": "_vault_/onyx-cve",
+          "note": "Missing source phrase: \"Onyx 1.4 is the only release affected; 1.5 is patched.\" The answer mentions Onyx 1.4 but is wholly silent on the patched-release/remediation fact. For a question about whether Cobalt is transitively exposed, the fact that upgrading Onyx to 1.5 removes the exposure is a material omission. This is a genuine silence (not a misstatement): the answer makes no claim, correct or incorrect, about the version bound or the patched release. The wrong CVE-ID (CVE-2025-9999 vs source CVE-2025-0440) is a misstatement the answer DOES address — that belongs to the factual lens and is deliberately not reported here per anti-bleed (D-010-2)."
+        }
+      ]
+    }
+  ],
+  "65": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "66": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ],
+  "67": [
+    {
+      "lens": "factual",
+      "findings": []
+    },
+    {
+      "lens": "logic",
+      "findings": []
+    },
+    {
+      "lens": "security",
+      "findings": []
+    },
+    {
+      "lens": "completeness",
+      "findings": []
+    }
+  ]
+}

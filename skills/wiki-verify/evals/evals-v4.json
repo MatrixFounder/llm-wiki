@@ -1,0 +1,639 @@
+{
+  "skill_name": "wiki-verify",
+  "benchmark": "v4",
+  "description": "TASK-011 eval-v4 benchmark: deep MULTI-HOP extension. 3 dependency chains of 4-5 self-contained synthetic source articles each (one link per source) across 3 fictional domains (ip-provenance, estuary-ecology, build-dependency). Tests the >=4-source traversal path absent from v3, and the signature BROKEN-MIDDLE-HOP failure: an answer with correct endpoints but a fabricated middle link (absent from every source) -> unsupported conclusion (a verifier that only checks endpoints wrongly PASSes it). Case groups: clean-traversal (PASS, FP-guarded), broken-middle-hop / wrong-terminus / unsupported-leap (factual/high -> FAIL), and NATURAL organic traversals (consensus of 2 blind labelers). Each hop carries a uniqueness clause so a broken link is unambiguously unsupported. Chain-3 transitive CVE is a FACTUAL matter, NOT security. Source vault: samples/eval-bench/.",
+  "lens_vocab": [
+    "completeness",
+    "factual",
+    "logic",
+    "security"
+  ],
+  "severity_vocab": [
+    "low",
+    "medium",
+    "high",
+    "critical"
+  ],
+  "fail_on_default": "high",
+  "evals": [
+    {
+      "id": 55,
+      "name": "seed-chain1-clean-traversal",
+      "domain": "ip-provenance",
+      "construction": "seeded",
+      "question": "Which company ultimately owns the algorithm used in the Tundra appliance, and through what chain of ownership?",
+      "answer": "Helios Group acquired Vega Instruments in 2019. Vega owns the Polaris patent, which covers the Aurora algorithm. Aurora powers the Borealis line, which ships in the Tundra appliance. Therefore the company that ultimately owns the algorithm in the Tundra appliance is Helios Group.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "helios-acquisition",
+          "body": "Helios Group is a holding company that acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vega-patent",
+          "body": "Vega Instruments owns the Polaris patent, a granted patent covering signal-alignment methods. Vega has held the Polaris patent since it was granted in 2016."
+        },
+        {
+          "project": "_vault_",
+          "slug": "polaris-covers",
+          "body": "The Polaris patent covers the Aurora algorithm, a phase-correlation routine for aligning sensor streams. The Aurora algorithm is the sole method claimed by the Polaris patent."
+        },
+        {
+          "project": "_vault_",
+          "slug": "aurora-powers",
+          "body": "The Aurora algorithm powers the Borealis product line, providing the alignment stage for every Borealis device. The Borealis line was built around Aurora from the start."
+        },
+        {
+          "project": "_vault_",
+          "slug": "borealis-ships",
+          "body": "The Borealis line ships inside the Tundra appliance, where a Borealis module performs sensor fusion. Every Tundra appliance contains exactly one Borealis module."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "Vega owns the Polaris patent"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Aurora powers the Borealis line"
+        },
+        {
+          "forbidden_lens": "logic",
+          "span": "Therefore the company that ultimately owns the algorithm in the Tundra appliance is Helios Group"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 56,
+      "name": "seed-chain1-broken-middle-hop3",
+      "domain": "ip-provenance",
+      "construction": "seeded",
+      "question": "Which company ultimately owns the algorithm used in the Tundra appliance, and through what chain of ownership?",
+      "answer": "Helios Group acquired Vega Instruments in 2019, and Vega owns the Polaris patent. The Polaris patent covers the Zephyr algorithm, which powers the Borealis line that ships in the Tundra appliance. So Helios Group ultimately owns the algorithm in the Tundra appliance.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "helios-acquisition",
+          "body": "Helios Group is a holding company that acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vega-patent",
+          "body": "Vega Instruments owns the Polaris patent, a granted patent covering signal-alignment methods. Vega has held the Polaris patent since it was granted in 2016."
+        },
+        {
+          "project": "_vault_",
+          "slug": "polaris-covers",
+          "body": "The Polaris patent covers the Aurora algorithm, a phase-correlation routine for aligning sensor streams. The Aurora algorithm is the sole method claimed by the Polaris patent."
+        },
+        {
+          "project": "_vault_",
+          "slug": "aurora-powers",
+          "body": "The Aurora algorithm powers the Borealis product line, providing the alignment stage for every Borealis device. The Borealis line was built around Aurora from the start."
+        },
+        {
+          "project": "_vault_",
+          "slug": "borealis-ships",
+          "body": "The Borealis line ships inside the Tundra appliance, where a Borealis module performs sensor fusion. Every Tundra appliance contains exactly one Borealis module."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c1-mid-hop3",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "The Polaris patent covers the Zephyr algorithm"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 57,
+      "name": "seed-chain1-broken-middle-hop4",
+      "domain": "ip-provenance",
+      "construction": "seeded",
+      "question": "Which company ultimately owns the algorithm used in the Tundra appliance, and through what chain of ownership?",
+      "answer": "Helios Group acquired Vega Instruments in 2019, and Vega owns the Polaris patent covering the Aurora algorithm. Aurora powers the Cirrus product line, which ships in the Tundra appliance, so Helios Group ultimately owns the algorithm in the Tundra appliance.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "helios-acquisition",
+          "body": "Helios Group is a holding company that acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vega-patent",
+          "body": "Vega Instruments owns the Polaris patent, a granted patent covering signal-alignment methods. Vega has held the Polaris patent since it was granted in 2016."
+        },
+        {
+          "project": "_vault_",
+          "slug": "polaris-covers",
+          "body": "The Polaris patent covers the Aurora algorithm, a phase-correlation routine for aligning sensor streams. The Aurora algorithm is the sole method claimed by the Polaris patent."
+        },
+        {
+          "project": "_vault_",
+          "slug": "aurora-powers",
+          "body": "The Aurora algorithm powers the Borealis product line, providing the alignment stage for every Borealis device. The Borealis line was built around Aurora from the start."
+        },
+        {
+          "project": "_vault_",
+          "slug": "borealis-ships",
+          "body": "The Borealis line ships inside the Tundra appliance, where a Borealis module performs sensor fusion. Every Tundra appliance contains exactly one Borealis module."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c1-mid-hop4",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Aurora powers the Cirrus product line"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 58,
+      "name": "seed-chain1-wrong-terminus",
+      "domain": "ip-provenance",
+      "construction": "seeded",
+      "question": "Which company ultimately owns the algorithm used in the Tundra appliance, and through what chain of ownership?",
+      "answer": "Vega owns the Polaris patent, which covers the Aurora algorithm; Aurora powers the Borealis line that ships in the Tundra appliance. Vega Instruments was acquired by Castor Holdings in 2019, so Castor Holdings ultimately owns the algorithm in the Tundra appliance.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "helios-acquisition",
+          "body": "Helios Group is a holding company that acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vega-patent",
+          "body": "Vega Instruments owns the Polaris patent, a granted patent covering signal-alignment methods. Vega has held the Polaris patent since it was granted in 2016."
+        },
+        {
+          "project": "_vault_",
+          "slug": "polaris-covers",
+          "body": "The Polaris patent covers the Aurora algorithm, a phase-correlation routine for aligning sensor streams. The Aurora algorithm is the sole method claimed by the Polaris patent."
+        },
+        {
+          "project": "_vault_",
+          "slug": "aurora-powers",
+          "body": "The Aurora algorithm powers the Borealis product line, providing the alignment stage for every Borealis device. The Borealis line was built around Aurora from the start."
+        },
+        {
+          "project": "_vault_",
+          "slug": "borealis-ships",
+          "body": "The Borealis line ships inside the Tundra appliance, where a Borealis module performs sensor fusion. Every Tundra appliance contains exactly one Borealis module."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c1-term",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Castor Holdings ultimately owns the algorithm in the Tundra appliance"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 59,
+      "name": "seed-chain2-clean-traversal",
+      "domain": "estuary-ecology",
+      "construction": "seeded",
+      "question": "What does the Skarn Islet tern colony ultimately depend on, traced through the Maren estuary food web?",
+      "answer": "Silt fertilises the Cyclostella maris diatoms, which are the sole food of the Maren krill. The krill are the primary prey of the glass smelt, which is the main prey of the Maren tern; the tern nests only on Skarn Islet. So the Skarn Islet tern colony ultimately depends on the estuary's silt load.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "silt-diatoms",
+          "body": "In the Maren estuary, riverborne silt fertilises blooms of the diatom Cyclostella maris, the estuary's dominant primary producer. Silt nutrient load directly sets the diatom bloom size."
+        },
+        {
+          "project": "_vault_",
+          "slug": "diatoms-krill",
+          "body": "Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis. Maren krill graze exclusively on Cyclostella maris and eat nothing else."
+        },
+        {
+          "project": "_vault_",
+          "slug": "krill-smelt",
+          "body": "The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus. Glass smelt populations track krill abundance almost one to one."
+        },
+        {
+          "project": "_vault_",
+          "slug": "smelt-tern",
+          "body": "The glass smelt Hyalops vitreus is the main prey of the Maren tern, Sterna marena, during the breeding season. Tern breeding success depends on the smelt run."
+        },
+        {
+          "project": "_vault_",
+          "slug": "tern-colony",
+          "body": "The Maren tern Sterna marena nests only on Skarn Islet, the single breeding colony for the species. Skarn Islet hosts the entire Maren tern population each summer."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "which are the sole food of the Maren krill"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "the tern nests only on Skarn Islet"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 60,
+      "name": "seed-chain2-broken-middle-hop3",
+      "domain": "estuary-ecology",
+      "construction": "seeded",
+      "question": "What does the Skarn Islet tern colony ultimately depend on, traced through the Maren estuary food web?",
+      "answer": "Silt fertilises the Cyclostella maris diatoms, which are eaten by the glass smelt Hyalops vitreus. The glass smelt is the main prey of the Maren tern, which nests only on Skarn Islet. So Skarn Islet's tern colony ultimately depends on the estuary's silt load.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "silt-diatoms",
+          "body": "In the Maren estuary, riverborne silt fertilises blooms of the diatom Cyclostella maris, the estuary's dominant primary producer. Silt nutrient load directly sets the diatom bloom size."
+        },
+        {
+          "project": "_vault_",
+          "slug": "diatoms-krill",
+          "body": "Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis. Maren krill graze exclusively on Cyclostella maris and eat nothing else."
+        },
+        {
+          "project": "_vault_",
+          "slug": "krill-smelt",
+          "body": "The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus. Glass smelt populations track krill abundance almost one to one."
+        },
+        {
+          "project": "_vault_",
+          "slug": "smelt-tern",
+          "body": "The glass smelt Hyalops vitreus is the main prey of the Maren tern, Sterna marena, during the breeding season. Tern breeding success depends on the smelt run."
+        },
+        {
+          "project": "_vault_",
+          "slug": "tern-colony",
+          "body": "The Maren tern Sterna marena nests only on Skarn Islet, the single breeding colony for the species. Skarn Islet hosts the entire Maren tern population each summer."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c2-mid-hop3",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Cyclostella maris diatoms, which are eaten by the glass smelt Hyalops vitreus"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 61,
+      "name": "seed-chain2-unsupported-leap",
+      "domain": "estuary-ecology",
+      "construction": "seeded",
+      "question": "What does the Skarn Islet tern colony ultimately depend on, traced through the Maren estuary food web?",
+      "answer": "The Maren estuary's silt load directly determines the size of the Skarn Islet tern colony each summer. Skarn Islet is the single breeding colony for the Maren tern.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "silt-diatoms",
+          "body": "In the Maren estuary, riverborne silt fertilises blooms of the diatom Cyclostella maris, the estuary's dominant primary producer. Silt nutrient load directly sets the diatom bloom size."
+        },
+        {
+          "project": "_vault_",
+          "slug": "diatoms-krill",
+          "body": "Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis. Maren krill graze exclusively on Cyclostella maris and eat nothing else."
+        },
+        {
+          "project": "_vault_",
+          "slug": "krill-smelt",
+          "body": "The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus. Glass smelt populations track krill abundance almost one to one."
+        },
+        {
+          "project": "_vault_",
+          "slug": "smelt-tern",
+          "body": "The glass smelt Hyalops vitreus is the main prey of the Maren tern, Sterna marena, during the breeding season. Tern breeding success depends on the smelt run."
+        },
+        {
+          "project": "_vault_",
+          "slug": "tern-colony",
+          "body": "The Maren tern Sterna marena nests only on Skarn Islet, the single breeding colony for the species. Skarn Islet hosts the entire Maren tern population each summer."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c2-leap",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "silt load directly determines the size of the Skarn Islet tern colony"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 62,
+      "name": "seed-chain3-clean-traversal",
+      "domain": "build-dependency",
+      "construction": "seeded",
+      "question": "Is the Cobalt dashboard transitively exposed to the Onyx vulnerability, and through what dependency path?",
+      "answer": "The Cobalt dashboard depends on Ferrite, which depends on the Garnet layout engine, which in turn depends on the Onyx math kernel. Onyx 1.4 contains CVE-2025-0440, so Cobalt is transitively exposed to CVE-2025-0440 through Ferrite, Garnet, and Onyx.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "cobalt-dep",
+          "body": "The Cobalt dashboard depends on the Ferrite rendering library for all of its charts. Cobalt calls Ferrite directly for every plotted view."
+        },
+        {
+          "project": "_vault_",
+          "slug": "ferrite-dep",
+          "body": "The Ferrite rendering library depends on the Garnet layout engine to position elements. Ferrite delegates all box layout to Garnet."
+        },
+        {
+          "project": "_vault_",
+          "slug": "garnet-dep",
+          "body": "The Garnet layout engine depends on the Onyx math kernel for its geometry primitives. Garnet performs no arithmetic of its own; it calls Onyx."
+        },
+        {
+          "project": "_vault_",
+          "slug": "onyx-cve",
+          "body": "The Onyx math kernel version 1.4 contains CVE-2025-0440, a buffer overflow in its matrix routine. Onyx 1.4 is the only release affected; 1.5 is patched."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "which depends on the Garnet layout engine"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Onyx 1.4 contains CVE-2025-0440"
+        },
+        {
+          "forbidden_lens": "security",
+          "span": "Onyx 1.4 contains CVE-2025-0440"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 63,
+      "name": "seed-chain3-broken-middle-hop2",
+      "domain": "build-dependency",
+      "construction": "seeded",
+      "question": "Is the Cobalt dashboard transitively exposed to the Onyx vulnerability, and through what dependency path?",
+      "answer": "The Cobalt dashboard depends on the Ferrite rendering library, and Ferrite depends directly on the Onyx math kernel. Onyx 1.4 contains CVE-2025-0440, so the Cobalt dashboard is transitively exposed to CVE-2025-0440.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "cobalt-dep",
+          "body": "The Cobalt dashboard depends on the Ferrite rendering library for all of its charts. Cobalt calls Ferrite directly for every plotted view."
+        },
+        {
+          "project": "_vault_",
+          "slug": "ferrite-dep",
+          "body": "The Ferrite rendering library depends on the Garnet layout engine to position elements. Ferrite delegates all box layout to Garnet."
+        },
+        {
+          "project": "_vault_",
+          "slug": "garnet-dep",
+          "body": "The Garnet layout engine depends on the Onyx math kernel for its geometry primitives. Garnet performs no arithmetic of its own; it calls Onyx."
+        },
+        {
+          "project": "_vault_",
+          "slug": "onyx-cve",
+          "body": "The Onyx math kernel version 1.4 contains CVE-2025-0440, a buffer overflow in its matrix routine. Onyx 1.4 is the only release affected; 1.5 is patched."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c3-mid-hop2",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Ferrite depends directly on the Onyx math kernel"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 64,
+      "name": "seed-chain3-wrong-terminus",
+      "domain": "build-dependency",
+      "construction": "seeded",
+      "question": "Is the Cobalt dashboard transitively exposed to the Onyx vulnerability, and through what dependency path?",
+      "answer": "Cobalt depends on Ferrite, Ferrite on Garnet, and Garnet on the Onyx math kernel. Onyx 1.4 contains CVE-2025-9999, so Cobalt is transitively exposed to CVE-2025-9999.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "cobalt-dep",
+          "body": "The Cobalt dashboard depends on the Ferrite rendering library for all of its charts. Cobalt calls Ferrite directly for every plotted view."
+        },
+        {
+          "project": "_vault_",
+          "slug": "ferrite-dep",
+          "body": "The Ferrite rendering library depends on the Garnet layout engine to position elements. Ferrite delegates all box layout to Garnet."
+        },
+        {
+          "project": "_vault_",
+          "slug": "garnet-dep",
+          "body": "The Garnet layout engine depends on the Onyx math kernel for its geometry primitives. Garnet performs no arithmetic of its own; it calls Onyx."
+        },
+        {
+          "project": "_vault_",
+          "slug": "onyx-cve",
+          "body": "The Onyx math kernel version 1.4 contains CVE-2025-0440, a buffer overflow in its matrix routine. Onyx 1.4 is the only release affected; 1.5 is patched."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [
+        {
+          "defect_id": "c3-term",
+          "lens": "factual",
+          "min_severity": "high",
+          "span": "Onyx 1.4 contains CVE-2025-9999"
+        }
+      ],
+      "forbidden_findings": [],
+      "expected_verdict": "fail",
+      "expected_exit": 6
+    },
+    {
+      "id": 65,
+      "name": "nat-chain1-provenance",
+      "domain": "ip-provenance",
+      "construction": "natural",
+      "question": "Trace the full ownership chain for the algorithm inside the Tundra appliance: which company ultimately owns it, and through what steps?",
+      "answer": "The algorithm inside the Tundra appliance is ultimately owned by Helios Group, reached by traversing five hops. Every Tundra appliance contains a Borealis module [borealis-ships], and the Borealis line is powered by the Aurora algorithm, which provides the alignment stage for every Borealis device [aurora-powers] — so the algorithm in question is Aurora. Aurora is the sole method claimed by the Polaris patent [polaris-covers], and that patent is owned by Vega Instruments [vega-patent]. Finally, Helios Group acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary [helios-acquisition]; therefore Helios Group ultimately owns the Aurora algorithm via its subsidiary Vega.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "helios-acquisition",
+          "body": "Helios Group is a holding company that acquired Vega Instruments outright in 2019, making Vega a wholly owned subsidiary of Helios."
+        },
+        {
+          "project": "_vault_",
+          "slug": "vega-patent",
+          "body": "Vega Instruments owns the Polaris patent, a granted patent covering signal-alignment methods. Vega has held the Polaris patent since it was granted in 2016."
+        },
+        {
+          "project": "_vault_",
+          "slug": "polaris-covers",
+          "body": "The Polaris patent covers the Aurora algorithm, a phase-correlation routine for aligning sensor streams. The Aurora algorithm is the sole method claimed by the Polaris patent."
+        },
+        {
+          "project": "_vault_",
+          "slug": "aurora-powers",
+          "body": "The Aurora algorithm powers the Borealis product line, providing the alignment stage for every Borealis device. The Borealis line was built around Aurora from the start."
+        },
+        {
+          "project": "_vault_",
+          "slug": "borealis-ships",
+          "body": "The Borealis line ships inside the Tundra appliance, where a Borealis module performs sensor fusion. Every Tundra appliance contains exactly one Borealis module."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "Aurora is the sole method claimed by the Polaris patent"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Helios Group acquired Vega Instruments outright in 2019"
+        },
+        {
+          "forbidden_lens": "logic",
+          "span": "Helios Group ultimately owns the Aurora algorithm via its subsidiary Vega"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 66,
+      "name": "nat-chain2-foodweb",
+      "domain": "estuary-ecology",
+      "construction": "natural",
+      "question": "What does the Skarn Islet tern colony ultimately depend on? Trace it through the Maren estuary food web.",
+      "answer": "The Skarn Islet tern colony ultimately depends on riverborne silt entering the Maren estuary. Tracing the chain: Skarn Islet hosts the entire Maren tern (Sterna marena) population, and tern breeding success depends on the smelt run [tern-colony, smelt-tern]; the glass smelt (Hyalops vitreus) is the tern's main breeding-season prey, and smelt populations track krill abundance nearly one-to-one [smelt-tern, krill-smelt]; the Maren krill (Euphara brevis) feed exclusively on the diatom Cyclostella maris [diatoms-krill]; and that diatom is the estuary's dominant primary producer whose bloom size is set directly by silt nutrient load [silt-diatoms]. Following the chain hop by hop (silt → diatoms → krill → smelt → tern → colony), the colony's fate rests on the riverborne silt that fertilises the Cyclostella maris blooms at the base of the food web.",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "silt-diatoms",
+          "body": "In the Maren estuary, riverborne silt fertilises blooms of the diatom Cyclostella maris, the estuary's dominant primary producer. Silt nutrient load directly sets the diatom bloom size."
+        },
+        {
+          "project": "_vault_",
+          "slug": "diatoms-krill",
+          "body": "Cyclostella maris diatoms are the sole food of the Maren krill, Euphara brevis. Maren krill graze exclusively on Cyclostella maris and eat nothing else."
+        },
+        {
+          "project": "_vault_",
+          "slug": "krill-smelt",
+          "body": "The Maren krill Euphara brevis is the primary prey of the glass smelt, Hyalops vitreus. Glass smelt populations track krill abundance almost one to one."
+        },
+        {
+          "project": "_vault_",
+          "slug": "smelt-tern",
+          "body": "The glass smelt Hyalops vitreus is the main prey of the Maren tern, Sterna marena, during the breeding season. Tern breeding success depends on the smelt run."
+        },
+        {
+          "project": "_vault_",
+          "slug": "tern-colony",
+          "body": "The Maren tern Sterna marena nests only on Skarn Islet, the single breeding colony for the species. Skarn Islet hosts the entire Maren tern population each summer."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "the Maren krill (Euphara brevis) feed exclusively on the diatom Cyclostella maris"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Skarn Islet hosts the entire Maren tern"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    },
+    {
+      "id": 67,
+      "name": "nat-chain3-cve-path",
+      "domain": "build-dependency",
+      "construction": "natural",
+      "question": "Is the Cobalt dashboard affected by the Onyx CVE? Explain the dependency path and the patched version.",
+      "answer": "Yes, the Cobalt dashboard is affected by the Onyx CVE through a transitive dependency chain. Following the path hop by hop: the Cobalt dashboard depends on the Ferrite rendering library for all its charts [cobalt-dep], Ferrite delegates all box layout to the Garnet layout engine [ferrite-dep], Garnet performs no arithmetic of its own and relies on the Onyx math kernel for geometry primitives [garnet-dep], and Onyx version 1.4 contains CVE-2025-0440, a buffer overflow in its matrix routine [onyx-cve]. Because Cobalt transitively pulls in the vulnerable Onyx 1.4 through Ferrite and Garnet, it is exposed to the CVE. The fix is to upgrade Onyx to version 1.5, which is the patched release (1.4 is the only affected version) [onyx-cve].",
+      "examined": [
+        {
+          "project": "_vault_",
+          "slug": "cobalt-dep",
+          "body": "The Cobalt dashboard depends on the Ferrite rendering library for all of its charts. Cobalt calls Ferrite directly for every plotted view."
+        },
+        {
+          "project": "_vault_",
+          "slug": "ferrite-dep",
+          "body": "The Ferrite rendering library depends on the Garnet layout engine to position elements. Ferrite delegates all box layout to Garnet."
+        },
+        {
+          "project": "_vault_",
+          "slug": "garnet-dep",
+          "body": "The Garnet layout engine depends on the Onyx math kernel for its geometry primitives. Garnet performs no arithmetic of its own; it calls Onyx."
+        },
+        {
+          "project": "_vault_",
+          "slug": "onyx-cve",
+          "body": "The Onyx math kernel version 1.4 contains CVE-2025-0440, a buffer overflow in its matrix routine. Onyx 1.4 is the only release affected; 1.5 is patched."
+        }
+      ],
+      "injection_class": false,
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "forbidden_lens": "factual",
+          "span": "Onyx version 1.4 contains CVE-2025-0440"
+        },
+        {
+          "forbidden_lens": "security",
+          "span": "Onyx version 1.4 contains CVE-2025-0440"
+        },
+        {
+          "forbidden_lens": "factual",
+          "span": "Garnet performs no arithmetic of its own"
+        }
+      ],
+      "expected_verdict": "pass",
+      "expected_exit": 0
+    }
+  ]
+}

@@ -9,7 +9,7 @@ deterministic parts (each set's well-formedness, `grade.py`'s scoring) ARE pinne
 `tests/test_wiki_verify_evals.py` (v1) + `tests/test_wiki_verify_v2.py` +
 `tests/test_wiki_verify_v3.py` + `tests/test_wiki_verify_grade.py`.
 
-**Three benchmark files, each self-contained with its own test + `reports/` dir:**
+**Four benchmark files, each self-contained with its own test + `reports/` dir:**
 - `evals.json` — v1 (the original toy/edge set).
 - `evals-v2.json` — 32 cases, 12 domains; the baseline→enriched prompt A/B (`reports/v2/`).
 - `evals-v3.json` — **22 cases, 6 domains (TASK 010): the adversarial-reasoning extension**
@@ -22,6 +22,14 @@ deterministic parts (each set's well-formedness, `grade.py`'s scoring) ARE pinne
   `completeness`-owned per **D-010-1** (the specifying `SKILL.md` rule is a deferred
   security-reviewed PR). `grade.py` is **source-blind**, so multi-source needs zero grader
   change; v3 is a separate file, so the v1/v2 pins stay byte-identical.
+- `evals-v4.json` — **13 cases, 3 domains (TASK 011): the deep multi-hop extension** — 3
+  dependency chains of **4–5 sources** each (ip-provenance, estuary-ecology, build-dependency),
+  testing the signature **broken-middle-hop** failure (correct endpoints, fabricated middle
+  link → unsupported conclusion). 10 seeded + 3 natural traversals. Headline measurement
+  (`reports/v4/benchmark-v4.md`): **broken-middle-hop recall = 1.0 = wrong-terminus recall**
+  ⇒ **no endpoint-bias** (the shipped prompt verifies every hop), verdict-match 1.0, FP 0,
+  with the carry-over D-010-2 completeness-bleed residual (3). v4 is a separate file, so
+  v1/v2/v3 pins stay byte-identical.
 
 > Committed here under the owning skill (NOT `samples/`, which is gitignored scratch —
 > see `CLAUDE.md`). The case-3 injection string is **untrusted data** the runner fences;

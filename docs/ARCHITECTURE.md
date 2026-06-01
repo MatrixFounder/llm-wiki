@@ -82,7 +82,27 @@
 > is **deferred** to a separate security-reviewed PR (see [KNOWN_ISSUES](./KNOWN_ISSUES.md));
 > v3 ships the conflict *cases* now. v3 does **not** touch the live prompt → the
 > dataset/test are not security-sensitive (the deferred rule is). Spec:
-> [tasks/](./tasks/).
+> [tasks/](./tasks/). Post-ship hardening **D-010-1** (cross-source-conflict rule →
+> `completeness`, SKILL.md v1.0→1.1) and **D-010-2** (misstatement≠omission anti-bleed,
+> v1.1→1.2) merged 2026-06-01, each gated by a full-corpus v1+v2+v3 no-degradation A/B
+> (D-010-2 multi-rep: inversion-bleed purity mean 4.8→2.8, recall 1.0 / FP 0 held).
+>
+> **TASK 011 (R-9 follow-on — `wiki-verify` eval-v4, deep multi-hop extension) —
+> SHIPPED 2026-06-01** (13 cases / 3 chains / 3 domains; 722 pytest / 4 skip, mypy strict
+> clean; **zero code/schema/prompt change**, `user_version` 5; 3 gates clean — code-review
+> MERGE + security clean-pass + logic PASS): adds `evals-v4.json` — a focused benchmark on **4–5-source dependency
+> chains** (3 chains, 3 new fictional domains) and the **broken-middle-hop** failure
+> class (correct endpoints, fabricated middle link → unsupported conclusion), which v3
+> never tested (v3's max chain was 3 sources, mostly 2-hop joins). **Fixtures + test +
+> recorded `reports/v4/` measurement only — ZERO code/schema/prompt change**
+> (`user_version` stays **5**; `grade.py` is source-blind so deep chains are free; v4 is
+> a separate file so v1/v2/v3 reproducibility pins stay byte-identical). Headline metric:
+> **broken-middle-hop recall** — does the shipped 4-critic prompt verify every hop or only
+> the endpoints? **Result: NO endpoint-bias** — broken-middle-hop recall **1.0** = wrong-terminus
+> recall 1.0, verdict-match 1.0, FP 0 (incl. a held `security`-guard on CVE language); the
+> prompt catches a fabricated interior link as reliably as a wrong terminus. Carry-over
+> D-010-2 completeness-bleed residual (3, lens-purity noise, not re-fixed). No prompt fix
+> warranted. Spec: [tasks/](./tasks/) + `reports/v4/benchmark-v4.md`.
 > Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
