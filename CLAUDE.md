@@ -58,9 +58,23 @@ beads (012-00..16) + the `/vdd-multi` post-ship hardening (SEC-1 egress-sanitiza
 of the untrusted ledger, LOG-1 delta-reindex auto-index render, perf) are **committed
 `c127b4b`** (on top of the R-X1 pre-flight `4608a50`). **R-X2 Phase C
 (agentic-development archive hook) deferred** (ROADMAP R-X2c); residual perf/UX items
-tracked in `docs/issues/` (R-X1-* + R-X3-META-FILTER). See `docs/ARCHITECTURE.md`
+tracked in `docs/issues/`. See `docs/ARCHITECTURE.md`
 §3.5, `docs/adr/` (ADR-002 §D8 TASK-012 amendment), `docs/tasks/` (`task-012-*.md`)
 + `docs/plans/`.
+**TASK 013 (R-X3-META-FILTER — `wiki-search` frontmatter metadata filter) SHIPPED
+2026-06-01, committed `177fd5a`**: general repeatable `--where 'field=value'` +
+`--status`/`--severity` sugar → parameterized `CAST(json_extract(frontmatter_json, ?)
+AS TEXT) = ?` predicate (string-rep match → numeric `priority=1` works; hyphenated
+`SEV-2` via equality, not FTS); optional query → non-FTS `(project, slug, vault_id)`
+listing; injection-safe (field allowlist `[a-z][a-z0-9_]*` via `re.fullmatch`,
+path+value bound, dup-field rejected, `INVALID_FILTER` never echoes value); **zero DDL**
+(`user_version` 5). Full VDD pipeline + `/vdd-multi` + code-review. **TASK 014
+(dogfood-fixes) SHIPPED 2026-06-01** (uncommitted on `177fd5a`): closes
+**R-X1-REF-SLUGIFY** (SEV-2 — `reindex._body_refs` slugifies ref targets via the
+layout's `slug_strategy` so `[[Title Case]]`/`[[Идеи]]` resolve under non-`identity`
+layouts; karpathy=no-op→byte-identity; dev-vault orphans 2228→2160) + two CLI-UX
+fixes (`wiki-query --vault-root` now optional/derived; `wiki-alias --list` lists the
+whole vault via new `repo.list_all_aliases`). **852 pytest (+4 skipped), mypy strict.**
 
 ## Knowledge lookup priority
 
@@ -108,15 +122,14 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Current: TASK 012
-  `universal-layout-engine`** (R-X1 + R-X2 A-B + R-X3, shipped 2026-06-01,
-  committed `c127b4b`). NOTE: TASK 012's **parent** spec is still at
-  `docs/TASK.md` / `docs/PLAN.md` — committed in place, **not yet rotated** into
-  `docs/tasks/`/`docs/plans/` per the usual on-completion convention (rotate when
-  the next task starts, or on request). Its 17 per-bead specs ARE archived at
-  `docs/tasks/task-012-00..16-*.md`. Predecessors: `task-011`/`task-010`
-  (wiki-verify eval-v3/v4), `task-009-wiki-verify-critic-rubric.md` (durable eval
-  harness at `skills/wiki-verify/evals/` — `evals.json` + `grade.py` + `reports/`),
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Current: TASK 014
+  `dogfood-fixes`** (`docs/TASK.md`; closes R-X1-REF-SLUGIFY + 2 CLI-UX gaps from
+  the 2026-06-01 comprehensive dogfood; done compactly — no separate `docs/PLAN.md`,
+  the RTM/fix-plans are inline in TASK.md). Predecessors archived: `task-013-wiki-search-metadata-filter.md`
+  (R-X3-META-FILTER, shipped `177fd5a`) + `plan-013-*`; `task-012-universal-layout-engine.md`
+  (+ 17 per-bead `task-012-00..16-*.md`) + `plan-012-*`; `task-011`/`task-010`
+  (wiki-verify eval-v3/v4); `task-009-wiki-verify-critic-rubric.md` (durable eval
+  harness at `skills/wiki-verify/evals/` — `evals.json` + `grade.py` + `reports/`);
   `task-008-wiki-verify-multi.md`.
 - `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002,
   status header tracks Phase 3a/3b progress).

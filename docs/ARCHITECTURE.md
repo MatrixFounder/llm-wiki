@@ -117,7 +117,8 @@
 > validator hoisted to a module singleton. **810 pytest / 4 skip, mypy strict clean (63
 > files).** Deferred (tracked in `docs/issues/`): R-X1-REDOS-RT (runtime regex deadline),
 > R-X1-CFG-COST (resolve cache + compile-into-config), R-X1-OBS-WALK (obsidian multi-glob
-> re-walk), R-X3-META-FILTER (frontmatter not FTS-filterable). Replaces ~15 hardcoded layout surfaces
+> re-walk), R-X3-MF-SCAN (metadata-filter unindexed scan). (R-X3-META-FILTER + R-X1-REF-SLUGIFY
+> were later **FIXED** — TASK 013 / 014.) Replaces ~15 hardcoded layout surfaces
 > (`PAGE_SUBDIRS`, the `Lessons/` two-tier walk, `TYPE_MAPPING`/`_PATH_TYPE_FALLBACK`,
 > `_WIKILINK_RE`, slug rules) with a **YAML-config-driven engine** (new
 > `scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` + built-in
@@ -145,6 +146,21 @@
 > [KNOWN_ISSUES.md](./KNOWN_ISSUES.md). For shipped task specs (history, decisions, hardening
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
+>
+> **TASK 013 (R-X3-META-FILTER) — SHIPPED `177fd5a`** + **TASK 014 (dogfood-fixes) —
+> SHIPPED (uncommitted)**: (013) `wiki-search` frontmatter metadata filter —
+> `--where 'field=value'` + `--status`/`--severity` → parameterized
+> `CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?` predicate (string-rep match
+> → numeric `priority=1`; hyphenated `SEV-2` via equality, not FTS), optional query →
+> non-FTS `(project, slug, vault_id)` listing, injection-safe, **zero DDL** (see §11a
+> Q-013-a..d). (014) the 2026-06-01 comprehensive dogfood (dev-vault + karpathy/
+> obsidian-personal/dev-project sandboxes) found + fixed **R-X1-REF-SLUGIFY** (SEV-2 —
+> `reindex._body_refs` now slugifies ref targets via the layout's `slug_strategy`, so
+> `[[Title Case]]`/`[[Идеи]]` resolve under non-`identity` layouts instead of becoming
+> false `orphan-link`s; `identity`/karpathy = verbatim no-op → byte-identity; dev-vault
+> orphans 2228→2160) plus two CLI-UX fixes (`wiki-query --vault-root` optional/derived;
+> `wiki-alias --list` vault-wide via new `repo.list_all_aliases`). **852 pytest / 4 skip,
+> mypy strict.**
 >
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).

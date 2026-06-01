@@ -75,11 +75,15 @@ def test_dev_project_indexes_and_searches(tmp_path: Path) -> None:
         # FTS search finds the ADR (term without the FTS5-special hyphen)
         hits = repo.search_pages("Layering", vaults=["dev-proj"])
         assert any(h.page.slug == "adr-002-layering" for h in hits)
-        # dev-project id-ref extraction: "ADR-002" in the task body → a ref row
+        # dev-project id-ref extraction: "ADR-002" in the task body → a ref row.
+        # TASK 014 / R-X1-REF-SLUGIFY: ref targets are now slugified via the
+        # layout's slug_strategy (dev-project = transliterate), so "ADR-002"
+        # resolves to slug "adr-002" — matching the page slug it links to (the
+        # whole point of the fix; an un-slugified "ADR-002" would be a false orphan).
         ref_targets = {r["entity_slug"] for r in repo._connect().execute(
             "SELECT entity_slug FROM page_entity_refs WHERE vault_id='dev-proj'").fetchall()}
-        assert "ADR-002" in ref_targets   # id-ref rule
-        assert "ADR-001" in ref_targets   # id-ref rule (from the ADR body)
+        assert "adr-002" in ref_targets   # id-ref rule, transliterated to slug form
+        assert "adr-001" in ref_targets   # id-ref rule (from the ADR body)
         assert "adr-001-x" in ref_targets  # markdown-link stem transform
     finally:
         repo.close()

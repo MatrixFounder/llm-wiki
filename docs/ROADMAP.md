@@ -390,6 +390,19 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 014 (dogfood-fixes) — 2026-06-01.** Fixes from the comprehensive dogfood
+  (dev-vault + karpathy/obsidian-personal/dev-project sandbox vaults across all
+  layout classes + aliases + cross-vault search). Closes **R-X1-REF-SLUGIFY**
+  (SEV-2): `reindex._body_refs` slugifies ref targets via the layout's
+  `slug_strategy`, so `[[Title Case]]`/`[[Идеи]]` resolve under non-`identity`
+  layouts (transliterate/preserve-unicode) instead of becoming false `orphan-link`s
+  — `identity`/karpathy is a verbatim no-op (byte-identity held); dev-vault orphans
+  dropped 2228→2160; 7-case layout-matrix test. Plus two CLI-UX fixes: `wiki-query
+  --vault-root` now optional (derived from the registered vault's `root_path`), and
+  `wiki-alias --list` lists the whole vault when no slug is given (new
+  `repo.list_all_aliases`). New deferred perf issue **R-X3-MF-SCAN** (metadata-filter
+  unindexed scan, 1k-page trigger). **Zero DDL** (`user_version` 5). 852 pytest
+  (+4 skip), mypy strict. Done compactly (no separate PLAN; RTM inline in TASK.md).
 - **TASK 013 (R-X3-META-FILTER) — 2026-06-01.** `wiki-search` frontmatter metadata
   filter (Cluster C / daily-use enablement). General repeatable `--where 'field=value'`
   + `--status`/`--severity` sugar → parameterized `CAST(json_extract(frontmatter_json, ?)

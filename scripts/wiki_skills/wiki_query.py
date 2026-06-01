@@ -212,6 +212,18 @@ def _read_payload(
 # -----------------------------------------------------------------------------
 # prepare (R-6.1)
 # -----------------------------------------------------------------------------
+def _derive_vault_root(
+    args: argparse.Namespace, repo: IndexRepository,
+) -> Path | None:
+    """Resolve the vault root (TASK 014 / R-MF14-2): an explicit ``--vault-root``
+    wins; otherwise fall back to the registered vault's ``root_path``. Returns
+    ``None`` when neither is available (vault not registered + no flag)."""
+    if args.vault_root:
+        return Path(args.vault_root)
+    vault = repo.get_vault(args.vault)
+    return Path(vault.root_path) if vault is not None else None
+
+
 def prepare(args: argparse.Namespace) -> int:
     question = (args.question or "").strip()
     if not question:
@@ -349,17 +361,23 @@ def apply(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_SLUG", "field": "query-slug",
                      "reason": "must be kebab-case"}, 2)
 
-    try:
-        vault_root = Path(args.vault_root).resolve(strict=True)
-    except OSError:
-        return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
-                     "reason": "does not exist"}, 2)
-
     config: dict[str, str] = {"vault_id": args.vault}
     if args.db_path:
         config["db_path"] = args.db_path
     repo = make_repo(config)
     try:
+        # TASK 014 / R-MF14-2: --vault-root is optional. When omitted, derive it
+        # from the registered vault's root_path (an explicit flag still wins).
+        vr = _derive_vault_root(args, repo)
+        if vr is None:
+            return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
+                         "reason": "vault not registered; pass --vault-root "
+                                   "explicitly"}, 2)
+        try:
+            vault_root = vr.resolve(strict=True)
+        except OSError:
+            return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
+                         "reason": "does not exist"}, 2)
         # 1. Reproduce prepare's retrieval → recompute hash (TOCTOU / R-6.7).
         try:
             hits = _retrieve(repo, question, args)
@@ -493,7 +511,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("prepare", help="Deterministic FTS retrieval pass.")
     pp.add_argument("question")
     pp.add_argument("--vault", required=True)
-    pp.add_argument("--vault-root", required=True)
+    pp.add_argument("--vault-root", default=None,
+                    help="Optional (prepare does not read it; accepted for "
+                         "symmetry with apply). Derived from the registered "
+                         "vault when omitted.")
     pp.add_argument("--vaults", default=None,
                     help="Comma-separated search scope ('all' = every vault). "
                          "Default: the home --vault.")
@@ -509,7 +530,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ap = sub.add_parser("apply", help="Grounding-checked write-back + index.")
     ap.add_argument("--vault", required=True)
-    ap.add_argument("--vault-root", required=True)
+    ap.add_argument("--vault-root", default=None,
+                    help="Optional — derived from the registered vault's "
+                         "root_path when omitted (TASK 014). Explicit value wins.")
     ap.add_argument("--query-slug", required=True)
     ap.add_argument("--question", required=True)
     ap.add_argument("--question-hash", required=True)

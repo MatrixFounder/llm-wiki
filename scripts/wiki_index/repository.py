@@ -418,6 +418,13 @@ class IndexRepository(abc.ABC):
         ...
 
     @abc.abstractmethod
+    def list_all_aliases(self, vault_id: str) -> list[tuple[str, str]]:
+        """All ``(alias, entity_slug)`` pairs in the vault, ordered by
+        ``(entity_slug, alias)`` (TASK 014 / R-MF14-3 — the vault-wide listing
+        surface for ``wiki-alias --list`` with no entity)."""
+        ...
+
+    @abc.abstractmethod
     def expand_query_aliases(self, vault_id: str, term: str) -> list[str]:
         """Given a surface term, return the matched entity's canonical name +
         sibling aliases for FTS OR-expansion (R-5.5). Bounded to the matched

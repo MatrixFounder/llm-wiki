@@ -18,6 +18,7 @@ from scripts.wiki_index.layout import (
 )
 from scripts.wiki_index.layout_config import (
     RefRule,
+    _apply_slug_strategy,
     iter_pages,
     resolve_layout_config,
 )
@@ -201,16 +202,27 @@ def _synthesize_fm(
 
 def _body_refs(
     out: Any, ref_rules: tuple[RefRule, ...], vault_id: str,
+    slug_strategy: str = "identity",
 ) -> list[PageRef]:
     """Body ``'mentioned'`` refs via the layout's ``ref_extraction`` rules
     (TASK 012 / PW-D) — config-driven, replacing the adapter's hardcoded
     wiki-link refs in the reindex path. The karpathy single wiki-link rule
     reproduces the previous ``out.refs`` byte-for-byte (golden anchor guards it);
-    a dev-project layout additionally yields markdown-link + id-ref targets."""
+    a dev-project layout additionally yields markdown-link + id-ref targets.
+
+    TASK 014 / R-X1-REF-SLUGIFY: the extracted target is run through the layout's
+    ``slug_strategy`` (``_apply_slug_strategy``) so it matches the way the TARGET
+    page's slug was derived from its stem — otherwise a ``[[Title Case]]`` /
+    ``[[Идеи]]`` link never resolves under a non-``identity`` strategy
+    (transliterate / preserve-unicode) and is flagged a false ``orphan-link``.
+    For ``identity`` (karpathy) this is a verbatim no-op → byte-identity preserved
+    (golden anchor). ``cited``/``verifies`` refs (explicit slugs from frontmatter)
+    are NOT touched — only body wiki/markdown-link targets."""
     return [
         PageRef(
             vault_id=vault_id, page_slug=out.page_slug, page_project=out.project,
-            entity_slug=target, ref_type="mentioned", trust_level="high",
+            entity_slug=_apply_slug_strategy(target, slug_strategy),
+            ref_type="mentioned", trust_level="high",
             line_start=line, line_end=line, source_quote=quote,
         )
         for (target, line, quote) in extract_refs(out.body_text, ref_rules)
@@ -313,7 +325,8 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # query page body + `wiki-reindex --delta` does NOT drop its
                 # `cited` refs (full/delta symmetry; matches reindex_full +
                 # _index_query_page). Cite-parse warnings fold into `skipped`.
-                delta_refs = _body_refs(out, config.ref_extraction, vault_id)
+                delta_refs = _body_refs(out, config.ref_extraction, vault_id,
+                                        config.slug_strategy)
                 delta_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     skipped,
@@ -451,7 +464,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # is delete-all-then-insert — a second call would clobber the
                 # body refs, M-1). Step 2.5 (AM-3) below canonicalizes all refs'
                 # targets through the alias map, ref_type preserved.
-                all_refs = _body_refs(out, config.ref_extraction, vault_id)
+                all_refs = _body_refs(out, config.ref_extraction, vault_id,
+                                      config.slug_strategy)
                 all_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     cite_skipped,

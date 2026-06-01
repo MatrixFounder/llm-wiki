@@ -30,12 +30,17 @@ _ALIAS_TYPES = (
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wiki-alias")
-    p.add_argument("slug", help="Canonical entity slug (or an existing alias).")
+    p.add_argument("slug", nargs="?", default=None,
+                   help="Canonical entity slug (or an existing alias). Optional "
+                        "with --list: omit it to list EVERY alias in the vault "
+                        "(TASK 014). Required for --add/--remove.")
     p.add_argument("--vault", required=True, help="Vault id.")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--add", metavar="SURFACE", help="Register an alias.")
     g.add_argument("--remove", metavar="SURFACE", help="Drop an alias.")
-    g.add_argument("--list", action="store_true", help="List the entity's aliases.")
+    g.add_argument("--list", action="store_true",
+                   help="List aliases. With a slug: that entity's aliases. "
+                        "Without a slug: every alias in the vault.")
     p.add_argument("--type", choices=_ALIAS_TYPES, default="spelling_variant",
                    help="alias_type for --add (Class B only; default spelling_variant).")
     p.add_argument("--db-path", default=None)
@@ -75,6 +80,15 @@ def main(argv: list[str] | None = None) -> int:
         config["db_path"] = args.db_path
     repo = make_repo(config)
     try:
+        # TASK 014 / R-MF14-3: `--list` with no slug → every alias in the vault.
+        if args.slug is None:
+            if not args.list:
+                return emit({"error": "SLUG_REQUIRED", "field": "slug",
+                             "reason": "a slug is required for --add/--remove"}, 2)
+            pairs = repo.list_all_aliases(args.vault)
+            return emit({"vault": args.vault, "count": len(pairs),
+                         "aliases": [{"alias": a, "entity": e} for a, e in pairs]})
+
         ent = repo.resolve_entity(args.vault, args.slug)
         if ent is None:
             return emit({"error": "ENTITY_NOT_FOUND", "field": "slug",

@@ -1043,6 +1043,16 @@ class SQLiteRepository(IndexRepository):
             ).fetchall()
         ]
 
+    def list_all_aliases(self, vault_id: str) -> list[tuple[str, str]]:
+        conn = self._connect()
+        return [
+            (r["alias"], r["entity_slug"]) for r in conn.execute(
+                "SELECT alias, entity_slug FROM entity_aliases "
+                "WHERE vault_id = ? ORDER BY entity_slug, alias",
+                (vault_id,),
+            ).fetchall()
+        ]
+
     def expand_query_aliases(self, vault_id: str, term: str) -> list[str]:
         """R-5.5: canonical name + sibling aliases for the entity `term` resolves
         to. Bounded to that entity's own alias set (no transitive expansion).
