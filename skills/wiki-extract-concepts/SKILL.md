@@ -1,4 +1,4 @@
-<!-- Sync with scripts/wiki_skills/wiki_extract_concepts.py argparse on every change. -->
+<!-- Sync with scripts/wiki_skills/wiki_extract_concepts/__init__.py argparse (_build_parser_v3) on every change. TASK 016: this module is now a package (facade __init__ + _validation/_sourcing/_db/_pages/_errors leaves). -->
 ---
 name: wiki-extract-concepts
 description: >-

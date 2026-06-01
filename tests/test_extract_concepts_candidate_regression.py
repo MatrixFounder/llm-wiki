@@ -15,7 +15,9 @@ from scripts.wiki_index.models import Vault
 from scripts.wiki_index.reindex import reindex_full
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 
-_SRC = Path(__file__).resolve().parent.parent / "scripts" / "wiki_skills" / "wiki_extract_concepts.py"
+# TASK 016 bead 016-05: write_concept_page relocated to _pages.py.
+_SRC = (Path(__file__).resolve().parent.parent / "scripts" / "wiki_skills"
+        / "wiki_extract_concepts" / "_pages.py")
 
 
 def test_write_concept_page_pins_is_candidate() -> None:

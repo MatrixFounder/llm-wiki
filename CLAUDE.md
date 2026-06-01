@@ -92,6 +92,21 @@ known once + grows the dedup set in place (O(E), not O(N·E)); idempotency-failu
 per-entry `partial`; M-2 abspath leak closed; combined.json cap 1 MiB→10 MiB. **Deferred:**
 single-outer-transaction batching (SQLite nested-txn limit). **Zero DDL** (`user_version`
 5). **877 pytest (+4 skipped), mypy strict.**
+**TASK 016 (split-extract-concepts-module) SHIPPED 2026-06-01** (uncommitted, branch
+`task-016-split-extract-concepts`): pure structural refactor — the 2174-line
+`wiki_extract_concepts.py` god-module split into a **package**
+`scripts/wiki_skills/wiki_extract_concepts/` (facade `__init__.py` 1071 lines +
+leaves `_validation`/`_sourcing`/`_db`/`_pages`/`_errors` + `__main__.py`). **Zero
+behaviour/CLI/envelope/exit-code/schema change.** The patch-target lock is preserved:
+the 8 monkeypatched names (`make_repo`, `load_known_entities`, `validate_manifest`,
+`index_from_manifest`, `dispatch_to_indexer`, `_apply_candidates_to_db`,
+`_try_update_idempotency_state`, `update_idempotency_state`) stay rebindable at
+`scripts.wiki_skills.wiki_extract_concepts.<name>` as facade globals (`_db` carve-out
+for `load_known_entities`+`update_idempotency_state`); acyclic import-direction
+(facade→leaves; `_errors` sink). All moved bodies byte-identical (verbatim, hash-proven
+per bead); green-throughout (full VDD pipeline: task/arch/plan reviews + Sarcasmotron
+per bead). **879 pytest (+4 skipped), mypy strict (69 files).** See `docs/TASK.md`,
+`docs/PLAN.md`, `docs/ARCHITECTURE.md` §2.1, `docs/tasks/task-016-*.md`.
 
 ## Knowledge lookup priority
 

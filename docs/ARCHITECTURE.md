@@ -147,10 +147,12 @@
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
-> **TASK 016 (split-extract-concepts-module) — IN PROGRESS** (branch
+> **TASK 016 (split-extract-concepts-module) — SHIPPED (uncommitted)** (branch
 > `task-016-split-extract-concepts`): pure structural refactor — split the 2174-line
 > `scripts/wiki_skills/wiki_extract_concepts.py` god-module into a **package**
-> `scripts/wiki_skills/wiki_extract_concepts/` (facade `__init__.py` + leaf submodules).
+> `scripts/wiki_skills/wiki_extract_concepts/` (facade `__init__.py` **1071** + leaves
+> `_validation` 375 / `_sourcing` 332 / `_db` 273 / `_pages` 227 / `_errors` 60 +
+> `__main__.py`).
 > **Zero behaviour / CLI / envelope / exit-code / schema change.** Dominant constraint =
 > the **patch-target lock**: tests monkeypatch **8** symbols at
 > `scripts.wiki_skills.wiki_extract_concepts.<name>` (`make_repo`, `load_known_entities`,
@@ -163,7 +165,12 @@
 > intercepts — the R-2 invariant); pure leaves move to `_validation`/`_sourcing`/`_db`/
 > `_pages`/`_errors`. The `_db` carve-out: `load_known_entities` + `update_idempotency_state`
 > live in `_db.py` but are re-imported into the facade and called there as facade globals.
-> Green-throughout, leaf-first. See `docs/TASK.md`.
+> Green-throughout, leaf-first. `_SOURCE_KIND` relocated `_sourcing`→`_db` (its only
+> consumers). **Verified**: all 39 moved function/class bodies byte-identical (AST-proven
+> verbatim); full VDD pipeline (task/arch/plan reviews + per-bead Sarcasmotron) + post-ship
+> `/vdd-multi` (logic bikeshedding-only, security + perf clean-pass) + dogfood smoke.
+> **879 pytest (+4 skip), mypy strict (69 files).** See `docs/TASK.md`, `docs/PLAN.md`,
+> `docs/tasks/task-016-*.md`.
 >
 > **TASK 015 (perf-hardening-extract-concepts) — SHIPPED `7fce4b3`**: Four SEV-2
 > performance issues in the `wiki-extract-concepts` / `_manifest_consumer` hot path, all

@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-01T22:21:59.688555 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-02T00:19:18.294782 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood

@@ -391,6 +391,21 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 016 (split-extract-concepts-module) — 2026-06-01.** Pure structural refactor: the
+  2174-line `scripts/wiki_skills/wiki_extract_concepts.py` god-module split into a **package**
+  — facade `__init__.py` (orchestration: `prepare`/`apply`/`dispatch_to_indexer`/`_batch_*`/
+  `main`/`_build_parser_v3`, 1071 lines) + leaves `_validation` (375) / `_sourcing` (332) /
+  `_db` (273) / `_pages` (227) / `_errors` (60) + `__main__.py`. **Zero behaviour / CLI /
+  envelope / exit-code / schema change.** The **patch-target lock** is preserved: the 8
+  monkeypatched names stay rebindable at `scripts.wiki_skills.wiki_extract_concepts.<name>`
+  as facade globals (`_db` carve-out re-imports `load_known_entities` +
+  `update_idempotency_state` into the facade); acyclic import-direction (facade→leaves;
+  `_errors` is the sink; no leaf→facade edge). `_SOURCE_KIND` relocated `_sourcing`→`_db`
+  (its only consumers). All moved bodies byte-identical (verbatim, hash-proven per bead);
+  green-throughout, leaf-first. Full VDD pipeline (task/arch/plan reviews all APPROVED —
+  task-review caught the lock surface was **8** symbols not 7; plan-review pinned
+  `_path_is_absolute`→`_validation`) + per-bead Sarcasmotron + dogfood smoke. **879 pytest
+  (+4 skip), mypy strict (69 files).**
 - **TASK 015 (perf-hardening-extract-concepts) — 2026-06-01.** Closes four SEV-2
   hot-path issues in `wiki-extract-concepts` / `_manifest_consumer`: **H-PERF-3**
   (`wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict` programmatic

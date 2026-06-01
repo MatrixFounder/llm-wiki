@@ -8,6 +8,24 @@
 - **Type:** Pure refactor (zero behaviour change, zero DDL, zero public-contract change)
 - **Predecessor:** TASK 015 `perf-hardening-extract-concepts` (shipped + committed
   `7fce4b3`; grew this file to **2174 lines** with the batch surfaces + the F1 fix).
+- **Status:** ✅ **SHIPPED (uncommitted) 2026-06-02** — all beads 016-00..08 merged
+  green-throughout (full VDD: task/arch/plan reviews APPROVED + per-bead Sarcasmotron +
+  post-ship `/vdd-multi` clean). Result: facade `__init__.py` **1071** + leaves
+  `_validation` 375 / `_sourcing` 332 / `_db` 273 / `_pages` 227 / `_errors` 60 +
+  `__main__.py`. **AC-016-1..10 all PASS**; the 8-symbol patch-target lock holds (all
+  intercept post-split; the 2 lock guard tests pass UNMODIFIED); **all 39 moved bodies
+  byte-identical** (AST-proven verbatim). **879 pytest (+4 skip), mypy strict (69 files).**
+  Remaining: commit.
+
+> **Notable during execution (see PLAN risks + per-bead decisions):** (1) `_SOURCE_KIND`
+> was relocated `_sourcing`→`_db` (vs the 016-04 bead text) — its only consumers are the
+> `_db` idempotency functions, so this *honors* the reviewed DAG (`_db→_validation+_errors`;
+> `_sourcing` self-contained) rather than adding a `_db→_sourcing` edge. (2) The post-ship
+> `/vdd-multi` deterministic completeness check caught one non-verbatim drift —
+> `_load_candidates`'s `args` annotation had been weakened `argparse.Namespace`→`Any`; it
+> was restored (added `import argparse` to `_sourcing`) → 100% byte-verbatim. (3) The
+> task-reviewer corrected the lock surface from 7→**8** symbols (`update_idempotency_state`
+> was the missing one); the plan-reviewer pinned `_path_is_absolute`'s home to `_validation`.
 
 ---
 
