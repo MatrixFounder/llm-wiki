@@ -243,9 +243,12 @@ KNOWN_ISSUES dogfood ran on it.
 >    To make daily/cross-project search "just work", run once:
 >    `wiki-init --register-existing --vault docs` (+ `wiki-reindex --full`) against the
 >    global DB. (Deliberately not done automatically — it writes to the global user DB.)
-> 2. **Frontmatter metadata isn't FTS-filterable** (`status`/`severity`) — tracked as
->    `docs/issues/r-x3-fts-frontmatter-metadata-filter.md` (R-X3-META-FILTER, SEV-3,
->    enhancement). Use `json_extract` / the rendered ledger meanwhile.
+> 2. ~~**Frontmatter metadata isn't FTS-filterable** (`status`/`severity`)~~ —
+>    ✅ **FIXED 2026-06-01 (TASK 013, R-X3-META-FILTER).** `wiki-search --status
+>    open --severity SEV-2 --vaults <vid>` (general `--where 'field=value'` +
+>    `--status`/`--severity` sugar) now compiles to a parameterized `json_extract`
+>    predicate; query optional for a pure metadata listing. See R-X3-META-FILTER
+>    below + `docs/tasks/task-013-*.md`.
 
 **See**: proposal §§2,4,8 (Phases A-C) + §12.
 
@@ -272,9 +275,11 @@ rendered index) is **held with the R-X2 live-bootstrap decision** (the render ne
 repo registered as a dev-vault) — the operator runs it once that's decided + reviews the
 report. ADR-002 §D8 amended for the Class-B "rebuildable markdown" sub-case.
 
-**Acceptance**: `wiki-search "hash drift" --types known-issue` returns one specific
-issue; delete + `wiki-index-render --auto-indexes` reproduces byte-identical
-`docs/KNOWN_ISSUES.md` (modulo GENERATED-AT). **See**: proposal §Phase D + ADR-002 §D8 amendment.
+**Acceptance**: `wiki-search "hash drift"` returns one specific issue (`known-issue`
+is a frontmatter *tag*, not a `pages.type`, so `--types known-issue` is a no-match —
+filter issues via `--status`/`--severity`, or FTS the body as here); delete +
+`wiki-index-render --auto-indexes` reproduces byte-identical `docs/KNOWN_ISSUES.md`
+(modulo GENERATED-AT). **See**: proposal §Phase D + ADR-002 §D8 amendment.
 
 ### R-X4. Agent-prompt cue integration (Phase E) — supersedes R-2
 Add proactive `/wiki-search` cue to `developer` / `architect` /
@@ -385,6 +390,16 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 013 (R-X3-META-FILTER) — 2026-06-01.** `wiki-search` frontmatter metadata
+  filter (Cluster C / daily-use enablement). General repeatable `--where 'field=value'`
+  + `--status`/`--severity` sugar → parameterized `json_extract(frontmatter_json, ?)`
+  predicate; optional query → non-FTS `(project, slug)`-ordered listing. Injection-safe
+  (field allowlist `^[a-z][a-z0-9_]*$` at CLI + DAL; path + value bound; `INVALID_FILTER`
+  never echoes value). **Zero DDL** (`user_version` 5). Full VDD pipeline (Analysis →
+  Architecture Q-013-a..d → Plan → 4 beads Stub-First). Live dogfood: `--status open
+  --severity SEV-2` returns the 5 open SEV-2 issues; R-X3-META-FILTER flipped to `fixed`
+  + ledger auto-re-rendered (PW-Q drift-clean). 833 pytest (+4 skipped), mypy strict.
+  See `docs/tasks/task-013-*.md`.
 - **TASK 012 (R-X1 + R-X2 A-B engine + R-X3 engine) — 2026-06-01.** Universal
   config-driven layout engine: 17-bead plan (012-00..16), full VDD pipeline gated
   (task/architecture/plan reviews APPROVED — architecture-review caught a real C1

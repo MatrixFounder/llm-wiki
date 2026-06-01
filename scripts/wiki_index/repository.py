@@ -18,6 +18,7 @@ breaks FTS5 rowid stability, and CASCADE-deletes page_entity_refs.
 from __future__ import annotations
 
 import abc
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -36,6 +37,36 @@ from scripts.wiki_index.models import (
     PageRef,
     Vault,
 )
+
+# TASK 013 (R-X3-META-FILTER): allowlist for frontmatter metadata-filter field
+# names. A `wiki-search --where 'field=value'` filter compiles to a parameterized
+# `json_extract(frontmatter_json, '$.<field>') = ?` predicate; the field name is
+# interpolated into the JSON path, so it MUST be allow-listed to a safe shape
+# (the path itself is still passed as a bound parameter — defense in depth, see
+# `SQLiteRepository.search_pages`). Lowercase identifier: leading [a-z], then
+# [a-z0-9_]. Rejects dots/brackets/quotes/`$`/whitespace → no JSON-path traversal
+# or SQL metacharacter can reach the query. The VALUE is never validated here — it
+# is always a bound parameter, so any string (incl. `SEV-2`, quotes) is safe.
+# NOTE: matched with `re.fullmatch` (NOT `.match` + `$`) — Python's `$` matches
+# *before* a single trailing `\n`, so `.match(r"…$")` would let `"status\n"` slip
+# the allowlist (vdd-multi critic-security LOW). `fullmatch` requires the WHOLE
+# string to match, closing that control-char gap.
+_FILTER_FIELD_RE = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def validate_filter_field(field: str) -> str:
+    """Return ``field`` unchanged iff it matches the metadata-filter allowlist
+    (a lowercase identifier `[a-z][a-z0-9_]*`, whole-string); otherwise raise
+    ``ValueError``.
+
+    Shared by the CLI (`wiki-search --where` parsing, the user-input boundary)
+    and re-applied in the DAL (`search_pages`, library-caller defense) per the
+    skill-family convention. The ``ValueError`` message names the field only —
+    callers MUST NOT echo the filter VALUE into error output (CWE-209/CWE-117).
+    """
+    if not _FILTER_FIELD_RE.fullmatch(field):
+        raise ValueError(f"invalid filter field name: {field!r}")
+    return field
 
 
 class IndexRepository(abc.ABC):
@@ -119,19 +150,23 @@ class IndexRepository(abc.ABC):
     @abc.abstractmethod
     def search_pages(
         self,
-        query: str,
+        query: str | None,
         *,
         vaults: list[str] | None = None,
         types: list[str] | None = None,
         exclude_types: list[str] | None = None,
         project: str | None = None,
+        where_fields: list[tuple[str, str]] | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
-        """FTS5 + BM25 search.
+        """FTS5 + BM25 search, optionally filtered by frontmatter metadata.
 
         Args:
             query: FTS5 MATCH expression (caller is responsible for escaping
-                special FTS operators).
+                special FTS operators). May be ``None``/empty **iff**
+                ``where_fields`` is non-empty — then a non-FTS metadata-only
+                listing is returned (TASK 013). Empty query AND empty
+                ``where_fields`` → ``ValueError`` (nothing to search).
             vaults: limit to these vault_ids; None = all registered vaults.
             types: limit to these `pages.type` values; None = all types.
             exclude_types: drop these `pages.type` values **before** the LIMIT
@@ -142,6 +177,16 @@ class IndexRepository(abc.ABC):
                 a real hit from the top-`limit` window (idempotency).
             project: limit to this project (e.g. '_vault_' or '<course-slug>');
                 None = all projects within the selected vaults.
+            where_fields: TASK 013 (R-X3-META-FILTER) — frontmatter metadata
+                predicates as ``(field, value)`` pairs. Each compiles to a
+                parameterized ``json_extract(p.frontmatter_json, '$.<field>') = ?``
+                clause; multiple pairs are AND-ed. Field names MUST satisfy
+                `validate_filter_field` (re-validated here as library-caller
+                defense); values are bound parameters (any string is safe,
+                incl. hyphenated `SEV-2`). When ``query`` is empty the search
+                takes a non-FTS path ordered by ``(project, slug, vault_id)`` —
+                the full page identity, so ties are deterministic — with no BM25
+                score. None/empty = no metadata filter (today's behaviour).
             limit: max hits to return.
         """
         ...

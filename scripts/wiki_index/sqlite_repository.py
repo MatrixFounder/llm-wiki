@@ -34,7 +34,7 @@ from scripts.wiki_index.models import (
     PageRef,
     Vault,
 )
-from scripts.wiki_index.repository import IndexRepository
+from scripts.wiki_index.repository import IndexRepository, validate_filter_field
 
 _SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent.parent / "sql" / "wiki-index-v2.sql"
@@ -431,25 +431,55 @@ class SQLiteRepository(IndexRepository):
 
     def search_pages(
         self,
-        query: str,
+        query: str | None,
         *,
         vaults: list[str] | None = None,
         types: list[str] | None = None,
         exclude_types: list[str] | None = None,
         project: str | None = None,
+        where_fields: list[tuple[str, str]] | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
         conn = self._connect()
-        sql_parts: list[str] = [
-            "SELECT p.vault_id, p.slug, p.project, p.type, p.title, p.file_path, "
+        has_match = bool(query)
+        if not has_match and not where_fields:
+            # TASK 013: a search with neither an FTS term nor a metadata filter
+            # is meaningless. The CLI refuses this before calling; the DAL
+            # defends the library-caller path.
+            raise ValueError(
+                "search_pages requires a non-empty query or at least one "
+                "where_fields predicate"
+            )
+        # Shared page-column projection for both paths so `_row_to_page` sees an
+        # identical row shape.
+        page_cols = (
+            "p.vault_id, p.slug, p.project, p.type, p.title, p.file_path, "
             "p.tldr, p.date, p.last_modified, p.file_hash, p.frontmatter_json, "
-            "p.body_excerpt, p.is_frozen, "
-            "bm25(pages_fts) AS bm25_score, "
-            "snippet(pages_fts, -1, '<b>', '</b>', '...', 16) AS snip "
-            "FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id "
-            "WHERE pages_fts MATCH ?",
-        ]
-        params: list[Any] = [query]
+            "p.body_excerpt, p.is_frozen"
+        )
+        params: list[Any] = []
+        if has_match:
+            # FTS path (today's behaviour): BM25-ranked.
+            sql_parts: list[str] = [
+                f"SELECT {page_cols}, "
+                "bm25(pages_fts) AS bm25_score, "
+                "snippet(pages_fts, -1, '<b>', '</b>', '...', 16) AS snip "
+                "FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id "
+                "WHERE pages_fts MATCH ?",
+            ]
+            params.append(query)
+        else:
+            # TASK 013 non-FTS path: pure metadata listing, no pages_fts join, no
+            # BM25 ranking. Score reported as 0.0 (PageHit.bm25_score is a float;
+            # there is no relevance score without a MATCH term) and an empty
+            # snippet; ordering is deterministic by the full page identity
+            # (project, slug, vault_id) — vault_id breaks ties for the same
+            # (project, slug) across vaults in an all-vaults listing.
+            sql_parts = [
+                f"SELECT {page_cols}, "
+                "0.0 AS bm25_score, '' AS snip "
+                "FROM pages p WHERE 1=1",
+            ]
         if vaults is not None:
             clause, vals = self._in_clause("p.vault_id", vaults)
             sql_parts.append(f" AND {clause}")
@@ -467,7 +497,20 @@ class SQLiteRepository(IndexRepository):
         if project is not None:
             sql_parts.append(" AND p.project = ?")
             params.append(project)
-        sql_parts.append(" ORDER BY bm25_score ASC LIMIT ?")
+        for field, value in where_fields or []:
+            # TASK 013 (R-X3-META-FILTER): library-caller defense — re-validate
+            # the field name (CLI validates too), then bind BOTH the JSON path and
+            # the value as parameters. No operator string ever reaches the SQL text.
+            validate_filter_field(field)
+            sql_parts.append(
+                " AND json_extract(p.frontmatter_json, ?) = ?"
+            )
+            params.append(f"$.{field}")
+            params.append(value)
+        if has_match:
+            sql_parts.append(" ORDER BY bm25_score ASC LIMIT ?")
+        else:
+            sql_parts.append(" ORDER BY p.project, p.slug, p.vault_id LIMIT ?")
         params.append(limit)
         sql = "".join(sql_parts)
         hits: list[PageHit] = []

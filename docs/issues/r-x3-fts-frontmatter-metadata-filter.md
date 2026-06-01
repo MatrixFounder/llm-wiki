@@ -1,7 +1,7 @@
 ---
 id: R-X3-META-FILTER
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-06-01
 category: ux
 severity: SEV-3
@@ -9,6 +9,20 @@ slug: r-x3-fts-frontmatter-metadata-filter
 ---
 
 # wiki-search can't filter by frontmatter metadata (status / severity / category)
+
+> **RESOLVED 2026-06-01 (TASK 013, fix-option 1).** `wiki-search` now accepts a
+> general repeatable `--where 'field=value'` filter plus `--status` / `--severity`
+> convenience flags. Each compiles to a parameterized
+> `json_extract(p.frontmatter_json, '$.<field>') = ?` predicate (zero DDL — reuses
+> the existing column; **not** FTS-projected, so hyphenated values like `SEV-2`
+> work via equality and never trip the DF-1 FTS5-hyphen hazard). With no positional
+> query a non-FTS metadata listing is returned, ordered by `(project, slug)`. Field
+> names are allow-list validated (`^[a-z][a-z0-9_]*$`) and the path+value are bound
+> parameters (injection-safe; `INVALID_FILTER` exit 2 never echoes the value). Now:
+> `wiki-search --status open --severity SEV-2 --vaults obsidian-llm-wiki --db-path .wiki/index.db`.
+> (NOTE: `known-issue` is a frontmatter **tag**, not a `pages.type`, so `--types
+> known-issue` does NOT scope to issues; `--status`/`--severity` already do —
+> only issue pages carry those fields.)
 
 - **Symptom**: After the R-X3 KNOWN_ISSUES migration, per-issue `docs/issues/*.md`
   files carry structured frontmatter (`status`, `severity`, `category`), but
@@ -32,12 +46,12 @@ slug: r-x3-fts-frontmatter-metadata-filter
   `SELECT slug FROM pages WHERE vault_id=? AND json_extract(frontmatter_json,'$.status')='open'`;
   or read the rendered `docs/KNOWN_ISSUES.md` ledger, which groups by `category`
   and shows `status`/`severity` inline per issue.
-- **Fix options (deferred — enhancement, pick when status-filtering is a real
-  pain)**:
-  1. **Structured filter flag** — add `wiki-search --where 'status=open'` /
-     `--status open` that compiles to a `json_extract(frontmatter_json,'$.<field>')`
+- **Fix options**:
+  1. ✅ **SHIPPED (TASK 013) — Structured filter flag** —
+     `wiki-search --where 'status=open'` / `--status open` / `--severity SEV-2`
+     compiling to a parameterized `json_extract(frontmatter_json,'$.<field>')`
      predicate (no schema change; reuses the existing column). Cleanest — keeps
-     metadata as filters, not full-text.
+     metadata as filters, not full-text. See `docs/tasks/task-013-*.md`.
   2. **`tag_from_frontmatter` layout option** — a per-layout config list (e.g.
      `[status, severity]`) that copies those frontmatter VALUES into `pages.tags`
      (which IS FTS-indexed), so `--types`/tag-match can filter them. Touches

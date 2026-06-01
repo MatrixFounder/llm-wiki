@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-01T16:57:37.671351 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-01T17:50:31.228151 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood
@@ -48,6 +48,7 @@
 - **P-11** [[p-11-find-alias-collisions-cross-name-join-on-unindexed-entities-name|find_alias_collisions cross-name join on unindexed entities.name]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **R-X1-CFG-COST** [[r-x1-layout-config-resolve-cost|Per-command layout-config resolve cost (no cache; per-file regex recompile)]] — severity `SEV-3`, status `open`, opened 2026-06-01
 - **R-X1-OBS-WALK** [[r-x1-obsidian-multiglob-rewalk|obsidian-personal multi-glob subtree re-walk]] — severity `SEV-3`, status `open`, opened 2026-06-01
+- **R-X3-MF-SCAN** [[r-x3-metadata-filter-unindexed-scan|wiki-search metadata filter is an unindexed json_extract scan + filesort]] — severity `SEV-3`, status `open`, opened 2026-06-01
 
 ## quality
 
@@ -74,4 +75,4 @@
 
 ## ux
 
-- **R-X3-META-FILTER** [[r-x3-fts-frontmatter-metadata-filter|wiki-search can't filter by frontmatter metadata (status / severity / category)]] — severity `SEV-3`, status `open`, opened 2026-06-01
+- **R-X3-META-FILTER** [[r-x3-fts-frontmatter-metadata-filter|wiki-search can't filter by frontmatter metadata (status / severity / category)]] — severity `SEV-3`, status `fixed`, opened 2026-06-01

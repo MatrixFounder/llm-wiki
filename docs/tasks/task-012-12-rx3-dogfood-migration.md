@@ -5,7 +5,7 @@
 
 ## Use Case Connection
 - UC-32: this repo's `docs/KNOWN_ISSUES.md` (743 lines) → per-file Class-A `docs/issues/*.md`
-  + Class-B auto-rendered ledger; `wiki-search "hash drift" --types known-issue` returns one issue.
+  + Class-B auto-rendered ledger; `wiki-search "hash drift"` returns one issue.
 
 ## Task Goal
 Run the splitter (012-11) on this repo as the first real dogfood, regenerate the ledger via
@@ -37,7 +37,7 @@ actually lands for `obsidian-llm-wiki`.
 
 ## Acceptance Criteria
 - ✅ Real `KNOWN_ISSUES.md` round-trips (delete + `--auto-indexes` byte-identical modulo GENERATED-AT).
-- ✅ `wiki-search "hash drift" --types known-issue --vaults obsidian-llm-wiki` returns ONE
+- ✅ `wiki-search "hash drift" --vaults obsidian-llm-wiki` returns ONE
   specific issue, not the whole ledger (verified post-012-14).
 - ✅ `wiki-lint` flags a hand-edit of the regenerated ledger (012-10).
 - ✅ `.migration-report.md` reviewed; no silent data loss.

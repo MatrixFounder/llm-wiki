@@ -257,6 +257,12 @@ wiki-reindex --full --vault my-vault
 
 # 4. Day-to-day: search before grep
 wiki-search "concept name" --vaults my-vault
+
+# 4b. Filter by frontmatter metadata (TASK 013) — status/severity/any field.
+#     Compiles to a json_extract predicate (not full-text), so hyphenated
+#     values like SEV-2 work; omit the query for a pure metadata listing.
+wiki-search --status open --severity SEV-2 --vaults my-vault
+wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 ```
 
 Inside a Claude Code session, the same commands are invokable as
@@ -277,6 +283,7 @@ auto-rejected to prevent SQLite corruption.
 | `/wiki-init --register-existing --vault <path>` | one-time, per vault |
 | `/wiki-init --scaffold-new --vault <path>` | brand-new vault layout |
 | `/wiki-search "<query>" --vaults <vid>` | every time you need a fact |
+| `/wiki-search [--status <v>] [--severity <v>] [--where 'field=value'] --vaults <vid>` | filter by frontmatter metadata (query optional) |
 | `/wiki-reindex --delta --vault <vid>` | after manual markdown edits |
 | `/wiki-reindex --full --vault <vid>` | rebuild from scratch (rare) |
 | `/wiki-lint --vault <vid>` | periodic health-check |
