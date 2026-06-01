@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-01T19:34:37.037765 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-01T22:21:59.688555 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood
@@ -42,9 +42,9 @@
 - **P-4** [[p-4-benchmark-suite-default-n-100-only|benchmark suite default n=100 only]] — status `open`, opened 2026-05-26
 - **P-5** [[p-5-idx-pages-vault-tags-is-dead-weight-functional-index|idx_pages_vault_tags is dead-weight functional index]] — status `fixed`, opened 2026-05-26
 - **P-10** [[p-10-wiki-lint-frontmatter-scan-is-a-2nd-o-pages-yaml-sweep|wiki-lint frontmatter scan is a 2nd O(pages) YAML sweep]] — status `fixed`, opened 2026-05-29
-- **P-6** [[p-6-known-concepts-payload-o-n-per-prepare-invocation|known_concepts payload O(N) per prepare invocation]] — severity `SEV-2`, status `open`, opened 2026-05-28
-- **P-7** [[p-7-no-batch-surface-for-n-source-page-workflows|no batch surface for N-source-page workflows]] — severity `SEV-2`, status `open`, opened 2026-05-28
-- **P-8** [[p-8-wal-pragma-setup-cost-compounded-across-the-two-process-workflow|WAL PRAGMA setup cost compounded across the two-process workflow]] — severity `SEV-2`, status `open`, opened 2026-05-28
+- **P-6** [[p-6-known-concepts-payload-o-n-per-prepare-invocation|known_concepts payload O(N) per prepare invocation]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
+- **P-7** [[p-7-no-batch-surface-for-n-source-page-workflows|no batch surface for N-source-page workflows]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
+- **P-8** [[p-8-wal-pragma-setup-cost-compounded-across-the-two-process-workflow|WAL PRAGMA setup cost compounded across the two-process workflow]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **P-9** [[p-9-missing-concept-files-o-n-stat-sweep-in-prepare|missing_concept_files O(N) stat sweep in prepare]] — severity `SEV-3`, status `open`, opened 2026-05-28
 - **P-11** [[p-11-find-alias-collisions-cross-name-join-on-unindexed-entities-name|find_alias_collisions cross-name join on unindexed entities.name]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **R-X1-CFG-COST** [[r-x1-layout-config-resolve-cost|Per-command layout-config resolve cost (no cache; per-file regex recompile)]] — severity `SEV-3`, status `open`, opened 2026-06-01
@@ -67,7 +67,7 @@
 - **H-6** [[h-6-indirect-prompt-injection-via-source-body|indirect prompt injection via source_body]] — status `open`, opened 2026-05-28
 - **D-010-1** [[d-010-1-cross-source-conflict-lens-rule-deferred-prompt-change|cross-source conflict lens rule (deferred prompt change)]] — status `fixed`, opened 2026-05-31
 - **D-010-2** [[d-010-2-completeness-omission-bleed-on-inversion-defects-v3-quantified|completeness-omission bleed on inversion defects (v3-quantified)]] — status `mitigated`, opened 2026-05-31
-- **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `open`, opened 2026-05-28
+- **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `open`, opened 2026-06-01
 
 ## uncategorized

@@ -1439,7 +1439,10 @@ def test_dispatch_to_indexer_calls_validate_then_index() -> None:
     ) as mi:
         result = wec.dispatch_to_indexer(manifest, "vid", Path("/v"), None)
     mv.assert_called_once_with(manifest, "vid", Path("/v"))
-    mi.assert_called_once_with(manifest, "vid", Path("/v"), db_path=None)
+    # TASK 015 / R-015-2: dispatch forwards the (optional) caller-owned repo;
+    # omitted here → repo=None (index_from_manifest opens/closes its own).
+    mi.assert_called_once_with(manifest, "vid", Path("/v"), db_path=None,
+                               repo=None)
     assert result is fake_summary
 
 

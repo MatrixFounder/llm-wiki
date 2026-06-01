@@ -4,11 +4,33 @@
 - **Task ID:** 015
 - **Slug:** `perf-hardening-extract-concepts`
 - **Mode:** VDD (full pipeline)
+- **Status:** ✅ **SHIPPED (uncommitted) 2026-06-01** — all MVP requirements
+  (R-015-1…5 + NF1–4) implemented; beads 00–10 done; all four issues marked
+  `fixed`. Hardened by `/vdd-multi` ×2 (logic/security/performance all clean):
+  iteration 1 fixed the `apply --ingest` repo-threading CRITICAL; iteration 2
+  fixed 2 HIGH + 1 MED + 2 LOW on the batch surfaces (see the deviation note
+  below). **877 pytest (+4 skip), `mypy --strict` clean (63 files).** Remaining:
+  commit + task archival.
 - **Closes:**
-  - `docs/issues/h-perf-3-index-from-manifest-argparse-in-loop.md` (**H-PERF-3**, SEV-2)
-  - `docs/issues/p-8-wal-pragma-setup-cost-compounded-across-the-two-process-workflow.md` (**P-8**, SEV-2)
-  - `docs/issues/p-6-known-concepts-payload-o-n-per-prepare-invocation.md` (**P-6**, SEV-2)
-  - `docs/issues/p-7-no-batch-surface-for-n-source-page-workflows.md` (**P-7**, SEV-2)
+  - `docs/issues/h-perf-3-index-from-manifest-argparse-in-loop.md` (**H-PERF-3**, SEV-2) — fixed
+  - `docs/issues/p-8-wal-pragma-setup-cost-compounded-across-the-two-process-workflow.md` (**P-8**, SEV-2) — fixed
+  - `docs/issues/p-6-known-concepts-payload-o-n-per-prepare-invocation.md` (**P-6**, SEV-2) — fixed
+  - `docs/issues/p-7-no-batch-surface-for-n-source-page-workflows.md` (**P-7**, SEV-2) — fixed
+
+> **Deviation from spec (R-015-4c), recorded during `/vdd-multi`:** the batch
+> `prepare` envelope emits `known_concepts` + `missing_concept_files` ONCE at
+> the top level — `{"known_concepts": […], "missing_concept_files": […],
+> "batch": [{source_slug, source_path, source_hash, is_unchanged} | {…error…},
+> …]}` — NOT per entry as the RTM literally stated. Per-entry embedding was
+> O(N·|known|) stdout (≈130 MB for 500 pages × 2160 concepts), re-inflating the
+> very P-6 payload this task shrinks. Hoisting keeps the orchestrator contract
+> (reads `known_concepts` once) and the P-6 win at batch scale. Single-page
+> `prepare` still embeds inline (backward-compatible). Also: the planned
+> `_apply_candidates_to_db` single `BEGIN IMMEDIATE` wrapper (bead 015-09) was
+> NOT added — SQLite forbids nested transactions (the DAL methods each
+> `BEGIN IMMEDIATE`); single-outer-transaction batching is **deferred** (needs
+> batch-mode upsert methods). AC-015-7/8 assert connection reuse, not txn count,
+> so they pass.
 
 ---
 

@@ -147,17 +147,30 @@
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
-> **TASK 015 (perf-hardening-extract-concepts) — IN PROGRESS**: Four SEV-2 performance
-> issues in the `wiki-extract-concepts` / `_manifest_consumer` hot path: (H-PERF-3) expose
-> `wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict` — programmatic
-> entry-point, no argparse-in-loop, returns envelope dict; (P-8) `index_from_manifest`
-> gains an optional `repo` parameter — caller passes a shared connection, function reuses
-> it (does not close); single `make_repo` per invocation; (P-6) `prepare
-> --known-concepts-format {full,slugs-only}` flag — `slugs-only` emits `[slug,…]` vs full
-> `[{slug,name,type,aliases},…]` (cap 500 KB → ~30 KB at 1k entities); (P-7)
-> `prepare --batch <slugs.json>` (known_concepts loaded once, per-slug isolation) +
-> `apply --batch-candidates <combined.json>` (shared repo for all entries, single
-> `make_repo`). **Zero DDL** (`user_version` 5). All changes additive/backward-compatible.
+> **TASK 015 (perf-hardening-extract-concepts) — SHIPPED (uncommitted)**: Four SEV-2
+> performance issues in the `wiki-extract-concepts` / `_manifest_consumer` hot path, all
+> CLOSED: (H-PERF-3) `wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict`
+> — programmatic entry-point, no argparse-in-loop, returns envelope dict with private
+> `_exit_code`; `main()` delegates; (P-8) `index_from_manifest` + `dispatch_to_indexer`
+> gained an optional `repo` parameter — caller passes a shared connection, function reuses
+> it (does not close); `apply --ingest` now threads its open repo so the whole invocation
+> is ONE `make_repo`; (P-6) `prepare --known-concepts-format {full,slugs-only}` —
+> `slugs-only` emits `[slug,…]` vs full `[{slug,name,type,aliases},…]`; (P-7)
+> `prepare --batch <slugs.json>` + `apply --batch-candidates <combined.json>`, one repo
+> reused across all entries (single `make_repo`), per-entry error isolation. The `apply`
+> Steps 2–5 were factored into `_apply_validate` (no repo — input errors never touch the
+> DB, preserving the CWE-117 canary ordering) + `_apply_write` (write on the open repo);
+> `prepare` into `_load_known_and_drift` + `_recon_single`. **vdd-multi (2 iterations,
+> all critics clean)** hardened the batch surfaces: `sqlite3.Error` added to the
+> per-entry catch tuple (a DB fault isolates to one entry, never crashes the batch);
+> batch `prepare` emits `known_concepts`/`missing_concept_files` ONCE at the envelope top
+> level (not per entry → O(N+|known|) stdout, not O(N·|known|)); batch `apply` loads known
+> entities ONCE and grows the dedup set in place (O(E), not O(N·E)); idempotency-update
+> failure reports per-entry `partial` (single-page parity); M-2 absolute-path leak in
+> `_resolve_source_inside_sources` closed; combined.json cap raised 1 MiB→10 MiB.
+> **Deferred** (documented): single-outer-transaction batching (SQLite forbids nested
+> transactions — needs batch-mode upsert methods). **Zero DDL** (`user_version` 5); all
+> changes additive/backward-compatible. **877 pytest / 4 skip, mypy strict.**
 >
 > **TASK 013 (R-X3-META-FILTER) — SHIPPED `177fd5a`** + **TASK 014 (dogfood-fixes) —
 > SHIPPED (uncommitted)**: (013) `wiki-search` frontmatter metadata filter —

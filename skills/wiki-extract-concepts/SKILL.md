@@ -53,7 +53,8 @@ skill.
 wiki-extract-concepts prepare \
     --vault <vault-id> \
     --vault-root <path> \
-    --source-page <slug-or-relative-path> \
+    (--source-page <slug-or-relative-path> | --batch <slugs.json>) \
+    [--known-concepts-format {full,slugs-only}] \
     [--db-path <override>]
 ```
 
@@ -61,7 +62,9 @@ wiki-extract-concepts prepare \
 |---|---|---|
 | `--vault` | yes | vault_id; must be registered in `vaults` |
 | `--vault-root` | yes | absolute path; resolved with `strict=True` |
-| `--source-page` | yes | kebab slug OR vault-relative path |
+| `--source-page` | mutex | kebab slug OR vault-relative path (XOR `--batch`) |
+| `--batch SLUGS_JSON` | mutex | **TASK 015 / R-015-4**: path to a JSON array of slugs; one invocation, `known_concepts` + concept-drift swept ONCE and shared. Per-entry errors are non-fatal. Output: `{"known_concepts": […], "missing_concept_files": […], "batch": [{source_slug, source_path, source_hash, is_unchanged} \| {source_slug, error, …}, …]}` — `known_concepts`/`missing_concept_files` are emitted ONCE at the top level (not per entry, P-6) |
+| `--known-concepts-format` | no | **TASK 015 / R-015-3**: `full` (default) = `[{slug,name,type,aliases},…]`; `slugs-only` = `[slug,…]` (smaller payload at scale) |
 | `--db-path` | no | override XDG global DB location |
 
 **No** `--model`, `--max-tokens`, `--ingest` (those belong to v2 / apply).
@@ -88,7 +91,7 @@ wiki-extract-concepts apply \
     --vault-root <path> \
     --source-page <slug> \
     --source-hash <hex-from-prepare> \
-    (--candidates-stdin | --candidates-file <path>) \
+    (--candidates-stdin | --candidates-file <path> | --batch-candidates <combined.json>) \
     [--db-path <override>] \
     [--orchestrator-id <id>] \
     [--ingest]
@@ -97,9 +100,10 @@ wiki-extract-concepts apply \
 | Flag | Required | Notes |
 |---|---|---|
 | `--vault` / `--vault-root` / `--source-page` / `--db-path` | as `prepare` | same semantics |
-| `--source-hash HEX` | **yes** | sha256 emitted by `prepare`; mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (H-1, Q5) |
+| `--source-hash HEX` | single-page | sha256 emitted by `prepare`; mismatch → exit 2 `SOURCE_CHANGED_DURING_EXTRACTION` (H-1, Q5). Required for single-page; omit with `--batch-candidates` (per-entry hash) |
 | `--candidates-stdin` | mutex | reads JSON array from stdin (cap 1 MiB) |
 | `--candidates-file PATH` | mutex | reads JSON from path (must resolve inside vault; stat-cap 1 MiB) |
+| `--batch-candidates COMBINED_JSON` | mutex | **TASK 015 / R-015-5**: path to `[{source_slug, source_hash, candidates:[…]}, …]`. ONE repo reused across all entries; per-entry isolation; with `--ingest`, `index_from_manifest` dispatched once per entry on the shared repo. Output: `{"batch": [{source_slug, action, manifest} \| {source_slug, error, message}, …]}`. `--source-page`/`--source-hash` are omitted (per-entry) |
 | `--orchestrator-id ID` | no | regex `^[a-z0-9._:@-]{1,64}$`; defaults to literal `"orchestrator"` (Q9-v3.1) |
 | `--ingest` | no | dispatch manifest in-process to `index_from_manifest` (Decision-15 preserved) |
 

@@ -9,6 +9,7 @@ import argparse
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import SCHEMA_FILE
@@ -45,6 +46,74 @@ def _find_vault_root(src: Path) -> Path | None:
         current = current.parent
 
 
+def upsert_one(
+    vault_id: str,
+    src: Path,
+    vault_root: Path,
+    repo: Any,
+) -> dict[str, Any]:
+    """Programmatic entry-point for upserting a single page into the index.
+
+    Accepts an already-open repo (caller owns lifecycle — does NOT close it).
+    Returns the envelope dict with private '_exit_code' key (does NOT call emit()).
+    main() pops '_exit_code' and calls emit() with the appropriate exit code.
+    """
+    adapter = ManualSourceAdapter()
+    item = SourceItem(kind="manual", source_path=src, vault_root=vault_root,
+                      vault_id=vault_id)
+    out = adapter.fetch(item)
+    try:
+        updated_fm, db_type = normalize_frontmatter(
+            out.frontmatter, source_path=src,
+        )
+        normalized_body = normalize_body_for_fts(out.body_text)
+    except (UnmappedTypeError, BodyNormalizationError) as e:
+        return {"error": type(e).__name__, "message": str(e),
+                "source": str(src), "_exit_code": 6}
+
+    title = str(updated_fm.get("title") or out.page_slug)
+    tldr_raw = updated_fm.get("tldr")
+    tldr_val = tldr_raw if isinstance(tldr_raw, str) else None
+    date_val: date | None = None
+    fm_date = updated_fm.get("date")
+    if isinstance(fm_date, date):
+        date_val = fm_date
+    elif isinstance(fm_date, str):
+        try:
+            date_val = date.fromisoformat(fm_date)
+        except ValueError:
+            date_val = None
+    last_modified = datetime.fromtimestamp(src.stat().st_mtime)
+    tags = list(updated_fm.get("tags") or [])
+
+    page = Page(
+        vault_id=vault_id,
+        slug=out.page_slug,
+        project=out.project,
+        type=db_type,  # type: ignore[arg-type]
+        title=title,
+        file_path=str(src.relative_to(vault_root)),
+        tldr=tldr_val,
+        date=date_val,
+        last_modified=last_modified,
+        file_hash=out.file_hash,
+        frontmatter_json=updated_fm,
+        body_excerpt=normalized_body[:1000],
+        tags=tags,
+    )
+    outcome = repo.upsert_page(page)
+    if outcome != "unchanged":
+        repo.replace_refs(vault_id, out.page_slug, out.project, out.refs)
+    return {
+        "action": outcome,
+        "vault_id": vault_id,
+        "slug": out.page_slug,
+        "project": out.project,
+        "refs_count": len(out.refs),
+        "_exit_code": 0,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     src = Path(args.source).resolve(strict=True)
@@ -62,59 +131,9 @@ def main(argv: list[str] | None = None) -> int:
         config["db_path"] = args.db_path
     repo = make_repo(config)
     try:
-        adapter = ManualSourceAdapter()
-        item = SourceItem(kind="manual", source_path=src, vault_root=vault_root,
-                          vault_id=args.vault)
-        out = adapter.fetch(item)
-        try:
-            updated_fm, db_type = normalize_frontmatter(
-                out.frontmatter, source_path=src,
-            )
-            normalized_body = normalize_body_for_fts(out.body_text)
-        except (UnmappedTypeError, BodyNormalizationError) as e:
-            return emit({"error": type(e).__name__, "message": str(e),
-                         "source": str(src)}, exit_code=6)
-
-        title = str(updated_fm.get("title") or out.page_slug)
-        tldr_raw = updated_fm.get("tldr")
-        tldr_val = tldr_raw if isinstance(tldr_raw, str) else None
-        date_val: date | None = None
-        fm_date = updated_fm.get("date")
-        if isinstance(fm_date, date):
-            date_val = fm_date
-        elif isinstance(fm_date, str):
-            try:
-                date_val = date.fromisoformat(fm_date)
-            except ValueError:
-                date_val = None
-        last_modified = datetime.fromtimestamp(src.stat().st_mtime)
-        tags = list(updated_fm.get("tags") or [])
-
-        page = Page(
-            vault_id=args.vault,
-            slug=out.page_slug,
-            project=out.project,
-            type=db_type,  # type: ignore[arg-type]
-            title=title,
-            file_path=str(src.relative_to(vault_root)),
-            tldr=tldr_val,
-            date=date_val,
-            last_modified=last_modified,
-            file_hash=out.file_hash,
-            frontmatter_json=updated_fm,
-            body_excerpt=normalized_body[:1000],
-            tags=tags,
-        )
-        outcome = repo.upsert_page(page)
-        if outcome != "unchanged":
-            repo.replace_refs(args.vault, out.page_slug, out.project, out.refs)
-        return emit({
-            "action": outcome,
-            "vault_id": args.vault,
-            "slug": out.page_slug,
-            "project": out.project,
-            "refs_count": len(out.refs),
-        })
+        result = upsert_one(args.vault, src, vault_root, repo)
+        exit_code: int = result.pop("_exit_code", 0)
+        return emit(result, exit_code=exit_code)
     finally:
         repo.close()
 

@@ -75,6 +75,23 @@ layout's `slug_strategy` so `[[Title Case]]`/`[[Идеи]]` resolve under non-`i
 layouts; karpathy=no-op→byte-identity; dev-vault orphans 2228→2160) + two CLI-UX
 fixes (`wiki-query --vault-root` now optional/derived; `wiki-alias --list` lists the
 whole vault via new `repo.list_all_aliases`). **852 pytest (+4 skipped), mypy strict.**
+**TASK 015 (perf-hardening-extract-concepts) SHIPPED 2026-06-01** (uncommitted): closes
+the four SEV-2 hot-path issues **H-PERF-3** (`wiki_index_upsert.upsert_one(vault_id, src,
+vault_root, repo)` programmatic entry-point — no argparse-in-loop; `main()` delegates),
+**P-8** (`index_from_manifest` + `dispatch_to_indexer` optional `repo`; `apply --ingest`
+threads its open repo → one `make_repo`), **P-6** (`prepare --known-concepts-format
+{full,slugs-only}`), **P-7** (`prepare --batch <slugs.json>` + `apply --batch-candidates
+<combined.json>` — one repo reused across all entries, per-entry isolation). `apply`
+factored into `_apply_validate` (no repo — input errors never touch the DB, preserving the
+CWE-117 canary ordering) + `_apply_write`; `prepare` into `_load_known_and_drift` +
+`_recon_single`. Hardened by **`/vdd-multi` ×2 (all critics clean)**: `sqlite3.Error` in the
+per-entry catch (DB fault isolates, never crashes the batch); batch `prepare` hoists
+`known_concepts`/`missing_concept_files` to the envelope top level (O(N+|known|), not
+O(N·|known|) stdout — deviation from R-015-4c, recorded in TASK.md); batch `apply` loads
+known once + grows the dedup set in place (O(E), not O(N·E)); idempotency-failure →
+per-entry `partial`; M-2 abspath leak closed; combined.json cap 1 MiB→10 MiB. **Deferred:**
+single-outer-transaction batching (SQLite nested-txn limit). **Zero DDL** (`user_version`
+5). **877 pytest (+4 skipped), mypy strict.**
 
 ## Knowledge lookup priority
 

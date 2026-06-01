@@ -4,9 +4,9 @@ Created by TASK 003 / I-7.0 to break cross-skill coupling (Decision-16).
 Both ``wiki_enrich.py`` (back-compat re-export) and ``wiki_extract_concepts.py``
 (new in TASK 003 v2) import from this module so no skill depends on another
 skill at IMPORT TIME for v1.1 manifest validation and SQLite-index mirroring.
-(Note: ``index_from_manifest`` still reaches into ``wiki_index_upsert`` via a
-lazy in-function import — runtime neutrality is therefore not absolute, but
-the import graph at module load is clean.)
+TASK 015 / R-015-2 (H-PERF-3 + P-8): ``index_from_manifest`` now imports
+``upsert_one`` at module load and accepts an optional ``repo`` parameter.
+When provided, the caller's connection is reused (no new open/close cycle).
 
 Public surface (the "integration contract"):
     - WikiIngestError       — exception raised on contract violations
@@ -23,9 +23,6 @@ release cycle.
 """
 from __future__ import annotations
 
-import contextlib
-import io
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,6 +34,7 @@ from scripts.wiki_index.security import (
     PathTraversalError,
     validate_inside_vault,
 )
+from scripts.wiki_skills.wiki_index_upsert import upsert_one
 
 
 class WikiIngestError(Exception):
@@ -78,11 +76,19 @@ def validate_manifest(manifest: dict[str, Any], expected_vault_id: str,
             ) from e
 
 
-def index_from_manifest(manifest: dict[str, Any], vault_id: str,
-                        vault_root: Path, db_path: str | None = None
-                        ) -> dict[str, Any]:
+def index_from_manifest(
+    manifest: dict[str, Any],
+    vault_id: str,
+    vault_root: Path,
+    db_path: str | None = None,
+    repo: Any = None,
+) -> dict[str, Any]:
     """For each manifest.written[].path → upsert into SQLite. Mirror
     manifest.log_event into log_events. Returns summary stats.
+
+    When ``repo`` is provided (not None), the caller owns the connection —
+    it is reused directly and NOT closed here. When ``repo`` is None, one
+    connection is opened and closed by this function (H-PERF-3 / P-8 fix).
 
     Top-level system files (index.md, log.md, WIKI_SCHEMA.md, CLAUDE.md)
     are skipped — Class B/C per ADR-002 §D8: index.md is projected by
@@ -90,86 +96,62 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
     top-level-only so legitimate subdir pages like ``_concepts/index.md``
     still reach upsert.
     """
-    from scripts.wiki_skills.wiki_index_upsert import main as upsert_main
-
-    upserted: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
-    for entry in manifest["written"]:
-        rel = entry["path"]
-        # TODO: extend if promotion-spec introduces course-tier `Lessons/<C>/index.md`.
-        rel_path = Path(rel)
-        # vdd-multi critic-logic M-1: defense-in-depth — reject absolute paths
-        # at the upsert boundary (validate_manifest should have caught them,
-        # but if a future caller invokes index_from_manifest() directly
-        # without validation, the system-file skip would be bypassed for an
-        # absolute path like `/abs/index.md` and the upsert step would try
-        # to read OUTSIDE the vault).
-        if rel_path.is_absolute():
-            failed.append({"path": rel,
-                           "envelope": {"error": "ABSOLUTE_PATH_IN_MANIFEST",
-                                        "message": f"manifest written entry has absolute path: {rel}"}})
-            continue
-        if rel_path.parent == Path(".") and rel_path.name in SYSTEM_FILES:
-            continue
-        abs_path = (vault_root / rel).resolve()
-        argv = [
-            "--vault", vault_id,
-            "--source", str(abs_path),
-            "--vault-root", str(vault_root),
-        ]
-        if db_path:
-            argv.extend(["--db-path", db_path])
-        # wiki_index_upsert.main writes a JSON envelope to stdout; capture it.
-        # Catch only EXPECTED failure modes — `OSError` for FS errors,
-        # `ValueError` for frontmatter parse, `KeyError` for missing schema
-        # fields, `RuntimeError` for explicit raise-with-context. Programming
-        # errors (`MemoryError`, `RecursionError`, `AttributeError`, etc.)
-        # MUST propagate — silently routing them to `failed[]` masked refactor
-        # regressions per vdd-multi critic-logic C-1 + critic-security M-3.
-        buf = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf):
-                rc = upsert_main(argv)
-        except (OSError, ValueError, KeyError, RuntimeError) as e:
-            failed.append({"path": rel,
-                           "envelope": {"error": type(e).__name__,
-                                        "message": str(e)}})
-            continue
-        try:
-            envelope = json.loads(buf.getvalue())
-        except json.JSONDecodeError:
-            # M-1 (vdd-multi 2026-05-28): the v3.1 envelope CWE-117
-            # invariant (tested by 003-v3-17) forbids `raw` / `content`
-            # / `value` / `received` keys in error envelopes — they
-            # surface arbitrary downstream output (potentially including
-            # sensitive vault content) into the final emitted payload.
-            # Replace with a structured `reason` that emits only the
-            # output LENGTH, not the bytes themselves. Operators can
-            # find the full output in the application log if needed.
-            raw_len = len(buf.getvalue())
-            envelope = {
-                "error": "BAD_UPSERT_OUTPUT",
-                "reason": (f"wiki-index-upsert emitted non-JSON stdout "
-                           f"({raw_len} bytes); see application log "
-                           "for the raw output"),
-            }
-        if rc != 0 or "error" in envelope:
-            failed.append({"path": rel, "envelope": envelope})
-        else:
-            upserted.append({"path": rel, "action": envelope.get("action", "?")})
-
-    log_event_id: int | None = None
-    log_event = manifest.get("log_event")
-    if log_event and not failed:
-        repo = make_repo({
+    _owns_repo = repo is None
+    if _owns_repo:
+        repo_to_use: Any = make_repo({
             "vault_id": vault_id,
             **({"db_path": db_path} if db_path else {}),
         })
-        try:
+    else:
+        repo_to_use = repo
+
+    upserted: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    log_event_id: int | None = None
+    try:
+        for entry in manifest["written"]:
+            rel = entry["path"]
+            # TODO: extend if promotion-spec introduces course-tier `Lessons/<C>/index.md`.
+            rel_path = Path(rel)
+            # vdd-multi critic-logic M-1: defense-in-depth — reject absolute paths
+            # at the upsert boundary (validate_manifest should have caught them,
+            # but if a future caller invokes index_from_manifest() directly
+            # without validation, the system-file skip would be bypassed for an
+            # absolute path like `/abs/index.md` and the upsert step would try
+            # to read OUTSIDE the vault).
+            if rel_path.is_absolute():
+                failed.append({"path": rel,
+                               "envelope": {"error": "ABSOLUTE_PATH_IN_MANIFEST",
+                                            "message": f"manifest written entry has absolute path: {rel}"}})
+                continue
+            if rel_path.parent == Path(".") and rel_path.name in SYSTEM_FILES:
+                continue
+            abs_path = (vault_root / rel).resolve()
+            # Catch only EXPECTED failure modes — `OSError` for FS errors,
+            # `ValueError` for frontmatter parse, `KeyError` for missing schema
+            # fields, `RuntimeError` for explicit raise-with-context. Programming
+            # errors (`MemoryError`, `RecursionError`, `AttributeError`, etc.)
+            # MUST propagate — silently routing them to `failed[]` masked refactor
+            # regressions per vdd-multi critic-logic C-1 + critic-security M-3.
+            try:
+                result = upsert_one(vault_id, abs_path, vault_root, repo_to_use)
+            except (OSError, ValueError, KeyError, RuntimeError) as e:
+                failed.append({"path": rel,
+                               "envelope": {"error": type(e).__name__,
+                                            "message": str(e)}})
+                continue
+            exit_code: int = result.pop("_exit_code", 0)
+            if exit_code != 0 or "error" in result:
+                failed.append({"path": rel, "envelope": result})
+            else:
+                upserted.append({"path": rel, "action": result.get("action", "?")})
+
+        log_event = manifest.get("log_event")
+        if log_event and not failed:
             ev_ts_raw = log_event.get("event_ts")
             ev_ts = (datetime.fromisoformat(ev_ts_raw) if ev_ts_raw
                      else datetime.now())
-            log_event_id = repo.append_log_event(LogEvent(
+            log_event_id = repo_to_use.append_log_event(LogEvent(
                 vault_id=vault_id,
                 event_ts=ev_ts,
                 event_type=log_event.get("event_type", "ingest"),
@@ -184,8 +166,9 @@ def index_from_manifest(manifest: dict[str, Any], vault_id: str,
                 },
                 log_md_byte_offset=log_event.get("log_md_byte_offset"),
             ))
-        finally:
-            repo.close()
+    finally:
+        if _owns_repo:
+            repo_to_use.close()
 
     return {
         "upserted": upserted,

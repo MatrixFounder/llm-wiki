@@ -259,6 +259,8 @@
   },
   "active": "cc435f8a140e37b6",
   "lastOpenFiles": [
+    "tests/__pycache__/test_perf_hardening.cpython-314-pytest-9.0.3.pyc",
+    "tests/test_perf_hardening.py",
     "docs/reviews/plan-015-review.md",
     "docs/tasks/task-015-10-close-issues-docs.md",
     "docs/tasks/task-015-09-implement-batch-apply.md",
@@ -290,7 +292,6 @@
     "docs/tasks/task-013-02-cli-where-flag.md",
     "docs/tasks/task-013-01-dal-where-fields.md",
     "docs/tasks/task-013-00-no-regression-anchor.md",
-    "docs/plans/plan-012-universal-layout-engine.md",
     "tests/__pycache__/test_vdd_multi_012_fixes.cpython-314-pytest-9.0.3.pyc",
     "tests/test_vdd_multi_012_fixes.py"
   ]

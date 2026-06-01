@@ -341,8 +341,9 @@ Trigger: real vault crosses 1k pages and operations slow down.
 > enum L-5 already-absent), reindex name fallback (L-8), `_recompute_mentions`
 > dedup (F12c), `wiki-lint` frontmatter scan from `pages.frontmatter_json`
 > (P-10+F12b — removes a 2nd O(N) YAML sweep), + doc clarifications (L-1/6/7).
-> Scale-gated perf (P-1/2/3/4/6/7/8/9/11, H-PERF-3) + threat-gated security
-> (D-1/D-2/H-5/H-6/Q17) remain deferred with their triggers. See
+> Scale-gated perf (P-1/2/3/4/9/11) + threat-gated security
+> (D-1/D-2/H-5/H-6/Q17) remain deferred with their triggers
+> (**P-6/P-7/P-8 + H-PERF-3 closed by TASK 015** 2026-06-01). See
 > `docs/tasks/task-006-*.md`.
 
 ---
@@ -390,6 +391,25 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 015 (perf-hardening-extract-concepts) — 2026-06-01.** Closes four SEV-2
+  hot-path issues in `wiki-extract-concepts` / `_manifest_consumer`: **H-PERF-3**
+  (`wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict` programmatic
+  entry-point — no argparse-in-loop; `main()` delegates), **P-8** (`index_from_manifest`
+  + `dispatch_to_indexer` optional `repo` param; `apply --ingest` threads its open repo →
+  one `make_repo` per invocation), **P-6** (`prepare --known-concepts-format
+  {full,slugs-only}`), **P-7** (`prepare --batch <slugs.json>` + `apply --batch-candidates
+  <combined.json>` — one repo reused across all entries, per-entry error isolation).
+  `apply` factored into `_apply_validate` (no repo — input errors never touch the DB,
+  preserving the CWE-117 canary ordering) + `_apply_write`; `prepare` into
+  `_load_known_and_drift` + `_recon_single`. **Hardened by `/vdd-multi` ×2 (all critics
+  clean):** `sqlite3.Error` in the per-entry catch (one DB fault isolates, never crashes
+  the batch); batch `prepare` hoists `known_concepts`/`missing_concept_files` to the
+  envelope top level (O(N+|known|) stdout, not O(N·|known|)); batch `apply` loads known
+  entities once + grows the dedup set in place (O(E), not O(N·E)); idempotency-failure →
+  per-entry `partial`; M-2 absolute-path leak closed; combined.json cap 1 MiB→10 MiB.
+  **Deferred:** single-outer-transaction batching (SQLite nested-txn limit → needs
+  batch-mode upsert methods). **Zero DDL** (`user_version` 5), additive/backward-compatible.
+  877 pytest (+4 skip), mypy strict.
 - **TASK 014 (dogfood-fixes) — 2026-06-01.** Fixes from the comprehensive dogfood
   (dev-vault + karpathy/obsidian-personal/dev-project sandbox vaults across all
   layout classes + aliases + cross-vault search). Closes **R-X1-REF-SLUGIFY**
@@ -486,13 +506,13 @@ the misleading docstring.
   - **Final gate**: 450 pytest pass + 4 skipped, mypy --strict clean
     (55 files), anthropic-free invariant clean, patch-target lock clean.
   - **Architectural follow-ups deferred** to
-    [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md): **H-PERF-3** (SEV-2 —
-    `_manifest_consumer` argparse-in-loop N+1; needs
-    `wiki_index_upsert` programmatic entry-point), **H-5**
+    [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md): ~~**H-PERF-3**~~ (SEV-2 —
+    `_manifest_consumer` argparse-in-loop N+1) **— CLOSED by TASK 015**
+    (`wiki_index_upsert.upsert_one` programmatic entry-point); **H-5**
     (`concept-extraction/SKILL.md` hash-pin enforcement), **H-6**
     (indirect prompt-injection canary scanning),
-    **P-8** (two-process WAL setup cost — bumped SEV-3 → SEV-2 after
-    counting `--ingest`-path connection cycles), **L-4** (`>=` deps
+    ~~**P-8**~~ (two-process WAL setup cost) **— CLOSED by TASK 015**
+    (connection reuse via `index_from_manifest(repo=…)`), **L-4** (`>=` deps
     unpinned; add `pip-compile` lockfile + `pip-audit` to CI).
   - **BREAKING CHANGE**: legacy single-command CLI invocation no longer
     accepted; argparse routes to `prepare` / `apply` subparsers and
