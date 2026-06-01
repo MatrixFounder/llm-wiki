@@ -105,7 +105,10 @@
 > warranted. Spec: [tasks/](./tasks/) + `reports/v4/benchmark-v4.md`.
 >
 > **TASK 012 (R-X1 + R-X2 A-B + R-X3 — universal config-driven layout engine + dev-vault
-> bootstrap) — IN PROGRESS (2026-06-01):** replaces ~15 hardcoded layout surfaces
+> bootstrap) — R-X1 SHIPPED + R-X2/R-X3 engine+tooling SHIPPED (2026-06-01); live
+> dev-vault bootstrap of THIS repo held on an operator decision (repo-root WIKI_SCHEMA
+> vs docs/-relative globs — see ROADMAP R-X2). 803 pytest green, mypy strict clean.**
+> Replaces ~15 hardcoded layout surfaces
 > (`PAGE_SUBDIRS`, the `Lessons/` two-tier walk, `TYPE_MAPPING`/`_PATH_TYPE_FALLBACK`,
 > `_WIKILINK_RE`, slug rules) with a **YAML-config-driven engine** (new
 > `scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` + built-in

@@ -36,6 +36,12 @@ from scripts.wiki_index.models import LogEvent, Vault
 _VAULT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
+# TASK 012 / R-X2.1: layout names accepted by --layout. `flat`/`per-project` are
+# legacy aliases for the Karpathy grammar (they + `karpathy` get the two-tier
+# page-subdir scaffold); `dev-project`/`obsidian-personal` index an existing tree.
+_LAYOUT_CHOICES = ["flat", "per-project", "karpathy", "dev-project", "obsidian-personal"]
+_KARPATHY_LAYOUTS = {"flat", "per-project", "karpathy"}
+
 
 def _validate_vault_id(vault_id: str) -> bool:
     if vault_id == "_global_":
@@ -83,8 +89,15 @@ def scaffold_new(args: argparse.Namespace) -> int:
                       "pattern": _VAULT_ID_RE.pattern}, exit_code=6)
     vault_root = Path(args.vault).resolve()
     vault_root.mkdir(parents=True, exist_ok=True)
-    for sub in SCAFFOLD_DIRS:
-        (vault_root / sub).mkdir(parents=True, exist_ok=True)
+    # TASK 012 / R-X2.1: only the Karpathy family gets the two-tier page-subdir
+    # scaffold (_sources/_concepts/…). dev-project / obsidian-personal index an
+    # EXISTING tree (docs/, numbered folders), so scaffolding Karpathy dirs into
+    # a real repo would be wrong — write WIKI_SCHEMA.md + register only.
+    _layout = args.layout or "per-project"
+    _karpathy = _layout in _KARPATHY_LAYOUTS
+    if _karpathy:
+        for sub in SCAFFOLD_DIRS:
+            (vault_root / sub).mkdir(parents=True, exist_ok=True)
     # DF-3 (dogfood): the description renders into a *double-quoted* YAML scalar
     # in the template (`description: "${description}"`). The old default
     # `LLM Wiki vault: {vault_id}` had an unquoted colon → invalid YAML →
@@ -96,7 +109,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
     placeholders = {
         "vault_id": vault_id,
         "language": args.language or "en",
-        "layout": args.layout or "per-project",
+        "layout": _layout,
         "description": _desc,
     }
     schema_path = vault_root / SCHEMA_FILE
@@ -111,14 +124,15 @@ def scaffold_new(args: argparse.Namespace) -> int:
             Template((_TEMPLATES_DIR / "CLAUDE.md.tmpl").read_text())
             .substitute(placeholders)
         )
-    idx = vault_root / VAULT_INDEX_DIR / "index.md"
-    if not idx.exists():
-        idx.write_text(f"# {vault_id} Index\n\nAuto-generated.\n")
-    now = datetime.now()
-    log_month = (vault_root / VAULT_INDEX_DIR / LOG_SUBDIR /
-                 f"{now.strftime('%Y-%m')}.md")
-    if not log_month.exists():
-        log_month.write_text(f"# Log {now.strftime('%Y-%m')}\n\n")
+    if _karpathy:
+        idx = vault_root / VAULT_INDEX_DIR / "index.md"
+        if not idx.exists():
+            idx.write_text(f"# {vault_id} Index\n\nAuto-generated.\n")
+        now = datetime.now()
+        log_month = (vault_root / VAULT_INDEX_DIR / LOG_SUBDIR /
+                     f"{now.strftime('%Y-%m')}.md")
+        if not log_month.exists():
+            log_month.write_text(f"# Log {now.strftime('%Y-%m')}\n\n")
 
     config: dict[str, Any] = {"vault_id": vault_id}
     if args.db_path:
@@ -288,8 +302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vault-id", help="Override vault_id (scaffold-new only).")
     p.add_argument("--db-path", help="Override default DB path (testing).")
     p.add_argument("--language", default=None)
-    p.add_argument("--layout", default=None,
-                   choices=["flat", "per-project"])
+    p.add_argument("--layout", default=None, choices=_LAYOUT_CHOICES)
     p.add_argument("--description", default=None)
     p.add_argument("--force", action="store_true")
     p.add_argument("--confirm", action="store_true")

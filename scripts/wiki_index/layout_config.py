@@ -46,7 +46,11 @@ from scripts.wiki_index.config_loader import (
     load_root_config,
 )
 from scripts.wiki_index.layout import SCHEMA_FILE, SYSTEM_FILES, VAULT_TIER_PROJECT
-from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
+from scripts.wiki_index.security import (
+    PathTraversalError,
+    assert_no_symlink_escape,
+    validate_inside_vault,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -65,11 +69,24 @@ UNMATCHED_PROJECT = "_unmatched_"
 # plan-review m2 / architecture-review m2).
 _REDOS_N = 5
 _REDOS_CEILING_S = 0.05
-# A short ambiguous run: a nested-quantifier pattern backtracks ~exponentially here
-# (~180ms at 22 chars — clearly over the 50ms ceiling, yet bounded sub-second so the
-# gate's own first run can't hang), while safe/built-in patterns finish in ~1µs (a
-# ~4-orders-of-magnitude margin → no flaky reject of good patterns / pass of bad).
-_REDOS_PAYLOAD = "a" * 22 + "!"
+# A small battery of STRUCTURALLY-DIVERSE adversarial payloads (critic-security
+# HIGH-2): different char classes + a no-final-match tail, so the gate catches
+# more than one backtracker SHAPE (the old single `"a"*22+"!"` only stressed
+# nested-quantifier-over-`a`; a pattern like `(.*a){50}` slipped past it). Each
+# payload is short so even a catastrophic pattern completes in ~sub-second (the
+# gate itself can't be DoS'd; safe patterns finish in ~1µs → no flaky verdicts).
+# RESIDUAL (deferred → KNOWN_ISSUES R-X1-REDOS-RUNTIME): a pattern that is linear
+# on these short payloads but catastrophic only on LONG real file content is NOT
+# caught at load — that needs a per-file runtime regex deadline at the
+# `extract_refs`/`_derive_project` consumer (stdlib `re` has no timeout). Built-in
+# layout patterns are pre-vetted; this gate guards operator-custom configs.
+_REDOS_PAYLOADS = (
+    "a" * 24 + "!",                # nested quantifier over one char
+    "1" * 24 + "x",                # digit run
+    " " * 24 + "x",                # whitespace run
+    ("ab" * 12) + "!",             # alternation/group over a 2-char cycle
+    ("a" * 12 + "b" * 12) + "!",   # two runs + non-matching tail (defeats `(.*a){…}`)
+)
 
 # Repo-root-relative paths (project root = parent of `scripts/`).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -158,16 +175,28 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return raw
 
 
+_VALIDATOR: Draft202012Validator | None = None
+
+
+def _get_validator() -> Draft202012Validator:
+    """Module-level singleton (perf-critic H-1): the layout-config JSON Schema is
+    static + ships with the engine, so read + `check_schema`-meta-validate + build
+    the `Draft202012Validator` ONCE per process, not on every `_validate` call
+    (which previously re-read the file + re-meta-validated the schema each time)."""
+    global _VALIDATOR
+    if _VALIDATOR is None:
+        schema_doc = yaml.safe_load(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        if not isinstance(schema_doc, dict):
+            raise LayoutConfigError(f"{_SCHEMA_PATH}: schema must be a YAML mapping")
+        Draft202012Validator.check_schema(schema_doc)
+        _VALIDATOR = Draft202012Validator({**schema_doc, "$ref": "#/$defs/LayoutConfig"})
+    return _VALIDATOR
+
+
 def _validate(merged: dict[str, Any]) -> None:
     """Validate `merged` against #/$defs/LayoutConfig. Raises LayoutConfigError
     with a JSON pointer to the offending field on failure."""
-    schema_doc = yaml.safe_load(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    if not isinstance(schema_doc, dict):
-        raise LayoutConfigError(f"{_SCHEMA_PATH}: schema must be a YAML mapping")
-    scope = {**schema_doc, "$ref": "#/$defs/LayoutConfig"}
-    Draft202012Validator.check_schema(schema_doc)
-    validator = Draft202012Validator(scope)
-    errors = sorted(validator.iter_errors(merged), key=lambda e: list(e.absolute_path))
+    errors = sorted(_get_validator().iter_errors(merged), key=lambda e: list(e.absolute_path))
     if errors:
         parts = []
         for err in errors:
@@ -233,25 +262,28 @@ def _resolve_override(vault_root: Path, root_config: dict[str, Any]) -> Path | N
     vault root)."""
     pointer = root_config.get("layout_config")
     if pointer:
-        candidate = (vault_root / str(pointer)).resolve()
+        candidate = vault_root / str(pointer)   # RAW — do NOT resolve yet
     else:
-        conventional = vault_root / _OVERRIDE_CONVENTIONAL
-        if not conventional.exists():
+        candidate = vault_root / _OVERRIDE_CONVENTIONAL
+        if not candidate.exists():
             return None
-        candidate = conventional
 
+    # critic-security MED-2: check is_symlink on the RAW candidate, BEFORE any
+    # resolve() (which would dereference the symlink and make this check a no-op).
     if candidate.is_symlink():
         raise LayoutConfigError(
             f"layout override is a symlink (refusing to follow): {candidate}"
         )
     try:
-        return validate_inside_vault(candidate, vault_root)
+        validated = validate_inside_vault(candidate, vault_root)  # resolve+contain
+        assert_no_symlink_escape(validated)                       # ancestor-symlink walk
     except PathTraversalError as exc:
         raise LayoutConfigError(str(exc)) from exc
     except FileNotFoundError as exc:
         raise LayoutConfigError(
             f"layout_config pointer does not exist: {candidate}"
         ) from exc
+    return validated
 
 
 def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutConfig:
@@ -311,22 +343,23 @@ def _redos_budget_check(config: LayoutConfig) -> None:
             compiled = re.compile(pat)
         except re.error as exc:  # ref regexes are not compile-checked elsewhere
             raise LayoutConfigError(f"regex {label}={pat!r} failed to compile: {exc}") from exc
-        times: list[float] = []
-        for _ in range(_REDOS_N):
-            t0 = time.perf_counter()
-            compiled.search(_REDOS_PAYLOAD)
-            dt = time.perf_counter() - t0
-            times.append(dt)
-            if dt > _REDOS_CEILING_S:
-                break  # already over budget — stop (bounds catastrophic gate cost)
-        median = sorted(times)[len(times) // 2]
-        if median > _REDOS_CEILING_S:
-            raise LayoutConfigError(
-                f"regex {label}={pat!r} exceeds the ReDoS budget "
-                f"({median * 1000:.1f}ms median > {_REDOS_CEILING_S * 1000:.0f}ms "
-                f"ceiling) on the adversarial payload — refusing to load "
-                f"(potential catastrophic backtracking)"
-            )
+        for payload in _REDOS_PAYLOADS:
+            times: list[float] = []
+            for _ in range(_REDOS_N):
+                t0 = time.perf_counter()
+                compiled.search(payload)
+                dt = time.perf_counter() - t0
+                times.append(dt)
+                if dt > _REDOS_CEILING_S:
+                    break  # already over budget — stop (bounds catastrophic gate cost)
+            median = sorted(times)[len(times) // 2]
+            if median > _REDOS_CEILING_S:
+                raise LayoutConfigError(
+                    f"regex {label}={pat!r} exceeds the ReDoS budget "
+                    f"({median * 1000:.1f}ms median > {_REDOS_CEILING_S * 1000:.0f}ms "
+                    f"ceiling) on an adversarial payload — refusing to load "
+                    f"(potential catastrophic backtracking)"
+                )
 
 
 # --------------------------------------------------------------------------- #
@@ -355,6 +388,13 @@ def _validate_path_patterns(paths: tuple[PathEntry, ...]) -> None:
                 f"project_pattern {entry.project_pattern!r} (glob {entry.glob!r}) "
                 f"failed to compile: {exc}"
             ) from exc
+        if not entry.project_template:
+            # critic-logic LOW: a pattern without a template → _derive_project
+            # would substitute into "" → a degenerate empty project. Reject at load.
+            raise LayoutConfigError(
+                f"project_pattern {entry.project_pattern!r} (glob {entry.glob!r}) "
+                f"requires a project_template"
+            )
         if entry.project_template:
             ids = set(string.Template(entry.project_template).get_identifiers())
             missing = ids - set(compiled.groupindex)

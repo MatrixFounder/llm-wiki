@@ -342,6 +342,16 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         except Exception:
             conn.execute("ROLLBACK")
             raise
+        # Step 5 (PW-H, critic-logic HIGH-1): re-render auto_indexes so an
+        # incremental edit/delete of a known-issue keeps the Class-B ledger
+        # consistent — otherwise the supported `--delta` workflow leaves a stale
+        # ledger that the PW-Q drift guard then false-flags. Reuses the `config`
+        # resolved at the top (no re-resolve). No-op for layouts w/o auto_indexes.
+        from scripts.wiki_index.rendering import render_and_write_auto_indexes
+        auto_rendered = render_and_write_auto_indexes(
+            repo, vault_id, vault_root, config,
+            generated_at=datetime.now().isoformat(),
+        )
         duration = time.perf_counter() - t0
         repo.append_log_event(LogEvent(
             vault_id=vault_id,
@@ -363,6 +373,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     return {
         "action": "reindexed", "mode": "delta", "vault_id": vault_id,
         "touched": touched, "deleted": deleted, "skipped": skipped,
+        "auto_rendered": auto_rendered,
         "duration_seconds": round(duration, 3),
     }
 
@@ -601,6 +612,15 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                           "log_events": log_events_count,
                           "skipped": len(skipped)},
         ))
+        # Step 5 (PW-H, TASK 012): render the layout's auto_indexes[] targets
+        # (e.g. docs/KNOWN_ISSUES.md) from the now-indexed Class-A pages. No-op
+        # for layouts without auto_indexes (Karpathy → byte-identical).
+        from scripts.wiki_index.rendering import render_and_write_auto_indexes
+        auto_rendered = render_and_write_auto_indexes(
+            repo, vault_id, vault_root, config,
+            generated_at=datetime.now().isoformat(),
+        )
+
         repo.finish_batch_run(
             run_id, "success",
             notes=f"pages={pages_count} entities={entities_count} "
@@ -621,5 +641,6 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         "alias_collisions": alias_collisions,
         "cite_skipped": cite_skipped,
         "skipped": skipped,
+        "auto_rendered": auto_rendered,
         "duration_seconds": round(duration, 3),
     }

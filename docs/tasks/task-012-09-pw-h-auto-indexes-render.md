@@ -36,6 +36,14 @@ per-issue files**, byte-identical on re-render modulo a single `GENERATED-AT` he
 - **Render-trigger contract:** at the end of an upsert batch that creates OR deletes a page
   whose **tag-route type** is `known-issue` (predicate on the tag/frontmatter marker, NOT a
   `pages.type` value — zero-DDL), fire the `auto_indexes[]` render for the affected output.
+- **STATUS (shipped vs deferred — /vdd-multi convergence, critic-logic):** the render is wired
+  into `reindex_full` **and `reindex_delta`** (Step 5) + the explicit `wiki-index-render
+  --auto-indexes` CLI. The **per-upsert batch trigger is DEFERRED as a latency optimization**
+  (not a correctness gate): a post-upsert ledger is at worst transiently stale until the next
+  `--delta`/render — exactly the Class-B drift the design already tolerates between renders,
+  and PW-Q surfaces it. `--delta` + CLI cover the supported incremental workflow, so the
+  stale-ledger→false-positive risk this sub-feature guards against is closed without the
+  upsert hook. Recorded here so spec and code do not silently diverge.
 
 ### New Files
 #### File: `scripts/wiki_index/assets/known-issues-ledger.md.tmpl` (NEW)

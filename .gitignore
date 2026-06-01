@@ -110,3 +110,6 @@ samples
 !/.claude/skills/wiki-reindex
 !/.claude/skills/wiki-search
 # <<< end agentic-development framework <<<
+
+# TASK 012 / R-X2: dev-vault operational state (SQLite cache + render-state) — Class C
+.wiki/

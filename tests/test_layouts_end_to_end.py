@@ -51,14 +51,14 @@ def test_builtin_layouts_load_and_validate(tmp_path: Path) -> None:
 def test_dev_project_indexes_and_searches(tmp_path: Path) -> None:
     vault = tmp_path / "dv"
     _wiki_schema(vault, "dev-proj", "dev-project")
-    (vault / "docs" / "adr").mkdir(parents=True)
-    (vault / "docs" / "adr" / "adr-002-layering.md").write_text(
+    (vault / "adr").mkdir(parents=True)
+    (vault / "adr" / "adr-002-layering.md").write_text(
         "# ADR-002: Data Layering\n\nSupersedes ADR-001. See [related](adr-001-x.md).\n",
         encoding="utf-8")  # no frontmatter → glob_type=adr + H1 title
-    (vault / "docs" / "tasks").mkdir(parents=True)
-    (vault / "docs" / "tasks" / "task-012-x.md").write_text(
+    (vault / "tasks").mkdir(parents=True)
+    (vault / "tasks" / "task-012-x.md").write_text(
         "---\ntype: task\ntitle: A Task\n---\n\nbody mentioning ADR-002\n", encoding="utf-8")
-    (vault / "docs" / "ROADMAP.md").write_text("# Roadmap\n\nitems\n", encoding="utf-8")
+    (vault / "ROADMAP.md").write_text("# Roadmap\n\nitems\n", encoding="utf-8")
 
     repo = SQLiteRepository(tmp_path / "g.db")
     repo.apply_schema()

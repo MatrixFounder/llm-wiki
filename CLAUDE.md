@@ -38,10 +38,23 @@ plus a **durable, reproducible eval harness** at `skills/wiki-verify/evals/`) sh
 security-audit + code-review + `/vdd-multi` [2 HIGH instrument bugs fixed →
 clean-pass]; **zero code/schema change**, `user_version` 5; measured baseline→enriched
 delta: lens-bleed violations 10→3, false-positives 2→0, gate verdict-correctness +
-recall →1.0, injection recall 100% held; **702 pytest, mypy strict**). No active
-task at HEAD (working tree has TASK 009 uncommitted — nothing auto-committed). See
-`docs/ARCHITECTURE.md`, `docs/adr/`, and the archived task/plan pairs under
-`docs/tasks/` + `docs/plans/`.
+recall →1.0, injection recall 100% held; **702 pytest, mypy strict**). TASK 010/011
+(wiki-verify eval-v3/v4) shipped 2026-05-30..06-01. **TASK 012 (R-X1 universal
+config-driven layout engine + R-X2 A-B + R-X3) — R-X1 SHIPPED + R-X2/R-X3 engine+tooling
+SHIPPED 2026-06-01**: ~15 hardcoded layout surfaces replaced by a YAML-config engine
+(`scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` + built-in
+`scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml`); two separate
+config layers (per-vault identity vs per-layout grammar); byte-identical for Karpathy
+(golden anchor); stdlib-`re` ReDoS load-gate; PW-G/H/Q (KNOWN_ISSUES splitter +
+auto-rendered ledger + drift lint guard); `wiki-init --layout` (5 values); **zero DDL**
+(`user_version` 5; new doc types via TYPE_MAPPING tag-route). ADR-002 §D8 amended
+(Class-B "rebuildable markdown"). **803 pytest, mypy strict (63 files).** The **live**
+dev-vault bootstrap of THIS repo + the KNOWN_ISSUES dogfood are **held on one operator
+decision** (repo-root `WIKI_SCHEMA.md` vs `docs/`-relative globs — see ROADMAP R-X2);
+**R-X2 Phase C (agentic-development archive hook) deferred** (ROADMAP R-X2c). Working tree
+has TASK 012 (012-08..16) uncommitted on top of the committed R-X1 (012-00..07). See
+`docs/ARCHITECTURE.md` §3.5, `docs/adr/` (ADR-002 §D8 TASK-012 amendment), and the
+archived task/plan pairs under `docs/tasks/` (`task-012-*.md`) + `docs/plans/`.
 
 ## Knowledge lookup priority
 

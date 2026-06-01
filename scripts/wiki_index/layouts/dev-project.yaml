@@ -2,6 +2,11 @@
 # Indexes TASK/PLAN/ADR/reviews/audit/issues/proposals as first-class, type-tagged,
 # cross-referenced pages. New doc types route through the TYPE_MAPPING tag-route onto
 # the existing pages.type CHECK enum — ZERO DDL (user_version stays 5).
+#
+# vault_root = the project's `docs/` directory (D-012 operator decision): the
+# committable `WIKI_SCHEMA.md` lives at `docs/WIKI_SCHEMA.md`, so these globs are
+# docs/-ROOT-RELATIVE (`tasks/*.md`, not `docs/tasks/*.md`). This keeps the repo
+# root free of a vault marker ("repo is not a vault").
 schema_version: '2.0'
 layout: dev-project
 
@@ -10,27 +15,29 @@ ignore:
   - "**/.DS_Store"
   - "**/__pycache__/**"
   - "**/.pytest_cache/**"
+  - "**/.migration-report.md"        # PW-G operator-review report — not an issue page
+  - ".wiki/**"                        # operational state (db / render-state) — Class C
 file_extensions: ['.md']
 slug_strategy: transliterate        # cross-platform-safe (ASCII slugs)
 
-# Globs evaluated in order, first-match-wins. Flat dev-vault → project '_vault_'.
-# `resolved/` is two segments deep so it never collides with the one-level
-# docs/issues/*.md glob; listed first for clarity.
+# Globs evaluated in order, first-match-wins (relative to vault_root = docs/). Flat
+# dev-vault → project '_vault_'. `resolved/` is two segments deep so it never
+# collides with the one-level issues/*.md glob; listed first for clarity.
 paths:
-  - {glob: "docs/issues/resolved/*.md", type: known-issue, project: "_vault_", extra_tags: [resolved]}
-  - {glob: "docs/issues/*.md",          type: known-issue, project: "_vault_"}
-  - {glob: "docs/tasks/*.md",           type: task,         project: "_vault_"}
-  - {glob: "docs/plans/*.md",           type: plan,         project: "_vault_"}
-  - {glob: "docs/adr/*.md",             type: adr,          project: "_vault_"}
-  - {glob: "docs/reviews/*.md",         type: review,       project: "_vault_"}
-  - {glob: "docs/audit/*.md",           type: audit,        project: "_vault_"}
-  - {glob: "docs/architectures/*.md",   type: architecture, project: "_vault_"}
-  - {glob: "docs/product/*.md",         type: product-doc,  project: "_vault_"}
-  - {glob: "docs/proposals/*.md",       type: proposal,     project: "_vault_"}
-  - {glob: "docs/TASK.md",              type: task,         project: "_vault_"}
-  - {glob: "docs/PLAN.md",              type: plan,         project: "_vault_"}
-  - {glob: "docs/ARCHITECTURE.md",      type: architecture, project: "_vault_"}
-  - {glob: "docs/ROADMAP.md",           type: roadmap,      project: "_vault_"}
+  - {glob: "issues/resolved/*.md", type: known-issue, project: "_vault_", extra_tags: [resolved]}
+  - {glob: "issues/*.md",          type: known-issue, project: "_vault_"}
+  - {glob: "tasks/*.md",           type: task,         project: "_vault_"}
+  - {glob: "plans/*.md",           type: plan,         project: "_vault_"}
+  - {glob: "adr/*.md",             type: adr,          project: "_vault_"}
+  - {glob: "reviews/*.md",         type: review,       project: "_vault_"}
+  - {glob: "audit/*.md",           type: audit,        project: "_vault_"}
+  - {glob: "architectures/*.md",   type: architecture, project: "_vault_"}
+  - {glob: "product/*.md",         type: product-doc,  project: "_vault_"}
+  - {glob: "proposals/*.md",       type: proposal,     project: "_vault_"}
+  - {glob: "TASK.md",              type: task,         project: "_vault_"}
+  - {glob: "PLAN.md",              type: plan,         project: "_vault_"}
+  - {glob: "ARCHITECTURE.md",      type: architecture, project: "_vault_"}
+  - {glob: "ROADMAP.md",           type: roadmap,      project: "_vault_"}
 
 # Tag-route: new doc types → existing db_type enum values + a filterable tag.
 type_mapping:
@@ -69,7 +76,6 @@ frontmatter_synthesis:
 # the per-issue Class-A docs/issues/*.md files.
 auto_indexes:
   - source_type: known-issue
-    output: docs/KNOWN_ISSUES.md
+    output: KNOWN_ISSUES.md          # relative to vault_root = docs/ → docs/KNOWN_ISSUES.md
     group_by: category
     sort_within_group: [severity, opened_at, id]
-    template: assets/known-issues-ledger.md.tmpl

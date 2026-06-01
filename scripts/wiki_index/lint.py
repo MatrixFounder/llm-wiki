@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from scripts.wiki_index.repository import IndexRepository
 
 Severity = Literal["error", "warning", "info"]
@@ -93,6 +95,8 @@ def run_all_checks(
                 details={"alias": _safe_surface(col.alias), "slugs": col.slugs,
                          "kind": col.kind},
             ))
+        # PW-Q (TASK 012): auto-generated ledger drift (hand edit / stale render)
+        issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path))
 
     # Cross-vault duplicates (R-29)
     for slug, vault_ids in repo.find_cross_vault_concept_duplicates():
@@ -105,6 +109,52 @@ def run_all_checks(
                      "hint": "Consider promotion via wiki-ingest promote"},
         ))
     return issues
+
+
+def check_auto_generated_unchanged(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path",
+) -> list[LintIssue]:
+    """PW-Q (TASK 012): for each `auto_indexes[].output` (e.g. docs/KNOWN_ISSUES.md),
+    re-render from the index and compare the header-stripped body sha256 against the
+    on-disk file. A mismatch = a manual edit (or a stale render) of a Class-B
+    rebuildable-markdown file → flag with a remediation hint (don't overwrite).
+    Operator BEGIN-CUSTOM blocks are preserved in the re-render, so editing those
+    is NOT flagged — only edits to the generated body. No-op for layouts without
+    `auto_indexes[]` (Karpathy/obsidian-personal)."""
+    from scripts.wiki_index.layout_config import resolve_layout_config
+    from scripts.wiki_index.rendering import (
+        auto_index_body_sha,
+        extract_custom_sections,
+        render_auto_index,
+    )
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+
+    if not isinstance(repo, SQLiteRepository):
+        return []
+    out: list[LintIssue] = []
+    config = resolve_layout_config(vault_root)
+    for auto_index in config.auto_indexes:
+        output_rel = str(auto_index["output"])
+        out_path = vault_root / output_rel
+        if not out_path.is_file():
+            continue  # never rendered yet — not a drift (other checks cover absence)
+        on_disk = out_path.read_text(encoding="utf-8")
+        rerender = render_auto_index(
+            repo, vault_id, auto_index, generated_at="lint",
+            preserve_custom=extract_custom_sections(on_disk),
+        )
+        if auto_index_body_sha(on_disk) != auto_index_body_sha(rerender):
+            out.append(LintIssue(
+                category="auto-generated-drift", severity="warning",
+                vault_id=vault_id,
+                details={
+                    "path": output_rel,
+                    "hint": (f"manual edit detected at {output_rel!r}; run "
+                             "`wiki-index-render --auto-indexes` to regenerate, or "
+                             "move your edit into the per-issue file"),
+                },
+            ))
+    return out
 
 
 def render_markdown_report(issues: list[LintIssue]) -> str:

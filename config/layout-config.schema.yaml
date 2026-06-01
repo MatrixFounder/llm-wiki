@@ -131,7 +131,6 @@ $defs:
         type: array
         items: {type: string}
         default: []
-      template: {type: [string, 'null']}
 
   # ----------------------------------------------------------------------------
   # LayoutConfig — the merged grammar the engine consumes.

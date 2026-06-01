@@ -275,6 +275,13 @@ Single-user personal scale (5-10 vaults × 1K concepts текущие 12-18 ме
 >   header**. A sha256 of the rendered body is pinned in `<vault>/.wiki/state.json`;
 >   the **PW-Q** lint guard (`check_auto_generated_unchanged`) re-renders at lint
 >   time and flags manual drift ("edit the per-issue file, not the ledger").
+>   **Well-definedness (architecture-review M2):** the rendered body is a **pure
+>   deterministic function of the Class-A per-issue files' content** — the *only*
+>   volatile value is the single excluded GENERATED-AT header line (no `now()` /
+>   "opened N days ago" / locale-formatted dates in the body); `sort_within_group`
+>   carries a **stable total order with a final `id` tiebreaker** so equal
+>   `(severity, opened_at)` rows never reorder across machines/clones, and the
+>   PW-Q sha256 is computed over the **header-stripped** body.
 > - **No schema change:** per-issue pages index via the **TYPE_MAPPING tag-route**
 >   (`known-issue` → `db_type=research` + tag `known-issue`) — the closed
 >   `pages.type` CHECK is untouched; `PRAGMA user_version` stays **5**. (PW-I, the

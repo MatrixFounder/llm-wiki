@@ -8,10 +8,12 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.layout_config import resolve_layout_config
 from scripts.wiki_index.models import LogEvent
 from scripts.wiki_index.rendering import (
     atomic_write,
     extract_custom_sections,
+    render_and_write_auto_indexes,
     render_index,
 )
 from scripts.wiki_skills._common import emit
@@ -22,6 +24,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vault", required=True, help="vault_id.")
     p.add_argument("--output", default=None,
                    help="Output path (default: <vault_root>/index.md).")
+    p.add_argument("--auto-indexes", action="store_true",
+                   help="Render the layout's auto_indexes[] targets (PW-H, e.g. "
+                        "docs/KNOWN_ISSUES.md) instead of index.md.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -37,6 +42,23 @@ def main(argv: list[str] | None = None) -> int:
         if vault is None:
             return emit({"error": "VAULT_NOT_REGISTERED",
                          "vault_id": args.vault}, exit_code=6)
+        if args.auto_indexes:
+            layout = resolve_layout_config(vault.root_path)
+            written = render_and_write_auto_indexes(
+                repo, args.vault, vault.root_path, layout,
+                generated_at=datetime.now().isoformat(),
+            )
+            return emit({
+                "action": "rendered-auto-indexes",
+                "vault_id": args.vault,
+                "outputs": written,
+            })
+        # LOW-2 (critic-security): `--output` is the operator's EXPLICIT, typed
+        # choice of where to write index.md — intentionally NOT vault-bounded
+        # (unlike the config-driven auto_indexes[].output, which a shared/committed
+        # layout config controls and IS guarded by _safe_output_path). Bounding an
+        # explicit CLI arg would break the legitimate "render my index elsewhere"
+        # use case; the risk is an operator overwriting their own file. Left open.
         output_path = (Path(args.output) if args.output
                        else vault.root_path / "index.md")
         preserve: dict[str, str] = {}

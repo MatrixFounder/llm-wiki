@@ -205,48 +205,76 @@ across 3+ repos for the same concept twice in a session, OR wants to
 answer "where in my Obsidian vault did I write about X?" and Obsidian's
 search is too slow. Until then, status = PROPOSAL.
 
-### R-X1. Universalise layout engine (PW-A..N + PW-Q)
-Replace 15 hardcoded surfaces (`PAGE_SUBDIRS`, `TYPE_MAPPING`,
-`_PATH_TYPE_FALLBACK`, `_WIKILINK_RE`, slug regex, etc.) with a
-YAML-config-driven parser. Three built-in layouts ship:
-`karpathy.yaml` (current behaviour, byte-identical), `dev-project.yaml`
-(this proposal's primary use case), `obsidian-personal.yaml` (real
-iCloud vaults with numbered folders, MOC pattern, Cyrillic, `.base`
-files). ~755 src + ~1220 test LoC.
+### R-X1. Universalise layout engine (PW-A..N + PW-Q) ✅ DONE 2026-06-01 (TASK 012)
+Replaced the 15 hardcoded surfaces with a **YAML-config-driven engine**
+(`scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` +
+built-in `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml`).
+**Two separate config layers** (D-012-2): the existing per-vault identity config
+is untouched; the new layer carries per-layout-class grammar. `flat`/`per-project`
+alias → `karpathy`. **Byte-identical for Karpathy** (golden-snapshot anchor +
+`test_karpathy_config_matches_layout_constants`; `identity` slug strategy; three
+slug surfaces kept distinct). **ReDoS = stdlib `re` + load-time budget gate**
+(D-012-3, covers `ref_extraction` + `project_pattern`; no new dependency). PW-G/H/Q
+engine shipped too (auto_indexes render + KNOWN_ISSUES splitter + lint guard).
+**Zero DDL** (`user_version` stays 5; new doc types via the TYPE_MAPPING tag-route).
+Architecture-review caught + fixed a real fifth-walk PK-drift bug (`find_pages_missing_in_index`,
+C1). **Shipped**: beads 012-00..010 (Stub-First green-throughout; task/architecture/plan
+gates APPROVED; per-bead Roast). See `docs/tasks/task-012-*.md` + ADR-002 §D8 TASK-012
+amendment. **See**: proposal §11.
 
-**Acceptance**: all current tests pass unchanged after migration;
-`trade-agents` re-indexes byte-identically modulo timestamps; new
-Obsidian-personal fixture (Cyrillic, deep hierarchy, system folders)
-indexes without PK collisions.
+### R-X2. Dev-vault + obsidian-personal bootstrap (Phases A-B) ✅ DONE 2026-06-01 (TASK 012)
+Depends on R-X1 (done). `wiki-init --layout {flat,per-project,karpathy,dev-project,
+obsidian-personal}` shipped (012-13; dev/obsidian layouts skip the Karpathy
+page-subdir scaffold). Bootstrap + cross-project capability acceptance-tested
+end-to-end (012-14/15). **Operator decision RESOLVED (2026-06-01): option (b)** —
+`dev-project.yaml` globs are `docs/`-root-relative and **vault_root = `<repo>/docs`**,
+so the committed dev-vault declaration is `docs/WIKI_SCHEMA.md` and the repo root
+stays vault-free ("repo is not a vault" preserved; no gitignore change). This repo
+was **live-bootstrapped** as `obsidian-llm-wiki` (270 pages indexed) and the R-X3
+KNOWN_ISSUES dogfood ran on it.
 
-**See**: proposal §11 (full PW table, error policies, ReDoS guard).
+> **OPERATOR FOLLOW-UPS (dogfood friction, not blockers):**
+> 1. **Local vs global DB.** The live index lives in a **gitignored `.wiki/index.db`**
+>    (self-contained; used to render the ledger). `wiki-search` defaults to the GLOBAL
+>    DB (`~/Library/Application Support/wiki-index/global.db`), which does NOT contain
+>    this repo — so a bare `wiki-search "X"` finds nothing here. Until you register
+>    globally, the correct command is:
+>    `wiki-search "<q>" --vaults obsidian-llm-wiki --db-path .wiki/index.db`.
+>    To make daily/cross-project search "just work", run once:
+>    `wiki-init --register-existing --vault docs` (+ `wiki-reindex --full`) against the
+>    global DB. (Deliberately not done automatically — it writes to the global user DB.)
+> 2. **Frontmatter metadata isn't FTS-filterable** (`status`/`severity`) — tracked as
+>    `docs/issues/r-x3-fts-frontmatter-metadata-filter.md` (R-X3-META-FILTER, SEV-3,
+>    enhancement). Use `json_extract` / the rendered ledger meanwhile.
 
-### R-X2. Dev-vault + obsidian-personal bootstrap (Phases A-C)
-Depends on R-X1. Extend `wiki-init` with `--layout {dev-project,
-obsidian-personal}` flag; bootstrap obsidian-llm-wiki itself + one
-peer project as first dev-vaults; wire `archive_protocol.py::archive_task()`
-in agentic-development to fire `wiki-index-upsert` with `pending.log`
-fallback observability. ~140 src + ~200 test LoC across two repos.
+**See**: proposal §§2,4,8 (Phases A-C) + §12.
 
-**Acceptance**: `wiki-search "ADR-002" --vaults all` returns ranked
-hits with snippets; archival of a fake TASK appears in the index;
-forced upsert timeout writes to `~/.cache/wiki-index/pending.log`.
+### R-X2c. Archive-hook integration (Phase C) — DEFERRED (operator decision D-012-4, 2026-06-01)
+Split out of R-X2. Wire `agentic-development/.agent/tools/archive_protocol.py::archive_task()`
+to fire `wiki-index-upsert` (feature-detected shell-out + `~/.cache/wiki-index/pending.log`
+observability, behind an `enable_wiki_index` flag — proposal §12 Option C). **Deferred
+on purpose: stabilise + dogfood the wiki first, then extend to the framework.** This is a
+CROSS-REPO change (separate branch/commit in agentic-development, with its tests there);
+no compile coupling either direction. **Trigger**: the wiki is in daily dev use + the
+R-X2 live bootstrap decision (above) is made. **See**: proposal §12.
 
-**See**: proposal §§2,4,8 (Phases A-C) + §12 (Option C dependency strategy).
+### R-X3. KNOWN_ISSUES → per-file migration (Phase D) ✅ ENGINE+SPLITTER DONE 2026-06-01 (TASK 012); live migration held with R-X2 bootstrap
+Depends on R-X1 + R-X2. `scripts/migrate_known_issues_to_files.py` shipped (012-11):
+parses THIS repo's `## [date] <id> <title> [STATUS]` ledger format into per-issue
+Class-A files with verbatim bodies + a partial-confidence `.migration-report.md`
+(flag, never drop). **Validated on the real 743-line `docs/KNOWN_ISSUES.md`** (012-12
+test): all 50 issues split with count parity + no empty bodies; 2 flagged for review
+(`N-008-1` unknown prefix, `D-010-2` unusual status). The auto-rendered ledger (PW-H)
++ drift lint guard (PW-Q) are shipped + tested (rebuildability byte-identical modulo
+GENERATED-AT; `id` tiebreaker; sha256 in `.wiki/state.json`). The **live on-disk
+migration** of this repo (write `docs/issues/*.md` + replace the prose ledger with the
+rendered index) is **held with the R-X2 live-bootstrap decision** (the render needs the
+repo registered as a dev-vault) — the operator runs it once that's decided + reviews the
+report. ADR-002 §D8 amended for the Class-B "rebuildable markdown" sub-case.
 
-### R-X3. KNOWN_ISSUES → per-file migration (Phase D)
-Depends on R-X1 + R-X2. One-shot splitter `scripts/migrate_known_issues_to_files.py`
-(~280 src + ~200 test LoC, fixture-driven, with partial-confidence
-report). After migration: `docs/issues/<id>-<slug>.md` are Class A
-canonical, `docs/KNOWN_ISSUES.md` becomes Class B auto-rendered
-(ADR-002 §D8 amendment required — see proposal §Phase D "Class A/B
-reclassification").
-
-**Acceptance**: `wiki-search "hash drift" --types known-issue --vaults all`
-returns one specific issue, not the whole ledger; delete + re-render
-produces byte-identical `docs/KNOWN_ISSUES.md`.
-
-**See**: proposal §Phase D + ADR-002 amendment (or new ADR-003).
+**Acceptance**: `wiki-search "hash drift" --types known-issue` returns one specific
+issue; delete + `wiki-index-render --auto-indexes` reproduces byte-identical
+`docs/KNOWN_ISSUES.md` (modulo GENERATED-AT). **See**: proposal §Phase D + ADR-002 §D8 amendment.
 
 ### R-X4. Agent-prompt cue integration (Phase E) — supersedes R-2
 Add proactive `/wiki-search` cue to `developer` / `architect` /
@@ -357,6 +385,14 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 012 (R-X1 + R-X2 A-B engine + R-X3 engine) — 2026-06-01.** Universal
+  config-driven layout engine: 17-bead plan (012-00..16), full VDD pipeline gated
+  (task/architecture/plan reviews APPROVED — architecture-review caught a real C1
+  fifth-walk PK-drift bug). R-X1 (012-00..07) committed; 012-08..16 on the working
+  tree. Two separate config layers; 3 built-in layouts; karpathy byte-identical
+  (golden anchor); stdlib-`re` ReDoS gate; PW-G/H/Q; `wiki-init --layout`; zero DDL.
+  803 pytest, mypy strict (63 files). Live dev-vault bootstrap + KNOWN_ISSUES dogfood
+  held on the R-X2 operator decision; R-X2c (archive hook) deferred.
 - All 34 Phase 3a tasks (TASK 001 wiki-mvp)
 - Bridge skill `wiki-enrich` integrating with wiki-ingest v1.1
 - 8 skills + 8 commands + 8 wrappers + global installer (now 9 after R-3)
