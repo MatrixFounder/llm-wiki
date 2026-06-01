@@ -43,9 +43,11 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
 - **DAL** (`scripts/wiki_index/`) — `IndexRepository` ABC + `SQLiteRepository`
   with multi-vault partitioning, FTS5, WAL, atomic upserts (M-4 contract),
   bi-directional `log.md ↔ log_events` sync, drift detection.
-- **CLIs** (`scripts/wiki_skills/`) — twelve thin entry points wrapping the
-  DAL: `wiki-init`, `wiki-search`, `wiki-lint`, `wiki-reindex`,
-  `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
+- **CLIs** (`scripts/wiki_skills/`) — fourteen thin entry points wrapping the
+  DAL: `wiki-init` (now with `--layout` — see the layout engine below),
+  `wiki-search`, `wiki-lint`, `wiki-reindex`,
+  `wiki-index-upsert`, `wiki-index-render` (`--auto-indexes` renders the
+  Class-B ledger), `wiki-append-log`,
   `wiki-enrich` (bridge to `wiki-ingest`, see [External dependency](#external-dependency-wiki-ingest)),
   `wiki-extract-concepts` (Epic 7 entry-point — LLM-driven concept
   extraction from an already-indexed source page; emits a wiki-ingest v1.1
@@ -68,6 +70,19 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
   `pages.file_path`; schema v4→v5).
   Plus a neutral sub-layer module `_manifest_consumer.py` shared by
   `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
+- **Universal layout engine** (`scripts/wiki_index/layout_config.py`, TASK 012 /
+  R-X1) — a YAML-config-driven replacement for the ~15 previously-hardcoded
+  "what files exist / what page-type are they" surfaces. Three built-in layouts
+  ship (`scripts/wiki_index/layouts/`): `karpathy` (the original behaviour,
+  **byte-identical** — a validated projection of `layout.py`, golden-anchor-guarded),
+  `dev-project` (a software repo's `docs/` — TASKs/ADRs/issues), and
+  `obsidian-personal` (numbered folders + Unicode). New vault shapes become
+  config, not code; `wiki-init --layout <name>` names a vault's layout, and the
+  `auto_indexes[]` feature renders a Class-B "rebuildable markdown" ledger (e.g.
+  this repo's `docs/KNOWN_ISSUES.md` from per-issue `docs/issues/*.md`). Operator
+  regexes are gated by a stdlib-`re` load-time ReDoS budget; the per-vault identity
+  config (`config_loader.py`) and this per-layout-class grammar are deliberately
+  **two separate systems**.
 - **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —
   canonical definitions, symlinked into `.claude/` and `.agent/` for
   vendor compatibility.
@@ -76,8 +91,11 @@ The **index layer** for an Obsidian-style llm-wiki. Provides:
 - **Migration + benchmarks** (`scripts/wiki_migrate_flat_to_folders.py`,
   `scripts/benchmark.py`).
 
-The repo *is* the implementation. **It is not a vault** — running
-`wiki-init --scaffold-new --vault .` is rejected by design.
+The repo *is* the implementation. **The repo root is not a vault** — running
+`wiki-init --scaffold-new --vault .` is rejected by design. (Since TASK 012 the
+repo's own `docs/` **is** registered as a `dev-project` dev-vault — vault_root =
+`<repo>/docs`, committed `docs/WIKI_SCHEMA.md` — so `wiki-search "ADR-002"
+--vaults obsidian-llm-wiki` works; the repo root itself stays vault-free.)
 
 ---
 

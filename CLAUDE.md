@@ -48,13 +48,19 @@ config layers (per-vault identity vs per-layout grammar); byte-identical for Kar
 (golden anchor); stdlib-`re` ReDoS load-gate; PW-G/H/Q (KNOWN_ISSUES splitter +
 auto-rendered ledger + drift lint guard); `wiki-init --layout` (5 values); **zero DDL**
 (`user_version` 5; new doc types via TYPE_MAPPING tag-route). ADR-002 §D8 amended
-(Class-B "rebuildable markdown"). **803 pytest, mypy strict (63 files).** The **live**
-dev-vault bootstrap of THIS repo + the KNOWN_ISSUES dogfood are **held on one operator
-decision** (repo-root `WIKI_SCHEMA.md` vs `docs/`-relative globs — see ROADMAP R-X2);
-**R-X2 Phase C (agentic-development archive hook) deferred** (ROADMAP R-X2c). Working tree
-has TASK 012 (012-08..16) uncommitted on top of the committed R-X1 (012-00..07). See
-`docs/ARCHITECTURE.md` §3.5, `docs/adr/` (ADR-002 §D8 TASK-012 amendment), and the
-archived task/plan pairs under `docs/tasks/` (`task-012-*.md`) + `docs/plans/`.
+(Class-B "rebuildable markdown"). **810 pytest (+4 skipped), mypy strict.** The operator
+decision (repo-root `WIKI_SCHEMA.md` vs `docs/`-relative globs) was **RESOLVED →
+`docs/`-relative** (vault_root = `<repo>/docs`, committed `docs/WIKI_SCHEMA.md`,
+repo root stays vault-free); the **live** dev-vault bootstrap of THIS repo + the
+KNOWN_ISSUES dogfood are **DONE** — `docs/issues/*.md` are the Class-A per-issue
+sources and `docs/KNOWN_ISSUES.md` is now the auto-rendered Class-B ledger. All 17
+beads (012-00..16) + the `/vdd-multi` post-ship hardening (SEC-1 egress-sanitization
+of the untrusted ledger, LOG-1 delta-reindex auto-index render, perf) are **committed
+`c127b4b`** (on top of the R-X1 pre-flight `4608a50`). **R-X2 Phase C
+(agentic-development archive hook) deferred** (ROADMAP R-X2c); residual perf/UX items
+tracked in `docs/issues/` (R-X1-* + R-X3-META-FILTER). See `docs/ARCHITECTURE.md`
+§3.5, `docs/adr/` (ADR-002 §D8 TASK-012 amendment), `docs/tasks/` (`task-012-*.md`)
++ `docs/plans/`.
 
 ## Knowledge lookup priority
 
@@ -102,23 +108,36 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — archived task/plan pairs (no
-  `docs/TASK.md` at HEAD — most recent: `task-009-wiki-verify-critic-rubric.md`
-  shipped 2026-05-30; per-bead specs at `task-009-01..06-*.md`; review records at
-  `docs/reviews/{task,architecture,plan,security-audit,code-review,vdd-multi}-009*`;
-  the durable eval harness it added lives at `skills/wiki-verify/evals/`
-  (`evals.json` + `grade.py` + `reports/` + committed run-outputs);
-  predecessor `task-008-wiki-verify-multi.md`).
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Current: TASK 012
+  `universal-layout-engine`** (R-X1 + R-X2 A-B + R-X3, shipped 2026-06-01,
+  committed `c127b4b`). NOTE: TASK 012's **parent** spec is still at
+  `docs/TASK.md` / `docs/PLAN.md` — committed in place, **not yet rotated** into
+  `docs/tasks/`/`docs/plans/` per the usual on-completion convention (rotate when
+  the next task starts, or on request). Its 17 per-bead specs ARE archived at
+  `docs/tasks/task-012-00..16-*.md`. Predecessors: `task-011`/`task-010`
+  (wiki-verify eval-v3/v4), `task-009-wiki-verify-critic-rubric.md` (durable eval
+  harness at `skills/wiki-verify/evals/` — `evals.json` + `grade.py` + `reports/`),
+  `task-008-wiki-verify-multi.md`.
 - `docs/ARCHITECTURE.md` — system architecture (multi-vault, ADRs 001+002,
   status header tracks Phase 3a/3b progress).
-- `docs/KNOWN_ISSUES.md` — deferred items, including perf SEV-1 set
-  flagged by `/vdd-multi` 2026-05-26.
+- `docs/KNOWN_ISSUES.md` — **auto-rendered Class-B ledger** (TASK 012 / R-X3) over
+  the per-issue Class-A sources in `docs/issues/*.md`. Regenerate with
+  `wiki-index-render --auto-indexes`; a manual edit is flagged by `wiki-lint`
+  (PW-Q drift guard). Holds the deferred items (perf SEV-1 set, the R-X1-*
+  residuals, R-X3-META-FILTER). Edit the per-issue files, never the ledger.
 - `docs/adr/ADR-001-wiki-ingest-integration.md` — Option I (Wrap + Index).
 - `docs/adr/ADR-002-multi-vault-bottleneck-corrections.md` — vault_id
   partitioning + Class A/B/C data layering contract.
 - `docs/WIKI-INGEST-V1.1-CONTRACT.md` — external `wiki-ingest` skill
   contract; consumed by `wiki-enrich` (install globally before using).
-- `scripts/wiki_index/layout.py` — single source of truth for layout
-  constants (`PAGE_SUBDIRS` = `INGEST_SHARED_SUBDIRS` ∪ `HOST_ONLY_SUBDIRS`
+- `scripts/wiki_index/layout.py` — single source of truth for the **karpathy**
+  layout constants (`PAGE_SUBDIRS` = `INGEST_SHARED_SUBDIRS` ∪ `HOST_ONLY_SUBDIRS`
   incl. `QUERIES_SUBDIR`, `COURSE_TIER_DIR`, `SYSTEM_FILES`,
-  `GLOBAL_VAULT_SENTINEL`, etc.; R-X1-forward role split per TASK 007).
+  `GLOBAL_VAULT_SENTINEL`, etc.; R-X1-forward role split per TASK 007). Since
+  TASK 012 these are *projected into* `layouts/karpathy.yaml` but stay the source
+  of truth (byte-identity anchor); they are NOT superseded by the engine below.
+- `scripts/wiki_index/layout_config.py` — **TASK 012 / R-X1 config-driven layout
+  engine** (`LayoutConfig`, `iter_pages`, `resolve_layout_config`, ReDoS load-gate);
+  built-in layouts at `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml`;
+  schema `config/layout-config.schema.yaml`. The per-layout *grammar* layer,
+  separate from the per-vault identity `config_loader.py` (two-systems split).

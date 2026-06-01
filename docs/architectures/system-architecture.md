@@ -396,10 +396,16 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
 
 ### 3.5. Layout Engine (config-driven) — TASK 012 / R-X1
 
-> **Status:** TASK 012 in progress (2026-06-01). Replaces ~15 hardcoded layout
+> **Status:** TASK 012 SHIPPED (2026-06-01). Replaces ~15 hardcoded layout
 > surfaces with a YAML-config-driven engine. **Zero DDL** (`user_version` stays 5);
 > new doc types route via the TYPE_MAPPING tag-route. Byte-identical for Karpathy
 > vaults (the standing §D8 rebuildability invariant, now golden-snapshot-guarded).
+> **dev-project `vault_root` = the project's `docs/` directory** (D-012 operator
+> decision): the committed dev-vault declaration is `docs/WIKI_SCHEMA.md` and the
+> `dev-project.yaml` globs are docs/-root-relative (`tasks/*.md`, `issues/*.md`, …),
+> so the repo root carries no vault marker ("repo is not a vault" preserved). This
+> repo is itself a live dev-vault (its `docs/issues/*.md` + auto-rendered
+> `docs/KNOWN_ISSUES.md`).
 
 #### Two config systems (deliberately separate — D-012-2)
 
@@ -432,20 +438,30 @@ merely *names* the layout.
 - **`LayoutConfig`** = frozen dataclass: `paths[]`, `type_mapping`,
   `path_type_fallback`, `ref_extraction[]`, `slug_strategy`, `ignore[]`,
   `file_extensions`, `frontmatter_synthesis`, `auto_indexes[]`.
-- **ReDoS guard (D-012-3, stdlib `re` only):** at config-load, every
-  `ref_extraction[].regex` is run against a **versioned, named adversarial-payload
-  fixture** (`tests/fixtures/redos_payloads/…`, not an ad-hoc inline string — so the
-  gate is reproducible/regression-tested); the budget is a **wall-clock ceiling
-  measured as the median of N≥5 runs** against the pinned payload (explicit N + ceiling
-  constants, not a one-shot timing — one-shot flakes on a loaded laptop). Any pattern
-  over the ceiling → **exit 6** before any file is processed. Built-in layouts are
-  pre-vetted. No `regex` PyPI dependency (protects the self-contained-publication goal);
-  the residual (a pattern slow only on specific *file content*, not the synthetic
-  payload) is documented, with a stdlib watchdog deferred until it bites (YAGNI).
-- **Override load is path-guarded (architecture-review m3):** `<vault>/.wiki/layout.yaml`
-  (and a `WIKI_SCHEMA.md` `layout_config:` target) is read under
-  `validate_inside_vault` + `O_NOFOLLOW`/symlink-refuse — an operator override is a
-  Class-A vault file but must not escape the vault root.
+- **ReDoS guard (D-012-3, stdlib `re` only) — AS BUILT:** at config-load,
+  `_redos_budget_check` runs **both** `ref_extraction[].regex` **and**
+  `paths[].project_pattern` (every operator regex) against a **battery of 5
+  structurally-diverse short adversarial payloads** (module constants `_REDOS_PAYLOADS`
+  — a-run, digit-run, whitespace-run, alternation-cycle, two-runs+tail — so more than
+  one backtracker *shape* is caught; `/vdd-multi` HIGH-2 hardened the original
+  single-`"a"*N` payload that let `(.*a){50}` slip past). Budget = median of N=5 runs,
+  **break-on-over** so the gate itself can't be DoS'd; over-ceiling → **exit 6** before
+  any file is read. Built-ins pre-vetted; no `regex` dep. **Residual (deferred →
+  `docs/issues/r-x1-redos-runtime-deadline-residual.md`):** a pattern linear on the short
+  payloads but catastrophic only on long real *file content* is NOT caught at load —
+  needs a per-file runtime deadline at the `extract_refs`/`_derive_project` consumer.
+- **Egress sanitisation (`/vdd-multi` SEC-1) — load-bearing:** the auto-index renderer
+  AND `render_index` route every untrusted frontmatter field (`title`/`tldr`/`id`/
+  `category`) through `_common.sanitize_markdown_text` before interpolating into
+  `[[slug|title]]` / `## <category>`. Without it a crafted `title` injects a `]]`-breakout
+  wikilink (graph-poisoning), a `<!-- BEGIN-CUSTOM -->` marker (hijacks preserve-custom on
+  the next render), or a `<!-- GENERATED-AT: -->` line (fools the PW-Q drift hash). `slug`
+  is the link *target* (slugify-derived) and is left literal.
+- **Override load is path-guarded (architecture-review m3 + `/vdd-multi` MED-2):**
+  `<vault>/.wiki/layout.yaml` (and a `WIKI_SCHEMA.md` `layout_config:` target) — the
+  `is_symlink()` refusal is checked on the **raw** candidate (before any `resolve()`
+  dereferences it), then `validate_inside_vault` + `assert_no_symlink_escape` (ancestor
+  walk). An operator override is a Class-A vault file but must not escape the vault root.
 
 #### Engine: `iter_pages(vault_root, config)` — one walk, all slug/project derivation converges
 

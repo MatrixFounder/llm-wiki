@@ -105,10 +105,19 @@
 > warranted. Spec: [tasks/](./tasks/) + `reports/v4/benchmark-v4.md`.
 >
 > **TASK 012 (R-X1 + R-X2 A-B + R-X3 — universal config-driven layout engine + dev-vault
-> bootstrap) — R-X1 SHIPPED + R-X2/R-X3 engine+tooling SHIPPED (2026-06-01); live
-> dev-vault bootstrap of THIS repo held on an operator decision (repo-root WIKI_SCHEMA
-> vs docs/-relative globs — see ROADMAP R-X2). 803 pytest green, mypy strict clean.**
-> Replaces ~15 hardcoded layout surfaces
+> bootstrap) — SHIPPED 2026-06-01 (incl. live dogfood + `/vdd-multi` hardening).**
+> Operator decision RESOLVED: dev-project `vault_root = <repo>/docs` (docs/-relative
+> globs; committed `docs/WIKI_SCHEMA.md`; repo root stays vault-free). This repo was
+> **live-bootstrapped** (270 pages) and its `docs/KNOWN_ISSUES.md` migrated to per-file
+> `docs/issues/*.md` + a Class-B auto-rendered ledger (rebuildable byte-identical modulo
+> GENERATED-AT; verified). `/vdd-multi` (3 critics) → clean-pass/bikeshedding-only after
+> hardening: ledger/index renderers **egress-sanitise** untrusted `title`/`tldr`/`category`
+> (wikilink/graph-poisoning/custom-block/drift-hash-spoof), ReDoS gate diversified to a
+> 5-shape payload battery, override symlink-check on the raw candidate, JSON-schema
+> validator hoisted to a module singleton. **810 pytest / 4 skip, mypy strict clean (63
+> files).** Deferred (tracked in `docs/issues/`): R-X1-REDOS-RT (runtime regex deadline),
+> R-X1-CFG-COST (resolve cache + compile-into-config), R-X1-OBS-WALK (obsidian multi-glob
+> re-walk), R-X3-META-FILTER (frontmatter not FTS-filterable). Replaces ~15 hardcoded layout surfaces
 > (`PAGE_SUBDIRS`, the `Lessons/` two-tier walk, `TYPE_MAPPING`/`_PATH_TYPE_FALLBACK`,
 > `_WIKILINK_RE`, slug rules) with a **YAML-config-driven engine** (new
 > `scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` + built-in
