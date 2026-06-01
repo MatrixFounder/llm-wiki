@@ -259,8 +259,9 @@ wiki-reindex --full --vault my-vault
 wiki-search "concept name" --vaults my-vault
 
 # 4b. Filter by frontmatter metadata (TASK 013) — status/severity/any field.
-#     Compiles to a json_extract predicate (not full-text), so hyphenated
-#     values like SEV-2 work; omit the query for a pure metadata listing.
+#     Compiles to a CAST(json_extract(...) AS TEXT) predicate (not full-text), so
+#     hyphenated values (SEV-2) and numeric values (priority=1) both match by
+#     string; omit the query for a pure metadata listing.
 wiki-search --status open --severity SEV-2 --vaults my-vault
 wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 ```

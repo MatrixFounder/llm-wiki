@@ -179,8 +179,11 @@ class IndexRepository(abc.ABC):
                 None = all projects within the selected vaults.
             where_fields: TASK 013 (R-X3-META-FILTER) — frontmatter metadata
                 predicates as ``(field, value)`` pairs. Each compiles to a
-                parameterized ``json_extract(p.frontmatter_json, '$.<field>') = ?``
-                clause; multiple pairs are AND-ed. Field names MUST satisfy
+                parameterized ``CAST(json_extract(p.frontmatter_json, '$.<field>')
+                AS TEXT) = ?`` clause; multiple pairs are AND-ed. The ``CAST``
+                matches by **string representation**, so a numeric/boolean
+                frontmatter value (e.g. ``priority: 1``) matches the string filter
+                ``("priority", "1")``. Field names MUST satisfy
                 `validate_filter_field` (re-validated here as library-caller
                 defense); values are bound parameters (any string is safe,
                 incl. hyphenated `SEV-2`). When ``query`` is empty the search

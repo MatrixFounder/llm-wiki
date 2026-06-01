@@ -501,9 +501,15 @@ class SQLiteRepository(IndexRepository):
             # TASK 013 (R-X3-META-FILTER): library-caller defense — re-validate
             # the field name (CLI validates too), then bind BOTH the JSON path and
             # the value as parameters. No operator string ever reaches the SQL text.
+            # `CAST(... AS TEXT)` makes the equality match by STRING representation:
+            # `json_extract` returns the value in its native JSON storage class
+            # (e.g. INTEGER 1 for `priority: 1`), which SQLite will NOT equate to a
+            # TEXT-bound `'1'`. Casting normalises both sides so a numeric/boolean
+            # frontmatter value matches the (always-string) CLI value, while string
+            # values (the common `status`/`severity` case) stay byte-identical.
             validate_filter_field(field)
             sql_parts.append(
-                " AND json_extract(p.frontmatter_json, ?) = ?"
+                " AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?"
             )
             params.append(f"$.{field}")
             params.append(value)

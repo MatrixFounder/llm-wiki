@@ -8,11 +8,13 @@ mypy `--strict` + full pytest green at every bead.
 - **CLI surface (Q-013-a):** general repeatable `--where 'field=value'` + sugar
   `--status <v>` / `--severity <v>` (desugar into `where_fields`).
 - **DAL (Q-013-b):** extend `search_pages(query, *, where_fields=None, …)`; `query`
-  becomes optional. MATCH term present → FTS path + `AND json_extract(p.frontmatter_json, ?) = ?`;
+  becomes optional. MATCH term present → FTS path + `AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?`;
   query empty + ≥1 `where_fields` → **non-FTS** `SELECT … FROM pages p WHERE <preds>`.
-- **Ordering (Q-013-c):** query-less path `ORDER BY p.project, p.slug`.
-- **Injection (Q-013-d):** field allowlist `^[a-z][a-z0-9_]*$` (CLI + DAL re-validate);
-  json-path + value BOTH bound params; `INVALID_FILTER` (exit 2) never echoes value.
+  (`CAST … AS TEXT` → string-rep match, so numeric frontmatter values match too.)
+- **Ordering (Q-013-c):** query-less path `ORDER BY p.project, p.slug, p.vault_id`.
+- **Injection (Q-013-d):** field allowlist `[a-z][a-z0-9_]*` via `re.fullmatch` (CLI +
+  DAL re-validate); json-path + value BOTH bound params; duplicate-field rejected;
+  `INVALID_FILTER` (exit 2) never echoes value.
 
 ## Shared helper
 

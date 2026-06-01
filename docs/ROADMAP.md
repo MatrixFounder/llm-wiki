@@ -392,12 +392,14 @@ the misleading docstring.
 
 - **TASK 013 (R-X3-META-FILTER) — 2026-06-01.** `wiki-search` frontmatter metadata
   filter (Cluster C / daily-use enablement). General repeatable `--where 'field=value'`
-  + `--status`/`--severity` sugar → parameterized `json_extract(frontmatter_json, ?)`
-  predicate; optional query → non-FTS `(project, slug)`-ordered listing. Injection-safe
-  (field allowlist `^[a-z][a-z0-9_]*$` at CLI + DAL; path + value bound; `INVALID_FILTER`
-  never echoes value). **Zero DDL** (`user_version` 5). Full VDD pipeline (Analysis →
-  Architecture Q-013-a..d → Plan → 4 beads Stub-First). Live dogfood: `--status open
-  --severity SEV-2` returns the 5 open SEV-2 issues; R-X3-META-FILTER flipped to `fixed`
+  + `--status`/`--severity` sugar → parameterized `CAST(json_extract(frontmatter_json, ?)
+  AS TEXT) = ?` predicate (string-rep match → numeric values like `priority=1` work too);
+  optional query → non-FTS `(project, slug, vault_id)`-ordered listing. Injection-safe
+  (field allowlist `[a-z][a-z0-9_]*` via `re.fullmatch` at CLI + DAL; path + value bound;
+  duplicate-field rejected; `INVALID_FILTER` never echoes value). **Zero DDL**
+  (`user_version` 5). Full VDD pipeline (Analysis → Architecture Q-013-a..d → Plan →
+  4 beads Stub-First) + `/vdd-multi` (logic/security/perf) + code-review. Live dogfood:
+  `--status open --severity SEV-2` returns the 5 open SEV-2 issues; R-X3-META-FILTER flipped to `fixed`
   + ledger auto-re-rendered (PW-Q drift-clean). 833 pytest (+4 skipped), mypy strict.
   See `docs/tasks/task-013-*.md`.
 - **TASK 012 (R-X1 + R-X2 A-B engine + R-X3 engine) — 2026-06-01.** Universal

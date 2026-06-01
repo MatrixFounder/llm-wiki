@@ -11,19 +11,23 @@ already-stored `pages.frontmatter_json`, with a query-less (non-FTS) path. Zero 
   exclude_types=None, project=None, where_fields: list[tuple[str, str]] | None = None,
   limit=20)`.
 - **MATCH term present** (`query` truthy): today's `pages_fts JOIN pages` path,
-  append `AND json_extract(p.frontmatter_json, ?) = ?` per filter (path param
-  `'$.'+field`, value param). Order unchanged (BM25).
+  append `AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?` per filter
+  (path param `'$.'+field`, value param). Order unchanged (BM25). The `CAST … AS
+  TEXT` matches by string representation, so numeric/boolean frontmatter values
+  (`priority: 1`) match the always-string CLI value (`/vdd-multi` refinement).
 - **Query empty + ≥1 `where_fields`**: non-FTS path —
-  `SELECT <same page columns>, NULL AS bm25_score, '' AS snip FROM pages p
-   WHERE 1=1 [AND vault IN …][AND type IN …][AND project=?] AND <json_extract preds>
-   ORDER BY p.project, p.slug LIMIT ?`. (No `pages_fts`, no `bm25()`.)
+  `SELECT <same page columns>, 0.0 AS bm25_score, '' AS snip FROM pages p
+   WHERE 1=1 [AND vault IN …][AND type IN …][AND project=?] AND <CAST json_extract preds>
+   ORDER BY p.project, p.slug, p.vault_id LIMIT ?`. (No `pages_fts`, no `bm25()`;
+   `vault_id` is the cross-vault tiebreaker — `/vdd-multi` fix.)
 - **Both empty**: caller contract — `search_pages` requires a `query` OR
   `where_fields`; raise `ValueError` (the CLI converts to a usage error before
   calling, but the DAL defends).
-- Shared `validate_filter_field(field) -> str` (regex `^[a-z][a-z0-9_]*$`,
-  raises `ValueError`) re-applied in the DAL on each `where_fields` entry
-  (library-caller defense). Value is NEVER validated/escaped — it is a bound
-  parameter (any string, incl. `SEV-2`, quotes, is safe).
+- Shared `validate_filter_field(field) -> str` (regex `[a-z][a-z0-9_]*` via
+  `re.fullmatch` — NOT `.match`+`$`, which leaks a trailing `\n`; raises
+  `ValueError`) re-applied in the DAL on each `where_fields` entry (library-caller
+  defense). Value is NEVER validated/escaped — it is a bound parameter (any string,
+  incl. `SEV-2`, quotes, is safe).
 
 ## Stub-First
 1. **Stub**: add `where_fields` param to the ABC (`repository.py`) + the

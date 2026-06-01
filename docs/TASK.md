@@ -31,8 +31,10 @@ dev-vault ledger.
 
 **Approach:** Fix-option **1** from the issue (the issue's recommended option) —
 a structured filter flag that compiles to a parameterized
-`json_extract(p.frontmatter_json, '$.<field>') = ?` predicate on the existing
-`search_pages` SQL. **No schema change** (`user_version` stays 5; reuses the
+`CAST(json_extract(p.frontmatter_json, '$.<field>') AS TEXT) = ?` predicate on the
+existing `search_pages` SQL (the `CAST` matches by string representation so numeric
+frontmatter values match too — `/vdd-multi` refinement). **No schema change**
+(`user_version` stays 5; reuses the
 already-stored `frontmatter_json` column) — consistent with TASK 012's zero-DDL
 posture. Fix-option 2 (`tag_from_frontmatter` layout option copying values into
 the FTS-indexed `pages.tags`) is explicitly **out of scope** (touches
@@ -103,7 +105,8 @@ hyphen hazard.
 
 - **Security (PRIMARY):** the metadata filter is the new untrusted-input surface.
   - **NFR-S1** Field name MUST be validated against an allowlist regex
-    (`^[a-z][a-z0-9_]*$`) — rejects JSON-path traversal / SQL metacharacters.
+    (`[a-z][a-z0-9_]*` via `re.fullmatch` — NOT `.match`+`$`, which would let a
+    trailing `\n` slip) — rejects JSON-path traversal / SQL metacharacters.
   - **NFR-S2** The JSON path (`'$.'+field`) MUST be passed as a **bound parameter**
     to `json_extract`, and the value as a bound parameter — never string-formatted
     into SQL. (SQLite accepts `json_extract(col, ?)` with the path bound.)
@@ -123,9 +126,12 @@ hyphen hazard.
 ### 4. Constraints and Assumptions
 
 - **C1 — Zero DDL.** Reuse `pages.frontmatter_json`; no new column/index/table.
-- **C2 — Equality only (v1).** `field=value` exact match. No `<`/`>`/`!=`/`LIKE`
+- **C2 — Equality only (v1).** `field=value` exact match, by **string
+  representation** (`CAST(json_extract(...) AS TEXT)` — so `priority=1` matches a
+  numeric frontmatter value; booleans serialize to `1`/`0`). No `<`/`>`/`!=`/`LIKE`
   /range. (Severity ordering needs a rank map — a separate enhancement; YAGNI.)
-- **C3 — AND semantics** across multiple `--where` filters (no OR in v1).
+- **C3 — AND semantics** across multiple `--where` filters (no OR in v1); two
+  predicates on the same field are rejected (`INVALID_FILTER`).
 - **C4 — Assumption:** `frontmatter_json` is populated for filterable pages. TRUE
   for `dev-project` issue pages (the auto-rendered ledger reads `status`/`severity`
   /`category` from it). Pages with no frontmatter simply never match a `--where`.
@@ -156,7 +162,7 @@ hyphen hazard.
 - **Q3 — Query-less ordering.** With no FTS MATCH there is no BM25 — order by
   `(project, slug)`? by `last_modified`? *Analyst lean: `(project, slug)`
   deterministic.*
-- **Q4 — Field-name allowlist policy.** Static regex only (`^[a-z][a-z0-9_]*$`),
+- **Q4 — Field-name allowlist policy.** Static regex only (`[a-z][a-z0-9_]*`),
   or also a per-layout `filterable_fields` allowlist in the layout config? *Analyst
   lean: static regex for v1 (any well-formed field is allowed); a per-layout
   allowlist is a YAGNI follow-up.*

@@ -28,12 +28,14 @@ VAULT_ID = "meta-vault"
 
 def _page(slug: str, *, project: str = "_vault_", status: str | None = None,
           severity: str | None = None, body: str = "body text here",
-          ptype: str = "concept") -> Page:
+          ptype: str = "concept", extra_fm: dict[str, object] | None = None) -> Page:
     fm: dict[str, object] = {"tags": ["t"]}
     if status is not None:
         fm["status"] = status
     if severity is not None:
         fm["severity"] = severity
+    if extra_fm:
+        fm.update(extra_fm)
     return Page(
         vault_id=VAULT_ID, slug=slug, project=project, type=ptype,
         title=slug.replace("-", " ").title(), file_path=f"_concepts/{slug}.md",
@@ -60,6 +62,11 @@ def repo(tmp_path: Path):
                         body="gamma resolved"))
     r.upsert_page(_page("issue-d", status="open", body="delta no severity"))
     r.upsert_page(_page("plain-note", body="just a source with drift mention"))
+    # Numeric + boolean frontmatter values (stored as JSON int/bool, not text).
+    # No `status` so this page stays out of the status=open assertions above.
+    r.upsert_page(_page("issue-num",
+                        extra_fm={"priority": 1, "blocking": True},
+                        body="numeric frontmatter page"))
     yield r
     r.close()
 
@@ -150,6 +157,29 @@ def test_validate_filter_field_allowlist() -> None:
                 "status\n", "a\nb", "status\t", " status"]:
         with pytest.raises(ValueError):
             validate_filter_field(bad)
+
+
+def test_where_matches_numeric_frontmatter_value(repo) -> None:
+    # `priority: 1` is stored as a JSON integer; the CAST(... AS TEXT) makes the
+    # string filter "1" match it (without the cast, INTEGER 1 != TEXT '1').
+    hits = repo.search_pages(None, where_fields=[("priority", "1")])
+    assert {h.page.slug for h in hits} == {"issue-num"}
+    # A non-matching numeric value still excludes correctly.
+    assert repo.search_pages(None, where_fields=[("priority", "2")]) == []
+
+
+def test_where_matches_boolean_frontmatter_as_int(repo) -> None:
+    # JSON `true` is extracted as SQLite integer 1 → CAST AS TEXT '1'. This
+    # documents the representation: filter with "1"/"0", not "true"/"false".
+    assert {h.page.slug for h in repo.search_pages(
+        None, where_fields=[("blocking", "1")])} == {"issue-num"}
+    assert repo.search_pages(None, where_fields=[("blocking", "true")]) == []
+
+
+def test_where_string_value_still_byte_identical(repo) -> None:
+    # The CAST must not change string matching (the common status/severity case).
+    assert {h.page.slug for h in repo.search_pages(
+        None, where_fields=[("severity", "SEV-2")])} == {"issue-a", "issue-c"}
 
 
 def test_query_less_ordering_tiebreak_by_vault_id(repo) -> None:
