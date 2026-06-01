@@ -1,0 +1,75 @@
+# Built-in DEV-PROJECT layout — a software project's docs/ tree (TASK 012 / R-X2).
+# Indexes TASK/PLAN/ADR/reviews/audit/issues/proposals as first-class, type-tagged,
+# cross-referenced pages. New doc types route through the TYPE_MAPPING tag-route onto
+# the existing pages.type CHECK enum — ZERO DDL (user_version stays 5).
+schema_version: '2.0'
+layout: dev-project
+
+ignore:
+  - ".git/**"
+  - "**/.DS_Store"
+  - "**/__pycache__/**"
+  - "**/.pytest_cache/**"
+file_extensions: ['.md']
+slug_strategy: transliterate        # cross-platform-safe (ASCII slugs)
+
+# Globs evaluated in order, first-match-wins. Flat dev-vault → project '_vault_'.
+# `resolved/` is two segments deep so it never collides with the one-level
+# docs/issues/*.md glob; listed first for clarity.
+paths:
+  - {glob: "docs/issues/resolved/*.md", type: known-issue, project: "_vault_", extra_tags: [resolved]}
+  - {glob: "docs/issues/*.md",          type: known-issue, project: "_vault_"}
+  - {glob: "docs/tasks/*.md",           type: task,         project: "_vault_"}
+  - {glob: "docs/plans/*.md",           type: plan,         project: "_vault_"}
+  - {glob: "docs/adr/*.md",             type: adr,          project: "_vault_"}
+  - {glob: "docs/reviews/*.md",         type: review,       project: "_vault_"}
+  - {glob: "docs/audit/*.md",           type: audit,        project: "_vault_"}
+  - {glob: "docs/architectures/*.md",   type: architecture, project: "_vault_"}
+  - {glob: "docs/product/*.md",         type: product-doc,  project: "_vault_"}
+  - {glob: "docs/proposals/*.md",       type: proposal,     project: "_vault_"}
+  - {glob: "docs/TASK.md",              type: task,         project: "_vault_"}
+  - {glob: "docs/PLAN.md",              type: plan,         project: "_vault_"}
+  - {glob: "docs/ARCHITECTURE.md",      type: architecture, project: "_vault_"}
+  - {glob: "docs/ROADMAP.md",           type: roadmap,      project: "_vault_"}
+
+# Tag-route: new doc types → existing db_type enum values + a filterable tag.
+type_mapping:
+  task:         {db_type: brief,    tag: task}
+  plan:         {db_type: brief,    tag: plan}
+  adr:          {db_type: research, tag: adr}
+  review:       {db_type: research, tag: review}
+  audit:        {db_type: research, tag: audit}
+  architecture: {db_type: research, tag: architecture}
+  roadmap:      {db_type: research, tag: roadmap}
+  known-issue:  {db_type: research, tag: known-issue}
+  product-doc:  {db_type: research, tag: product}
+  proposal:     {db_type: research, tag: proposal}
+
+path_type_fallback: {}              # dev types come from paths[].type
+
+ref_extraction:
+  - kind: wiki-link
+    regex: '\[\[([^\]|]+)(?:\|[^\]]+)?\]\]'
+    target_group: 1
+  - kind: markdown-link
+    regex: '\[([^\]]+)\]\(([^)]+\.md(?:#[^)]+)?)\)'
+    target_group: 2
+    transform: stem
+  - kind: id-ref
+    regex: '\b(ADR-\d+|R-\d+(?:\.\d+)*|task-\d+(?:-\d+)*|M-\d+|P-\d+|UC-\d+(?:\.\d+)*)\b'
+    target_group: 1
+
+# Dev docs often lack frontmatter (e.g. ROADMAP.md) — title from first H1 ∥ stem.
+frontmatter_synthesis:
+  enabled: true
+  title_source: first_h1
+  fallback_title: filename_stem
+
+# PW-H (bead 012-09): the KNOWN_ISSUES ledger is rebuildable markdown rendered from
+# the per-issue Class-A docs/issues/*.md files.
+auto_indexes:
+  - source_type: known-issue
+    output: docs/KNOWN_ISSUES.md
+    group_by: category
+    sort_within_group: [severity, opened_at, id]
+    template: assets/known-issues-ledger.md.tmpl

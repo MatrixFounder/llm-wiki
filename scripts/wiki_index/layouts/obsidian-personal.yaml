@@ -1,0 +1,66 @@
+# Built-in OBSIDIAN-PERSONAL layout — a real personal Obsidian vault (TASK 012 /
+# R-X2): numbered top-level folders, underscore system dirs, MOC pattern, deep
+# hierarchy, multilingual filenames, .base files. Drives PW-J/K/L/M/N + PW-F.
+schema_version: '2.0'
+layout: obsidian-personal
+
+ignore:
+  - ".obsidian/**"                  # Obsidian metadata
+  - ".trash/**"                     # Obsidian trash
+  - "_templates/**"                 # not content
+  - "**/*.base"                     # Obsidian Bases — not md (also via file_extensions)
+  - "**/.DS_Store"
+file_extensions: ['.md']
+slug_strategy: preserve-unicode     # Cyrillic/CJK survive (single-OS workflows)
+
+# Order matters — most specific glob first; first-match-wins. project derived
+# from the numbered-folder path via regex + ${name} template (no shell ternaries:
+# the two-component vs single-component cases are separate entries).
+paths:
+  # --- Underscore system folders — explicit project per area --------------
+  - {glob: "_daily/**/*.md",     type: daily-note, project: "_daily",     default_tags: [daily]}
+  - {glob: "_clippings/**/*.md", type: clipping,   project: "_clippings", default_tags: [clipping]}
+  - {glob: "_inbox/**/*.md",     type: note,       project: "_inbox",     default_tags: [inbox, draft]}
+
+  # --- Numbered top-level: "NN - Area/Sub/.../X.md" → project "Area/Sub" ---
+  - glob: "[0-9][0-9] - */*/**/*.md"
+    type: note
+    project_pattern: '^(?P<num>\d+)\s*-\s*(?P<area>[^/]+)/(?P<sub>[^/]+)/'
+    project_template: '${area}/${sub}'
+  # --- Numbered top-level: "NN - Area/X.md" (no sub) → project "Area" ------
+  - glob: "[0-9][0-9] - */*.md"
+    type: note
+    project_pattern: '^(?P<num>\d+)\s*-\s*(?P<area>[^/]+)/'
+    project_template: '${area}'
+  # --- The MOC note itself: "NN - Area.md" → project "Area", tag moc -------
+  - glob: "[0-9][0-9] - *.md"
+    type: note
+    project_pattern: '^(?P<num>\d+)\s*-\s*(?P<area>[^.]+)\.md$'
+    project_template: '${area}'
+    extra_tags: [moc]
+  # --- Standalone root-level notes (no folder, no number) -----------------
+  - {glob: "*.md", type: note, project: "_root_"}
+
+type_mapping:
+  note:        {db_type: summary, tag: null}
+  daily-note:  {db_type: summary, tag: daily}
+  clipping:    {db_type: summary, tag: clipping}
+
+path_type_fallback: {}
+
+# Most Obsidian notes have no frontmatter — title from first H1 ∥ filename stem.
+frontmatter_synthesis:
+  enabled: true
+  title_source: first_h1
+  fallback_title: filename_stem
+
+ref_extraction:
+  - kind: wiki-link
+    regex: '\[\[([^\]|#]+)(?:#[^|\]]*)?(?:\|[^\]]+)?\]\]'
+    target_group: 1
+  - kind: markdown-link
+    regex: '\[([^\]]+)\]\(([^)]+\.md(?:#[^)]+)?)\)'
+    target_group: 2
+    transform: stem
+
+auto_indexes: []

@@ -45,10 +45,19 @@ $defs:
     enum:
       - flat
       - per-project
+      - karpathy
+      - dev-project
+      - obsidian-personal
     description: >
-      'flat' — single-tier vault (all content at root, project='_vault_').
-      'per-project' — multi-course vault (Lessons/<Course>/...), project=
-      <course-slug>. Set on wiki-init; cannot change without reindex.
+      Names the vault's layout GRAMMAR (TASK 012 / R-X1). The engine resolves
+      this to a built-in layouts/<name>.yaml via scripts/wiki_index/layout_config.py.
+      'flat' and 'per-project' are LEGACY ALIASES → 'karpathy' (the layout field
+      never gated the two-tier walk). 'karpathy' — two-tier Karpathy vault
+      (_sources/_concepts/_entities/_queries/_verifications + Lessons/<Course>/).
+      'dev-project' — a software project's docs/ (TASK/PLAN/ADR/reviews/issues).
+      'obsidian-personal' — a personal Obsidian vault (numbered folders, system
+      dirs, MOC pattern, multilingual, deep hierarchy). Set on wiki-init; cannot
+      change without reindex.
 
   # ----------------------------------------------------------------------------
   # Paths — vault-internal directory conventions.

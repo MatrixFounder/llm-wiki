@@ -103,6 +103,28 @@
 > prompt catches a fabricated interior link as reliably as a wrong terminus. Carry-over
 > D-010-2 completeness-bleed residual (3, lens-purity noise, not re-fixed). No prompt fix
 > warranted. Spec: [tasks/](./tasks/) + `reports/v4/benchmark-v4.md`.
+>
+> **TASK 012 (R-X1 + R-X2 A-B + R-X3 — universal config-driven layout engine + dev-vault
+> bootstrap) — IN PROGRESS (2026-06-01):** replaces ~15 hardcoded layout surfaces
+> (`PAGE_SUBDIRS`, the `Lessons/` two-tier walk, `TYPE_MAPPING`/`_PATH_TYPE_FALLBACK`,
+> `_WIKILINK_RE`, slug rules) with a **YAML-config-driven engine** (new
+> `scripts/wiki_index/layout_config.py` + `config/layout-config.schema.yaml` + built-in
+> `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml`). **Two
+> separate config layers** (D-012-2): the existing per-vault identity/policy
+> (`config_loader`) is untouched; the new layer carries per-layout-class *grammar*.
+> `flat`/`per-project` alias to `karpathy.yaml`. **Byte-identical for Karpathy**
+> (golden-snapshot harness + `test_karpathy_config_matches_layout_constants`;
+> three slug surfaces kept distinct; `identity` slug strategy). **ReDoS = stdlib `re`
+> + load-time budget gate** (D-012-3, no `regex` dep). **PW-G/H/Q INCLUDE NOW** (D-012-1):
+> the `auto_indexes[]` renderer + KNOWN_ISSUES splitter + `check_auto_generated_unchanged`
+> lint guard, dogfooded by migrating this repo's `docs/KNOWN_ISSUES.md` → per-file
+> Class-A `docs/issues/*.md` + a Class-B auto-rendered ledger (the **§D8 "rebuildable
+> markdown" sub-case** — ADR-002 TASK-012 amendment, gating PW-H). **Zero DDL**
+> (`user_version` stays **5**; new doc types via the TYPE_MAPPING tag-route). R-X2
+> extends `wiki-init --layout` (5 values) + bootstraps this repo + one peer as dev-vaults
+> (`wiki-search "ADR-002" --vaults all`). **R-X2 Phase C** (the agentic-development
+> `archive_protocol.py` hook) is **DEFERRED** (D-012-4) + recorded in ROADMAP — stabilise
+> the wiki first. See §3.5 + ADR-002 §D8 amendment. Spec: [tasks/](./tasks/).
 > Predecessor: **TASK 006** (`ba4fa92`) — consolidation/hardening
 > (schema **v3→v4**). ADRs 001
 > + 002 in effect; §D8 amended for the entity_aliases PK (v2→v3, L-4) and the
@@ -169,7 +191,7 @@ Functional components (Configuration Resolver, Source Adapters, Index Layer DAL,
 
 ## 3. System Architecture
 
-Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only).
+Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **§3.5 (TASK 012 / R-X1)** adds the **config-driven Layout Engine**: two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`), the `iter_pages` walk that converges the four hardcoded two-tier walks, the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct), the stdlib-`re` ReDoS load-gate, and the PW-H `auto_indexes[]` renderer + PW-Q lint guard (Class-B "rebuildable markdown" — zero DDL).
 
 → [details](./architectures/system-architecture.md)
 
@@ -241,6 +263,9 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 - Q-D: vault_hash storage — `vault_metadata` table.
 - Q-E: trust_level per adapter — manual=high, transcript/light=medium.
 - Q-F: required_frontmatter для flat — без `project`.
+- **Q-012-e (TASK 012): `auto_indexes[]` template mechanism** — **RESOLVED: dependency-free Python renderer** driven by `group_by` / `sort_within_group`, with an optional `assets/<name>.md.tmpl` (`string.Template`) for the surrounding shell. No Jinja dependency (NFR-3). See §3.5.
+- **Q-012-f (TASK 012): per-vault layout-override merge policy** — **RESOLVED: `paths[]`/`ref_extraction[]` REPLACE on operator-supplied key; scalars overlay.** Predictable (no partial-list merge surprises); pinned by schema-validation tests. See §3.5.
+- **Q-012-g (TASK 012): peer dev-vault for the cross-project acceptance (UC-33)** — default `Universal-skills` unless operator prefers `trade-agents`; either satisfies the bar (low-stakes, operator confirms at Bead 15).
 
 ### 11b. Defer-able (не блокирует Architecture, можно решать в Plan/Dev)
 

@@ -68,7 +68,6 @@ from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
     COURSE_TIER_DIR,
     SOURCES_SUBDIR,
-    VAULT_TIER_PROJECT,
 )
 from scripts.wiki_index.security import (
     PathTraversalError,
@@ -1140,29 +1139,18 @@ def _read_file_bounded(path: Path, cap_bytes: int) -> bytes:
 def _derive_source_project(source_path: Path, vault_root: Path) -> str:
     """Derive the `pages.project` column value for `source_path`.
 
-    Mirrors `scripts.wiki_index.reindex.discover_pages()`:
-    - vault-tier  (`<vault_root>/_sources/<slug>.md`) → `VAULT_TIER_PROJECT`
-      (sentinel from `layout.py`)
-    - course-tier (`<vault_root>/Lessons/<Course>/_sources/<slug>.md`)
-      → `slugify(<Course>, lowercase=True, separator="-")`
-
-    Load-bearing for `replace_refs`: `page_entity_refs` has an FK on
-    `(vault_id, page_slug, page_project) → pages(vault_id, slug, project)`,
-    so apply MUST emit the same project value the indexer recorded.
-    Hardcoding the vault-tier sentinel worked for vault-tier vaults
-    but failed the FK on course-tier vaults (dogfood signal from
-    `trade-agents` 2026-05-29).
+    TASK 012 / architecture-review C1: delegates to the shared, config-driven
+    `layout_config.derive_project_for_path` so the apply-side project matches what
+    the reindexer (`iter_pages`) records — the `page_entity_refs` FK on
+    `(vault_id, page_slug, page_project) → pages(vault_id, slug, project)`
+    requires the two paths to agree. For a Karpathy vault this yields the same
+    two-tier result as before (vault-tier → `VAULT_TIER_PROJECT`; course-tier →
+    slugified course); for dev/obsidian layouts it follows the layout config
+    (previously this hardcoded the Karpathy two-tier walk and would have drifted).
     """
-    from slugify import slugify
+    from scripts.wiki_index.layout_config import derive_project_for_path
 
-    try:
-        rel = source_path.relative_to(vault_root)
-    except ValueError:
-        return VAULT_TIER_PROJECT
-    parts = rel.parts
-    if len(parts) >= 3 and parts[0] == COURSE_TIER_DIR:
-        return slugify(parts[1], lowercase=True, separator="-")
-    return VAULT_TIER_PROJECT
+    return derive_project_for_path(source_path, vault_root)
 
 
 def _all_concepts_dirs(vault_root: Path) -> list[Path]:

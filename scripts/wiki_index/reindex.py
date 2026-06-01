@@ -4,21 +4,22 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from dataclasses import replace
 from datetime import date as date_cls
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from slugify import slugify
-
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
-    COURSE_TIER_DIR,
     ENTITIES_SUBDIR,
     LOG_SUBDIR,
-    PAGE_SUBDIRS,
     VAULT_INDEX_DIR,
-    VAULT_TIER_PROJECT,
+)
+from scripts.wiki_index.layout_config import (
+    RefRule,
+    iter_pages,
+    resolve_layout_config,
 )
 from scripts.wiki_index.logfile import parse_log_md
 from scripts.wiki_index.models import Entity, LogEvent, Page, PageRef
@@ -34,6 +35,7 @@ from scripts.wiki_index.security import (
 )
 from scripts.wiki_source.base import SourceItem
 from scripts.wiki_source.manual import ManualSourceAdapter
+from scripts.wiki_source.parsing import extract_refs, first_h1
 
 if TYPE_CHECKING:
     from scripts.wiki_index.repository import IndexRepository
@@ -63,29 +65,17 @@ def _coerce_is_candidate(fm: dict[str, Any]) -> int:
 
 
 def discover_pages(vault_root: Path) -> list[tuple[Path, str, str]]:
-    """Walk both tiers; yield (path, slug, project) tuples."""
-    out: list[tuple[Path, str, str]] = []
-    # Root tier
-    for sub in PAGE_SUBDIRS:
-        base = vault_root / sub
-        if base.is_dir():
-            for f in base.rglob("*.md"):
-                if f.is_file():
-                    out.append((f, f.stem, VAULT_TIER_PROJECT))
-    # Course tier under Lessons/
-    lessons = vault_root / COURSE_TIER_DIR
-    if lessons.is_dir():
-        for course_dir in lessons.iterdir():
-            if not course_dir.is_dir():
-                continue
-            proj = slugify(course_dir.name, lowercase=True, separator="-")
-            for sub in PAGE_SUBDIRS:
-                base = course_dir / sub
-                if base.is_dir():
-                    for f in base.rglob("*.md"):
-                        if f.is_file():
-                            out.append((f, f.stem, proj))
-    return out
+    """Config-driven page discovery (TASK 012 / PW-B). Resolves the vault's layout
+    grammar (`resolve_layout_config` — defaults to karpathy when no `WIKI_SCHEMA.md`)
+    and walks it via `iter_pages`, replacing the former hardcoded two-tier walk.
+    Yields `(path, slug, project)` tuples, stably sorted by vault-relative path.
+
+    The built-in `karpathy.yaml` reproduces the previous behaviour byte-for-byte
+    (root-tier `PAGE_SUBDIRS` → `_vault_`; `Lessons/<Course>/` → slugified course);
+    the golden anchor `tests/test_karpathy_byte_identity.py` guards the invariant.
+    """
+    config = resolve_layout_config(vault_root)
+    return [(d.path, d.slug, d.project) for d in iter_pages(vault_root, config)]
 
 
 def _cited_refs(
@@ -193,6 +183,40 @@ def _frontmatter_refs(
     return refs
 
 
+def _synthesize_fm(
+    frontmatter: dict[str, Any], body: str, synthesis: dict[str, Any],
+) -> dict[str, Any]:
+    """PW-F frontmatter synthesis: when the layout enables it and the file has no
+    `title:`, inject the first H1 as the title (→ `_build_page` falls back to the
+    filename stem when there is no H1). The page `type` for a frontmatter-less file
+    comes from the matched glob's `type` (glob_type) in `normalize_frontmatter`, so
+    synthesis here only supplies the human title. No-op for Karpathy
+    (`enabled: false`) → byte-identical."""
+    if synthesis.get("enabled") and "title" not in frontmatter:
+        h1 = first_h1(body)
+        if h1:
+            return {**frontmatter, "title": h1}
+    return frontmatter
+
+
+def _body_refs(
+    out: Any, ref_rules: tuple[RefRule, ...], vault_id: str,
+) -> list[PageRef]:
+    """Body ``'mentioned'`` refs via the layout's ``ref_extraction`` rules
+    (TASK 012 / PW-D) — config-driven, replacing the adapter's hardcoded
+    wiki-link refs in the reindex path. The karpathy single wiki-link rule
+    reproduces the previous ``out.refs`` byte-for-byte (golden anchor guards it);
+    a dev-project layout additionally yields markdown-link + id-ref targets."""
+    return [
+        PageRef(
+            vault_id=vault_id, page_slug=out.page_slug, page_project=out.project,
+            entity_slug=target, ref_type="mentioned", trust_level="high",
+            line_start=line, line_end=line, source_quote=quote,
+        )
+        for (target, line, quote) in extract_refs(out.body_text, ref_rules)
+    ]
+
+
 def _build_page(out: Any, vault_id: str, db_type: str,
                 src: Path, vault_root: Path,
                 updated_fm: dict[str, Any]) -> Page:
@@ -242,6 +266,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         raise ValueError(f"vault_id={vault_id!r} not registered")
     vault_root = vault.root_path
     assert_no_symlink_escape(vault_root.resolve())
+    config = resolve_layout_config(vault_root)  # PW-C/E: type-mapping source
     t0 = time.perf_counter()
     run_id = repo.begin_batch_run(vault_id, "delta")
     skipped: list[dict[str, Any]] = []
@@ -252,11 +277,12 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         ).fetchone()
         cutoff = (datetime.fromisoformat(row["m"]) if row and row["m"]
                   else vault.registered_at)
-        paths_on_disk = discover_pages(vault_root)
-        on_disk_keys = {(slug, project) for (_, slug, project) in paths_on_disk}
+        paths_on_disk = iter_pages(vault_root, config)
+        on_disk_keys = {(d.slug, d.project) for d in paths_on_disk}
         touched = 0
         adapter = ManualSourceAdapter()
-        for path, slug, project in paths_on_disk:
+        for disc in paths_on_disk:
+            path = disc.path
             try:
                 mtime = datetime.fromtimestamp(path.stat().st_mtime)
             except OSError as e:
@@ -268,8 +294,16 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
                 out = adapter.fetch(item)
+                # C1/C4 convergence (PW-L) — see reindex_full.
+                out = replace(out, page_slug=disc.slug, project=disc.project)
+                fm = _synthesize_fm(out.frontmatter, out.body_text,
+                                    config.frontmatter_synthesis)  # PW-F
                 updated_fm, db_type = normalize_frontmatter(
-                    out.frontmatter, source_path=path,
+                    fm, source_path=path,
+                    type_mapping=config.type_mapping,
+                    path_type_fallback=config.path_type_fallback,
+                    extra_tags=disc.extra_tags,  # PW-N
+                    glob_type=disc.raw_type,     # PW-C/F glob-inferred type
                 )
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
@@ -279,7 +313,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # query page body + `wiki-reindex --delta` does NOT drop its
                 # `cited` refs (full/delta symmetry; matches reindex_full +
                 # _index_query_page). Cite-parse warnings fold into `skipped`.
-                delta_refs = list(out.refs)
+                delta_refs = _body_refs(out, config.ref_extraction, vault_id)
                 delta_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     skipped,
@@ -349,6 +383,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     if vault is None:
         raise ValueError(f"vault_id={vault_id!r} not registered")
     vault_root = vault.root_path
+    config = resolve_layout_config(vault_root)  # PW-C/E: type-mapping source
 
     t0 = time.perf_counter()
     run_id = repo.begin_batch_run(vault_id, "full")
@@ -374,13 +409,26 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         # per call; can't nest BEGIN IMMEDIATE. Phase 3a SLO (1K-10K pages)
         # tolerates non-atomic rebuild; benchmark task (001-33) flags if scale
         # demands chunked-tx strategy.
-        for path, slug, project in discover_pages(vault_root):
+        for disc in iter_pages(vault_root, config):
+            path = disc.path
             try:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
                 out = adapter.fetch(item)
+                # C1/C4 convergence (PW-L): the config-driven discovered
+                # (slug, project) is authoritative — override the adapter's
+                # hardcoded derive_slug so dev/obsidian layouts index under the
+                # project_pattern/slug_strategy values (byte-identical for
+                # karpathy). All downstream out.* reads use the converged identity.
+                out = replace(out, page_slug=disc.slug, project=disc.project)
+                fm = _synthesize_fm(out.frontmatter, out.body_text,
+                                    config.frontmatter_synthesis)  # PW-F
                 updated_fm, db_type = normalize_frontmatter(
-                    out.frontmatter, source_path=path,
+                    fm, source_path=path,
+                    type_mapping=config.type_mapping,
+                    path_type_fallback=config.path_type_fallback,
+                    extra_tags=disc.extra_tags,  # PW-N
+                    glob_type=disc.raw_type,     # PW-C/F glob-inferred type
                 )
                 page = _build_page(out, vault_id, db_type, path, vault_root,
                                    updated_fm)
@@ -392,7 +440,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # is delete-all-then-insert — a second call would clobber the
                 # body refs, M-1). Step 2.5 (AM-3) below canonicalizes all refs'
                 # targets through the alias map, ref_type preserved.
-                all_refs = list(out.refs)
+                all_refs = _body_refs(out, config.ref_extraction, vault_id)
                 all_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     cite_skipped,

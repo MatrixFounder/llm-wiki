@@ -394,3 +394,146 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
 
 ---
 
+### 3.5. Layout Engine (config-driven) — TASK 012 / R-X1
+
+> **Status:** TASK 012 in progress (2026-06-01). Replaces ~15 hardcoded layout
+> surfaces with a YAML-config-driven engine. **Zero DDL** (`user_version` stays 5);
+> new doc types route via the TYPE_MAPPING tag-route. Byte-identical for Karpathy
+> vaults (the standing §D8 rebuildability invariant, now golden-snapshot-guarded).
+
+#### Two config systems (deliberately separate — D-012-2)
+
+The engine reads from **two** independent config layers that answer different
+questions at different times:
+
+| Layer | Files | Scope | Answers | Lifetime |
+|---|---|---|---|---|
+| **Per-vault identity/policy** (existing, unchanged) | `config_loader.py` + `config/wiki-config.schema.yaml`; `<vault>/WIKI_SCHEMA.md` (+ optional `CLAUDE.md::wiki:`, `.wiki.yaml`) | one vault | "who is this vault?" (`vault_id`, `language`, `layout` name, lint discipline) | read per skill-invocation; `deep_merge` (lists **replace**) |
+| **Per-layout-class grammar** (NEW — R-X1) | `layout_config.py` + `config/layout-config.schema.yaml`; built-in `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml` | one *layout class* (shared by all vaults of that kind) | "how do I parse this kind of vault?" (`paths[]` globs→type, `ref_extraction[]`, `type_mapping`, `slug_strategy`, `ignore[]`, `file_extensions`, `frontmatter_synthesis`, `auto_indexes[]`) | resolved once per reindex, cached per-vault |
+
+They are kept separate because the per-vault `deep_merge` **replaces** lists wholesale
+— wrong semantics for a layered layout grammar (a base built-in + a small operator
+patch). The grammar therefore ships **once** with the tool, and `WIKI_SCHEMA.md`
+merely *names* the layout.
+
+#### Component: **LayoutConfig + loader** (`scripts/wiki_index/layout_config.py`)
+
+- **Resolution:** `root_config["layout"]` → alias map (`flat`/`per-project` →
+  `karpathy`) → built-in `layouts/<name>.yaml` (base) → optional per-vault override
+  (`WIKI_SCHEMA.md` frontmatter `layout_config:` *or* conventional
+  `<vault>/.wiki/layout.yaml`; explicit frontmatter wins) **deep-merged over the
+  base** → validated against `layout-config.schema.yaml`.
+- **Override merge policy (Q-012-f → resolved):** `paths[]` and `ref_extraction[]`
+  are **replaced** if the operator supplies the key (predictable, no partial-list
+  surprises); scalar fields overlay. Pinned by schema-validation tests.
+- **Validation:** Draft-2020-12 (`jsonschema`, already a dep), **`additionalProperties:
+  false` at the `PathEntry` level** — stricter than the per-vault schema, so a
+  misspelled key is a load-time exit-6, not a silent `_unmatched_` flood.
+- **`LayoutConfig`** = frozen dataclass: `paths[]`, `type_mapping`,
+  `path_type_fallback`, `ref_extraction[]`, `slug_strategy`, `ignore[]`,
+  `file_extensions`, `frontmatter_synthesis`, `auto_indexes[]`.
+- **ReDoS guard (D-012-3, stdlib `re` only):** at config-load, every
+  `ref_extraction[].regex` is run against a **versioned, named adversarial-payload
+  fixture** (`tests/fixtures/redos_payloads/…`, not an ad-hoc inline string — so the
+  gate is reproducible/regression-tested); the budget is a **wall-clock ceiling
+  measured as the median of N≥5 runs** against the pinned payload (explicit N + ceiling
+  constants, not a one-shot timing — one-shot flakes on a loaded laptop). Any pattern
+  over the ceiling → **exit 6** before any file is processed. Built-in layouts are
+  pre-vetted. No `regex` PyPI dependency (protects the self-contained-publication goal);
+  the residual (a pattern slow only on specific *file content*, not the synthetic
+  payload) is documented, with a stdlib watchdog deferred until it bites (YAGNI).
+- **Override load is path-guarded (architecture-review m3):** `<vault>/.wiki/layout.yaml`
+  (and a `WIKI_SCHEMA.md` `layout_config:` target) is read under
+  `validate_inside_vault` + `O_NOFOLLOW`/symlink-refuse — an operator override is a
+  Class-A vault file but must not escape the vault root.
+
+#### Engine: `iter_pages(vault_root, config)` — one walk, all slug/project derivation converges
+
+- Per `paths[]` entry, resolve `Path(vault_root).glob(entry.glob)` (native `**`).
+  **First-match-wins** in declared order.
+- **Walk-cost note (scoped — architecture-review M1):** for **Karpathy-shaped**
+  layouts (globs anchored at named subdirs: `_sources/**/*.md`, …) this is
+  structurally identical to today's per-subdir `rglob` — the root tree is never
+  walked. For **multi-`**`-glob layouts** (obsidian-personal: a `*.md` root
+  catch-all + three overlapping `[0-9][0-9] - */…/**/*.md` globs) `Path.glob` runs
+  **once per `paths[]` entry**, so deep subtrees get re-walked once per overlapping
+  glob (dedup is first-match-wins, *after* enumeration). Bounded + deterministic;
+  acceptable at personal-vault scale (§8 = vertical, single-user). If a large
+  personal vault ever bites, the optimisation is a single-pass `os.walk` + an
+  in-memory per-entry matcher — **YAGNI-gated, not built now.** An NFR pins a
+  perf-floor at the obsidian-personal fixture scale to catch a future regression.
+- **PW-K `ignore[]`** evaluated before `paths[]`; **PW-M `file_extensions`** allow-list
+  (default `[.md]`) skips `.base`/`.canvas`/etc. The engine **also treats
+  `layout.py::SYSTEM_FILES` and every `auto_indexes[].output` as an implicit ignore
+  set** (architecture-review m1) — so a `*.md` root catch-all never scoops
+  `WIKI_SCHEMA.md`/`CLAUDE.md`/`index.md`/`log.md`/`README.md`, and a generated
+  Class-B ledger (`docs/KNOWN_ISSUES.md`) can never be re-ingested as a Class-A page
+  (closes the render→ingest feedback loop).
+- **PW-J `project`** = literal, or `project_pattern` (regex) + `project_template`
+  (`string.Template` `${name}` only — no shell ternaries). Error policy:
+  regex-compile-fail → exit-6; glob-matches-but-pattern-misses → WARN +
+  `project:"_unmatched_"`; template references missing group → exit-6.
+- **Output is stably sorted by relative POSIX path** before emit — deterministic and
+  independent of filesystem glob order (strictly ≥ today's order; no test asserts
+  order).
+- **Walk convergence (the C-4 PK-consistency invariant — architecture-review C1):**
+  there are **five** physical slug/project-producing walks. `discover_pages(vault_root)`
+  becomes the canonical one (keeps its signature; loads config internally, cached;
+  delegates to `iter_pages`). `sqlite_repository.check_drift` **already delegates** to
+  `discover_pages` (no change). The remaining three **must converge onto it**, comparing
+  on `(slug, project)` — **NOT bare `f.stem`**: (1) `sqlite_repository.find_pages_missing_in_index`
+  (`sqlite_repository.py:526-549` — today inlines its own `PAGE_SUBDIRS`+`Lessons/` walk
+  and compares slug-**only**, a latent course-tier bug; route through `discover_pages`
+  and compare on `(slug, project)`); (2) `parsing.py::derive_slug`;
+  (3) `wiki_extract_concepts._derive_source_project`. If any walk computes membership via
+  `f.stem` while the config path derives slug via `slug_strategy`/`project_pattern`, the
+  drift/orphan surface and the reindex surface disagree → false orphans + spurious
+  `wiki-lint --fix` re-upserts under a drifted slug (a direct `UNIQUE(vault_id, slug,
+  project)` PK-drift hazard).
+
+#### Byte-identity strategy (the load-bearing invariant)
+
+`karpathy.yaml` is a **validated projection of `layout.py`** (constants NOT deleted —
+scaffolding, `SYSTEM_FILES`, and the vendored `wiki_ingest.DEFAULT_SUBDIRS` drift
+guard still depend on them). The invariant test
+`test_karpathy_config_matches_layout_constants` ties the two. **Three slug surfaces
+stay distinct**: page slug = `slug_strategy: identity` (verbatim `path.stem`); course
+project = loose `slugify`; concept-tag slug = `_slugify_concept` (strict, **untouched**).
+The PW-L strategies (`preserve-unicode`/`transliterate`/`ascii-only`) all call
+slugify and are obsidian-personal-only. A Bead-0 golden snapshot of the current
+engine's rows stays green through every bead.
+
+#### Component: **auto_indexes render + lint guard** (PW-H / PW-Q)
+
+- **PW-H** extends `wiki-index-render`: walk `config.auto_indexes[]`, render each
+  `output` (e.g. `docs/KNOWN_ISSUES.md`) grouped/sorted from a small Python renderer.
+  **Template mechanism (Q-012-e → resolved):** a dependency-free Python renderer
+  driven by `group_by` / `sort_within_group`, with an optional
+  `assets/<name>.md.tmpl` (`string.Template`) for the surrounding shell — no Jinja
+  dependency. Preserves `BEGIN-CUSTOM` blocks; emits a `<!-- GENERATED-AT: … -->`
+  header and stores the rendered-body sha256 in `<vault>/.wiki/state.json`.
+  **Well-definedness of the rebuildability invariant (architecture-review M2):** the
+  rendered body is a **pure deterministic function of the Class-A per-issue files'
+  content** — the only volatile value is the single excluded GENERATED-AT header line
+  (no `now()`/"opened N days ago"/locale-formatted dates in the body). `sort_within_group`
+  carries a **stable total order with a final `id` tiebreaker** (so equal
+  `(severity, opened_at)` rows never reorder across machines/clones — the cross-platform
+  NFC/NFD/inode hazard). The PW-Q sha256 is computed over the **header-stripped** body.
+  The `output` path is `validate_inside_vault`-checked before the atomic write
+  (architecture-review m3) — an operator-set `output: ../../etc/x` is refused.
+- **Render-trigger contract:** fires on `wiki-reindex --full/--delta`, on explicit
+  `wiki-index-render --auto-indexes`, and at the end of any `wiki-index-upsert` batch
+  that creates/deletes a page whose **tag-route type** is `known-issue` (the predicate
+  keys off the tag/frontmatter marker, not a `pages.type` value — there is no
+  `known-issue` enum value; zero-DDL).
+- **PW-Q** `lint.py::check_auto_generated_unchanged`: re-render to a temp buffer at
+  lint time, compare against the `.wiki/state.json` sha256, flag manual drift. Folded
+  into `wiki-lint` (no new CLI).
+- **Class-B "rebuildable markdown"** (new §D8 sub-case — see ADR-002 TASK-012
+  amendment): `docs/issues/<id>-<slug>.md` are **Class A**; the rendered
+  `docs/KNOWN_ISSUES.md` is **Class B** rebuilt from those files (the first Class-B
+  markdown rebuilt from *markdown*, not a DB view). Rebuildability test: delete the
+  ledger, `--auto-indexes`, byte-identical modulo the GENERATED-AT header.
+
+---
+

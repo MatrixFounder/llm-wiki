@@ -1,0 +1,180 @@
+$schema: 'https://json-schema.org/draft/2020-12/schema'
+$id: 'https://github.com/sergey/obsidian-llm-wiki/config/layout-config.schema.yaml'
+title: 'layout-config'
+description: >
+  JSON Schema 2020-12 for a wiki LAYOUT GRAMMAR (TASK 012 / R-X1, PW-A). This is
+  the per-layout-class parsing grammar — a SEPARATE config system from the
+  per-vault identity config (config/wiki-config.schema.yaml). Built-in layouts
+  ship at scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml;
+  an operator may override per-vault via <vault>/.wiki/layout.yaml or a
+  WIKI_SCHEMA.md frontmatter `layout_config:` pointer.
+
+  Validate a merged layout config against #/$defs/LayoutConfig. Unlike
+  wiki-config.schema.yaml (additionalProperties: true, forward-compat stub),
+  PathEntry / RefRule / TypeMappingEntry are STRICT (additionalProperties: false)
+  so a misspelled grammar key is a load-time error (exit 6), not a silent
+  _unmatched_ flood (D-012-2 / architecture-review).
+
+$defs:
+  # ----------------------------------------------------------------------------
+  # SlugStrategy — how a page slug is derived (PW-L). `identity` = verbatim stem
+  # (Karpathy byte-identity); the others call python-slugify (obsidian-personal).
+  # ----------------------------------------------------------------------------
+  SlugStrategy:
+    type: string
+    enum: [identity, preserve-unicode, transliterate, ascii-only]
+
+  # `course-slug` is the loose-default slugify used for the Karpathy course
+  # project (slugify(name, lowercase=True, separator='-')) — distinct from the
+  # page slug_strategy and from the strict concept-tag _slugify_concept.
+  ProjectSlugStrategy:
+    type: string
+    enum: [course-slug, identity, preserve-unicode, transliterate, ascii-only]
+
+  # ----------------------------------------------------------------------------
+  # PathEntry — one glob → (type, project) rule. STRICT.
+  # ----------------------------------------------------------------------------
+  PathEntry:
+    type: object
+    additionalProperties: false
+    required: [glob]
+    properties:
+      glob:
+        type: string
+        description: 'vault-root-relative glob (native ** supported via Path.glob).'
+      type:
+        type: [string, 'null']
+        description: >
+          Literal raw-type for matched files (e.g. task, adr). If absent, the
+          engine infers from frontmatter `type:` then path_type_fallback.
+      project:
+        type: [string, 'null']
+        description: 'Literal pages.project value (e.g. _vault_).'
+      project_pattern:
+        type: [string, 'null']
+        description: 'Regex matched against the vault-relative POSIX path; named groups feed project_template.'
+      project_template:
+        type: [string, 'null']
+        description: 'string.Template (${name} only) over project_pattern named groups.'
+      project_slug_strategy:
+        oneOf:
+          - {$ref: '#/$defs/ProjectSlugStrategy'}
+          - {type: 'null'}
+      default_tags:
+        type: array
+        items: {type: string}
+        default: []
+      extra_tags:
+        type: array
+        items: {type: string}
+        default: []
+
+  # ----------------------------------------------------------------------------
+  # RefRule — one cross-reference extraction pattern (PW-D). STRICT.
+  # ----------------------------------------------------------------------------
+  RefRule:
+    type: object
+    additionalProperties: false
+    required: [kind, regex, target_group]
+    properties:
+      kind:
+        type: string
+        enum: [wiki-link, markdown-link, id-ref]
+      regex:
+        type: string
+      target_group:
+        type: integer
+        minimum: 0
+      transform:
+        type: [string, 'null']
+        enum: [stem, null]
+        description: 'Optional post-match transform (stem = basename without extension).'
+
+  # ----------------------------------------------------------------------------
+  # TypeMappingEntry — raw_type → (db_type, tag). db_type MUST be a live
+  # pages.type CHECK enum value. STRICT.
+  # ----------------------------------------------------------------------------
+  TypeMappingEntry:
+    type: object
+    additionalProperties: false
+    required: [db_type]
+    properties:
+      db_type:
+        type: string
+        enum: [summary, concept, query, brief, research, index, verification]
+      tag:
+        type: [string, 'null']
+
+  # ----------------------------------------------------------------------------
+  # FrontmatterSynthesis (PW-F).
+  # ----------------------------------------------------------------------------
+  FrontmatterSynthesis:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean, default: false}
+      title_source: {type: string, enum: [first_h1], default: first_h1}
+      fallback_title: {type: string, enum: [filename_stem], default: filename_stem}
+
+  # ----------------------------------------------------------------------------
+  # AutoIndex (PW-H) — a rebuildable-markdown projection target.
+  # ----------------------------------------------------------------------------
+  AutoIndex:
+    type: object
+    additionalProperties: false
+    required: [source_type, output]
+    properties:
+      source_type: {type: string}
+      output: {type: string}
+      group_by: {type: [string, 'null']}
+      sort_within_group:
+        type: array
+        items: {type: string}
+        default: []
+      template: {type: [string, 'null']}
+
+  # ----------------------------------------------------------------------------
+  # LayoutConfig — the merged grammar the engine consumes.
+  # ----------------------------------------------------------------------------
+  LayoutConfig:
+    type: object
+    additionalProperties: false
+    required: [schema_version, layout, slug_strategy, paths, type_mapping]
+    properties:
+      schema_version: {type: string}
+      layout: {type: string}
+      ignore:
+        type: array
+        items: {type: string}
+        default: []
+      file_extensions:
+        type: array
+        items: {type: string}
+        default: ['.md']
+      slug_strategy: {$ref: '#/$defs/SlugStrategy'}
+      paths:
+        type: array
+        minItems: 1
+        items: {$ref: '#/$defs/PathEntry'}
+      type_mapping:
+        type: object
+        additionalProperties: {$ref: '#/$defs/TypeMappingEntry'}
+      path_type_fallback:
+        type: object
+        additionalProperties: {type: string}
+        default: {}
+      ref_extraction:
+        type: array
+        items: {$ref: '#/$defs/RefRule'}
+        default: []
+      frontmatter_synthesis:
+        $ref: '#/$defs/FrontmatterSynthesis'
+      auto_indexes:
+        type: array
+        items: {$ref: '#/$defs/AutoIndex'}
+        default: []
+
+# Top-level: library of $defs (mirrors wiki-config.schema.yaml). The loader
+# validates a merged config against #/$defs/LayoutConfig explicitly.
+type: object
+description: 'Library of $defs. Validate against #/$defs/LayoutConfig.'

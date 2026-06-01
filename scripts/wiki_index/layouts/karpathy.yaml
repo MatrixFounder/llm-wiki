@@ -1,0 +1,92 @@
+# Built-in KARPATHY layout — the two-tier Karpathy vault
+# (_sources/_concepts/_entities/_queries/_verifications at the root tier +
+# Lessons/<Course>/ course tier). This file is a VALIDATED PROJECTION of
+# scripts/wiki_index/layout.py — it encodes today's hardcoded behaviour
+# BIT-FOR-BIT (ADR-002 §D8 byte-identity / R-X1). The invariant test
+# tests/test_layout_config.py::test_karpathy_config_matches_layout_constants
+# ties this file to layout.py + normalization.py; do not edit one without the
+# other. `flat` and `per-project` (the legacy WIKI_SCHEMA layout: values) both
+# alias to this layout — the layout field never gated the two-tier walk.
+schema_version: '2.0'
+layout: karpathy
+
+# Karpathy walks only the named subdirs (never the root tree), so no ignore[]
+# is needed — see the per-subdir globs below.
+ignore: []
+file_extensions: ['.md']
+
+# Page slug = verbatim file stem (NO slugify). The only byte-identical strategy.
+slug_strategy: identity
+
+paths:
+  # --- Root tier: project literal "_vault_" (VAULT_TIER_PROJECT) ------------
+  # One entry per PAGE_SUBDIRS member; each glob is rooted at the subdir and
+  # recursive (** = rglob within the subdir). type omitted ⇒ infer from
+  # frontmatter `type:` then path_type_fallback.
+  - {glob: '_sources/**/*.md',        project: '_vault_'}
+  - {glob: '_concepts/**/*.md',       project: '_vault_'}
+  - {glob: '_entities/**/*.md',       project: '_vault_'}
+  - {glob: '_queries/**/*.md',        project: '_vault_'}
+  - {glob: '_verifications/**/*.md',  project: '_vault_'}
+
+  # --- Course tier: project = slugify(course-dir) (loose default slugify) ---
+  - glob: 'Lessons/*/_sources/**/*.md'
+    project_pattern: '^Lessons/(?P<course>[^/]+)/'
+    project_template: '${course}'
+    project_slug_strategy: course-slug
+  - glob: 'Lessons/*/_concepts/**/*.md'
+    project_pattern: '^Lessons/(?P<course>[^/]+)/'
+    project_template: '${course}'
+    project_slug_strategy: course-slug
+  - glob: 'Lessons/*/_entities/**/*.md'
+    project_pattern: '^Lessons/(?P<course>[^/]+)/'
+    project_template: '${course}'
+    project_slug_strategy: course-slug
+  - glob: 'Lessons/*/_queries/**/*.md'
+    project_pattern: '^Lessons/(?P<course>[^/]+)/'
+    project_template: '${course}'
+    project_slug_strategy: course-slug
+  - glob: 'Lessons/*/_verifications/**/*.md'
+    project_pattern: '^Lessons/(?P<course>[^/]+)/'
+    project_template: '${course}'
+    project_slug_strategy: course-slug
+
+# Verbatim mirror of normalization.TYPE_MAPPING (15 entries). db_type values
+# are constrained to the live pages.type CHECK enum.
+type_mapping:
+  summary:         {db_type: summary,      tag: null}
+  summary-light:   {db_type: summary,      tag: summary-light}
+  lesson-summary:  {db_type: summary,      tag: lesson-summary}
+  meeting-summary: {db_type: summary,      tag: meeting-summary}
+  concept:         {db_type: concept,      tag: null}
+  external:        {db_type: concept,      tag: external}
+  person:          {db_type: concept,      tag: person}
+  company:         {db_type: concept,      tag: company}
+  product:         {db_type: concept,      tag: product}
+  group:           {db_type: concept,      tag: group}
+  query:           {db_type: query,        tag: null}
+  verification:    {db_type: verification, tag: null}
+  brief:           {db_type: brief,        tag: null}
+  research:        {db_type: research,     tag: null}
+  index:           {db_type: index,        tag: null}
+
+# Mirror of normalization._PATH_TYPE_FALLBACK (keyed by subdir name).
+path_type_fallback:
+  _concepts:       concept
+  _entities:       external
+  _queries:        query
+  _verifications:  verification
+
+# One rule, byte-identical to parsing._WIKILINK_RE.
+ref_extraction:
+  - kind: wiki-link
+    regex: '\[\[([^\]|]+)(?:\|[^\]]+)?\]\]'
+    target_group: 1
+
+# Karpathy requires frontmatter; a type-less file still raises UnmappedTypeError.
+frontmatter_synthesis:
+  enabled: false
+  title_source: first_h1
+  fallback_title: filename_stem
+
+auto_indexes: []

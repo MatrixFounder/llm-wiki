@@ -123,46 +123,67 @@ _PATH_TYPE_FALLBACK: dict[str, str] = {
 }
 
 
-def _infer_type_from_path(source_path: Path | None) -> str | None:
-    """If ``source_path`` lives under ``_concepts/`` or ``_entities/`` and
-    frontmatter has no ``type:``, return the implied raw type. Real vaults
-    (esp. wiki-ingest output) often omit ``type:`` because the directory
-    convention is self-documenting.
+def _infer_type_from_path(
+    source_path: Path | None,
+    path_type_fallback: dict[str, str] | None = None,
+) -> str | None:
+    """If ``source_path`` lives under a fallback subdir (``_concepts/``,
+    ``_entities/``, …) and frontmatter has no ``type:``, return the implied raw
+    type. Real vaults (esp. wiki-ingest output) often omit ``type:`` because the
+    directory convention is self-documenting.
+
+    ``path_type_fallback`` defaults to the module-level ``_PATH_TYPE_FALLBACK``
+    (the Karpathy default); TASK 012 / PW-C passes a layout-config map instead.
     """
     if source_path is None:
         return None
+    fallback = path_type_fallback if path_type_fallback is not None else _PATH_TYPE_FALLBACK
     for part in source_path.parts:
-        if part in _PATH_TYPE_FALLBACK:
-            return _PATH_TYPE_FALLBACK[part]
+        if part in fallback:
+            return fallback[part]
     return None
 
 
 def normalize_frontmatter(
     fm: dict[str, Any], *, source_path: Path | None = None,
+    type_mapping: dict[str, tuple[str, str | None]] | None = None,
+    path_type_fallback: dict[str, str] | None = None,
+    extra_tags: tuple[str, ...] = (),
+    glob_type: str | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Translate frontmatter via §6.1 mapping table.
+    """Translate frontmatter via the §6.1 mapping table.
 
     Returns `(updated_fm, db_type)`. `updated_fm` has:
       - tags = original tags + marker (if mapped) + slugified concepts; dedup
         preserving order.
       - concepts[] preserved verbatim if present.
 
-    If ``type:`` is missing but ``source_path`` lives under ``_concepts/`` or
-    ``_entities/``, the type is inferred from the directory (path-aware
-    fallback for wiki-ingest-generated files that carry ``kind: concept``
-    rather than ``type: concept``).
+    If ``type:`` is missing but ``source_path`` lives under a fallback subdir,
+    the type is inferred from the directory (path-aware fallback for
+    wiki-ingest-generated files that carry ``kind: concept`` rather than
+    ``type: concept``).
+
+    TASK 012 / PW-C/E: ``type_mapping`` + ``path_type_fallback`` are sourced from
+    the vault's resolved layout config; both default to the module-level
+    ``TYPE_MAPPING`` / ``_PATH_TYPE_FALLBACK`` (the Karpathy grammar) so callers
+    that pass neither keep today's behaviour byte-for-byte.
     """
+    tm = type_mapping if type_mapping is not None else TYPE_MAPPING
     raw_type = fm.get("type")
+    # PW-C/F type-inference precedence: frontmatter `type:` → matched-glob type
+    # (glob_type, e.g. dev-project docs/adr/*.md → adr) → path_type_fallback subdir.
+    if not raw_type and glob_type:
+        raw_type = glob_type
     if not raw_type:
-        inferred = _infer_type_from_path(source_path)
+        inferred = _infer_type_from_path(source_path, path_type_fallback)
         if inferred:
             raw_type = inferred
-    if not raw_type or raw_type not in TYPE_MAPPING:
+    if not raw_type or raw_type not in tm:
         raise UnmappedTypeError(
-            f"frontmatter type={raw_type!r} not in TYPE_MAPPING. Valid: "
-            f"{sorted(TYPE_MAPPING)}"
+            f"frontmatter type={raw_type!r} not in type_mapping. Valid: "
+            f"{sorted(tm)}"
         )
-    db_type, marker = TYPE_MAPPING[raw_type]
+    db_type, marker = tm[raw_type]
 
     existing_tags: list[str] = list(fm.get("tags") or [])
     new_tags: list[str] = list(existing_tags)
@@ -174,6 +195,11 @@ def normalize_frontmatter(
         slug = _slugify_concept(concept)
         if slug and slug not in new_tags:
             new_tags.append(slug)
+    # PW-N (TASK 012): per-glob default_tags + extra_tags from the layout config,
+    # dedup-merged (empty for Karpathy → byte-identical).
+    for tag in extra_tags:
+        if tag and tag not in new_tags:
+            new_tags.append(tag)
 
     updated = _json_safe(dict(fm))
     assert isinstance(updated, dict)

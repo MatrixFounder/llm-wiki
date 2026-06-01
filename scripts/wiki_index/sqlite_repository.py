@@ -20,7 +20,6 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
-from scripts.wiki_index.layout import COURSE_TIER_DIR, PAGE_SUBDIRS
 from scripts.wiki_index.models import (
     AliasCollision,
     BatchMode,
@@ -526,26 +525,23 @@ class SQLiteRepository(IndexRepository):
     def find_pages_missing_in_index(
         self, vault_id: str, vault_root: Path
     ) -> list[Path]:
-        db_slugs = {
-            r["slug"]
+        # TASK 012 / architecture-review C1: route through the one config-driven
+        # walk (discover_pages) and compare on (slug, project) — NOT bare f.stem.
+        # The old inline walk compared slug-only, which false-negatived a
+        # course-tier page sharing a stem with a vault-tier page. Lazy-import to
+        # avoid the reindex↔SQLiteRepository import cycle (mirrors check_drift).
+        from scripts.wiki_index.reindex import discover_pages
+
+        db_keys = {
+            (r["slug"], r["project"])
             for r in self._connect().execute(
-                "SELECT slug FROM pages WHERE vault_id = ?", (vault_id,)
+                "SELECT slug, project FROM pages WHERE vault_id = ?", (vault_id,)
             ).fetchall()
         }
-        missing: list[Path] = []
-        scan_roots: list[Path] = [vault_root]
-        lessons = vault_root / COURSE_TIER_DIR
-        if lessons.is_dir():
-            for course_dir in lessons.iterdir():
-                if course_dir.is_dir():
-                    scan_roots.append(course_dir)
-        for root in scan_roots:
-            for subdir in PAGE_SUBDIRS:
-                base = root / subdir
-                if base.is_dir():
-                    for f in base.rglob("*.md"):
-                        if f.stem not in db_slugs:
-                            missing.append(f)
+        missing = [
+            f for (f, slug, project) in discover_pages(vault_root)
+            if (slug, project) not in db_keys
+        ]
         return sorted(missing)
 
     def check_drift(self, vault_id: str) -> DriftReport:
