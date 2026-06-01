@@ -147,7 +147,25 @@
 > rounds) see [tasks/](./tasks/) + [plans/](./plans/) archives;
 > for deferred items see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 >
-> **TASK 015 (perf-hardening-extract-concepts) — SHIPPED (uncommitted)**: Four SEV-2
+> **TASK 016 (split-extract-concepts-module) — IN PROGRESS** (branch
+> `task-016-split-extract-concepts`): pure structural refactor — split the 2174-line
+> `scripts/wiki_skills/wiki_extract_concepts.py` god-module into a **package**
+> `scripts/wiki_skills/wiki_extract_concepts/` (facade `__init__.py` + leaf submodules).
+> **Zero behaviour / CLI / envelope / exit-code / schema change.** Dominant constraint =
+> the **patch-target lock**: tests monkeypatch **8** symbols at
+> `scripts.wiki_skills.wiki_extract_concepts.<name>` (`make_repo`, `load_known_entities`,
+> `validate_manifest`, `index_from_manifest`, `dispatch_to_indexer`,
+> `_apply_candidates_to_db`, `_try_update_idempotency_state`, `update_idempotency_state`)
+> and require those patches to intercept the in-package call sites. Design (see §2 Concept
+> Extractor decomposition): the **facade `__init__.py`** holds the orchestration layer
+> (`prepare`/`apply`/`dispatch_to_indexer`/`_batch_*`/`main`) and binds all 8 lock symbols
+> as **facade globals** (the callers resolve them there, so `mock.patch(wec.<name>)` still
+> intercepts — the R-2 invariant); pure leaves move to `_validation`/`_sourcing`/`_db`/
+> `_pages`/`_errors`. The `_db` carve-out: `load_known_entities` + `update_idempotency_state`
+> live in `_db.py` but are re-imported into the facade and called there as facade globals.
+> Green-throughout, leaf-first. See `docs/TASK.md`.
+>
+> **TASK 015 (perf-hardening-extract-concepts) — SHIPPED `7fce4b3`**: Four SEV-2
 > performance issues in the `wiki-extract-concepts` / `_manifest_consumer` hot path, all
 > CLOSED: (H-PERF-3) `wiki_index_upsert.upsert_one(vault_id, src, vault_root, repo) → dict`
 > — programmatic entry-point, no argparse-in-loop, returns envelope dict with private
@@ -170,7 +188,7 @@
 > `_resolve_source_inside_sources` closed; combined.json cap raised 1 MiB→10 MiB.
 > **Deferred** (documented): single-outer-transaction batching (SQLite forbids nested
 > transactions — needs batch-mode upsert methods). **Zero DDL** (`user_version` 5); all
-> changes additive/backward-compatible. **877 pytest / 4 skip, mypy strict.**
+> changes additive/backward-compatible. **879 pytest / 4 skip, mypy strict.**
 >
 > **TASK 013 (R-X3-META-FILTER) — SHIPPED `177fd5a`** + **TASK 014 (dogfood-fixes) —
 > SHIPPED (uncommitted)**: (013) `wiki-search` frontmatter metadata filter —
@@ -239,6 +257,39 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
+
+**§2.1 Concept Extractor module decomposition (TASK 016).** The `wiki-extract-concepts`
+component is implemented as a **package** `scripts/wiki_skills/wiki_extract_concepts/`
+(was a single 2174-line module). The split is a behaviour-preserving structural refactor;
+its one architectural invariant is the **patch-target lock** — the import path
+`scripts.wiki_skills.wiki_extract_concepts` and **8** monkeypatched symbols
+(`make_repo`, `load_known_entities`, `validate_manifest`, `index_from_manifest`,
+`dispatch_to_indexer`, `_apply_candidates_to_db`, `_try_update_idempotency_state`,
+`update_idempotency_state`) must remain rebindable at that namespace, with in-package
+callers resolving them as **facade globals** so `mock.patch("…wiki_extract_concepts.<name>")`
+intercepts the call (the R-2 invariant, guarded by `test_patch_target_lock_at_skill_module`).
+
+| Module | Responsibility | Monkeypatch coupling |
+|---|---|---|
+| `__init__.py` (facade) | Orchestration: `prepare`/`apply`/`dispatch_to_indexer`/`_batch_*`/`main` + the argparse builder; binds all 8 lock symbols as facade globals (callers resolve them here) | **Owns the lock surface** |
+| `_validation.py` | Validators, sanitizers, candidate-schema, `classify_candidates`, `_preflight_sanitize`, `_parse_source_span`, regex/const allowlists | none |
+| `_sourcing.py` | `_read_file_bounded`, `_resolve_source_inside_sources`, `_all_concepts_dirs`, `_derive_source_project`, `_load_candidates`, `_path_is_absolute`, byte caps | none |
+| `_db.py` | `load_known_entities`, `upsert_extracted_entity`, `upsert_entity_refs`, `check_idempotency`, `update_idempotency_state`, `build_manifest`, `_lookup_entity_row` | **carve-out**: `load_known_entities` + `update_idempotency_state` are re-imported into the facade and called there as facade globals |
+| `_pages.py` | `write_concept_page`, `_format_source_quote_block`, name allowlist | none |
+| `_errors.py` | `ExtractionParseError`, `_envelope_from_parse_error` | none |
+
+`python -m scripts.wiki_skills.wiki_extract_concepts` keeps working via a package
+`__main__.py` (the `bin/wiki-extract-concepts` wrapper + the integration subprocess test
+depend on it). The decomposition adds **no** data-model, interface, security, or schema
+surface — see `docs/TASK.md` (TASK 016) for the full RTM + acceptance gates.
+
+**Import-direction rule (acyclic; the only forbidden edge is leaf → facade).** `_errors`
+is the dependency sink. Leaves MAY depend on lower leaves: `_validation` → `_errors`(+`_common`);
+`_sourcing` → `_errors`; `_pages` → `_validation` + `_errors`; `_db` → `_validation`
+(`upsert_entity_refs` calls `_parse_source_span`) + `_errors`. The facade → all leaves +
+`_manifest_consumer` + `factory`. No leaf may import the facade (that would both cycle and
+break the facade-global lock). `_format_source_quote_block` lives in `_pages` (its only
+caller is `write_concept_page`), resolving the TASK §3.1 dual-listing.
 
 ---
 
