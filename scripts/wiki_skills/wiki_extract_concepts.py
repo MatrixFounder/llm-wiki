@@ -1610,7 +1610,12 @@ def apply(args: argparse.Namespace) -> int:
           CANDIDATE_COUNT_OUT_OF_BOUNDS, FIELD_QUOTE_NOT_IN_BODY)
       5 — PARTIAL_INDEX_FAILURE (some concept pages written, indexer
           rejected at least one; source_state NOT updated so a retry is
-          safe — C-1 invariant carried forward from v2)
+          safe — C-1 invariant carried forward from v2);
+          IDEMPOTENCY_UPDATE_FAILED (H-3 DB-lock graceful path);
+          DB_WRITE_FAILED (a `sqlite3.Error` — e.g. a FOREIGN KEY failure
+          when the source page isn't indexed yet — caught as a clean
+          envelope instead of a traceback; source_state NOT updated → retry
+          safe; parity with the batch path's per-entry sqlite3.Error catch)
       6 — MANIFEST_INVALID
     """
     # R-015-5: batch dispatch (mutex with --candidates-file/stdin at
@@ -1720,6 +1725,22 @@ def apply(args: argparse.Namespace) -> int:
                            "safely re-extract"),
             }, exit_code=5)
         return emit(manifest)
+    except sqlite3.Error as e:
+        # A DB-layer fault during the entity/ref write (`_apply_write`) or the
+        # `--ingest` dispatch — most commonly a FOREIGN KEY failure because the
+        # source page is not yet in `pages` (run `wiki-reindex` first), or a
+        # transient lock / disk-full. Return a clean envelope instead of an
+        # uncaught traceback — parity with the batch path's per-entry
+        # `sqlite3.Error` isolation. Concept pages/entities may be partially
+        # written and `source_state` is NOT updated → exit 5, retry is safe.
+        # sqlite3 messages carry no bound-parameter values (CWE-209 safe).
+        return emit({
+            "action": "partial",
+            "error": "DB_WRITE_FAILED",
+            "reason": (f"database write failed ({type(e).__name__}: {e}). "
+                       "If this is a FOREIGN KEY failure, the source page is "
+                       "likely not indexed yet — run `wiki-reindex` first."),
+        }, exit_code=5)
     finally:
         repo.close()
 
@@ -2040,6 +2061,14 @@ def _batch_apply(args: argparse.Namespace) -> int:
                 except WikiIngestError as e:
                     batch_results.append({"source_slug": source_slug,
                                           "error": "MANIFEST_INVALID",
+                                          "message": str(e)})
+                    continue
+                except sqlite3.Error as e:
+                    # A DB fault during the indexer dispatch isolates to this
+                    # entry too (symmetry with the write-phase catch above) —
+                    # never crash the batch / lose accumulated results.
+                    batch_results.append({"source_slug": source_slug,
+                                          "error": "DB_WRITE_FAILED",
                                           "message": str(e)})
                     continue
                 if summary.get("failed"):

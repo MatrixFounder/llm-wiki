@@ -631,6 +631,84 @@ def test_apply_batch_accepts_file_over_1mib(tmp_path: Path) -> None:
     assert result["batch"][0]["action"] == "applied"
 
 
+def _setup_unindexed_vault(tmp_path: Path) -> tuple[Path, str, str]:
+    """Vault + DB registered, source file on disk, but the source page is NOT
+    in `pages` (no reindex) — so a ref write hits the page_entity_refs FK."""
+    from scripts.wiki_index.models import Vault
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+    vault_root = tmp_path / "uvault"
+    (vault_root / "_sources").mkdir(parents=True)
+    (vault_root / "_concepts").mkdir(parents=True)
+    src_hash = hashlib.sha256(_BATCH_BODY.encode("utf-8")).hexdigest()
+    (vault_root / "_sources" / "src-x.md").write_text(_BATCH_BODY,
+                                                      encoding="utf-8")
+    # candidates file inside the vault (single-page apply path)
+    (vault_root / "cand.json").write_text(json.dumps([_cand("x")]))
+    db_path = str(tmp_path / "u.db")
+    db: Any = SQLiteRepository(tmp_path / "u.db")
+    db.apply_schema()  # type: ignore[attr-defined]
+    db.register_vault(Vault(
+        vault_id="unindexed-test", name="u", root_path=vault_root,
+        schema_version="2.0", registered_at=datetime.now(timezone.utc),
+    ))
+    db.close()  # deliberately NO pages row + NO reindex
+    return vault_root, db_path, src_hash
+
+
+def test_single_page_apply_unindexed_source_clean_envelope(
+    tmp_path: Path,
+) -> None:
+    """F1: single-page apply on an UNINDEXED source returns a clean
+    DB_WRITE_FAILED envelope (exit 5), NOT an uncaught sqlite3 traceback —
+    parity with the hardened batch path."""
+    vault_root, db_path, src_hash = _setup_unindexed_vault(tmp_path)
+    ns = argparse.Namespace(
+        cmd="apply", vault="unindexed-test", vault_root=vault_root,
+        source_page="src-x", source_hash=src_hash, db_path=db_path,
+        ingest=False, orchestrator_id="claude-test",
+        candidates_file=vault_root / "cand.json", candidates_stdin=False,
+        batch_candidates=None,
+    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = wec.apply(ns)  # must NOT raise sqlite3.IntegrityError
+    result = json.loads(buf.getvalue())
+    assert rc == 5, "DB fault → exit 5 (retry-safe partial), not a crash"
+    assert result["error"] == "DB_WRITE_FAILED"
+    assert "wiki-reindex" in result["reason"], "actionable remediation hint"
+
+
+def test_apply_batch_dispatch_db_error_isolated(tmp_path: Path) -> None:
+    """A sqlite3.Error from the --ingest dispatch isolates to one entry
+    (DB_WRITE_FAILED) and does NOT crash the batch (dispatch-phase parity
+    with the write-phase per-entry catch)."""
+    import sqlite3
+    vault_root, db_path, src_hash, slugs = _setup_apply_batch_vault(tmp_path)
+    combined = [
+        {"source_slug": slugs[0], "source_hash": src_hash,
+         "candidates": [_cand("a")]},
+        {"source_slug": slugs[1], "source_hash": src_hash,
+         "candidates": [_cand("b")]},
+    ]
+    cf = tmp_path / "combined.json"
+    cf.write_text(json.dumps(combined))
+
+    real_dispatch = wec.dispatch_to_indexer
+    n = {"calls": 0}
+
+    def flaky_dispatch(*a: Any, **k: Any) -> dict[str, Any]:
+        n["calls"] += 1
+        if n["calls"] == 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_dispatch(*a, **k)
+
+    with patch.object(wec, "dispatch_to_indexer", side_effect=flaky_dispatch):
+        rc, result = _run_apply_batch(vault_root, str(cf), db_path, ingest=True)
+    assert rc == 0, "dispatch DB fault on one entry must not abort the batch"
+    assert len(result["batch"]) == 2
+    assert result["batch"][1].get("error") == "DB_WRITE_FAILED"
+
+
 def test_apply_batch_traversal_slug_no_abspath_leak(tmp_path: Path) -> None:
     """vdd-multi LOW (M-2/CWE-209): a traversal slug is rejected AND the
     error reason must not leak the absolute vault path."""

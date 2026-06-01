@@ -115,7 +115,7 @@ wiki-extract-concepts apply \
 | 1 | argparse / usage error | — |
 | 2 | Input-validation failure | `SOURCE_NOT_FOUND`, `INVALID_SOURCE_PATH`, `INVALID_SOURCE_SLUG`, `SOURCE_TOO_LARGE`, `SOURCE_CHANGED_DURING_EXTRACTION`, `INVALID_CANDIDATES_PATH` |
 | 4 | Candidates payload error | `EXTRACTION_PARSE_ERROR`, `CANDIDATES_TOO_LARGE`, `CANDIDATE_COUNT_OUT_OF_BOUNDS`, `FIELD_TOO_LONG`, `UNKNOWN_FIELD`, `FIELD_QUOTE_NOT_IN_BODY`, `INVALID_NAME_FORMAT`, `INVALID_SOURCE_SPAN` |
-| 5 | Partial index failure (`--ingest`) | `PARTIAL_INDEX_FAILURE` — `source_state` NOT updated (C-1 invariant); safe to retry |
+| 5 | Partial / retry-safe failure | `PARTIAL_INDEX_FAILURE` (`--ingest`), `IDEMPOTENCY_UPDATE_FAILED`, `DB_WRITE_FAILED` (a `sqlite3.Error` — e.g. a FOREIGN KEY failure when the source page isn't indexed yet; **run `wiki-reindex` first**) — all leave `source_state` NOT updated (C-1 invariant); safe to retry |
 | 6 | Manifest invalid (`--ingest`) | `MANIFEST_INVALID` |
 
 > Exit code **3** (the v2 `LLM_API_UNAVAILABLE` envelope) is **RETIRED**
