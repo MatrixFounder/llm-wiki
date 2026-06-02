@@ -9,6 +9,15 @@
   - **Justification**: SQLite stdlib, mature ecosystem (`python-frontmatter`, `pyyaml`, `python-slugify`, `jsonschema`), CLAUDE.md `LOCAL DEVELOPMENT RULES` mandate `pip + .venv`. Python 3.11+ для `match` statements, type hints (`X | None`), and structural pattern matching.
 - **Framework**: **None** (per skill-architecture-design TIER 0 «No frameworks if API is easier on lower-level libs»). `argparse` (stdlib) для CLI, `dataclasses` для models, raw `sqlite3` для DB.
 - **Future TypeScript**: Future Epic 6 `wiki-source-telegram` — TS/Bun для GramJS MTProto (cybos pattern). MVP — Python only.
+- **Libraries (NEW — TASK 017):** **`regex`** (PyPI, pin `>=2024.0`) — used *only* to enforce
+  a per-file `timeout=` deadline on **operator-custom** layout regex (R-X1-REDOS-RT); stdlib
+  `re` stays the engine for every built-in pattern. Adds **`types-regex`** (dev) for
+  `mypy --strict`, consistent with the existing `types-PyYAML` / `types-jsonschema` stub
+  pattern (the `regex` wheel ships **no** inline stubs — verified: no `py.typed`/`.pyi`); if
+  the stubs prove inadequate, fall back to a per-module `ignore_missing_imports`. This is a
+  deliberate, scoped relaxation of TASK 012's stdlib-only ReDoS posture — justified because no
+  pure-stdlib mechanism can interrupt a catastrophic stdlib-`re` match (GIL-held C call;
+  verified on CPython 3.14.4). **Resolves Q-017-4.**
 
 ### 6.2. Frontend
 

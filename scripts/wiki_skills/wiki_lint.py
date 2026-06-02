@@ -22,6 +22,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--report", default=None)
     p.add_argument("--json-sidecar", default=None)
     p.add_argument("--strict", action="store_true")
+    p.add_argument("--mtime-skip", action="store_true",
+                   help="skip drift re-hash when stored mtime matches disk "
+                        "(faster, integrity-relaxed; default off → always full-hash)")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -35,7 +38,8 @@ def main(argv: list[str] | None = None) -> int:
         config["db_path"] = args.db_path
     repo = make_repo(config)
     try:
-        issues = run_all_checks(repo, vaults=vaults_list, strict=args.strict)
+        issues = run_all_checks(repo, vaults=vaults_list, strict=args.strict,
+                                mtime_skip=args.mtime_skip)
         if args.report:
             Path(args.report).write_text(render_markdown_report(issues))
         if args.json_sidecar:

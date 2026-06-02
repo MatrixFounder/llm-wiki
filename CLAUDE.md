@@ -107,6 +107,28 @@ for `load_known_entities`+`update_idempotency_state`); acyclic import-direction
 per bead); green-throughout (full VDD pipeline: task/arch/plan reviews + Sarcasmotron
 per bead). **879 pytest (+4 skipped), mypy strict (69 files).** See `docs/TASK.md`,
 `docs/PLAN.md`, `docs/ARCHITECTURE.md` §2.1, `docs/tasks/task-016-*.md`.
+**TASK 017 (drift-delta-redos-timeout) SHIPPED 2026-06-02** (uncommitted): closes the only
+open **SEV-2 R-X1-REDOS-RT** + **P-2** + **P-3** as one bounded hardening task. **R-X1-REDOS-RT**
+— a per-file runtime ReDoS deadline: operator-custom layout patterns (`ref_extraction[].regex`
++ `paths[].project_pattern`) run under the **PyPI `regex` engine with `timeout=`** (built-ins
+stay stdlib `re` → byte-identity, zero overhead), gated by two provenance booleans on
+`LayoutConfig` (`{ref_extraction,paths}_operator_supplied`, set in `load_layout_config` from
+the Q-012-f override merge); per-file budget `WIKI_REDOS_BUDGET_S` (default 2.0 s, env-overridable);
+on `TimeoutError` → report-and-skip (`extract_refs`→empty refs+WARN; `_derive_project`→`UNMATCHED_PROJECT`+WARN),
+never hangs; the load-gate (`_redos_budget_check` + `_validate_path_patterns`) is engine-aligned
+to `regex` for operator patterns (dialect: `regex` V0 = `re`-compatible). **P-2** — single-stat
+walk: `DiscoveredPage.mtime` carries the walk's one `stat()`, reused by `reindex_delta` (no 2nd stat).
+**P-3** — `check_drift` regex `type:` fast-path → PyYAML fallback (**measured 4.6× `wiki-lint`
+@1k in default always-hash mode** — PyYAML dominated), + opt-in `wiki-lint --mtime-skip`
+(integrity-relaxed; default always full-hashes, D-017-B). **Zero DDL** (`user_version` 5; reuses
+`pages.last_modified`, no `file_size` column). New dep **`regex`** (+`types-regex`) — a deliberate,
+measured relaxation of TASK 012's stdlib-only ReDoS posture (no pure-stdlib mechanism can interrupt
+a catastrophic stdlib-`re` match; GIL-held C call — verified). Full VDD pipeline + per-phase
+Sarcasmotron + `/vdd-multi` post-ship hardening (logic/security/performance → convergence clean;
+1 HIGH fixed — `derive_project_for_path` was running operator `project_pattern` unguarded under
+stdlib `re` on the extract-concepts ingest path [ReDoS-bypass + `re.error` crash] → now threads
+`operator_supplied`; + MED `type:foo` fast-path + 4 LOW). **908 pytest (+4 skipped), mypy strict
+(69 files).** See `docs/TASK.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md` §3.5/§8.4, `docs/tasks/task-017-*.md`.
 
 ## Knowledge lookup priority
 

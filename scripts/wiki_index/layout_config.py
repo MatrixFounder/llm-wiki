@@ -28,13 +28,17 @@ module (PW-A) validates the config SCHEMA only.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import stat
 import string
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
+import regex  # PyPI linear-deadline engine — operator-pattern ReDoS guard (R-X1-REDOS-RT)
 import yaml
 from jsonschema import Draft202012Validator
 from slugify import slugify
@@ -88,6 +92,72 @@ _REDOS_PAYLOADS = (
     ("a" * 12 + "b" * 12) + "!",   # two runs + non-matching tail (defeats `(.*a){…}`)
 )
 
+
+# --- R-X1-REDOS-RT runtime per-file deadline (TASK 017) ----------------------- #
+# The load-gate above is a load-time heuristic; this is the sound backstop for a
+# pattern catastrophic only on long real file content. A per-file wall-clock budget
+# is enforced ONLY for operator-custom patterns, run under the PyPI `regex` engine —
+# which checks the deadline INSIDE its backtracking loop and raises the builtin
+# `TimeoutError` (stdlib `re` cannot be interrupted: a catastrophic match is one
+# C-level call that holds the GIL). Built-in layout patterns stay on stdlib `re`
+# (zero overhead, byte-identity). DIALECT: operator patterns are authored for stdlib
+# `re`; `regex` V0 mode (the default) is an `re`-compatible near-superset.
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+# Clamp the operator budget to a sane ceiling (vdd-multi SEC-LOW): an operator env
+# `WIKI_REDOS_BUDGET_S=999999` must not be able to silently DISABLE the guard. A
+# tiny/negative value fails SAFE (immediate timeout), so only the ceiling is clamped.
+_WIKI_REDOS_BUDGET_MAX_S = 60.0
+WIKI_REDOS_BUDGET_S: float = min(_env_float("WIKI_REDOS_BUDGET_S", 2.0),
+                                 _WIKI_REDOS_BUDGET_MAX_S)
+
+
+def _operator_remaining(deadline: float | None) -> float:
+    """Time left for an operator-pattern call. **Fails CLOSED** (vdd-multi SEC-LOW):
+    a missing `deadline` defaults to a full `WIKI_REDOS_BUDGET_S` budget rather than
+    `timeout=None` (which `regex` treats as NO limit → unbounded operator pattern)."""
+    if deadline is None:
+        deadline = time.monotonic() + WIKI_REDOS_BUDGET_S
+    return max(0.0, deadline - time.monotonic())
+
+
+def guarded_finditer(
+    pattern: str, text: str, *, operator: bool, deadline: float | None
+) -> Iterator[Any]:
+    """Iterate regex matches of `pattern` over `text`.
+
+    `operator=False` → verbatim stdlib `re.finditer` (byte-identity, zero overhead)
+    for pre-vetted built-in layout patterns. `operator=True` → run under the `regex`
+    engine with `timeout=remaining` (remaining = `deadline - monotonic()`), so a
+    catastrophic operator pattern raises the builtin `TimeoutError` instead of
+    hanging. The caller owns the per-file `deadline` and converts `TimeoutError`
+    into a report-and-skip (never re-raise, never hang). An operator call with no
+    deadline fails CLOSED (full budget), never `timeout=None`."""
+    if not operator:
+        yield from re.compile(pattern).finditer(text)
+        return
+    yield from regex.compile(pattern).finditer(text, timeout=_operator_remaining(deadline))
+
+
+def guarded_search(
+    pattern: str, text: str, *, operator: bool, deadline: float | None
+) -> Any:
+    """Single-shot counterpart of `guarded_finditer` (for `_derive_project`).
+    Returns the match (or None); raises builtin `TimeoutError` past the deadline
+    when `operator=True`. Fails CLOSED on a missing deadline (see `guarded_finditer`)."""
+    if not operator:
+        return re.compile(pattern).search(text)
+    return regex.compile(pattern).search(text, timeout=_operator_remaining(deadline))
+
+
 # Repo-root-relative paths (project root = parent of `scripts/`).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LAYOUTS_DIR = _REPO_ROOT / "scripts" / "wiki_index" / "layouts"
@@ -137,13 +207,16 @@ class DiscoveredPage(NamedTuple):
     `default_tags + extra_tags` (merged into the page's tags by reindex), and the
     matched glob's `type` (PW-C/F — the glob-inferred raw-type used when the file
     has no frontmatter `type:`; None for Karpathy, which infers from frontmatter /
-    path_type_fallback)."""
+    path_type_fallback), plus `mtime` — the `st_mtime` captured from the SINGLE
+    `stat()` the walk already performs (TASK 017 / P-2), reused by `reindex_delta`
+    and the `check_drift --mtime-skip` fast-path instead of a second stat."""
 
     path: Path
     slug: str
     project: str
     extra_tags: tuple[str, ...]
     raw_type: str | None = None
+    mtime: float | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +234,13 @@ class LayoutConfig:
     file_extensions: tuple[str, ...] = (".md",)
     frontmatter_synthesis: dict[str, Any] = field(default_factory=dict)
     auto_indexes: tuple[dict[str, Any], ...] = ()
+    # R-X1-REDOS-RT (TASK 017) provenance — True iff a per-vault override SUPPLIED
+    # this list (Q-012-f merge REPLACES it wholesale). Drives the runtime ReDoS
+    # guard: operator-supplied patterns run under `regex`+timeout; built-in patterns
+    # stay on stdlib `re` (byte-identity). `resolve_layout_config`'s built-in-only
+    # path leaves both False.
+    ref_extraction_operator_supplied: bool = False
+    paths_operator_supplied: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -205,9 +285,13 @@ def _validate(merged: dict[str, Any]) -> None:
         raise LayoutConfigError("layout config validation failed:\n" + "\n".join(parts))
 
 
-def _build(merged: dict[str, Any]) -> LayoutConfig:
+def _build(
+    merged: dict[str, Any], *, paths_operator_supplied: bool = False,
+    ref_extraction_operator_supplied: bool = False,
+) -> LayoutConfig:
     """Convert a validated config dict into a frozen LayoutConfig, applying
-    schema defaults (jsonschema does not mutate the instance with defaults)."""
+    schema defaults (jsonschema does not mutate the instance with defaults).
+    The two `*_operator_supplied` flags carry R-X1-REDOS-RT provenance (TASK 017)."""
     paths = tuple(
         PathEntry(
             glob=p["glob"],
@@ -246,6 +330,8 @@ def _build(merged: dict[str, Any]) -> LayoutConfig:
         file_extensions=tuple(merged.get("file_extensions") or (".md",)),
         frontmatter_synthesis=dict(merged.get("frontmatter_synthesis") or {}),
         auto_indexes=tuple(merged.get("auto_indexes") or ()),
+        ref_extraction_operator_supplied=ref_extraction_operator_supplied,
+        paths_operator_supplied=paths_operator_supplied,
     )
 
 
@@ -311,12 +397,19 @@ def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutC
     merged = _load_yaml(builtin)
 
     override_path = _resolve_override(vault_root, root_config)
+    paths_op = refs_op = False
     if override_path is not None:
-        merged = deep_merge(merged, _load_yaml(override_path))
+        override_dict = _load_yaml(override_path)
+        # Q-012-f: an override REPLACES the whole list when it supplies the key, so
+        # presence of the key is exact per-list provenance (R-X1-REDOS-RT).
+        paths_op = "paths" in override_dict
+        refs_op = "ref_extraction" in override_dict
+        merged = deep_merge(merged, override_dict)
 
     _validate(merged)
-    cfg = _build(merged)
-    _validate_path_patterns(cfg.paths)  # PW-J load-time error policy
+    cfg = _build(merged, paths_operator_supplied=paths_op,
+                 ref_extraction_operator_supplied=refs_op)
+    _validate_path_patterns(cfg.paths, operator_supplied=cfg.paths_operator_supplied)
     _redos_budget_check(cfg)            # PW-D ReDoS gate (ref + project regexes)
     return cfg
 
@@ -329,19 +422,24 @@ def _redos_budget_check(config: LayoutConfig) -> None:
     Roast finding). Built-in layouts are pre-vetted (sub-ms). Bounded: the loop
     breaks after the first over-ceiling run, so a pathological pattern cannot DoS
     the gate itself (one catastrophic run, then reject)."""
-    patterns: list[tuple[str, str]] = [
-        (f"ref_extraction[{i}].regex", r.regex)
+    # (label, pattern, operator) — R-X1-REDOS-RT alignment (TASK 017): probe each
+    # pattern under the SAME engine that runs it at runtime (operator-supplied →
+    # `regex`, built-in → stdlib `re`), so load-gate and runtime share one dialect
+    # and a regex-incompatible operator pattern is caught here (exit 6), not at
+    # runtime inside `guarded_*`.
+    patterns: list[tuple[str, str, bool]] = [
+        (f"ref_extraction[{i}].regex", r.regex, config.ref_extraction_operator_supplied)
         for i, r in enumerate(config.ref_extraction)
     ]
     patterns += [
-        (f"paths[{i}].project_pattern", p.project_pattern)
+        (f"paths[{i}].project_pattern", p.project_pattern, config.paths_operator_supplied)
         for i, p in enumerate(config.paths)
         if p.project_pattern is not None
     ]
-    for label, pat in patterns:
+    for label, pat, operator in patterns:
         try:
-            compiled = re.compile(pat)
-        except re.error as exc:  # ref regexes are not compile-checked elsewhere
+            compiled = regex.compile(pat) if operator else re.compile(pat)
+        except (re.error, regex.error) as exc:  # not compile-checked elsewhere
             raise LayoutConfigError(f"regex {label}={pat!r} failed to compile: {exc}") from exc
         for payload in _REDOS_PAYLOADS:
             times: list[float] = []
@@ -367,7 +465,9 @@ def _redos_budget_check(config: LayoutConfig) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _validate_path_patterns(paths: tuple[PathEntry, ...]) -> None:
+def _validate_path_patterns(
+    paths: tuple[PathEntry, ...], *, operator_supplied: bool = False
+) -> None:
     """PW-J error policy (a)+(c), enforced at config-load:
     (a) a `project_pattern` that fails to compile → LayoutConfigError (exit 6);
     (c) a `project_template` referencing a named group the pattern does not
@@ -377,13 +477,20 @@ def _validate_path_patterns(paths: tuple[PathEntry, ...]) -> None:
     is an operator-supplied regex run per-file in `_derive_project`, so it shares
     the same adversarial-payload budget check as `ref_extraction[].regex`.
     Built-in layouts are pre-vetted; the gate guards operator-custom configs.
+
+    R-X1-REDOS-RT (TASK 017): operator-supplied patterns are compiled under the
+    `regex` engine — the one that actually runs them in `_derive_project` — so the
+    compile-check + named-group validation share the runtime dialect with the
+    aligned `_redos_budget_check` (no engine split between load and runtime).
+    Built-in patterns compile under stdlib `re`.
     """
     for entry in paths:
         if entry.project_pattern is None:
             continue
         try:
-            compiled = re.compile(entry.project_pattern)
-        except re.error as exc:
+            compiled = (regex.compile(entry.project_pattern) if operator_supplied
+                        else re.compile(entry.project_pattern))
+        except (re.error, regex.error) as exc:
             raise LayoutConfigError(
                 f"project_pattern {entry.project_pattern!r} (glob {entry.glob!r}) "
                 f"failed to compile: {exc}"
@@ -421,12 +528,28 @@ def _project_slug(value: str, strategy: str | None) -> str:
     return value
 
 
-def _derive_project(rel_posix: str, entry: PathEntry) -> str:
+def _derive_project(
+    rel_posix: str, entry: PathEntry, *, operator_supplied: bool = False
+) -> str:
     """PW-J: derive `pages.project` for a matched file. Literal `project` wins;
     else `project_pattern` + `project_template` (already validated at load); a
-    pattern miss → UNMATCHED_PROJECT + a WARN (no silent drop)."""
+    pattern miss → UNMATCHED_PROJECT + a WARN (no silent drop).
+
+    R-X1-REDOS-RT (TASK 017): when the pattern is operator-supplied it runs under
+    the `regex` engine with a per-file deadline; a `TimeoutError` degrades to
+    UNMATCHED_PROJECT + a WARN (exact parity with the pattern-miss branch), never
+    hangs. The rel-path input is short, so a per-call budget suffices."""
     if entry.project_pattern is not None:
-        match = re.compile(entry.project_pattern).search(rel_posix)
+        try:
+            match = guarded_search(
+                entry.project_pattern, rel_posix, operator=operator_supplied,
+                deadline=(time.monotonic() + WIKI_REDOS_BUDGET_S
+                          if operator_supplied else None),
+            )
+        except TimeoutError:
+            _LOG.warning("[redos-skip] project_pattern exceeded %.1fs budget for %s "
+                         "(glob=%s)", WIKI_REDOS_BUDGET_S, rel_posix, entry.glob)
+            return UNMATCHED_PROJECT
         if match is None:
             _LOG.warning("[unmatched-pattern] %s (glob=%s)", rel_posix, entry.glob)
             return UNMATCHED_PROJECT
@@ -481,22 +604,36 @@ def iter_pages(vault_root: Path, config: LayoutConfig) -> list[DiscoveredPage]:
     for entry in config.paths:
         entry_tags = tuple(entry.default_tags) + tuple(entry.extra_tags)
         for path in vault_root.glob(entry.glob):
-            if path in seen or not path.is_file():
+            if path in seen:
                 continue
-            rel_posix = path.relative_to(vault_root).as_posix()
+            # Free string/glob filters FIRST — no syscall for non-.md / system /
+            # ignored glob hits (vdd-multi PERF-LOW; matters for broad-glob operator
+            # layouts; byte-identity-neutral — same files pass, sorted at the end).
             if path.suffix not in exts:
                 continue
-            if path.name in SYSTEM_FILES or rel_posix in autoindex_outputs:
+            if path.name in SYSTEM_FILES:
                 continue
-            if _matches_ignore(rel_posix, config.ignore):
+            rel_posix = path.relative_to(vault_root).as_posix()
+            if rel_posix in autoindex_outputs or _matches_ignore(rel_posix, config.ignore):
+                continue
+            # P-2 (TASK 017): ONE stat per SURVIVING candidate — derive is-regular-file
+            # AND mtime from it (was `path.is_file()` + a separate `path.stat()` in
+            # reindex_delta). `is_file()` swallows OSError → False; mirror that.
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
                 continue
             seen.add(path)
             out.append(DiscoveredPage(
                 path=path,
                 slug=_apply_slug_strategy(path.stem, config.slug_strategy),
-                project=_derive_project(rel_posix, entry),
+                project=_derive_project(rel_posix, entry,
+                                        operator_supplied=config.paths_operator_supplied),
                 extra_tags=entry_tags,
                 raw_type=entry.type,
+                mtime=st.st_mtime,
             ))
 
     out.sort(key=lambda d: d.path.relative_to(vault_root).as_posix())
@@ -518,7 +655,13 @@ def derive_project_for_path(path: Path, vault_root: Path) -> str:
     config = resolve_layout_config(vault_root)
     for entry in config.paths:
         if PurePosixPath(rel_posix).full_match(entry.glob):
-            return _derive_project(rel_posix, entry)
+            # R-X1-REDOS-RT (TASK 017): thread provenance exactly as `iter_pages`
+            # does — an operator `project_pattern` MUST run under the `regex` engine
+            # (with the runtime deadline), never unguarded stdlib `re`. Without this
+            # an operator pattern here both (a) escapes the ReDoS deadline and (b)
+            # crashes with `re.error` on regex-only syntax the load-gate accepted.
+            return _derive_project(rel_posix, entry,
+                                   operator_supplied=config.paths_operator_supplied)
     return VAULT_TIER_PROJECT
 
 

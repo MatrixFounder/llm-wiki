@@ -229,8 +229,8 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 320+ passed, 4 skipped (post-TASK-004)
-mypy --strict scripts/  # clean on 53 source files (vendored package
+pytest tests/           # 900+ passed, 4 skipped (post-TASK-017)
+mypy --strict scripts/  # clean on 69 source files (vendored package
                         # excluded via mypy.ini override per Decision-14)
 ```
 

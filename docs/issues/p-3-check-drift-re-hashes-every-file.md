@@ -1,7 +1,7 @@
 ---
 id: P-3
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-05-26
 category: performance
 slug: p-3-check-drift-re-hashes-every-file

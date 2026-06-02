@@ -202,7 +202,8 @@ def _synthesize_fm(
 
 def _body_refs(
     out: Any, ref_rules: tuple[RefRule, ...], vault_id: str,
-    slug_strategy: str = "identity",
+    slug_strategy: str = "identity", *,
+    ref_extraction_operator_supplied: bool = False,
 ) -> list[PageRef]:
     """Body ``'mentioned'`` refs via the layout's ``ref_extraction`` rules
     (TASK 012 / PW-D) — config-driven, replacing the adapter's hardcoded
@@ -225,7 +226,10 @@ def _body_refs(
             ref_type="mentioned", trust_level="high",
             line_start=line, line_end=line, source_quote=quote,
         )
-        for (target, line, quote) in extract_refs(out.body_text, ref_rules)
+        for (target, line, quote) in extract_refs(
+            out.body_text, ref_rules,
+            operator_supplied=ref_extraction_operator_supplied,
+        )
     ]
 
 
@@ -295,11 +299,17 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         adapter = ManualSourceAdapter()
         for disc in paths_on_disk:
             path = disc.path
-            try:
-                mtime = datetime.fromtimestamp(path.stat().st_mtime)
-            except OSError as e:
-                skipped.append({"path": str(path), "error": f"stat: {e}"})
-                continue
+            # P-2 (TASK 017): reuse the mtime the `iter_pages` walk already stat'd —
+            # no second `path.stat()` here. Fallback stat only for a hypothetical
+            # non-iter_pages source that left `mtime` unset.
+            if disc.mtime is not None:
+                mtime = datetime.fromtimestamp(disc.mtime)
+            else:
+                try:
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime)
+                except OSError as e:
+                    skipped.append({"path": str(path), "error": f"stat: {e}"})
+                    continue
             if mtime <= cutoff:
                 continue
             try:
@@ -325,8 +335,9 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # query page body + `wiki-reindex --delta` does NOT drop its
                 # `cited` refs (full/delta symmetry; matches reindex_full +
                 # _index_query_page). Cite-parse warnings fold into `skipped`.
-                delta_refs = _body_refs(out, config.ref_extraction, vault_id,
-                                        config.slug_strategy)
+                delta_refs = _body_refs(
+                    out, config.ref_extraction, vault_id, config.slug_strategy,
+                    ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
                 delta_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     skipped,
@@ -464,8 +475,9 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # is delete-all-then-insert — a second call would clobber the
                 # body refs, M-1). Step 2.5 (AM-3) below canonicalizes all refs'
                 # targets through the alias map, ref_type preserved.
-                all_refs = _body_refs(out, config.ref_extraction, vault_id,
-                                      config.slug_strategy)
+                all_refs = _body_refs(
+                    out, config.ref_extraction, vault_id, config.slug_strategy,
+                    ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
                 all_refs.extend(_frontmatter_refs(
                     db_type, updated_fm, vault_id, out.page_slug, out.project,
                     cite_skipped,

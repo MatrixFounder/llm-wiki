@@ -153,5 +153,19 @@
 | R-9.6 (invariants preserved) | §2.1 "Critic-prompt scoping + calibration" ("zero code/schema change; verdict contract byte-stable"); the C2 backstop; Decision-17 | existing deterministic `tests/test_wiki_verify_*` green; `user_version` 5; no `import anthropic`; SECURITY audit + code review clean |
 | **C2** (security FAIL-redundancy — binding) | §2.1 "The C2 backstop" (`factual`+`security` both MAY flag an injection — the one sanctioned overlap; lens-purity excludes it) | adversarial eval case: "the `security` lens under-reports the injection" still FAILs via `factual` (a FAIL-lens) |
 
+### Maintenance-path Hardening Requirements (TASK 017 — P-2, P-3, R-X1-REDOS-RT)
+
+> **Zero DDL** (`user_version` stays 5; reuses `pages.last_modified`, no `file_size`
+> column — D-017-C). Built-in-layout byte-identity preserved (karpathy golden anchor).
+> One new runtime dep (`regex`) scoped to operator-custom patterns only.
+
+| TASK Requirement | Architecture coverage | Test / AC reference |
+|---|---|---|
+| **R-017-1** (per-file regex deadline via `regex` `timeout=`, operator-custom only) | §3.5 "Runtime ReDoS deadline" (provenance-flag engine selection; per-file budget; report-and-skip; aligned load-gate); §7.3 ReDoS/A06; §6.1 `regex` dep | AC-017-1 (catastrophic-on-long-body pattern → skip+WARN, completes; without fix hangs); AC-017-2 (built-in byte-identity; `regex` not invoked for built-ins) |
+| **R-017-2** (`check_drift` type fast-path + opt-in `--mtime-skip`; always-hash default) | §8.4 P-3; §3.5 "Single-stat walk" (mtime reuse) | AC-017-3 (regex `type:` ≡ PyYAML on corpus; default full-hash detects preserved-mtime tamper; `--mtime-skip` hashes on mtime-change) |
+| **R-017-3** (`reindex_delta` single-stat) | §3.5 "Single-stat walk" (`DiscoveredPage.mtime`); §8.4 P-2 | AC-017-4 (one stat/file on no-op delta; order byte-identical; benchmark delta recorded) |
+| **R-017-4** (tests + perf evidence) | §8.4 (no blind index changes, P-5 lesson; `benchmark.py` before/after n=1000) | AC-017-5 (`pytest` ≥ baseline + new; `mypy --strict`; `user_version` 5; bench numbers in TASK) |
+| **Q-017-1..4** (resolved) | §3.5 (provenance Q-017-1; per-file budget Q-017-2); §8.4 (`--mtime-skip` surface Q-017-3); §6.1 (`types-regex` Q-017-4) | see §11a resolved Open Questions |
+
 ---
 

@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-02T00:19:18.294782 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-02T15:34:34.055362 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood
@@ -37,8 +37,8 @@
 ## performance
 
 - **P-1** [[p-1-reindex-full-per-page-transactions|reindex_full per-page transactions]] — status `open`, opened 2026-05-26
-- **P-2** [[p-2-reindex-delta-no-op-walk-cost|reindex_delta no-op walk cost]] — status `open`, opened 2026-05-26
-- **P-3** [[p-3-check-drift-re-hashes-every-file|check_drift re-hashes every file]] — status `open`, opened 2026-05-26
+- **P-2** [[p-2-reindex-delta-no-op-walk-cost|reindex_delta no-op walk cost]] — status `fixed`, opened 2026-05-26
+- **P-3** [[p-3-check-drift-re-hashes-every-file|check_drift re-hashes every file]] — status `fixed`, opened 2026-05-26
 - **P-4** [[p-4-benchmark-suite-default-n-100-only|benchmark suite default n=100 only]] — status `open`, opened 2026-05-26
 - **P-5** [[p-5-idx-pages-vault-tags-is-dead-weight-functional-index|idx_pages_vault_tags is dead-weight functional index]] — status `fixed`, opened 2026-05-26
 - **P-10** [[p-10-wiki-lint-frontmatter-scan-is-a-2nd-o-pages-yaml-sweep|wiki-lint frontmatter scan is a 2nd O(pages) YAML sweep]] — status `fixed`, opened 2026-05-29
@@ -68,7 +68,7 @@
 - **D-010-1** [[d-010-1-cross-source-conflict-lens-rule-deferred-prompt-change|cross-source conflict lens rule (deferred prompt change)]] — status `fixed`, opened 2026-05-31
 - **D-010-2** [[d-010-2-completeness-omission-bleed-on-inversion-defects-v3-quantified|completeness-omission bleed on inversion defects (v3-quantified)]] — status `mitigated`, opened 2026-05-31
 - **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
-- **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `open`, opened 2026-06-01
+- **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
 
 ## uncategorized
 

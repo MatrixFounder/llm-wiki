@@ -329,12 +329,18 @@ at N=100 (current default benchmark) but flag risk at 10k pages.
 | ID | Issue | Mitigation |
 |---|---|---|
 | **P-1** | `reindex_full`: N transactions, no batching | Bulk-tx + temporary FTS5 trigger drop |
-| **P-2** | `reindex_delta`: full filesystem walk on no-op | mtime/size short-circuit |
-| **P-3** | `check_drift`: re-hashes every file | mtime/size first-pass; streaming hash |
+| **P-2** | ~~`reindex_delta`: full filesystem walk on no-op~~ ✅ DONE 2026-06-02 (TASK 017) | Single-stat walk — `DiscoveredPage.mtime` reused (no 2nd stat). |
+| **P-3** | ~~`check_drift`: re-hashes every file~~ ✅ DONE 2026-06-02 (TASK 017) | regex `type:` fast-path (**4.6×** `wiki-lint` @1k, default mode) + opt-in `--mtime-skip`. |
 | **P-4** | Benchmark default `n=100` only | CI mode with `--scale all --enforce-slos` |
 | **P-5** | ~~Dead `idx_pages_vault_tags` JSON-expr index~~ ✅ DONE 2026-05-29 (TASK 006, schema v4) | Dropped. |
 
 Trigger: real vault crosses 1k pages and operations slow down.
+
+> **TASK 017 (`drift-delta-redos-timeout`) shipped 2026-06-02** — closes the only open
+> **SEV-2 R-X1-REDOS-RT** (runtime per-file `regex` `timeout=` deadline for operator-custom
+> layout patterns; built-ins stay stdlib `re`/byte-identity) **+ P-2 + P-3**. **Zero DDL**
+> (`user_version` 5). 908 pytest / mypy strict (incl. `/vdd-multi` post-ship hardening:
+> 1 HIGH unguarded-`derive_project_for_path` + MED + 4 LOW). New dep: `regex` (+`types-regex`).
 
 > **TASK 006 (consolidation/hardening) shipped 2026-05-29** — schema **v3→v4**
 > (drop dead `idx_pages_vault_tags` P-5 + `event_date` GENERATED L-2; `'log'`

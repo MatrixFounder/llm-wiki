@@ -240,10 +240,12 @@ class IndexRepository(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def check_drift(self, vault_id: str) -> DriftReport:
+    def check_drift(self, vault_id: str, *, trust_mtime: bool = False) -> DriftReport:
         """Reconcile filesystem ↔ DB; returns drift items per category.
         Applies ADR-002 §6.1 type-mapping (lesson-summary → summary+tag is
-        NOT drift)."""
+        NOT drift). `trust_mtime=True` (the `wiki-lint --mtime-skip` opt-in, TASK
+        017 / P-3) skips the re-hash for mtime-unchanged files — integrity-relaxed;
+        the default always full-hashes."""
         ...
 
     @abc.abstractmethod

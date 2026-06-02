@@ -1,7 +1,7 @@
 ---
 id: R-X1-REDOS-RT
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-06-01
 category: security
 severity: SEV-2

@@ -30,6 +30,21 @@
 - **A05 Security Misconfiguration**:
   - JSON Schema validation для config до запуска любого skill (R-01.3).
   - Fail-fast если `wiki:` блок отсутствует в `CLAUDE.md`.
+- **ReDoS / Availability (TASK 017 — R-X1-REDOS-RT)**:
+  - **Threat**: an operator-custom layout regex (`ref_extraction[].regex` / `project_pattern`)
+    that backtracks catastrophically on long file *content* can hang `wiki-reindex` (single-
+    user DoS / stuck maintenance). Built-in layout patterns are pre-vetted.
+  - **Control (defense-in-depth, two layers)**: (1) load-time `_redos_budget_check` rejects
+    obviously-catastrophic operator regex at config-load (exit 6) — a short-payload heuristic;
+    (2) a **runtime per-file `timeout=` deadline** via the `regex` engine on operator-custom
+    patterns (`WIKI_REDOS_BUDGET_S`, default 2.0 s) → degrades to skip-file-with-WARN, never
+    hangs. Verified: builtin `TimeoutError` fires at the deadline even on a 100 KB single line
+    (stdlib `re` cannot be interrupted — GIL-held C call). See §3.5 "Runtime ReDoS deadline".
+  - **CWE-117/209**: skip/WARN reasons name the file, never echo the offending pattern or body.
+- **A06 Vulnerable & Outdated Components**: TASK 017 adds **one** runtime dependency — `regex`
+  (PyPI, pinned floor `>=2024.0`) — for the control above: a single, widely-used, actively-
+  maintained package, no transitive bloat; `types-regex` for the type gate. (Pre-017 the tool
+  was stdlib + frontmatter/yaml/slugify/jsonschema only.)
 - **A08 Software & Data Integrity**:
   - `pages.file_hash` (sha256) для change detection.
   - `vault_metadata.schema_version` для migration tracking.

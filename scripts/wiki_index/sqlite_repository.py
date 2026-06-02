@@ -14,6 +14,7 @@ one (task-001-15, register_vault).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -593,17 +594,22 @@ class SQLiteRepository(IndexRepository):
         ]
         return sorted(missing)
 
-    def check_drift(self, vault_id: str) -> DriftReport:
+    def check_drift(self, vault_id: str, *, trust_mtime: bool = False) -> DriftReport:
+        """Detect Class A↔B drift. **Default = always full sha256** (D-017-B,
+        integrity-first: a preserved-mtime tamper must not slip). `trust_mtime=True`
+        (the opt-in `wiki-lint --mtime-skip`) skips the read+hash for files whose
+        stored `last_modified` still matches disk mtime — fast, integrity-relaxed."""
         from scripts.wiki_source.parsing import compute_file_hash
 
         conn = self._connect()
         db_rows = {
             (r["slug"], r["project"]): (
-                r["type"], r["file_hash"], r["file_path"], r["frontmatter_json"]
+                r["type"], r["file_hash"], r["file_path"], r["frontmatter_json"],
+                r["last_modified"],
             )
             for r in conn.execute(
-                "SELECT slug, project, type, file_hash, file_path, frontmatter_json "
-                "FROM pages WHERE vault_id = ?", (vault_id,)
+                "SELECT slug, project, type, file_hash, file_path, frontmatter_json, "
+                "last_modified FROM pages WHERE vault_id = ?", (vault_id,)
             ).fetchall()
         }
         vault = self.get_vault(vault_id)
@@ -616,17 +622,34 @@ class SQLiteRepository(IndexRepository):
         type_mismatch: list[tuple[str, str, str, str]] = []
         seen_on_disk: set[tuple[str, str]] = set()
 
-        # Two-tier walk — must mirror reindex.discover_pages so course-local
-        # pages aren't false-positived as missing-on-disk. Lazy-imported to
-        # avoid circular dependency (reindex itself uses SQLiteRepository).
-        from scripts.wiki_index.reindex import discover_pages
-        for f, slug, project in discover_pages(vault_root):
+        # Walk via iter_pages — the canonical config-driven walk that
+        # discover_pages wraps — so each DiscoveredPage carries the SINGLE walk
+        # stat's mtime, reused by the P-3 --mtime-skip fast-path (no second stat,
+        # TASK 017). The (slug, project) set is identical to discover_pages, so this
+        # still mirrors the reindex walk (no false missing-on-disk). layout_config
+        # does not import SQLiteRepository → cycle-free local import.
+        from scripts.wiki_index.layout_config import iter_pages, resolve_layout_config
+        for disc in iter_pages(vault_root, resolve_layout_config(vault_root)):
+            f, slug, project = disc.path, disc.slug, disc.project
             seen_on_disk.add((slug, project))
             key = (slug, project)
             if key not in db_rows:
                 missing_in_db.append(f)
                 continue
-            db_type, db_hash, _, db_fm = db_rows[key]
+            db_type, db_hash, _, db_fm, db_lastmod = db_rows[key]
+            # P-3 --mtime-skip (opt-in, integrity-relaxed): stored mtime == disk
+            # mtime → treat as unchanged, skip read+sha256+type. Default ALWAYS
+            # hashes (trust_mtime=False, D-017-B). Comparison is crash-proof: an
+            # aware-vs-naive datetime (TypeError) or a malformed stored value
+            # (ValueError) degrades to hashing — never raises (fail-safe).
+            if trust_mtime and db_lastmod is not None and disc.mtime is not None:
+                try:
+                    unchanged = (datetime.fromtimestamp(disc.mtime)
+                                 == datetime.fromisoformat(db_lastmod))
+                except (TypeError, ValueError):
+                    unchanged = False
+                if unchanged:
+                    continue
             # Adapter convention: hash full file bytes (frontmatter + body).
             # See manual.py for why frontmatter-aware hashing matters.
             raw = f.read_bytes()
@@ -672,17 +695,33 @@ class SQLiteRepository(IndexRepository):
         tags = fm.get("tags") or []
         return marker in tags
 
+    # P-3 (TASK 017): line-anchored fast-path for the common `type: <bare-slug>`
+    # case, avoiding a full PyYAML parse per page in check_drift. The strict token
+    # class is exactly the real type vocabulary (concept, lesson-summary, query, …);
+    # because it is letter-led and anchored to EOL, ANY non-trivial value — quoted,
+    # flow `[`/`{`, folded/literal `|`/`>`, anchor `&`, inline `# comment`, spaces,
+    # or numeric — simply fails to match and falls back to PyYAML, so the result is
+    # byte-identical to the previous always-PyYAML behaviour on the corpus. The `[ \t]+`
+    # (≥1 space) after the colon mirrors YAML's mapping rule: `type:foo` (no space) is a
+    # plain scalar, NOT a mapping → must fall back to PyYAML (yields None), not match "foo".
+    _FM_TYPE_RE = re.compile(r"^type:[ \t]+([A-Za-z][A-Za-z0-9._-]*)[ \t]*$", re.MULTILINE)
+
     @staticmethod
     def _extract_frontmatter_type(body: str) -> str | None:
-        """Quick YAML frontmatter parse — returns `type:` value or None."""
+        """Return the frontmatter `type:` value or None (regex fast-path → PyYAML
+        fallback for anything non-trivial; see `_FM_TYPE_RE`)."""
         if not body.startswith("---\n"):
             return None
         parts = body.split("---\n", 2)
         if len(parts) < 3:
             return None
+        fm_block = parts[1]
+        m = SQLiteRepository._FM_TYPE_RE.search(fm_block)
+        if m is not None:
+            return m.group(1)            # clean bare-slug type → trust the fast path
         import yaml as _yaml
         try:
-            fm = _yaml.safe_load(parts[1]) or {}
+            fm = _yaml.safe_load(fm_block) or {}
         except _yaml.YAMLError:
             return None
         if isinstance(fm, dict):

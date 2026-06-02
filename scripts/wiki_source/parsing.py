@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
-from collections.abc import Sequence
+import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,13 @@ import frontmatter  # python-frontmatter
 from slugify import slugify
 
 from scripts.wiki_index.layout import COURSE_TIER_DIR, VAULT_TIER_PROJECT
-from scripts.wiki_index.layout_config import RefRule
+from scripts.wiki_index.layout_config import (
+    WIKI_REDOS_BUDGET_S,
+    RefRule,
+    guarded_finditer,
+)
+
+_LOG = logging.getLogger(__name__)
 
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
@@ -79,7 +87,10 @@ def _stem_transform(target: str) -> str:
     return Path(target.split("#", 1)[0]).stem
 
 
-def extract_refs(body: str, rules: Sequence[RefRule]) -> list[tuple[str, int, str]]:
+def extract_refs(
+    body: str, rules: Sequence[RefRule], *, operator_supplied: bool = False,
+    budget_s: float = WIKI_REDOS_BUDGET_S,
+) -> list[tuple[str, int, str]]:
     """Config-driven cross-reference extraction (TASK 012 / PW-D). Iterates the
     layout's `ref_extraction[]` rules; returns `(target, line_number, quote)` —
     the same shape as `extract_wiki_links`. Per-rule `target_group` selects the
@@ -87,20 +98,53 @@ def extract_refs(body: str, rules: Sequence[RefRule]) -> list[tuple[str, int, st
 
     The karpathy config carries only the wiki-link rule, so its output equals
     `extract_wiki_links`. The ReDoS budget gate (layout_config) vets each
-    operator-supplied `regex` at config-load; the patterns here are pre-vetted by
-    that gate before this function ever runs."""
-    compiled = [(re.compile(r.regex), r.target_group, r.transform) for r in rules]
+    operator-supplied `regex` at config-load.
+
+    R-X1-REDOS-RT (TASK 017): the load-gate is a short-payload heuristic and cannot
+    catch a pattern catastrophic only on long real *file content*. When the rules
+    are operator-supplied (`operator_supplied=True`), each match runs under the
+    `regex` engine with a per-file wall-clock `deadline` (`budget_s`); a
+    `TimeoutError` aborts ref-extraction for this file with a WARN and returns an
+    **empty** list (deterministic — never partial, never raises, never hangs). The
+    page still indexes for FTS, and any `cites:`/`verifies:` frontmatter refs still
+    materialise via the §D8 reindex read-side. Built-in rules keep the stdlib `re`
+    path verbatim — patterns pre-compiled ONCE (the hot path; byte-identity and
+    zero per-line compile cost vs pre-TASK-017)."""
     out: list[tuple[str, int, str]] = []
-    for i, line in enumerate(body.splitlines(), start=1):
-        quote = line.strip()[:200]
-        for pattern, group, transform in compiled:
-            for m in pattern.finditer(line):
-                target = m.group(group).strip()
-                if transform == "stem":
-                    target = _stem_transform(target)
-                target = target.strip()
-                if target:
-                    out.append((target, i, quote))
+
+    def _collect(matches: Iterable[Any], rule: RefRule, i: int, quote: str) -> None:
+        for m in matches:
+            target = m.group(rule.target_group).strip()
+            if rule.transform == "stem":
+                target = _stem_transform(target)
+            target = target.strip()
+            if target:
+                out.append((target, i, quote))
+
+    if not operator_supplied:
+        # Built-in pre-vetted patterns → stdlib `re`, pre-compiled once (hot path).
+        compiled = [(re.compile(r.regex), r) for r in rules]
+        for i, line in enumerate(body.splitlines(), start=1):
+            quote = line.strip()[:200]
+            for pattern, rule in compiled:
+                _collect(pattern.finditer(line), rule, i, quote)
+        return out
+
+    # Operator-custom patterns → per-file deadline under the `regex` engine.
+    deadline = time.monotonic() + budget_s
+    scanned = 0
+    try:
+        for i, line in enumerate(body.splitlines(), start=1):
+            scanned = i
+            quote = line.strip()[:200]
+            for rule in rules:
+                _collect(guarded_finditer(rule.regex, line, operator=True,
+                                          deadline=deadline), rule, i, quote)
+    except TimeoutError:
+        # CWE-117/209: name neither the offending pattern nor the file body.
+        _LOG.warning("[redos-skip] ref-extraction exceeded %.1fs budget; skipping "
+                     "file refs (%d lines scanned)", budget_s, scanned)
+        return []
     return out
 
 

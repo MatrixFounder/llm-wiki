@@ -446,10 +446,12 @@ merely *names* the layout.
   one backtracker *shape* is caught; `/vdd-multi` HIGH-2 hardened the original
   single-`"a"*N` payload that let `(.*a){50}` slip past). Budget = median of N=5 runs,
   **break-on-over** so the gate itself can't be DoS'd; over-ceiling → **exit 6** before
-  any file is read. Built-ins pre-vetted; no `regex` dep. **Residual (deferred →
-  `docs/issues/r-x1-redos-runtime-deadline-residual.md`):** a pattern linear on the short
-  payloads but catastrophic only on long real *file content* is NOT caught at load —
-  needs a per-file runtime deadline at the `extract_refs`/`_derive_project` consumer.
+  any file is read. Built-ins pre-vetted. **Residual — RESOLVED in TASK 017
+  (R-X1-REDOS-RT):** a pattern linear on the short payloads but catastrophic only on long
+  real *file content* is NOT caught at load; the **Runtime ReDoS deadline** subsection
+  below closes it with a per-file deadline at the `extract_refs`/`_derive_project`
+  consumer. The gate is **kept** (defense-in-depth) and aligned to probe each pattern under
+  the *same* engine it runs under (operator→`regex`, built-in→stdlib `re`).
 - **Egress sanitisation (`/vdd-multi` SEC-1) — load-bearing:** the auto-index renderer
   AND `render_index` route every untrusted frontmatter field (`title`/`tldr`/`id`/
   `category`) through `_common.sanitize_markdown_text` before interpolating into
@@ -462,6 +464,57 @@ merely *names* the layout.
   `is_symlink()` refusal is checked on the **raw** candidate (before any `resolve()`
   dereferences it), then `validate_inside_vault` + `assert_no_symlink_escape` (ancestor
   walk). An operator override is a Class-A vault file but must not escape the vault root.
+
+#### Runtime ReDoS deadline (TASK 017 / R-X1-REDOS-RT — closes the load-gate residual)
+
+The load-gate above is a load-time *heuristic* (short adversarial payloads, 50 ms median
+ceiling); it cannot catch a pattern linear on short input but catastrophic only on a long
+real file body. TASK 017 adds the sound backstop: a **per-file wall-clock deadline at the
+consumer**, applied **only to operator-custom patterns**.
+
+- **Engine selection by provenance.** Built-in `layouts/*.yaml` patterns are pre-vetted and
+  stay on **stdlib `re`** (zero overhead, karpathy byte-identity preserved). Only patterns an
+  operator *replaces* via a per-vault override run under the **PyPI `regex` engine** with its
+  `timeout=`. Provenance is exact and free: the Q-012-f merge policy **replaces** the whole
+  `paths[]` / `ref_extraction[]` list when the operator supplies that key, so
+  `load_layout_config` records two booleans on the frozen `LayoutConfig`
+  (`ref_extraction_operator_supplied`, `paths_operator_supplied`); `resolve_layout_config`'s
+  built-in-only path leaves both `False`. **(Resolves Q-017-1.)**
+- **Why `regex`, not a watchdog.** Verified on CPython 3.14.4 (standard GIL build): stdlib
+  `re` holds the **GIL for the whole match**, so a `signal.alarm`/thread/subprocess watchdog
+  cannot reliably interrupt a single C-level `re.search` (a worker thread froze the
+  interpreter for the full ~1.37 s; `join(0.3)` did not return). `regex` checks the deadline
+  **inside** its backtracking loop: on a regex-catastrophic pattern (`(a|a)*$`) over a
+  **100 KB single line**, `search`/`finditer(timeout=0.5)` raised the **builtin
+  `TimeoutError`** at 500 ms (+0.2 ms) — no hang — and it *releases the GIL* during matching.
+  (`(a+)+$`/`(x+x+)+y` are optimised away by `regex` outright → net ReDoS reduction.)
+- **Scope = per-file budget, not per-call (resolves Q-017-2).** `extract_refs` calls
+  `finditer` **per line**; a naïve per-call timeout would bound each line to the ceiling →
+  worst case `N_lines × ceiling`. The consumer therefore computes one
+  `deadline = monotonic() + WIKI_REDOS_BUDGET_S` per file and passes the *remaining* time as
+  each call's `timeout=`. Default `WIKI_REDOS_BUDGET_S = 2.0 s` (module constant in
+  `layout_config.py`, env-overridable; distinct from the load-gate's 50 ms short-payload
+  ceiling) — generous vs a legitimately large *linear* page, tight enough to never hang a
+  reindex.
+- **Degradation policy (report-and-skip; never raise, never hang).** On `TimeoutError`:
+  `extract_refs` returns **empty body-refs** for that file + a WARN (deterministic — partial
+  refs would be timing-dependent); the page still indexes for FTS, and any frontmatter-
+  declared `cites:`/`verifies:` refs still materialise via the §D8 reindex read-side.
+  `_derive_project` returns `UNMATCHED_PROJECT` + a WARN (exact parity with the existing
+  pattern-miss policy). WARN/skip reasons name the **file**, never the pattern or body
+  (CWE-117/209).
+- **Shared guard helper.** Both consumers route through one small helper in
+  `scripts/wiki_index/layout_config.py` (importable by `wiki_source/parsing.py`, preserving
+  the acyclic import direction) that selects engine by the provenance flag and applies the
+  shrinking-deadline `timeout=`. **Both** load-time validators — `_redos_budget_check` *and*
+  `_validate_path_patterns` (the `project_pattern` compile + named-group check) — compile
+  operator patterns under the **same** `regex` engine that runs them, so load-time and runtime
+  share one dialect (a regex-only construct like `\p{L}` is accepted at load; a
+  regex-incompatible operator pattern is rejected at load, never crashes at runtime).
+  **Dialect note:** operator patterns are authored for stdlib `re`; `regex` V0 mode is
+  `re`-compatible (a near-superset) — documented in the layout-config docs + schema notes.
+  The eager `import regex` in `layout_config` is negligible (~6 ms cold vs the module's
+  already-eager `jsonschema` ~70 ms) — a lazy import would be incoherent, so it stays eager.
 
 #### Engine: `iter_pages(vault_root, config)` — one walk, all slug/project derivation converges
 
@@ -478,6 +531,14 @@ merely *names* the layout.
   personal vault ever bites, the optimisation is a single-pass `os.walk` + an
   in-memory per-entry matcher — **YAGNI-gated, not built now.** An NFR pins a
   perf-floor at the obsidian-personal fixture scale to catch a future regression.
+- **Single-stat walk (TASK 017 / P-2).** The walk already stats each candidate once (via
+  `path.is_file()`). `iter_pages` now derives is-file **and** `st_mtime` from a single
+  `os.stat`/`DirEntry` and carries the mtime onto `DiscoveredPage.mtime`, so `reindex_delta`
+  reads `disc.mtime` instead of issuing a **second** `path.stat()` per file (was
+  `reindex.py:299`) — one stat/file instead of two on the no-op delta path; iteration order +
+  match set unchanged (byte-identity). The same `DiscoveredPage.mtime` also feeds the P-3
+  `--mtime-skip` drift fast-path (no extra stat in `check_drift`). The full single-pass
+  `os.walk` rewrite stays YAGNI-deferred (Walk-cost note above).
 - **PW-K `ignore[]`** evaluated before `paths[]`; **PW-M `file_extensions`** allow-list
   (default `[.md]`) skips `.base`/`.canvas`/etc. The engine **also treats
   `layout.py::SYSTEM_FILES` and every `auto_indexes[].output` as an implicit ignore

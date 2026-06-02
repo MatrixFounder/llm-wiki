@@ -67,7 +67,11 @@ def test_markdown_link_stem_and_id_ref() -> None:
 # ReDoS budget gate
 # --------------------------------------------------------------------------- #
 
-_CATASTROPHIC = r"(a+)+$"  # nested quantifier → exponential backtracking
+# TASK 017 / R-X1-REDOS-RT: operator-supplied patterns now run (and are gate-probed)
+# under the PyPI `regex` engine, which optimizes `(a+)+$`/`(x+x+)+y` to linear. The
+# gate judges by the engine that RUNS the pattern, so the catastrophic exemplar must
+# be one `regex` does NOT optimize away (alternation-ambiguity).
+_CATASTROPHIC = r"(a|a)*$"  # catastrophic under the `regex` engine (~2.8 s at n=24)
 
 
 def _override(root: Path, body: str) -> None:

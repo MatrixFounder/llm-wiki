@@ -1,7 +1,7 @@
 ---
 id: P-2
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-05-26
 category: performance
 slug: p-2-reindex-delta-no-op-walk-cost

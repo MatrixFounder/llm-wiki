@@ -32,9 +32,12 @@ def _safe_surface(s: str) -> str:
 
 def run_all_checks(
     repo: "IndexRepository", *, vaults: list[str] | None = None,
-    strict: bool = False,
+    strict: bool = False, mtime_skip: bool = False,
 ) -> list[LintIssue]:
-    """Run SQL-level lint checks across the given vaults (or all if None)."""
+    """Run SQL-level lint checks across the given vaults (or all if None).
+    `mtime_skip` (the `wiki-lint --mtime-skip` opt-in, TASK 017 / P-3) is forwarded
+    to `check_drift` — skips the re-hash for mtime-unchanged files (integrity-relaxed;
+    default off → always full-hash)."""
     issues: list[LintIssue] = []
     target_vaults: list[str]
     if vaults is None:
@@ -58,7 +61,7 @@ def run_all_checks(
                          "line": orph.line_start},
             ))
         # Drift
-        drift = repo.check_drift(vid)
+        drift = repo.check_drift(vid, trust_mtime=mtime_skip)
         for f in drift.missing_in_db:
             issues.append(LintIssue(
                 category="missing-in-db", severity="warning",
