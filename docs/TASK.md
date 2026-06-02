@@ -7,8 +7,17 @@
 - **Status:** ✅ **SHIPPED (uncommitted)** — all 14 beads (017-00…13) done via `/vdd-develop-all`
   (per-phase Sarcasmotron + HITL gates) **+ `/vdd-multi` post-ship hardening (3 critics →
   convergence: logic ✓ security ✓ performance ✓)**. **Zero DDL** (`user_version` 5).
-  **908 pytest passed (+4 skipped), `mypy --strict` clean (69 files).** OQ-1..4 resolved in
+  Also **comprehensive CLI dogfood** (5 scenarios on real vaults + the live docs/ dev-vault).
+  **909 pytest passed (+4 skipped), `mypy --strict` clean (69 files).** OQ-1..4 resolved in
   Architecture (§11a Q-017-1..4). TASK 016 archived in lockstep.
+  - **Dogfood (2026-06-02):** ReDoS guard proven end-to-end (gate-slipping `(aa|aa)*$` → reindex
+    completes in ~budget time with a `[redos-skip]` WARN, not a hang); the vdd-multi HIGH fix proven
+    (`wiki-extract-concepts prepare` on a `\p{L}` operator pattern exits 0); P-3 extraction verified
+    byte-identical to PyYAML on all 331 real docs files. **Found + fixed
+    [DF-017-1](issues/df-017-1-check-drift-type-mismatch-not-layout-mapping-aware.md)** (SEV-3,
+    pre-existing): `check_drift` type-mismatch ignored the config-driven layout `type_mapping`
+    → 56 false positives on the dev-project docs vault; `_is_intentional_mapping` now unions
+    `config.type_mapping` (already resolved by `check_drift` for the P-2 walk) → **56 → 0**.
   - **`/vdd-multi` fixes folded in:** **HIGH** — `derive_project_for_path` was calling
     `_derive_project` **unguarded** (operator `project_pattern` ran under stdlib `re` on the
     `wiki-extract-concepts` ingest path → ReDoS-bypass + `re.error` crash on regex-only syntax);

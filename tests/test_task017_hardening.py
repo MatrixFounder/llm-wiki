@@ -340,6 +340,31 @@ def test_builtin_layout_does_not_invoke_regex_engine(
     assert calls["n"] == 0, "built-in layout must not invoke the regex engine"
 
 
+def test_is_intentional_mapping_layout_aware() -> None:
+    """DF-017-1: `check_drift` type-mismatch consults the config-driven layout
+    `type_mapping` (not just the 3 hardcoded karpathy mappings), so dev-project
+    `known-issue→research` etc. are intentional, not drift — while the marker tag
+    still disambiguates raw types that share a db_type (task/plan → brief)."""
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+
+    f = SQLiteRepository._is_intentional_mapping
+    tm = {"known-issue": ("research", "known-issue"),
+          "task": ("brief", "task"), "plan": ("brief", "plan")}
+
+    # layout-mapped + marker tag present → NOT drift (the DF-017-1 false positive)
+    assert f("known-issue", "research", '{"tags": ["known-issue"]}', tm) is True
+    # marker tag missing → still flagged (can't confirm intentional)
+    assert f("known-issue", "research", '{"tags": []}', tm) is False
+    # same db_type, WRONG marker → genuine raw-type drift still caught
+    assert f("task", "brief", '{"tags": ["task"]}', tm) is True
+    assert f("task", "brief", '{"tags": ["plan"]}', tm) is False
+    # null-marker mapping → db_type match alone suffices
+    assert f("raw", "mapped", "{}", {"raw": ("mapped", None)}) is True
+    # back-compat: no layout mapping → only the hardcoded karpathy 3 (old behavior)
+    assert f("lesson-summary", "summary", '{"tags": ["lesson-summary"]}') is True
+    assert f("known-issue", "research", '{"tags": ["known-issue"]}') is False
+
+
 def test_derive_project_for_path_operator_guarded(tmp_path: Path) -> None:
     """vdd-multi HIGH: `derive_project_for_path` threads operator provenance, so an
     operator `project_pattern` runs under the `regex` engine — NOT unguarded stdlib

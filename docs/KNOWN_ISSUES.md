@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-02T15:34:34.055362 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-02T17:35:24.493015 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood
@@ -58,6 +58,7 @@
 - **Q-007-4** [[q-007-4-cited-slug-rendered-into-a-sources-slug-wikilink-unsanitized|cited slug rendered into a \`## Sources \[\[slug\]\]\` wikilink unsanitized]] — status `documented`, opened 2026-05-29
 - **Q-007-1** [[q-007-1-wiki-query-apply-re-runs-the-full-retrieval-to-recompute-the-hash|\`wiki-query apply\` re-runs the full retrieval to recompute the hash]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **Q-007-2** [[q-007-2-self-index-re-reads-the-just-written-query-page|self-index re-reads the just-written query page]] — severity `SEV-3`, status `open`, opened 2026-05-29
+- **DF-017-1** [[df-017-1-check-drift-type-mismatch-not-layout-mapping-aware|check_drift type-mismatch is not layout-type-mapping-aware (false positives on non-karpathy layouts)]] — severity `SEV-3`, status `fixed`, opened 2026-06-02
 
 ## security
 

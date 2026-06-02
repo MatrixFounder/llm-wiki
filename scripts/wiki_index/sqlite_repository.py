@@ -629,7 +629,8 @@ class SQLiteRepository(IndexRepository):
         # still mirrors the reindex walk (no false missing-on-disk). layout_config
         # does not import SQLiteRepository → cycle-free local import.
         from scripts.wiki_index.layout_config import iter_pages, resolve_layout_config
-        for disc in iter_pages(vault_root, resolve_layout_config(vault_root)):
+        config = resolve_layout_config(vault_root)
+        for disc in iter_pages(vault_root, config):
             f, slug, project = disc.path, disc.slug, disc.project
             seen_on_disk.add((slug, project))
             key = (slug, project)
@@ -660,7 +661,8 @@ class SQLiteRepository(IndexRepository):
                 raw.decode("utf-8", errors="replace")
             )
             if file_type and file_type != db_type:
-                if not self._is_intentional_mapping(file_type, db_type, db_fm or ""):
+                if not self._is_intentional_mapping(file_type, db_type, db_fm or "",
+                                                    config.type_mapping):
                     type_mismatch.append((slug, project, file_type, db_type))
 
         missing_on_disk: list[tuple[str, str]] = [
@@ -675,19 +677,38 @@ class SQLiteRepository(IndexRepository):
         )
 
     @staticmethod
-    def _is_intentional_mapping(file_type: str, db_type: str, db_fm_json: str) -> bool:
-        """§6.1 type-mapping: file_type→db_type+tag marker. Not drift if the
-        mapping holds AND the marker tag is present in db frontmatter."""
-        mapping = {
+    def _is_intentional_mapping(
+        file_type: str, db_type: str, db_fm_json: str,
+        type_mapping: dict[str, tuple[str, str | None]] | None = None,
+    ) -> bool:
+        """§6.1 type-mapping: a file's raw `type:` legitimately mapped onto the
+        stored `db_type` is NOT drift. Sources, unioned (layout takes precedence):
+
+        - **DF-017-1**: the resolved layout's `type_mapping` (config-driven, TASK 012)
+          — without it, non-karpathy layouts (dev-project `known-issue→research`,
+          `task/plan→brief`, …) false-positive every mapped page as `type-mismatch`.
+        - the karpathy §6.1 defaults (back-compat / when no layout mapping is passed).
+
+        A mapping carrying a marker `tag` additionally requires that tag in the db
+        frontmatter — this disambiguates raw types that share a `db_type`
+        (lesson-summary/summary-light → summary; dev-project task/plan → brief), so a
+        genuine raw-type change is still caught. A null-marker mapping (the layout maps
+        the raw type unconditionally) needs only the `db_type` to match."""
+        mapping: dict[str, tuple[str, str | None]] = {
             "lesson-summary": ("summary", "lesson-summary"),
             "summary-light": ("summary", "summary-light"),
             "meeting-summary": ("summary", "meeting-summary"),
         }
-        if file_type not in mapping:
+        if type_mapping:
+            mapping = {**mapping, **type_mapping}
+        entry = mapping.get(file_type)
+        if entry is None:
             return False
-        expected_db_type, marker = mapping[file_type]
+        expected_db_type, marker = entry
         if db_type != expected_db_type:
             return False
+        if marker is None:
+            return True
         try:
             fm = json.loads(db_fm_json) if db_fm_json else {}
         except json.JSONDecodeError:

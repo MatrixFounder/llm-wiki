@@ -127,8 +127,13 @@ a catastrophic stdlib-`re` match; GIL-held C call — verified). Full VDD pipeli
 Sarcasmotron + `/vdd-multi` post-ship hardening (logic/security/performance → convergence clean;
 1 HIGH fixed — `derive_project_for_path` was running operator `project_pattern` unguarded under
 stdlib `re` on the extract-concepts ingest path [ReDoS-bypass + `re.error` crash] → now threads
-`operator_supplied`; + MED `type:foo` fast-path + 4 LOW). **908 pytest (+4 skipped), mypy strict
-(69 files).** See `docs/TASK.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md` §3.5/§8.4, `docs/tasks/task-017-*.md`.
+`operator_supplied`; + MED `type:foo` fast-path + 4 LOW) + comprehensive CLI dogfood (5 scenarios:
+ReDoS guard proven end-to-end via a gate-slipping `(aa|aa)*$`, HIGH-fix proven via
+`wiki-extract-concepts prepare` on `\p{L}`, P-3 extraction == PyYAML on all 331 real docs files).
+Dogfood found + fixed **DF-017-1** (SEV-3, pre-existing): `check_drift` type-mismatch ignored the
+config-driven layout `type_mapping` → 56 false positives on the dev-project docs vault;
+`_is_intentional_mapping` now unions `config.type_mapping` → 56→0. **909 pytest (+4 skipped), mypy
+strict (69 files).** See `docs/TASK.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md` §3.5/§8.4, `docs/tasks/task-017-*.md`.
 
 ## Knowledge lookup priority
 
