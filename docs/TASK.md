@@ -244,6 +244,9 @@ wiki-* CLIs* (System actors).
 - Indexing binary attachments at scale (6000+ images/office files) — flagged, not
   handled.
 - Dedup of repeated blocks across `_daily/` notes.
-- **PDF-OCR completion** — lives upstream in Universal-skills; `wiki-sync` only
-  *flags* `needs-ocr`.
+- ~~**PDF-OCR completion** — lives upstream in Universal-skills; `wiki-sync` only
+  *flags* `needs-ocr`.~~ **Post-ship update (2026-06-03):** the upstream OCR block
+  (`pdf_ocr.py`/ocrmypdf) shipped → the executor now **wires OCR** for a scanned
+  PDF (`pdf_extract` exit 10 → OCR → ingest); `needs-ocr` is only the
+  engine-unavailable fallback. (Scan/classifier unchanged — Q-018-6.)
 - Cross-vault entity-graph traversals (R-X5).

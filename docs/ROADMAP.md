@@ -165,9 +165,11 @@ skipped** overall). **Residual (P2,
 deferred — recorded, not silent):** the perf MED — a `.md` is read twice (decoded
 for classify + re-opened for hash); the architecture pre-accepted this "honest,
 bounded" read-cost (binaries pruned pre-read, zones scoped). A future fuse reads
-the bytes once. **Out of scope (unchanged):** binary-attachment indexing at
-scale, daily-block dedup, PDF-OCR completion (upstream Universal-skills —
-`wiki-sync` only flags `needs-ocr`).
+the bytes once. **PDF-OCR is now wired** (2026-06-03 — the upstream Universal-skills
+`pdf_ocr.py`/ocrmypdf block shipped): the executor OCRs a scanned PDF
+(`pdf_extract` exit 10) then ingests it; `needs-ocr` is now only the
+engine-unavailable fallback. **Out of scope (unchanged):** binary-attachment
+indexing at scale, daily-block dedup.
 
 <details><summary>Original proposal (for history)</summary>
 

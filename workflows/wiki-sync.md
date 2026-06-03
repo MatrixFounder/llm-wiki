@@ -100,14 +100,31 @@ source and write its markdown to `entry.staged_target` (always
 `_raw/.staging/<slug>-<ext>.md` — a **non-walked** dir, so the staged output is
 never re-discovered next scan, AC-14):
 
+- **`docx`/`pptx`/`xlsx`**: invoke the matching harness skill (`Skill({skill:
+  "docx"|"pptx"|"xlsx"})`) → markdown → `staged_target`.
+- **`pdf`**: invoke via the `pdf` skill (`Skill({skill: "pdf"})`) — run its
+  scripts under the skill's own venv (`scripts/.venv`, which carries `pdfplumber`
+  + the soft-optional `ocrmypdf`); a bare `python3` will not have them. Run
+  `pdf_extract.py "$SRC"` and compose markdown from the dump per its
+  `references/pdf-to-markdown.md`.
+  - **exit 0** (born-digital, has a text layer) → compose → `staged_target`.
+  - **exit 10 `DocumentScanned`** (image-only) → **OCR remediation hop (wired —
+    the pdf skill ships `pdf_ocr.py`)**: `pdf_ocr.py "$SRC" ocr.pdf --lang
+    eng+rus --sidecar ocr.txt` (overlays a searchable text layer via `ocrmypdf`),
+    then extract the OCR'd text (re-run `pdf_extract.py ocr.pdf` **or** use the
+    `ocr.txt` sidecar) → compose markdown → `staged_target` → continue as
+    `ingest`.
+    - **Soft-optional engine fallback:** if `pdf_ocr.py` exits non-zero with
+      `OcrEngineUnavailable` / `LanguagePackMissing`, the engine isn't installed
+      (`bash scripts/install.sh --with-ocr` + system tesseract/ghostscript) →
+      **then** flag `needs-ocr` in the report, skip the rest of this file,
+      continue (graceful degradation — never silently drop).
 - **Path safety (SEC-A3)**: before writing, validate the `_raw/.staging/` parent
   resolves **inside** the vault root and refuse a symlinked staging dir/target
   (`O_NOFOLLOW` posture) — never follow a swapped-in symlink out of the vault.
+  Do the OCR/extract in a tempdir, then atomically place the final markdown.
 - **Collision-safe**: if `staged_target` already exists with *different* content
   → refuse (report `STAGING_COLLISION`, skip this file). Same content → reuse.
-- The converter returns **`needs-ocr`** (a scanned PDF with no text layer) →
-  flag `needs-ocr` in the report, **skip the rest of this file**, continue.
-  (PDF-OCR completion is upstream Universal-skills — `wiki-sync` only flags it.)
 
 Then feed the staged markdown into the ingest pipeline (4b) as the raw body —
 the staged `.md` is itself UNTRUSTED and MUST be H-6-fenced (4b.2), exactly like

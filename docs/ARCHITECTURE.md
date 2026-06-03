@@ -239,8 +239,10 @@
 > the plan. Builds on vendored `classify_folder`/`scan`/`register_summary` + the existing
 > idempotent CLIs + the R-X1 layout engine + the multi-vault *search-only + enrich-zone* split.
 > **Zero DDL** (`user_version` 5; idempotency via `source_state`). Conversion via the harness
-> `docx`/`pdf`/`pptx`/`xlsx` skills; **PDF-OCR is an upstream gap** (Universal-skills) → flagged
-> `needs-ocr`, never dropped. Scope = **Full R-11** (incl. conversion; operator decision
+> `docx`/`pdf`/`pptx`/`xlsx` skills; **PDF-OCR is now wired** (2026-06-03, the upstream
+> Universal-skills `pdf_ocr.py`/ocrmypdf block shipped) — a scanned PDF (`pdf_extract` exit 10)
+> is OCR'd then ingested; `needs-ocr` is now only the engine-unavailable fallback (never dropped).
+> Scope = **Full R-11** (incl. conversion; operator decision
 > 2026-06-03). New component **Sync Dispatcher** (§2 functional-architecture); CLI + plan-JSON
 > contract (§5 interfaces); OQs resolved Q-018-1..9 (§11a). **`/vdd-adversarial` pass
 > (run wf_2b38a52f-59f, 45 agents) found a CRITICAL idempotency flaw + 2 HIGH design
@@ -476,12 +478,16 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   (5) on full success the executor writes the `sync` idempotency row (Q-018-8). Net = the source
   page + 10–15 compounding pages. (Feeding *raw* to `wiki-enrich` returns `needs-pre-summarization`
   — hence step 2 precedes step 3.)
-- **Q-018-6 (TASK 018): PDF-OCR gap.** **RESOLVED: scan plans `.pdf` → `convert+ingest`; the
-  orchestrator's convert step reports `needs-ocr` when the PDF has no extractable text layer**
-  (image-only) → the workflow records it **flagged in the report, batch continues, never
-  dropped**; text-layer PDFs convert normally. OCR completion is upstream (Universal-skills
-  task-013 OCR block); when it lands those PDFs reclassify with no `wiki-sync` change. (Scan stays
-  light — the text-layer probe lives in the converter, not the deterministic walk.)
+- **Q-018-6 (TASK 018): PDF-OCR gap — NOW CLOSED (2026-06-03, the upstream OCR block shipped).**
+  Scan plans `.pdf` → `convert+ingest` (unchanged — the deterministic walk/classifier never
+  changed, as predicted). The **executor convert step now WIRES OCR**: `pdf_extract.py` exit
+  `10 DocumentScanned` (image-only) → `pdf_ocr.py … --lang eng+rus` (the pdf skill's `ocrmypdf`
+  hop) → extract the searchable text → proceed as `ingest`. **`needs-ocr` is now only the
+  soft-optional-engine fallback** — if `pdf_ocr.py` reports `OcrEngineUnavailable`/
+  `LanguagePackMissing` (engine not installed: `install.sh --with-ocr`), the file is flagged in
+  the report and skipped (batch continues, never dropped). Text-layer PDFs convert normally.
+  (Scan stays light — the text-layer probe + OCR remediation live in the executor/converter,
+  not the deterministic walk; `workflows/wiki-sync.md` Step 4a.)
 - **Q-018-7 (TASK 018): tag surface + precedence.** **RESOLVED: accept BOTH the Obsidian tag
   `#wiki/{raw,skip,keep}` (frontmatter `tags:` or inline) AND an equivalent frontmatter field
   `wiki: {raw,skip,keep}`.** Precedence: **`skip` always wins** → then `raw` → then `keep` (only

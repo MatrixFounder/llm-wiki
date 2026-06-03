@@ -127,6 +127,8 @@ Design is **locked** across two adversarial gates (`docs/reviews/adversarial-018
 
 ## Out of scope (per TASK §6)
 
-- Binary-attachment indexing at scale; daily-block dedup; **PDF-OCR completion** (upstream
-  Universal-skills — `wiki-sync` only flags `needs-ocr`). No DDL. The optional `stat()`-mtime
+- Binary-attachment indexing at scale; daily-block dedup. No DDL. The optional `stat()`-mtime
   scan short-circuit (W-2) is a deferred YAGNI, not in these beads.
+- **PDF-OCR** was out-of-scope at plan time (upstream gap) but **the upstream block
+  shipped 2026-06-03** → the executor (`workflows/wiki-sync.md` Step 4a) now wires
+  `pdf_ocr.py`; `needs-ocr` is only the engine-unavailable fallback.
