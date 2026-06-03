@@ -213,6 +213,42 @@
 > `wiki-alias --list` vault-wide via new `repo.list_all_aliases`). **852 pytest / 4 skip,
 > mypy strict.**
 >
+> **TASK 017 (`drift-delta-redos-timeout`) — SHIPPED 2026-06-02** (committed; `user_version` 5):
+> runtime per-file `regex` `timeout=` ReDoS deadline for operator-custom layout patterns
+> (built-ins stay stdlib `re`/byte-identity) + P-2 single-stat delta walk + P-3 `check_drift`
+> regex `type:` fast-path (+ opt-in `wiki-lint --mtime-skip`). New dep `regex`(+`types-regex`).
+> See §3.5 + §8.4 + Q-017-1..4. Archived: `docs/tasks/task-017-*` + `docs/plans/plan-017-*`.
+>
+> **TASK 018 (R-11 `wiki-sync` — format-aware, tag-routed ingest/upsert dispatcher) —
+> 🟡 IN DESIGN (Architecture phase).** The compounding-driver automation over a *real mixed*
+> personal vault: walk an enrich zone, classify every file by **extension** (office/PDF →
+> convert→ingest; `.txt`/`.vtt`/`.srt` → implicit-raw→ingest; `.md` → tag/view rules;
+> binary → skip) and by **content** (`#wiki/raw|skip|keep` tag vocabulary;
+> generated-view sidecars — DB Folder `database-plugin:`/`yaml:dbfolder`, Bases, Dataview,
+> folder-notes — skipped, with an **only-a-view anti-over-flag guard**) → route each to
+> `wiki-enrich`/`wiki-index-upsert`/skip. **Decision-17 shaped (forced):** the vendored
+> `ingest()` is *summary-passthrough* (`needs-pre-summarization`), so the raw→ingest path is
+> orchestrator-coupled — `wiki-sync scan` is **deterministic plan-only** (no LLM/network) and
+> the **`workflows/wiki-sync.md`** orchestrator executes convert/summarise/enrich/extract per
+> the plan. Builds on vendored `classify_folder`/`scan`/`register_summary` + the existing
+> idempotent CLIs + the R-X1 layout engine + the multi-vault *search-only + enrich-zone* split.
+> **Zero DDL** (`user_version` 5; idempotency via `source_state`). Conversion via the harness
+> `docx`/`pdf`/`pptx`/`xlsx` skills; **PDF-OCR is an upstream gap** (Universal-skills) → flagged
+> `needs-ocr`, never dropped. Scope = **Full R-11** (incl. conversion; operator decision
+> 2026-06-03). New component **Sync Dispatcher** (§2 functional-architecture); CLI + plan-JSON
+> contract (§5 interfaces); OQs resolved Q-018-1..9 (§11a). **`/vdd-adversarial` pass
+> (run wf_2b38a52f-59f, 45 agents) found a CRITICAL idempotency flaw + 2 HIGH design
+> errors and they are corrected at design level**: the architecture-018 AM-1 contract
+> was wrong vs code (no raw-keyed `source_state` exists) → **superseded by Q-018-8**
+> (a `wiki-sync`-owned `source_state` `sync` partition + 2 new generic get/set DAL
+> methods; the "no new DAL surface" claim retracted); the scan uses its **own** walk
+> not `iter_pages` (Q-018-9, EC-1) and gains a `skip:unmappable-type` branch (EC-2);
+> + H-6 at the first LLM stage, collision-safe staging, determinism ordering,
+> per-vault `flock`. Still **zero DDL** (`user_version` 5). Spec: [tasks/](./tasks/)
+> (TASK 018) + reviews [task-018](./reviews/task-018-review.md) ·
+> [architecture-018](./reviews/architecture-018-review.md) ·
+> [adversarial-018](./reviews/adversarial-018-review.md). ROADMAP R-11.
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -262,7 +298,7 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 
 ## 2. Functional Architecture
 
-Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
+Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`, **Sync Dispatcher** `wiki-sync` [TASK 018 / R-11 — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip]) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
 
@@ -386,6 +422,106 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 - **Q-017-2 (TASK 017): regex-timeout scope (per-call vs per-file)** — **RESOLVED: per-file wall-clock budget**, not per-`finditer` call (`extract_refs` runs `finditer` per line → a per-call timeout would allow `N_lines × ceiling`). One `deadline = monotonic() + WIKI_REDOS_BUDGET_S` per file; each call gets the *remaining* time as `timeout=`. Default `WIKI_REDOS_BUDGET_S = 2.0 s` (module constant, env-overridable; distinct from the load-gate's 50 ms ceiling). See §3.5.
 - **Q-017-3 (TASK 017): `--mtime-skip` surface + P-3 default** — **RESOLVED (operator, D-017-B): default = always full-hash** (drift is integrity-first; a preserved-mtime tamper must not slip); the mtime short-circuit is an **opt-in `wiki-lint --mtime-skip` flag** only. The always-on default win is the PyYAML→regex `type:` fast-path. Zero DDL (reuses `pages.last_modified`; **no** `file_size` column — D-017-C). See §8.4.
 - **Q-017-4 (TASK 017): `regex` typing under `mypy --strict`** — **RESOLVED: add `types-regex` (dev)**, consistent with the existing `types-PyYAML`/`types-jsonschema` stub pattern (the `regex` wheel ships no inline stubs — verified: no `py.typed`/`.pyi`). Fallback if stubs are inadequate: per-module `ignore_missing_imports`. See §6.1.
+
+- **Q-018-1 (TASK 018): execution shape.** **RESOLVED: Decision-17 split — `wiki-sync scan`
+  (deterministic plan-only) + `workflows/wiki-sync.md` orchestrator executor.** Forced by the
+  grounding fact that the vendored `ingest()` is *summary-passthrough* (returns
+  `needs-pre-summarization` on raw) ⇒ the raw→ingest path requires an orchestrator LLM step
+  (`summarizing-meetings`). `wiki-sync` carries **no `import anthropic`**; `scan` does **no
+  LLM/network**, only filesystem classification → a strict plan JSON. Subcommand surface:
+  `wiki-sync scan <zone> [--dry-run]`. (A `wiki-sync apply --plan` convenience that batch-runs
+  the *deterministic-only* actions — `upsert`/`skip`/state-record — and returns the
+  LLM-required worklist is a **Planning-phase YAGNI option**, not part of the core contract.)
+- **Q-018-2 (TASK 018): classifier reuse vs new.** **RESOLVED: new `scripts/wiki_skills/wiki_sync.py`
+  + a `_sync` classifier helper. Vendored reuse is limited to `wiki_ingest._classify._count_md_structure`
+  (it MAY back the only-a-view body heuristic); `_detect_grouping` is NOT reused — it is filename-list
+  folder-role grouping, irrelevant to per-file extension/tag/view routing (RC-5).** The wiki-sync routing axis
+  (extension + tag + view-marker → one of {convert+ingest, ingest, upsert, skip}) is a *different
+  purpose* from vendored `classify_folder` (which role-classifies the files of ONE multi-file
+  ingest as primary/metadata/merge/…). No fork of vendored code; acyclic imports; **zero
+  behavioural change to vendored callers** (guarded by the existing vendored tests). *(am-1:
+  depend on the vendored `_classify` privates only if stable across `sync_wiki_ingest.sh`;
+  else reimplement the small needed bits in `_sync` — the routing logic is new regardless.)*
+- **Q-018-3 (TASK 018): conversion wiring + staging path.** **RESOLVED: the plan NAMES the
+  converter per extension (`converter ∈ {docx,xlsx,pptx,pdf}`); the ORCHESTRATOR executes it via
+  the harness `docx`/`pdf`/`pptx`/`xlsx` skills (Decision-17 — the deterministic CLI never shells
+  out to a skill).** Converted markdown lands at a deterministic, **collision-safe** in-vault
+  staging path **`_raw/.staging/<slug(stem)>-<ext>.md`** (SEC-A4 — extension-disambiguated;
+  refuse-overwrite-on-different-content) in the **non-walked `.staging/` subdir** so the converter
+  output is **never re-discovered as a fresh raw drop** (closes the convert+ingest self-ingest loop
+  — re-gate RG-1/W-3/SEC-N5; the walk excludes `_raw/.staging/**` alongside `_raw/.locks`/`_raw/failed`).
+  Empty-slug fallback `_raw/.staging/sync-<sha8(src-path)>-<ext>.md` (SEC-N1) is a Planning detail.
+  Universal-skills converter scripts are an interchangeable backend for the same skills.
+- **Q-018-4 (TASK 018): config home.** **RESOLVED: per-vault `.wiki/sync.yaml`** (operational
+  state, NOT vault identity — consistent with the "two separate config systems" principle and the
+  existing `.wiki/` dir). Declares `zones: [globs]`, `exclude: [globs]` (default-excluded, e.g.
+  `_daily/**`), `tag_namespace` (default `wiki`), `extensions` overrides. **MVP also accepts the
+  zone as a CLI arg** (`wiki-sync scan <zone-path>`); `.wiki/sync.yaml` is for persistent
+  multi-zone config. Schema-validated like `layout-config` (strict; misspelled key → load error).
+- **Q-018-5 (TASK 018): canonical `ingest` chain.** **RESOLVED:** for an `ingest` action —
+  (0) [`.vtt`/`.srt`] **de-timestamp/caption-dedup pre-step** (deterministic — reuse
+  transcript-fetcher `scripts/sources/_vtt_to_text.py`; RC-1); (1) [binary] convert via skill →
+  collision-safe non-walked `_raw/.staging/<slug(stem)>-<ext>.md`; (2) **H-6 fence the raw/converted body** then
+  orchestrator `summarizing-meetings` (raw → summary) — ⚠️ `summarizing-meetings` is the FIRST
+  LLM stage and has NO built-in H-6 banner, so the executor MUST fence before it (SEC-A1);
+  (3) **`wiki-enrich --source <summary>`** (the vendored summary-passthrough files it into
+  `_sources/` + indexes the source page + log_event — `register-summary` is the vendored primitive
+  it uses); (4) **`wiki-extract-concepts` prepare/apply** densifies → concept/entity pages;
+  (5) on full success the executor writes the `sync` idempotency row (Q-018-8). Net = the source
+  page + 10–15 compounding pages. (Feeding *raw* to `wiki-enrich` returns `needs-pre-summarization`
+  — hence step 2 precedes step 3.)
+- **Q-018-6 (TASK 018): PDF-OCR gap.** **RESOLVED: scan plans `.pdf` → `convert+ingest`; the
+  orchestrator's convert step reports `needs-ocr` when the PDF has no extractable text layer**
+  (image-only) → the workflow records it **flagged in the report, batch continues, never
+  dropped**; text-layer PDFs convert normally. OCR completion is upstream (Universal-skills
+  task-013 OCR block); when it lands those PDFs reclassify with no `wiki-sync` change. (Scan stays
+  light — the text-layer probe lives in the converter, not the deterministic walk.)
+- **Q-018-7 (TASK 018): tag surface + precedence.** **RESOLVED: accept BOTH the Obsidian tag
+  `#wiki/{raw,skip,keep}` (frontmatter `tags:` or inline) AND an equivalent frontmatter field
+  `wiki: {raw,skip,keep}`.** Precedence: **`skip` always wins** → then `raw` → then `keep` (only
+  meaningful in a default-excluded zone) → then the extension/path default (`_raw/` ≡ implicit
+  `raw`). `tag_namespace` overridable via `.wiki/sync.yaml`.
+- **Q-018-8 (TASK 018): idempotency — SUPERSEDES the architecture-018-review AM-1 fix, which the
+  `/vdd-adversarial` CRITICAL cluster proved wrong against the code.** **RESOLVED: a `wiki-sync`-owned
+  `source_state` partition.** Verified: `wiki-enrich`/vendored `ingest()` write **no** `source_state`
+  row (raw idempotency is a `source_hash:` frontmatter *footer* keyed by the summary slug), and the
+  only `source_state` writer is `wiki-extract-concepts` (`source_kind='extract-concepts'`, scope=
+  source-page slug) — **neither keyed on the raw file `scan` discovers, and the slug is unknowable at
+  scan time.** So AM-1's "`is_unchanged` keys on the `source_state` the chain writes" was uncomputable.
+  Fix: `source_state(source_kind='sync', scope=<vault-relative source path>, key='source_hash',
+  value=sha256(file bytes))` — original binary bytes for `convert+ingest` (CONS-4); **`scan`** reads it
+  via a new read-only `get_source_state(...)`; the **executor** writes it via `set_source_state(...)`
+  **only after the per-file chain fully succeeds** (commit marker → partial-failure resumes, ID-4).
+  **Zero DDL** (`source_state` has no `source_kind` CHECK; `'sync'` is data). The earlier "no new DAL
+  surface" claim (interfaces §5.4) is corrected → **two new generic zero-DDL `source_state` get/set
+  methods** (F2/ID-2/CONS-2). Uniform across all non-skip actions — also dissolves the
+  `pages.file_hash`/file_path/rename edge of ID-3 (a rename = new path = new row = re-process, documented).
+- **Q-018-9 (TASK 018): the scan walk + upsert feasibility — corrects two HIGH design errors.**
+  **RESOLVED:** (a) `wiki-sync scan` does **NOT** reuse R-X1 `iter_pages` (EC-1/ID-5 — `iter_pages`
+  filters to the layout's `.md` page-globs and would discover **zero** `.txt`/`.vtt`/`.docx`/`.pdf`
+  drops); it implements its **own** zone walk over the wiki-sync extension set, *mirroring*
+  `iter_pages`' single-stat + case-folded early-extension-skip discipline (EC-6), pruning `exclude:`
+  non-`.md` immediately but reading `exclude:`-zone `.md` for `#wiki/keep`. (b) A no-tag `.md` routes
+  to `upsert` **only if** it carries a layout-mapped frontmatter `type:` (or a `path_type_fallback`
+  subdir); else → `skip` reason `unmappable-type` (EC-2 — `wiki-index-upsert`→`normalize_frontmatter`
+  raises `UnmappedTypeError` on a type-less prose note, so "upsert as-is" is not free). (c) Degenerate
+  inputs never raise: empty file → `skip:empty-source`; unparseable frontmatter → route-by-path,
+  `frontmatter-unparseable` (EC-7). See functional-architecture *Sync Dispatcher → Classification*.
+- **Q-018-10 (TASK 018): architecture-review **re-gate** corrections (run wf_29fce9ba-39b; the
+  re-gate found my Q-018-8/9 fixes had introduced new holes — `docs/reviews/architecture-018-rereview.md`).**
+  **RESOLVED:** (a) **convert+ingest convergence** — staged output moved to the non-walked
+  `_raw/.staging/` (RG-1/W-3/SEC-N5); (b) **scan read-cost honesty (W-2/am-2)** — the uniform
+  `sync` `sha256(file bytes)` key means `scan` reads every eligible file; the superseded AM-1's
+  "no re-read fast-path" claim is dropped; acceptable because enrich zones are scoped + binaries
+  skipped pre-read + huge dirs `exclude`d (optional mtime short-circuit = Planning YAGNI); (c)
+  **SEC-A5 corrected (SEC-N3)** — `yaml.safe_load` does NOT stop an anchor-bomb (it expands
+  aliases); the real bound is the 256 KiB size-cap **+ a custom `SafeLoader` that forbids
+  anchors/aliases**; (d) **flock specified (SEC-N4)** — `LOCK_EX|LOCK_NB` on `<vault>/.wiki/sync.lock`,
+  exit 2 `SYNC_IN_PROGRESS` if held, fd-scoped auto-release, guards wiki-sync runs against each
+  other only; (e) **unmappable-type predictor is layout-general (W-1)** — predicts against the same
+  `normalize_frontmatter` resolution `wiki-index-upsert` uses, not a karpathy assumption. Re-gate
+  residual after these = LOW/Planning only (RC-4 matcher, RC-5 reuse, SEC-N1 empty-slug,
+  RG-5 wording). **Still zero DDL** (`user_version` 5).
 
 ### 11b. Defer-able (не блокирует Architecture, можно решать в Plan/Dev)
 

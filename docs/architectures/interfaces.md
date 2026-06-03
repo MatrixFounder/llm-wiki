@@ -54,3 +54,48 @@
 
 ---
 
+
+### 5.4. Sync Dispatcher — `wiki-sync` (TASK 018 / R-11)
+
+**CLI surface (deterministic core):**
+
+```
+wiki-sync scan <zone> [--vault <vid>] [--vault-root <path>] [--dry-run] [--db-path <p>]
+```
+
+- **`scan`** walks the zone (its **own** bounded walk — *not* `iter_pages`, which is
+  `.md`-only; EC-1/ID-5), classifies each file, and emits the **plan JSON** envelope
+  on stdout (full schema in `functional-architecture.md` → *Sync Dispatcher → Plan
+  JSON*). It is **deterministic** (no LLM, no network, no mutation) and reads the
+  `wiki-sync` `source_state` partition for `is_unchanged`.
+- **`--dry-run`** prints the human-readable plan (per-file action + reason + action
+  counts) and writes nothing — identical classification, presentation only.
+- Zone is a CLI arg (MVP); persistent multi-zone config lives in
+  **`<vault>/.wiki/sync.yaml`** (`zones`, `exclude`, `tag_namespace`, `extensions`),
+  validated against a new **`config/sync-config.schema.yaml`** (strict, like
+  `layout-config`; a misspelled key is a load error; `exclude`×`keep` precedence
+  pinned at the loader — META-4). The read is **size-capped** (≤256 KiB) **and parsed
+  by a custom `SafeLoader` that forbids YAML anchors/aliases** — note `yaml.safe_load`
+  alone does NOT stop an anchor-bomb (it still expands aliases; SEC-A5/SEC-N3), so the
+  size-cap + anchor-ban together are the bound.
+
+**Exit codes (consistent with the suite):** `0` ok · `2` precondition
+(zone missing / not inside the vault / vault unregistered) · `6`
+config-invalid (`.wiki/sync.yaml` schema violation). The error envelope never
+echoes untrusted file content (CWE-209/117).
+
+**DAL surface (corrected — the earlier "no new DAL surface" claim was wrong, F2/ID-2/CONS-2).**
+`wiki-sync` adds **two generic, zero-DDL `source_state` methods** to `IndexRepository`
+/ `SQLiteRepository` (pure DML on the existing table; no schema change):
+`get_source_state(vault_id, source_kind, scope, key) -> str | None` (read, used by
+`scan`) and `set_source_state(vault_id, source_kind, scope, key, value) -> None`
+(write, used by the executor as the post-success commit marker). These generalise the
+query-specific `check_query_state`/`record_query_state` (which are keyed
+`source_kind='query'` and cannot represent a raw `sync` drop). The **executor**
+(`workflows/wiki-sync.md`) composes the *existing* CLIs — `wiki-enrich`,
+`wiki-index-upsert`, `wiki-extract-concepts` — + the harness `docx`/`pdf`/`pptx`/`xlsx`
+convert skills + the transcript-fetcher `.vtt` cleaner. **No new `pages.type`; zero
+DDL** (`user_version` 5; the new `source_kind='sync'` partition is data on the
+existing `source_state` table).
+
+---

@@ -169,3 +169,48 @@
 
 ---
 
+
+### Sync Dispatcher Requirements (TASK 018 — R-11, Epics E1–E4)
+
+> **Zero DDL** (`user_version` 5; idempotency via `source_state`; no new
+> `pages.type`). **Decision-17** (deterministic `scan` plan + orchestrator
+> executor; no `import anthropic`). Builds on vendored `_classify`/`register_summary`
+> + the existing idempotent CLIs + the R-X1 layout engine.
+
+| TASK Epic / Issue | Architecture coverage | Test / AC reference |
+|---|---|---|
+| **E1** format front-stage (convert office/PDF→md; implicit-raw `.txt`/`.vtt`/`.srt`; binary skip; PDF-OCR flag) | functional-arch → *Sync Dispatcher → Classification* + plan `converter`/`staged_target`; Q-018-3 (collision-safe **non-walked** staging `_raw/.staging/<slug(stem)>-<ext>.md`), Q-018-6 (`needs-ocr` flag) | AC-3 (extension routing), AC-7 (no silent drop), AC-14 (convert re-run no-op) |
+| **E2** content classifier (`#wiki/raw\|skip\|keep` + `wiki:` field; generated-view sidecar skip + only-a-view guard) | functional-arch → *Classification* mermaid + precedence; Q-018-7 (tag surface + precedence) | AC-2 (DB Folder/Bases/Dataview/folder-note skip), **AC-2b** (embedded-view note → upsert, anti-over-flag), AC-4 (tag routing) |
+| **E3** Decision-17 dispatcher (deterministic `scan`→plan; orchestrated execute; idempotency; bounded walk) | functional-arch → *Plan JSON* + *Execution workflow*; interfaces §5.4; Q-018-1 (shape), Q-018-2 (reuse), Q-018-5 (ingest chain) | AC-1 (deterministic valid plan), AC-5 (e2e `.vtt`→compounding, re-run no-op), AC-8 (zero DDL), AC-9 (no `anthropic`, envelope/exit contract) |
+| **E4** config + safety + UX | interfaces §5.4 (`.wiki/sync.yaml`); security §7.5 (path-traversal, H-6, bounds, config-injection); Q-018-4 (config home) | AC-6 (`--dry-run` writes nothing + report), AC-7 (H-6 / path validation / isolation) |
+| **Q-018-1..7** (resolved) | ARCHITECTURE.md §11a | see §11a resolved Open Questions |
+
+---
+
+### TASK 018 — `/vdd-adversarial` amendments (run wf_2b38a52f-59f; docs/reviews/adversarial-018-review.md)
+
+> The adversarial pass found a CRITICAL idempotency flaw + 2 HIGH design errors in the
+> first-gated architecture; all corrected at the design level. New/changed coverage:
+
+| Finding(s) | Architecture coverage (corrected) | AC |
+|---|---|---|
+| **ID-1/RC-3/EC-3/SEC-A2/F2/F3/ID-2/CONS-1/2/4** (CRITICAL — AM-1 idempotency wrong vs code) | Q-018-8 + functional-arch *Idempotency*: `wiki-sync` `source_state` partition (`source_kind='sync'`, scope=path, `source_hash`); new `get_source_state`/`set_source_state` (zero-DDL); executor commit-marker; interfaces §5.4 "no new DAL surface" retracted | AC-5 (re-run no-op), AC-8 (zero DDL + the 2 DAL methods) |
+| **EC-1/ID-5** (HIGH — `iter_pages` can't discover raw drops) | Q-018-9(a) + functional-arch *own bounded walk* (not `iter_pages`); interfaces §5.4 | AC-1, AC-3, AC-10 |
+| **EC-2** (HIGH — `wiki-index-upsert` `UnmappedTypeError`) | Q-018-9(b) + E2.3(a) `skip:unmappable-type` branch | AC-12 |
+| **SEC-A1** (HIGH — no H-6 at first LLM stage) | security §7.5 H-6 bullet + functional-arch execution-workflow H-6 fence before `summarizing-meetings` | AC-7 |
+| **META-1** (HIGH — plan determinism) | functional-arch *Determinism* (entries sorted by POSIX path) | AC-10 |
+| **EC-5/SEC-A4** (staging collision) | Q-018-3 collision-safe **non-walked** `_raw/.staging/<slug(stem)>-<ext>.md` + refuse-overwrite; security §7.5 | AC-12, AC-14 |
+| **Re-gate (wf_29fce9ba-39b)** RG-1/W-3/SEC-N5 (convert self-ingest), W-2 (read-cost), SEC-N3 (safe_load≠anchor-bomb defense), SEC-N4 (flock spec), W-1 (layout-general type predict) | Q-018-10 + functional-arch (own-walk excludes `.staging/`; read-cost honest; layout-general upsert predict) + security §7.5 (anchor-ban loader; `LOCK_NB` `sync.lock`) | AC-14; rereview doc |
+| **EC-6** (extension case) | E1.1(a) case-insensitive + `.excalidraw.md`/`.canvas` skip | AC-3 |
+| **EC-7** (degenerate inputs) | E2.3(e) empty-source / frontmatter-unparseable, never raise | AC-11 |
+| **RC-1** (`.vtt` de-timestamp had no surface) | Q-018-5 step 0 de-timestamp pre-step (transcript-fetcher `_vtt_to_text.py`); functional-arch execution-workflow `ingest` row | AC-5 |
+| **SEC-A3/A5/A6, META-2** (path/config/symlink/concurrency) | security §7.5 (parent-dir validate, size-cap + safe_load, symlinked-dir refusal, per-vault `flock`) | AC-7 |
+| **CONS-3** (`#wiki/keep` missing from mermaid) | functional-arch classification mermaid (`#wiki/keep` rescue node + `exclude:`-zone gate) | AC-4 |
+| **META-3/E4.2** (report format) | functional-arch *Report* invariant (Plan `summary{}` + per-entry `result`) | AC-6, AC-13 |
+| **META-4** (config schema) | interfaces §5.4 `config/sync-config.schema.yaml` named (strict; `exclude`×`keep` precedence at loader) | AC-8 |
+
+Residual (Planning-phase operationalisation, not blocking): RC-4 (exact only-a-view
+body-ratio matcher), RC-5 (`_count_md_structure` reuse decision), and the LOW set
+(RC-6 fixed, RC-7/F5/EC-9/SEC-A6/ID-6 worded).
+
+---

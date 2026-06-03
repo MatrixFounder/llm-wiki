@@ -212,3 +212,20 @@ erDiagram
 
 ---
 
+
+## SourceState — `wiki-sync` partition (TASK 018 / R-11)
+
+`wiki-sync` reuses the existing **`source_state`** table (Class C operational, no
+DDL) with its own partition: `source_kind='sync'`, `scope=<vault-relative source
+path>`, `key='source_hash'`, `value=sha256(file bytes)` (original binary bytes for
+`convert+ingest`). It is the **only** store keyed on the raw file `wiki-sync scan`
+discovers — distinct from the chain's own idempotency (`wiki-enrich`'s
+`_sources/<slug>.md` frontmatter `source_hash:` footer, keyed by summary slug; and
+`wiki-extract-concepts`'s `source_kind='extract-concepts'` row, keyed by source-page
+slug — neither knowable at scan time). Written by the executor **only after the
+per-file chain fully succeeds** (commit marker → partial-failure resumes). Read via
+the new generic `get_source_state`; `source_state` has no `source_kind` CHECK, so the
+`'sync'` value is data — `user_version` stays **5**. (See ARCHITECTURE.md §11a
+Q-018-8; supersedes the architecture-018-review AM-1 contract.)
+
+---
