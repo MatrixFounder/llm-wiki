@@ -114,11 +114,18 @@ never re-discovered next scan, AC-14):
     then extract the OCR'd text (re-run `pdf_extract.py ocr.pdf` **or** use the
     `ocr.txt` sidecar) → compose markdown → `staged_target` → continue as
     `ingest`.
-    - **Soft-optional engine fallback:** if `pdf_ocr.py` exits non-zero with
-      `OcrEngineUnavailable` / `LanguagePackMissing`, the engine isn't installed
-      (`bash scripts/install.sh --with-ocr` + system tesseract/ghostscript) →
-      **then** flag `needs-ocr` in the report, skip the rest of this file,
-      continue (graceful degradation — never silently drop).
+    - **OCR-failure fallback (per-file isolation, AC-7):** if `pdf_ocr.py` exits
+      **non-zero for ANY reason** — `OcrEngineUnavailable` / `LanguagePackMissing`
+      (engine not installed: `bash scripts/install.sh --with-ocr` + system
+      tesseract/ghostscript), or any other failure (`InputUnreadable` /
+      `EncryptedInput` / `OutputWriteFailed` / a tesseract runtime error) — flag
+      the file in the report (`needs-ocr` for the engine-missing case, else
+      `ocr-failed:<type>`), **skip the rest of this file, continue**. Never crash
+      the batch, never silently drop (graceful degradation).
+    - **Runtime note (DF-018-OCR-1):** `ocrmypdf` shells out to `tesseract` and
+      needs a **writable, shared `TMPDIR`** — run the OCR hop in a normal
+      environment (an isolated-`/tmp` sandbox breaks the ocrmypdf→tesseract
+      temp-image handoff). Verified end-to-end (eng+rus) on a real image-only PDF.
 - **Path safety (SEC-A3)**: before writing, validate the `_raw/.staging/` parent
   resolves **inside** the vault root and refuse a symlinked staging dir/target
   (`O_NOFOLLOW` posture) — never follow a swapped-in symlink out of the vault.
@@ -180,8 +187,8 @@ nothing → the file is re-planned next scan (no half-done state survives).
 ## Step 5 — Final report
 
 Emit `plan.summary{}` augmented with the per-entry `result`
-(`done` / `skipped:<reason>` / `unchanged` / `needs-ocr` / `error:<msg>` /
-`staging-collision`). The lock auto-releases on exit (Step 2 trap).
+(`done` / `skipped:<reason>` / `unchanged` / `needs-ocr` / `ocr-failed:<type>` /
+`error:<msg>` / `staging-collision`). The lock auto-releases on exit (Step 2 trap).
 
 ## Fallback (vendor-agnostic)
 
