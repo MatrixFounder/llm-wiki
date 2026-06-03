@@ -143,6 +143,82 @@ the §D8 durability acceptance (UC-14/UC-15) in
 `tests/test_entity_resolution_durability.py`. **Unblocks R-X5** (cross-project
 entity graph, gated on Epic 7).
 
+### R-11. `wiki-sync` — format-aware, tag-routed ingest/upsert dispatcher — PROPOSED (P1)
+The automation that actually **closes the 3→10–15 pages-per-ingest gap** on a
+*real, mixed* personal vault. The static layout engine (R-X1) classifies files by
+**path** and only *indexes* `.md` that already exists; it cannot (a) bring in
+non-markdown sources operators actually drop into a collection folder
+(transcripts `.txt`/`.vtt`/`.srt`, office docs, PDFs), (b) decide per note whether
+to run a full LLM **ingest** (`wiki-enrich` → `_sources/_concepts/_entities/`) vs a
+plain **upsert** (index a ready note as-is), or (c) exclude content-defined noise
+(generated-view sidecars). `wiki-sync` is a thin **format-aware + content-aware
+dispatcher** layered over the existing idempotent CLIs.
+
+**(1) Format front-stage — route by extension before any indexing:**
+
+| Input | Handling |
+|---|---|
+| `.docx` / `.xlsx` / `.pptx` / `.pdf` | **deterministic convert → `.md`, then ingest.** Reuses the operator's Universal-skills converter scripts + the harness `docx`/`pdf`/`pptx`/`xlsx` skills; **~0 LLM tokens** (only the downstream ingest synthesis costs tokens). **PDF-OCR is the open gap** (tracked in Universal-skills). |
+| `.txt` / `.vtt` / `.srt` (plain-text source) | **implicitly raw → ingest, no tag needed** (`.vtt`/`.srt` get a de-timestamp pass first) |
+| `.md` note | → the tag + view rules in (2)/(3) |
+| images / other binary | **skip** (out of scope — 6000+ attachments) |
+
+**(2) Tag vocabulary for the `.md` layer (namespace `wiki/`):**
+
+| Signal | Action |
+|---|---|
+| `#wiki/raw` (or file in `_raw/`) | full **ingest** via `wiki-enrich` (transcripts, webinars, clippings to distill) |
+| *(no wiki tag)* | **upsert** the ready note as-is |
+| `#wiki/skip` | never index (drafts, sensitive — manual override that always wins) |
+| `#wiki/keep` | opt-in index for zones excluded by default (e.g. `_daily/`) |
+
+**(3) Generated-view sidecars — always skipped (navigation, not knowledge).**
+Detected by marker, not by name alone:
+- frontmatter `database-plugin:` **and/or** a fenced ` ```yaml:dbfolder ` body → **DB Folder** view;
+- a body that is essentially a single fenced ` ```base ` (or a companion `.base`) → **Bases** view;
+- a single fenced ` ```dataviewjs ` / ` ```dataview ` body → **Dataview** view;
+- the **folder-note** naming pattern (stem == parent/sibling dir).
+
+Anything the heuristic misses is caught by an explicit `#wiki/skip`.
+
+Conceptual flow (per file in a zone):
+
+```mermaid
+flowchart TD
+    SCAN["wiki-sync scans the zone(s)"] --> F{"by extension"}
+    F -->|".docx .xlsx .pptx .pdf"| CONV["convert → .md<br/>(deterministic scripts, ~0 tokens;<br/>PDF-OCR = open gap)"]
+    F -->|"images / other binary"| SKIPB["skip — out of scope"]
+    F -->|".txt .vtt .srt — text source"| ENR
+    F -->|".md"| V{"generated view?<br/>database-plugin: / base /<br/>dataviewjs / yaml:dbfolder /<br/>folder-note"}
+    CONV --> ENR
+    V -->|yes| SKIP["skip — navigation, not knowledge"]
+    V -->|no| K{"#wiki/skip ?"}
+    K -->|yes| SKIP
+    K -->|no| R{"#wiki/raw ?"}
+    R -->|yes| ENR["wiki-enrich → _sources/_concepts/_entities<br/>(idempotent via source_state hash)"]
+    R -->|no| UPS["wiki-index-upsert — ready note, as-is"]
+    classDef raw fill:#fdeede,stroke:#e0a050;
+    classDef act fill:#e8f0ff,stroke:#5577cc;
+    class ENR,CONV raw;
+    class UPS,SKIP,SKIPB act;
+```
+
+**Builds on**: R-3 (`wiki-extract-concepts`), `wiki-enrich`, `wiki-index-upsert`
+(all idempotent via `source_state`/file-hash); the R-X1 layout engine + the
+multi-vault "search-only + enrich-zone" split (documented in
+`docs/manuals/obsidian-llm-wiki_manual.md` → *Mixed vault*); the operator's
+office→md converter scripts (Universal-skills) + harness `docx`/`pdf`/`pptx`/`xlsx`
+skills. **Scope**: a `wiki-sync` workflow/skill = format front-stage (extension
+routing + deterministic convert shell-out) + a content classifier (view-sidecar
+markers; folder-note stem==dir; frontmatter tag read) + dispatch to the existing
+CLIs; per-vault tag config; dry-run + per-file report; idempotent re-runs. **NOT in
+scope** (future): indexing binary attachments at scale; dedup of repeated blocks
+across daily notes; **PDF-OCR completion** (lives in Universal-skills). **Trigger**:
+an operator runs a mixed vault where dropping a transcript / office doc into a
+collection folder should "just" become a compounding wiki without hand-invoking
+`wiki-enrich` per file. **Effort**: ~1 small TASK (Stub-First; mostly orchestration
+over existing CLIs + a shell-out conversion stage).
+
 ---
 
 ## P1 — Epic 7 RAG layer

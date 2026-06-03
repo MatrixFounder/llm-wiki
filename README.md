@@ -1,226 +1,233 @@
 # obsidian-llm-wiki
 
-Multi-vault SQLite-indexed knowledge base for Obsidian, implementing
+A multi-vault, SQLite-indexed knowledge base for Obsidian, implementing
 Karpathy's [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-pattern. Markdown is the canonical source; SQLite (FTS5 + WAL) is a
-rebuildable derivative cache.
+pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
+100%-rebuildable derivative cache.** You get fast full-text + metadata search, an
+entity/concept graph, RAG-with-citations, and a verification layer — all driven
+from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26) — 34 tasks landed, dogfooded
-> on a real two-tier vault. Phase 3b: TASK 004 (wiki-ingest vendoring)
-> shipped 2026-05-27; TASK 003 v2 (wiki-extract-concepts) shipped
-> 2026-05-28; **TASK 003 v3.1** (Decision-17 deterministic refactor +
-> `/vdd-multi` 22-finding hardening) shipped 2026-05-28 (commit
-> `43812f2`); **TASK 005** (Epic 7 entity resolution — R-4 confirmed/candidate
-> + `wiki-merge` + R-5 alias table) shipped 2026-05-29 — 17 beads +
-> `/vdd-multi` 8-fix hardening, **534 pytest pass + 4 skipped, mypy `--strict`
-> clean (58 files)**, schema v2→v3 (closes KNOWN_ISSUES L-4). See
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 017**
+> (`drift-delta-redos-timeout`, shipped 2026-06-02). Schema **v5**
+> (`user_version = 5`). **913 pytest collected (909 pass + 4 skipped),
+> `mypy --strict` clean on 69 source files.** The repo's own `docs/` is
+> registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
-> the status header pointing at archived task specs under
-> [docs/tasks/](docs/tasks/).
+> [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
 
 ---
 
 ## Table of Contents
 
-- [What's in this repo](#whats-in-this-repo)
-- [Architecture](#architecture)
-- [External dependency: `wiki-ingest`](#external-dependency-wiki-ingest)
+- [What it does](#what-it-does)
+- [Anatomy: how the system is layered](#anatomy-how-the-system-is-layered)
+- [Data model](#data-model)
+- [The universal layout engine](#the-universal-layout-engine)
 - [Installation](#installation)
-  - [A. Install for any target project (recommended)](#a-install-for-any-target-project-recommended)
+  - [A. Install for any project (recommended)](#a-install-for-any-project-recommended)
   - [B. Install for development of this repo](#b-install-for-development-of-this-repo)
-- [Use on a vault](#use-on-a-vault)
-- [CLI reference (slash forms)](#cli-reference-slash-forms)
+- [Quick start: put a vault under the index](#quick-start-put-a-vault-under-the-index)
+- [The `prepare` / `apply` pattern (agent-driven skills)](#the-prepare--apply-pattern-agent-driven-skills)
+- [CLI reference — all 14 commands](#cli-reference--all-14-commands)
+- [External dependency: `wiki-ingest`](#external-dependency-wiki-ingest)
 - [Repo layout](#repo-layout)
 - [Development](#development)
 - [Pointers](#pointers)
 
 ---
 
-## What's in this repo
+## What it does
 
-The **index layer** for an Obsidian-style llm-wiki. Provides:
+An llm-wiki is a knowledge base that **compounds**: every source you ingest is
+distilled into atomic, cross-linked concept and entity pages, so the next query
+is answered against an ever-richer corpus instead of re-reading raw material.
+This repo is the **index + tooling layer** for that pattern:
 
-- **DAL** (`scripts/wiki_index/`) — `IndexRepository` ABC + `SQLiteRepository`
-  with multi-vault partitioning, FTS5, WAL, atomic upserts (M-4 contract),
-  bi-directional `log.md ↔ log_events` sync, drift detection.
-- **CLIs** (`scripts/wiki_skills/`) — fourteen thin entry points wrapping the
-  DAL: `wiki-init` (now with `--layout` — see the layout engine below),
-  `wiki-search`, `wiki-lint`, `wiki-reindex`,
-  `wiki-index-upsert`, `wiki-index-render` (`--auto-indexes` renders the
-  Class-B ledger), `wiki-append-log`,
-  `wiki-enrich` (bridge to `wiki-ingest`, see [External dependency](#external-dependency-wiki-ingest)),
-  `wiki-extract-concepts` (Epic 7 entry-point — LLM-driven concept
-  extraction from an already-indexed source page; emits a wiki-ingest v1.1
-  manifest, optionally dispatches in-process to the indexer via `--ingest`),
-  and the **Epic 7 entity resolver** (TASK 005): `wiki-confirm`
-  (candidate→confirmed promotion, `--undo`, `--auto --threshold N`),
-  `wiki-alias` (register/remove/list alias surface-strings; `wiki-search`
-  expands through them by default), and `wiki-merge` (fold a duplicate entity
-  into the canonical one — the alias table is the durable redirect).
-  The **Epic 7 RAG layer** (TASK 007): `wiki-query` (RAG over FTS5 + entity
-  graph — a two-pass `prepare`/`apply` skill, Decision-17: deterministic
-  retrieval → orchestrator-owned cited synthesis → a first-class compounding
-  `_queries/<slug>.md` page that is indexed, FTS-searchable, `cited`-back-linked,
-  and §D8-durable).
-  The **Epic 7 RAG verification layer** (TASK 008): `wiki-verify-multi`
-  (off-by-default 4-critic prose audit of a filed answer against its cited
-  sources — `prepare`/`apply`, Decision-17 — filing a first-class compounding
-  `_verifications/verify-<slug>.md` verdict page; FAIL = record verdict +
-  non-zero exit, **never mutating the answer**; layout-agnostic via
-  `pages.file_path`; schema v4→v5).
-  Plus a neutral sub-layer module `_manifest_consumer.py` shared by
-  `wiki-enrich` and `wiki-extract-concepts` (TASK 003 v2 / Decision-16).
-- **Universal layout engine** (`scripts/wiki_index/layout_config.py`, TASK 012 /
-  R-X1) — a YAML-config-driven replacement for the ~15 previously-hardcoded
-  "what files exist / what page-type are they" surfaces. Three built-in layouts
-  ship (`scripts/wiki_index/layouts/`): `karpathy` (the original behaviour,
-  **byte-identical** — a validated projection of `layout.py`, golden-anchor-guarded),
-  `dev-project` (a software repo's `docs/` — TASKs/ADRs/issues), and
-  `obsidian-personal` (numbered folders + Unicode). New vault shapes become
-  config, not code; `wiki-init --layout <name>` names a vault's layout, and the
-  `auto_indexes[]` feature renders a Class-B "rebuildable markdown" ledger (e.g.
-  this repo's `docs/KNOWN_ISSUES.md` from per-issue `docs/issues/*.md`). Operator
-  regexes are gated by a stdlib-`re` load-time ReDoS budget; the per-vault identity
-  config (`config_loader.py`) and this per-layout-class grammar are deliberately
-  **two separate systems**.
-- **Skills/commands/workflows** (`skills/`, `commands/`, `workflows/`) —
-  canonical definitions, symlinked into `.claude/` and `.agent/` for
-  vendor compatibility.
-- **Shell wrappers** (`bin/wiki-*`) — make every CLI runnable from any
-  CWD; symlinked into `~/.local/bin` by the global installer.
-- **Migration + benchmarks** (`scripts/wiki_migrate_flat_to_folders.py`,
-  `scripts/benchmark.py`).
+- **Ingest** a raw source (transcript, article, meeting note) → LLM-synthesised
+  concept/entity pages, additive merge, contradiction flagging, a `log.md` entry.
+- **Search** the whole corpus with FTS5 BM25 ranking + frontmatter-metadata
+  filters, across one vault or many.
+- **Resolve entities**: candidate → confirmed promotion, aliases (one surface
+  string → one entity per vault), and merging of duplicates.
+- **Query (RAG)**: retrieve over FTS5 + the entity graph, synthesise a *cited*
+  answer, and file it back as a first-class compounding page.
+- **Verify**: an off-by-default multi-critic audit of a filed answer against the
+  sources it cited — it records a verdict, it never edits the answer.
+- **Stay healthy**: lint for orphan links, dangling refs, hash drift, type
+  mismatches, and cross-vault concept duplicates.
 
-The repo *is* the implementation. **The repo root is not a vault** — running
-`wiki-init --scaffold-new --vault .` is rejected by design. (Since TASK 012 the
-repo's own `docs/` **is** registered as a `dev-project` dev-vault — vault_root =
-`<repo>/docs`, committed `docs/WIKI_SCHEMA.md` — so `wiki-search "ADR-002"
---vaults obsidian-llm-wiki` works; the repo root itself stays vault-free.)
+The core invariant (ADR-002 §D8): **the vault's markdown is canonical; the DB is
+a rebuildable cache.** `wiki-reindex --full` restores the entire index from disk
+with no semantic loss. That means you can delete the `.db` at any time and rebuild
+it, and that hand-edits to markdown are first-class — not something the tooling
+will clobber.
 
 ---
 
-## Architecture
+## Anatomy: how the system is layered
 
-ADR-001 ([Option I: wrap + index](docs/adr/ADR-001-wiki-ingest-integration.md)):
-the file layer is owned by an external skill (`wiki-ingest`); this repo
-indexes its output and serves fast queries.
+Two ADRs define the shape:
 
-ADR-002 ([multi-vault + data layering](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)):
-one global SQLite DB partitioned by `vault_id`. Class A (markdown,
-canonical) → Class B (DB, rebuildable cache) → Class C (DB-only
-operational, minimal).
+- **ADR-001** ([Option I — wrap + index](docs/adr/ADR-001-wiki-ingest-integration.md)):
+  the **file layer** (LLM-driven page synthesis) is owned by an external skill,
+  `wiki-ingest`; **this repo owns the index layer** — it reads that skill's output
+  and serves fast queries. (As of TASK 004 `wiki-ingest` is *vendored* in-process,
+  so no external install is required — see [below](#external-dependency-wiki-ingest).)
+- **ADR-002** ([multi-vault + data layering](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)):
+  one global SQLite DB partitioned by `vault_id`, with a three-class data contract.
 
 ```
-       Operator / Claude agent
-                │
-   ┌────────────┴────────────┐
-   ▼ file layer              ▼ index layer
-/wiki-ingest               this repo
-(external)                    │
-   │ writes markdown           │ reads / writes SQLite
-   ▼                           ▼
-canonical files          rebuildable cache
-   │                           │
-   └─manifest JSON─►  /wiki-enrich (bridge)
-                           │
-                       /wiki-search, /wiki-lint
+                      Operator / Claude agent
+                              │
+          ┌───────────────────┴───────────────────┐
+          ▼ FILE LAYER (Class A)                   ▼ INDEX LAYER (Class B/C)
+   wiki-ingest (vendored)                     this repo
+   concept/entity synthesis,                  IndexRepository DAL
+   additive merge, log.md                     SQLite + FTS5 + WAL
+          │                                          │
+          ▼  writes canonical markdown                ▼  reads / writes rebuildable cache
+   _sources/  _concepts/  _entities/          pages · entities · aliases · refs · log_events
+   index.md   log.md   WIKI_SCHEMA.md                │
+          │                                          │
+          └──── manifest JSON ──► wiki-enrich ───────┘
+                                       │
+                       wiki-search · wiki-query · wiki-lint · …
 ```
+
+The code is split into clean layers under `scripts/`:
+
+| Layer | Path | Responsibility |
+|---|---|---|
+| **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
+| **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
+| **CLIs** | `scripts/wiki_skills/` | 14 thin entry points wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
+| **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
+| **Vendored file layer** | `scripts/wiki_ingest/` | In-process snapshot of the external `wiki-ingest` skill (TASK 004). |
+| **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
+| **Skills / commands / workflows** | `skills/`, `commands/`, `workflows/` | Canonical definitions, symlinked into `.claude/` and `.agent/` for vendor compatibility. |
+
+**The repo *is* the implementation, not a vault.** Running
+`wiki-init --scaffold-new --vault .` at the repo root is rejected by design.
+(Since TASK 012 the repo's own `docs/` is registered as a `dev-project` vault —
+`vault_root = <repo>/docs`, with a committed `docs/WIKI_SCHEMA.md` — so
+`wiki-search "ADR-002" --vaults obsidian-llm-wiki` works while the repo root
+itself stays vault-free.)
 
 ---
 
-## External dependency: `wiki-ingest` (now optional — vendored as of TASK 004)
+## Data model
 
-`/wiki-enrich` composes with the `wiki-ingest` skill (v1.1+), which
-owns the LLM-driven file layer — concept/entity page synthesis,
-additive merge, log.md append, contradiction detection.
+One global DB (`sql/wiki-index-v2.sql`, `user_version = 5`), every table
+partitioned by `vault_id`. The three-class contract (ADR-002 §D8):
 
-**Post-TASK-004 (2026-05-27)**: the `wiki-ingest` Python module is now
-**vendored** into `scripts/wiki_ingest/` (snapshot of
-`Universal-skills/skills/wiki-ingest/scripts/wiki_ingest/`) and called
-in-process by default. **No external install required** for `/wiki-enrich`
-to work — the in-process primary path satisfies UC-V2 (single-step
-install).
+- **Class A** — vault markdown. Semantic, canonical, human-/LLM-authored.
+- **Class B** — DB rows + *rendered* markdown (`index.md`, the auto-rendered
+  ledgers). A **rebuildable cache** — regenerable from Class A via reindex.
+- **Class C** — DB-only operational state (minimal: e.g. `vaults.registered_at`).
 
-Two paths exist:
-- **PRIMARY (default)**: in-process call into vendored `scripts.wiki_ingest`
-  package. No subprocess, no PATH dependency. Activated when the vendored
-  import succeeds AND `WIKI_ENRICH_NO_VENDORED` env var is unset.
-- **FALLBACK (subprocess)**: legacy path via `wiki-ingest` CLI on `PATH`.
-  Activated when (a) vendored import fails for any reason, OR
-  (b) `WIKI_ENRICH_NO_VENDORED=1` is set (escape hatch for debugging,
-  comparison, or standalone wiki-ingest users who prefer the external
-  copy).
+Core tables:
 
-To use the fallback, install upstream `wiki-ingest` globally (typically
-under `~/.claude/skills/wiki-ingest/` symlinked to your local clone of
-the Universal-skills repo) so the `wiki-ingest` binary lands on `PATH`.
+| Table | Holds |
+|---|---|
+| `vaults` | Registry of all vaults sharing the DB; `vault_id` is **required, explicit** in `<vault>/WIKI_SCHEMA.md` (`^[a-z][a-z0-9-]{2,31}$`, no hash fallback). |
+| `entities` | Canonical concepts/people/companies/products/… with definitions, contact fields, mention counts, and an `is_candidate` flag (1 = LLM-extracted/unconfirmed, 0 = confirmed). |
+| `entity_aliases` | One alias → **exactly one** entity per vault (PK `(vault_id, alias)`, schema v3); `wiki-search` expands through them. |
+| `pages` | Wiki pages: `summary` · `concept` · `query` · `brief` · `research` · `index` · `verification`; FTS5-mirrored. Upserts preserve `pages.id` so the FTS5 rowid stays stable. |
+| `page_entity_refs` | M:N page ↔ entity edges with provenance: `mentioned` · `defined-here` · `related` · `cited` · `verifies`. |
+| `log_events` | Structured mirror of `<vault>/log.md` (bi-directional, M-2 contract). |
+| `pages_fts` | FTS5 virtual table (`unicode61 remove_diacritics 2`), kept in sync by triggers. |
+| `batch_runs`, `source_state`, `schema_meta` | Reindex bookkeeping, per-source dedup, migration markers. |
+| `interactions`, `extracted_items` | Reserved for future Epics (tables present, indexes deferred). |
 
-See [`scripts/wiki_ingest/VENDORED_FROM.md`](scripts/wiki_ingest/VENDORED_FROM.md)
-for snapshot provenance, sync workflow, and local-patches log. Contract:
-[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md).
-Refresh the vendored snapshot via
-`bash scripts/sync_wiki_ingest.sh [--dry-run]`.
+Convenience views: `index_meta` (pages+entities catalog), `known_concepts`
+(for ingest-time concept injection), `v_concept_cooccurrence`, `v_vault_stats`.
 
-Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, etc.) are
-self-contained and do not need `wiki-ingest` (vendored or otherwise).
-`/wiki-extract-concepts` calls the Anthropic API directly (not via
-`wiki-ingest`); set `ANTHROPIC_API_KEY` in your environment before
-invoking. Its `--ingest` auto-dispatch path uses the neutral
-`_manifest_consumer` module in-process — also no PATH dependency on
-`wiki-ingest`.
+The DB is a Class B cache, so schema upgrades are **not** in-place `ALTER`s — a
+`vN→vN+1` migration on a populated DB is "delete the `.db`/`-wal`/`-shm`, then
+`wiki-init --register-existing` + `wiki-reindex --full`" (see ADR-002 §D8).
+
+---
+
+## The universal layout engine
+
+Different vaults have different shapes. TASK 012 (R-X1) replaced ~15 hardcoded
+"where do pages live / what type are they" surfaces with a **YAML-config-driven
+engine** (`scripts/wiki_index/layout_config.py`, schema
+`config/layout-config.schema.yaml`). Three layouts ship built-in
+(`scripts/wiki_index/layouts/`):
+
+| Layout | For |
+|---|---|
+| `karpathy` | The original llm-wiki shape. **Byte-identical** to the legacy hardcoded behaviour — a validated projection of `layout.py`, golden-anchor-guarded. |
+| `dev-project` | A software repo's `docs/` tree — TASKs, ADRs, issues. (This is what the repo's own docs use.) |
+| `obsidian-personal` | Numbered folders + Unicode titles. |
+
+New vault shapes become **config, not code**. Pick one with
+`wiki-init --layout <name>`. The `auto_indexes[]` feature renders a Class-B
+"rebuildable markdown" ledger from per-item Class-A sources (e.g. this repo's
+[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) is auto-rendered from
+`docs/issues/*.md`).
+
+Two deliberately separate config systems: per-vault **identity**
+(`config_loader.py` — who this vault is) vs per-layout-class **grammar** (the
+engine above — how this *kind* of vault is shaped).
+
+**Security note (TASK 012 + 017):** operator-supplied layout regexes
+(`ref_extraction[].regex`, `paths[].project_pattern`) are guarded against ReDoS
+both at load time (a stdlib-`re` budget gate) and at runtime (a per-file
+deadline via the PyPI [`regex`](https://pypi.org/project/regex/) engine with
+`timeout=`, env-overridable via `WIKI_REDOS_BUDGET_S`, default 2.0s). Built-in
+layouts use stdlib `re` and pay zero overhead.
 
 ---
 
 ## Installation
 
-Two install paths. Most users want **(A)**.
+Two install paths. **Most users want (A).** Requires **Python 3.14+** (via
+pyenv — the system 3.9 is incompatible with `python-frontmatter`).
 
-### A. Install for any target project (recommended)
+### A. Install for any project (recommended)
 
-After this one-time setup, `/wiki-*` slash commands work from **any**
-Claude Code project, and `wiki-search "x"` etc. work from **any** shell —
-the wrappers handle CWD + venv activation automatically.
+After this one-time setup, `/wiki-*` slash commands work from **any** Claude Code
+project, and `wiki-search "x"` etc. work from **any** shell — the wrappers handle
+CWD + venv activation automatically.
 
 ```bash
 # 1. Clone the repo to a stable location
 git clone <repo> ~/dev-projects/obsidian-llm-wiki
 cd ~/dev-projects/obsidian-llm-wiki
 
-# 2. Create a Python venv and install deps (Python 3.14+ via pyenv)
+# 2. Create a venv and install deps
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Install wrappers, skills, and commands into user-global Claude Code dirs
+# 3. Symlink wrappers, skills, and commands into user-global Claude Code dirs
 bash bin/install-globally.sh
 
-# That's it — /wiki-enrich works in-process via vendored wiki_ingest module.
-# (Optional: install upstream wiki-ingest to enable the subprocess fallback.
-# Not needed for normal operation.)
+# Done — /wiki-enrich works in-process via the vendored wiki_ingest module.
+# (Optional: install upstream wiki-ingest to enable the subprocess fallback.)
 ```
 
-What `bin/install-globally.sh` does (idempotent):
+`bin/install-globally.sh` is idempotent (`ln -sfn`) and links:
 
-| Source | Target | What |
+| Source | Target | Count |
 |---|---|---|
-| `bin/wiki-*` (8 files) | `~/.local/bin/wiki-*` | Shell wrappers |
-| `skills/wiki-*/` (8 dirs) | `~/.claude/skills/wiki-*/` | Skill definitions |
-| `commands/wiki-*.md` (8 files) | `~/.claude/commands/wiki-*.md` | Slash commands |
+| `bin/wiki-*` | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) | 14 shell wrappers |
+| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` | 16 skill definitions |
+| `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` | 14 slash commands |
 
-Override the wrapper destination with `WIKI_INSTALL_BIN=/some/path`.
-Ensure `~/.local/bin` is on your shell `PATH` (the installer prints a
-warning if not). Then jump to [Use on a vault](#use-on-a-vault).
+Ensure `~/.local/bin` is on your `PATH` (the installer warns if not). Then jump
+to [Quick start](#quick-start-put-a-vault-under-the-index).
 
 ### B. Install for development of this repo
 
-You only need this if you're contributing to obsidian-llm-wiki itself
-(running tests, modifying the DAL, working on the agentic-development
-framework alongside).
+Only needed if you're contributing to obsidian-llm-wiki itself (tests, DAL,
+framework work).
 
 ```bash
 # 1. Clone + venv + deps (same as A.1–A.2)
-git clone <repo>
-cd obsidian-llm-wiki
+git clone <repo> && cd obsidian-llm-wiki
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 
 # 2. Wire framework + project skills into this repo's .claude/ and .agent/
@@ -229,93 +236,200 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 900+ passed, 4 skipped (post-TASK-017)
-mypy --strict scripts/  # clean on 69 source files (vendored package
-                        # excluded via mypy.ini override per Decision-14)
+pytest tests/           # 909 passed, 4 skipped (~3s)
+mypy --strict scripts/  # clean on 69 source files (vendored package excluded
+                        # via mypy.ini override per Decision-14)
 ```
 
-Optionally also run `bin/install-globally.sh` so you can dogfood the
-wrappers from other projects while developing.
+Optionally also run `bin/install-globally.sh` to dogfood the wrappers from other
+projects while developing.
 
 ---
 
-## Use on a vault
+## Quick start: put a vault under the index
 
 After install (A), from any directory:
 
 ```bash
-# 1. Add `vault_id: <slug>` to your vault's WIKI_SCHEMA.md (ADR-002 §D1.1)
-#    No fallback — required field. Run wiki-init to get a suggested slug:
+# 1. Your vault needs `vault_id: <slug>` in its WIKI_SCHEMA.md (ADR-002 §D1.1).
+#    Run wiki-init once to get a suggested slug if it's missing:
 wiki-init --register-existing --vault /path/to/MyVault
-#   → if missing: { "error": "MISSING_VAULT_ID", "suggested_vault_id": "..." }
+#   → if missing: { "error": "MISSING_VAULT_ID", "suggested_vault_id": "my-vault" }
 
-# 2. After adding vault_id, register
+# 2. After adding vault_id, register the vault:
 wiki-init --register-existing --vault /path/to/MyVault
 
-# 3. First full index (also the rebuildability gate)
+# 3. First full index (this is also the Class-A → Class-B rebuildability gate):
 wiki-reindex --full --vault my-vault
 
-# 4. Day-to-day: search before grep
+# 4. Day-to-day: search before you grep
 wiki-search "concept name" --vaults my-vault
 
-# 4b. Filter by frontmatter metadata (TASK 013) — status/severity/any field.
-#     Compiles to a CAST(json_extract(...) AS TEXT) predicate (not full-text), so
-#     hyphenated values (SEV-2) and numeric values (priority=1) both match by
-#     string; omit the query for a pure metadata listing.
+# 4b. Filter by frontmatter metadata (status / severity / any field).
+#     Compiles to a CAST(json_extract(...) AS TEXT) predicate (not full-text),
+#     so hyphenated (SEV-2) and numeric (priority=1) values match by string.
 wiki-search --status open --severity SEV-2 --vaults my-vault
 wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 ```
 
-Inside a Claude Code session, the same commands are invokable as
-`/wiki-init`, `/wiki-search`, etc. (slash forms). The agent will
-auto-suggest them whenever the trigger phrases match (see each
-[SKILL.md](skills/) for the trigger keywords).
+For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
 
-DB lives at `~/Library/Application Support/wiki-index/global.db` on
-macOS (`~/.local/share/wiki-index/...` on Linux). iCloud paths are
-auto-rejected to prevent SQLite corruption.
+The DB lives at `~/Library/Application Support/wiki-index/global.db` on macOS
+(`~/.local/share/wiki-index/...` on Linux). **iCloud paths are auto-rejected** to
+prevent SQLite corruption.
+
+Inside a Claude Code session, every command below is also invokable as a slash
+form (`/wiki-init`, `/wiki-search`, …); the agent auto-suggests them when trigger
+phrases match (see each [SKILL.md](skills/) for triggers).
 
 ---
 
-## CLI reference (slash forms)
+## The `prepare` / `apply` pattern (agent-driven skills)
 
-| Command | When |
+Three skills do LLM work but keep **zero `anthropic` import** in the Python (the
+"Decision-17" split). The Python halves are deterministic; the LLM step is owned
+by the orchestrator agent, sandwiched between two CLI calls:
+
+```
+wiki-query prepare   →  [agent reads the retrieval envelope, synthesises a
+                         cited answer per the wiki-query-synthesis contract]
+                     →  wiki-query apply   (files _queries/<slug>.md)
+```
+
+The same shape powers `wiki-verify-multi` (`prepare` → 4 critics →
+`apply` files `_verifications/verify-<slug>.md`) and `wiki-extract-concepts`
+(`prepare` recon → agent synthesises candidate JSON per the `concept-extraction`
+contract → `apply` writes pages + entities). The contract skills
+(`wiki-query-synthesis`, `wiki-verify`, `concept-extraction`) have no CLI — they
+are the prompts the orchestrator loads between the two halves. When you run these
+inside Claude Code, the agent drives all three steps for you.
+
+---
+
+## CLI reference — all 14 commands
+
+Each command has a `SKILL.md` under [`skills/`](skills/) with the full contract,
+exit codes, and JSON-envelope schema, plus a slash-command wrapper under
+[`commands/`](commands/). Slash forms (`/wiki-…`) are equivalent to the shell
+binaries.
+
+> 📖 **Want the *why*, not just the flags?** The commands below are grouped by the
+> role they play in the compounding-knowledge loop. For the full methodology —
+> what each command is *for*, how to work with the vault's markdown (standard and
+> custom layouts), and how to drive the wiki from another agent — see the
+> **[obsidian-llm-wiki Manual](docs/manuals/obsidian-llm-wiki_manual.md)**.
+
+### Vault lifecycle
+
+*Bring a vault under management and keep the cache reconciled with its canonical markdown.*
+
+| Command | What it does |
 |---|---|
-| `/wiki-init --register-existing --vault <path>` | one-time, per vault |
-| `/wiki-init --scaffold-new --vault <path>` | brand-new vault layout |
-| `/wiki-search "<query>" --vaults <vid>` | every time you need a fact |
-| `/wiki-search [--status <v>] [--severity <v>] [--where 'field=value'] --vaults <vid>` | filter by frontmatter metadata (query optional) |
-| `/wiki-reindex --delta --vault <vid>` | after manual markdown edits |
-| `/wiki-reindex --full --vault <vid>` | rebuild from scratch (rare) |
-| `/wiki-lint --vault <vid>` | periodic health-check |
-| `/wiki-index-render --vault <vid>` | regenerate index.md projection |
-| `/wiki-enrich --vault <vid> --source <file>` | new raw source → end-to-end |
+| `wiki-init --register-existing --vault <path>` | Register a pre-existing vault in the index (one-time, per vault). |
+| `wiki-init --scaffold-new --vault <path> [--layout <name>]` | Scaffold a brand-new vault layout. `--layout` ∈ `karpathy` · `dev-project` · `obsidian-personal` (+ custom). |
+| `wiki-init --reconcile --vault <path>` | Rename / re-point a registered vault. |
+| `wiki-reindex --full --vault <vid>` | Wipe + rebuild the DB from markdown (the Class A→B gate; rare, authoritative). |
+| `wiki-reindex --delta --vault <vid>` | Incremental mtime/hash-based reindex after manual edits. |
+| `wiki-index-upsert --vault <vid> --file <path>` | Index a single markdown file (idempotent — file-hash match → no-op). |
+| `wiki-index-render --vault <vid> [--auto-indexes]` | Render `index.md` from the DB (preserves `<!-- BEGIN-CUSTOM -->` blocks); `--auto-indexes` also renders Class-B ledgers. |
 
-Each has a SKILL.md under [`skills/`](skills/) with full contract,
-exit codes, and JSON envelope schema. Discoverable via Claude Code's
-Skill tool and from the `.claude/` / `.agent/` vendor trees.
+### Search & retrieval
+
+*The everyday read path — search before you grep; turn the corpus into cited answers and audit them.*
+
+| Command | What it does |
+|---|---|
+| `wiki-search "<query>" --vaults <vid>[,<vid>…]` | FTS5 BM25 search across one/many vaults; ranked hits + snippets; expands aliases. |
+| `wiki-search [--status <v>] [--severity <v>] [--where 'field=value'] --vaults <vid>` | Filter by frontmatter metadata (query optional → pure listing). |
+| `wiki-query prepare/apply --vault-root <path>` | RAG: retrieve → orchestrator-cited synthesis → file a compounding `_queries/<slug>.md` page (`prepare`/`apply`). |
+| `wiki-verify-multi prepare/apply` | Off-by-default 4-critic audit of a filed answer vs its cited sources → `_verifications/verify-<slug>.md` verdict page; FAIL records + exits non-zero, never mutates the answer. |
+
+### Knowledge construction
+
+*Turn raw material into compounding pages, and keep the chronological log in sync.*
+
+| Command | What it does |
+|---|---|
+| `wiki-enrich --vault <vid> --source <file>` | End-to-end: invoke (vendored) `wiki-ingest` on a raw source, then mirror its manifest into the index. |
+| `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
+| `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
+
+### Entity resolution (Epic 7)
+
+*Curate the entity graph so it stays a graph, not a pile — vet candidates, unify spellings, dedupe.*
+
+| Command | What it does |
+|---|---|
+| `wiki-confirm <slug> --vault <vid>` | Promote a candidate entity to confirmed (`--undo` to demote; `--auto --threshold N` to bulk-promote by mention count). |
+| `wiki-alias (--add\|--remove) <surface> <slug> --vault <vid>` / `wiki-alias --list [<slug>]` | Manage alias surface-strings (Class A frontmatter + DB mirror; hard-unique per vault). `--list` without a slug lists every alias in the vault. |
+| `wiki-merge <duplicate-slug> <canonical-slug> --vault <vid>` | Fold a duplicate entity into the canonical one — re-point refs, absorb + register redirect aliases, delete the dup page. |
+
+### Health
+
+*Keep the compounding honest — surface broken links, drift, and duplicates; prove the cache is rebuildable.*
+
+| Command | What it does |
+|---|---|
+| `wiki-lint --vault <vid>` (or `--all`) | SQL-level health-check: orphan links, dangling refs, missing-on-disk pages, hash drift, type mismatches, cross-vault concept duplicates. `--mtime-skip` for a faster integrity-relaxed pass. |
+
+---
+
+## External dependency: `wiki-ingest`
+
+**Optional since TASK 004.** `wiki-enrich` composes with the `wiki-ingest` skill (v1.1+), which owns the
+LLM-driven file layer (page synthesis, additive merge, `log.md` append,
+contradiction detection). Since TASK 004 that module is **vendored** into
+`scripts/wiki_ingest/` and called in-process by default — **no external install
+required** for normal operation. Two paths:
+
+- **Primary (default):** in-process call into the vendored `scripts.wiki_ingest`
+  package. No subprocess, no `PATH` dependency. Active when the vendored import
+  succeeds and `WIKI_ENRICH_NO_VENDORED` is unset.
+- **Fallback (subprocess):** legacy path via a `wiki-ingest` binary on `PATH`.
+  Active when the vendored import fails, or `WIKI_ENRICH_NO_VENDORED=1` is set
+  (escape hatch for debugging/comparison/standalone users).
+
+Provenance + sync workflow:
+[`scripts/wiki_ingest/VENDORED_FROM.md`](scripts/wiki_ingest/VENDORED_FROM.md);
+refresh via `bash scripts/sync_wiki_ingest.sh [--dry-run]`. Contract:
+[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md). License
+notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, …) are self-contained and
+need no `wiki-ingest`. `wiki-extract-concepts` calls the Anthropic API directly
+(set `ANTHROPIC_API_KEY`); its `--ingest` auto-dispatch uses the neutral
+`_manifest_consumer` module in-process.
 
 ---
 
 ## Repo layout
 
 ```
-docs/                  TASK.md, PLAN.md, ARCHITECTURE.md, ADRs, schemas
-scripts/wiki_index/    DAL + lint + reindex + rendering + security
-scripts/wiki_source/   Source adapters (manual; future: transcript, email, ...)
-scripts/wiki_skills/   CLI entry points (8 thin wrappers)
-scripts/benchmark.py   Synthetic-vault SLO harness
-scripts/wiki_migrate_flat_to_folders.py   tmp2/ → _sources/ one-shot
-skills/wiki-*/         canonical SKILL.md for our 8 skills
-commands/wiki-*.md     slash-command wrappers (Claude Code)
-workflows/wiki-*.md    workflow definitions (multi-step orchestration)
-bin/wiki-*             shell wrappers (cd + venv + exec)
-bin/install-globally.sh        global install (recommended path A)
-bin/install-project-symlinks.sh  repo-local symlinks (dev path B)
-bin/link-*.sh          one-off helpers for adding a new skill/command/workflow
-sql/                   wiki-index-v2.sql (DDL)
-templates/             WIKI_SCHEMA.md.tmpl, CLAUDE.md.tmpl for new vaults
-tests/                 pytest suite (293 tests) + fixtures
+docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, plans/, issues/
+  adr/                      ADR-001 (wrap+index), ADR-002 (multi-vault + Class A/B/C)
+  KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
+config/                     layout-config.schema.yaml, wiki-config.schema.yaml
+sql/wiki-index-v2.sql       the SQLite DDL (user_version = 5)
+templates/                  WIKI_SCHEMA.md.tmpl, CLAUDE.md.tmpl for new vaults
+
+scripts/
+  wiki_index/               DAL: repository, sqlite_repository, lint, reindex,
+                            rendering, normalization, security, layout, layout_config
+  wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml
+  wiki_skills/              14 CLI entry points + _common/_retrieval/_manifest_consumer
+  wiki_source/              source adapters (base, manual, parsing)
+  wiki_ingest/              vendored file layer (snapshot of external wiki-ingest)
+  benchmark.py              synthetic-vault SLO harness
+  sync_wiki_ingest.sh       refresh the vendored snapshot
+
+skills/                     17 canonical SKILL.md dirs (16 wiki-* + concept-extraction)
+commands/wiki-*.md          14 slash-command wrappers (Claude Code)
+workflows/wiki-*.md         multi-step orchestration recipes
+bin/wiki-*                  14 shell wrappers (cd + venv + exec)
+bin/install-globally.sh     global install (path A)
+bin/install-project-symlinks.sh   repo-local symlinks (dev path B)
+tests/                      pytest suite (913 collected) + fixtures
+samples/                    gitignored scratch tree for dogfooding vaults
 ```
 
 ---
@@ -324,31 +438,41 @@ tests/                 pytest suite (293 tests) + fixtures
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 293 passed, 4 skipped (~3s)
-mypy --strict scripts/  # clean on 30 source files
+pytest tests/           # 909 passed, 4 skipped
+mypy --strict scripts/  # clean on 69 source files (the contract for scripts/)
 ```
 
-The agentic-development framework (orchestrator, skills/workflows for
-analysis → architecture → plan → develop → review) is installed as a
-symlink — its content lives outside the repo (`.agentic-development/`,
-`System/`, framework skills under `.agent/skills/`, `.claude/skills/`,
-etc.) and never enters git. See `.gitignore`.
+Conventions:
 
-Custom project skills under `skills/wiki-*/` are tracked. Re-running
-`bin/install-project-symlinks.sh` after a fresh clone reconnects them
-to this repo's `.claude/` and `.agent/` trees.
+- **Python** always via `.venv/`; **Node** always via local `node_modules/`.
+  Never install globally.
+- New skills/commands/workflows go at the repo root
+  (`skills/<name>/SKILL.md`, `commands/<name>.md`, `workflows/<name>.md`) and are
+  symlinked into `.claude/` and `.agent/` by the `bin/link-*.sh` helpers.
+- Vault artifacts (`_sources/`, `_concepts/`, `_entities/`, `00-Vault-Index/`,
+  `*.db*`, …) are gitignored. Dogfooding vaults live under `samples/` (also
+  gitignored). Durable test fixtures live under their owning
+  `skills/<name>/evals/`.
+- The agentic-development framework (orchestrator, analysis→architecture→plan→
+  develop→review skills/workflows) is installed as a symlink and lives *outside*
+  git (`.agentic-development/`, `System/`, framework skills under `.agent/`,
+  `.claude/`). Re-run `bin/install-project-symlinks.sh` after a fresh clone to
+  reconnect the project's `wiki-*` skills.
 
 ---
 
 ## Pointers
 
-- **[docs/tasks/](docs/tasks/)** — archived task specs (no active task at
-  HEAD; most recent: `task-003-v3.1-wiki-extract-concepts.md`)
-- **[docs/plans/](docs/plans/)** — archived development plans (lockstep
-  with `docs/tasks/`)
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — system architecture, multi-vault design (living document; status header tracks shipped tasks)
-- **[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)** — deferred items, including performance SEV-1/SEV-2 set + architectural follow-ups (H-PERF-3, H-5, H-6)
-- **[docs/adr/ADR-001-wiki-ingest-integration.md](docs/adr/ADR-001-wiki-ingest-integration.md)** — Option I (wrap + index)
-- **[docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)** — vault_id, Class A/B/C contract
-- **[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md)** — external skill contract
-- **[scripts/wiki_index/layout.py](scripts/wiki_index/layout.py)** — single source of truth for layout constants
+- **[docs/manuals/obsidian-llm-wiki_manual.md](docs/manuals/obsidian-llm-wiki_manual.md)** — the methodology manual: why each command exists, working with Obsidian documents (standard + custom layouts), and driving the wiki from another agent.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — living architecture (multi-vault, ADRs, status header tracking shipped tasks).
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — forward-looking work (e.g. the deferred R-X2c archive hook).
+- **[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)** — auto-rendered Class-B ledger over `docs/issues/*.md` (deferred perf set + residuals). Edit the per-issue files, never the ledger.
+- **[docs/tasks/](docs/tasks/)** + **[docs/plans/](docs/plans/)** — archived task/plan specs (lockstep).
+- **[docs/adr/ADR-001-wiki-ingest-integration.md](docs/adr/ADR-001-wiki-ingest-integration.md)** — Option I (wrap + index).
+- **[docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)** — `vault_id` partitioning + Class A/B/C contract.
+- **[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md)** — external `wiki-ingest` skill contract.
+- **[sql/wiki-index-v2.sql](sql/wiki-index-v2.sql)** — the schema DDL.
+- **[scripts/wiki_index/layout.py](scripts/wiki_index/layout.py)** — single source of truth for the `karpathy` layout constants.
+- **[CLAUDE.md](CLAUDE.md)** — project agent instructions + the full per-task ship log.
+</content>
+</invoke>
