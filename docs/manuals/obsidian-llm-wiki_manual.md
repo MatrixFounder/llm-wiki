@@ -28,6 +28,7 @@
   - [Registering a pre-made summary (not raw)](#registering-a-pre-made-summary-not-raw)
   - [Custom layouts: the layout engine](#custom-layouts-the-layout-engine)
   - [Mixed vault: search-only areas + enrich-able course zones](#mixed-vault-search-only-areas--enrich-able-course-zones)
+  - [Automating the mix: `wiki-sync` (per-note routing, conversion, OCR)](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr)
 - [Using the wiki as an external resource for other agents](#using-the-wiki-as-an-external-resource-for-other-agents)
   - [The integration model: JSON envelopes + exit codes](#the-integration-model-json-envelopes--exit-codes)
   - [The `prepare` / `apply` contract (Decision-17)](#the-prepare--apply-contract-decision-17)
@@ -170,8 +171,8 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 
 | Command | Plain terminal / Obsidian `Terminal` plugin | Claude Code `/wiki-*` | Gemini / other agents |
 |---|---|---|---|
-| `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` | ✅ run directly | ✅ | ✅ |
-| `query` · `verify-multi` · `extract-concepts` · `enrich` *(need an LLM step)* | ⚠️ deterministic halves only — you'd supply the LLM reasoning by hand | ✅ **recommended** | ✅ via each workflow's `## Fallback` |
+| `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` · `sync scan` · `sync record` | ✅ run directly | ✅ | ✅ |
+| `query` · `verify-multi` · `extract-concepts` · `enrich` · `sync` *(executor)* *(need an LLM step)* | ⚠️ deterministic halves only — you'd supply the LLM reasoning by hand | ✅ **recommended** | ✅ via each workflow's `## Fallback` |
 
 > **The one discipline that matters:** after you hand-edit markdown in Obsidian,
 > tell the index — `wiki-index-upsert` for one file, `wiki-reindex --delta` for
@@ -192,7 +193,8 @@ These turn raw material into compounding pages.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-enrich`** | The **raw-material** on-ramp. Hand it a raw source file; it invokes the (vendored) `wiki-ingest` synthesis layer (which **LLM-summarises** the source), then mirrors the produced manifest into the index. ⚠️ `wiki-enrich` **always treats `--source` as raw** — there is no "skip the summary" mode. If you *already have a finished summary*, do **not** use `wiki-enrich`; use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead. |
+| **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp). `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (convert / ingest / upsert / skip); the [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes it idempotently (office/PDF→md, **scanned-PDF OCR**, `.vtt` de-timestamp, summarise→enrich→extract, ready-note upsert, view-sidecar skip). Reach for it instead of hand-routing a folder of heterogeneous drops file-by-file. Deterministic core, no LLM; `wiki-sync record` is the per-file commit-marker. |
+| **`wiki-enrich`** | The **raw-material** on-ramp (single file). Hand it a raw source file; it invokes the (vendored) `wiki-ingest` synthesis layer (which **LLM-summarises** the source), then mirrors the produced manifest into the index. ⚠️ `wiki-enrich` **always treats `--source` as raw** — there is no "skip the summary" mode. If you *already have a finished summary*, do **not** use `wiki-enrich`; use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead. (`wiki-sync` composes `wiki-enrich` under the hood for `ingest`-routed files.) |
 | **`wiki-extract-concepts`** | The *retroactive* on-ramp. Given a source page already in the index, it extracts the concepts/entities it mentions but that have no page yet — turning implicit knowledge into explicit, linkable pages. A two-pass `prepare`/`apply` skill (see [below](#the-prepare--apply-contract-decision-17)). Use it to *densify* an existing corpus, or after importing many sources at once — **regardless of how the source page got indexed** (raw-ingested or hand-registered). |
 | **`wiki-index-upsert`** | The single-file primitive. Indexes one markdown file idempotently (a file-hash match is a no-op). Use it when you've hand-written, hand-edited, **or dropped in a finished summary from elsewhere** and want the index to reflect it immediately without a full reindex — **no LLM, no raw processing**. |
 | **`wiki-append-log`** | Writes a structured event to `log.md` *and* mirrors it to the `log_events` table atomically (flock + fsync, bi-directional M-2 contract). The log is grep-friendly chronological memory for future agent sessions — git diff is for humans, the log is for the next LLM. |
@@ -600,14 +602,114 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 - The **personal vault stays untouched** (indexed only); enrich writes solely into
   the course zone.
 
-> **Per-note routing has shipped (`wiki-sync`, TASK 018).** Beyond the per-*folder*
-> split above, routing per *note* inside a mixed folder — a `#wiki/raw` tag that
-> sends one note through full ingest while its neighbours are upserted as-is, plus
-> generated-view-sidecar/folder-note skipping — is now the **`wiki-sync`
-> dispatcher**: `wiki-sync scan <zone> --vault <id>` emits a deterministic plan
-> (convert / ingest / upsert / skip per file by extension + `#wiki/*` tags), and
-> [`workflows/wiki-sync.md`](../../workflows/wiki-sync.md) executes it idempotently.
-> See `skills/wiki-sync/SKILL.md` for the contract.
+---
+
+### Automating the mix: `wiki-sync` (per-note routing, conversion, OCR)
+
+The two-vault recipe above splits work *by folder*. **`wiki-sync`** (TASK 018 / R-11)
+goes one level finer: point it at a **zone** and it classifies **every file** — by
+extension, by per-note `#wiki/*` tag, and by content shape — then routes each one to
+**convert / ingest / upsert / skip**. Dropping a transcript, a `.docx`, or even a
+*scanned* PDF into a course folder now "just" becomes compounding wiki pages, without
+hand-invoking `wiki-enrich` / `wiki-index-upsert` per file.
+
+**Two phases (Decision-17 — deterministic plan, orchestrator-owned execution):**
+
+- **`wiki-sync scan <zone> --vault <id>`** — *pure Python.* Walk → classify →
+  `sha256` → `is_unchanged` → a strict **plan JSON** (`entries[]` + `summary{}`).
+  **No LLM, no network, no mutation.** `--dry-run` prints a human report of every
+  action + reason. This is the part you review before anything is written.
+- **[`workflows/wiki-sync.md`](../../workflows/wiki-sync.md)** — the orchestrator
+  *executor.* Per plan entry it converts / de-timestamps / **H-6-fences** /
+  summarises / enriches / extracts / upserts / skips, then writes a per-file
+  **commit-marker** (`wiki-sync record`) so a re-run is a no-op. (`/wiki-sync`
+  drives the whole thing.)
+
+```mermaid
+flowchart TD
+    F["file in the zone"] --> EXT{"extension<br/>(case-folded)"}
+    EXT -->|".docx .xlsx .pptx .pdf"| CONV["convert+ingest<br/>→ _raw/.staging/&lt;slug&gt;-&lt;ext&gt;.md<br/>(scanned PDF → OCR)"]
+    EXT -->|".txt .vtt .srt"| ING["ingest<br/>(.vtt/.srt → de-timestamp first)"]
+    EXT -->|"image · .canvas · .excalidraw · .base"| SKb["skip (binary / view-artifact)"]
+    EXT -->|".md"| TAG{"#wiki tag /<br/>wiki: field?"}
+    TAG -->|"skip"| SKt["skip: wiki/skip"]
+    TAG -->|"raw  (or under _raw/)"| ING
+    TAG -->|"none / keep"| VIEW{"generated-view<br/>sidecar?"}
+    VIEW -->|"only-a-view block"| SKv["skip: view:dbfolder/base/dataview/folder-note"]
+    VIEW -->|"embeds a view + real prose"| TYPE
+    VIEW -->|"plain note"| TYPE{"type: mappable?<br/>(same layout resolution<br/>wiki-index-upsert uses)"}
+    TYPE -->|"yes"| UP["upsert (no LLM)"]
+    TYPE -->|"no"| SKu["skip: unmappable-type"]
+    CONV --> ING
+    ING --> REC["on full success →<br/>wiki-sync record (commit-marker)"]
+    UP --> REC
+    classDef act fill:#fdeede,stroke:#e0a050;
+    classDef sk fill:#eef0f2,stroke:#99a;
+    class CONV,ING,UP,REC act;
+    class SKb,SKt,SKv,SKu sk;
+```
+
+**Routing by extension** (case-folded — `.PDF` == `.pdf`):
+
+| Extension | Action |
+|---|---|
+| `.docx` `.xlsx` `.pptx` `.pdf` | **convert** → staged `_raw/.staging/<slug>-<ext>.md` (a *non-walked* dir) → **ingest** |
+| `.txt` `.vtt` `.srt` | **ingest** (`.vtt`/`.srt` de-timestamped first) |
+| `.md` | content rules (tags → view → type, below) |
+| images · `.canvas` · `.excalidraw.md` · `.base` · unknown | **skip** (binary / view-artifact / unknown-ext) |
+
+**Routing by per-note tag** (`.md` only) — precedence **`skip` > `raw` > `keep` > default**.
+Accepts both an inline `#<ns>/x` tag (outside code fences), a frontmatter `tags:` entry,
+and a `<ns>:` field (`<ns>` = `tag_namespace`, default `wiki`):
+
+| Tag / signal | Effect |
+|---|---|
+| `#wiki/skip` (or `wiki: skip`) | never index this note |
+| `#wiki/raw` (or the file is under `_raw/`) | treat as **raw** → full ingest (summarise → concepts) |
+| `#wiki/keep` | **rescue** a `.md` from an `exclude:` zone (only `keep` rescues — not `raw`) |
+| *(no tag)* | a **mappable `type:`** → `upsert`; otherwise `skip: unmappable-type` |
+
+**Generated-view sidecars are skipped** — they're navigation, not knowledge: DB Folder
+(`database-plugin:` frontmatter and/or a ` ```yaml:dbfolder ` block), Bases (` ```base `),
+Dataview (` ```dataview `/` ```dataviewjs `), folder-notes (stem == dir). The
+**only-a-view guard** skips them *only* when the note is essentially one view block —
+a real note that *embeds* a view alongside prose is content → `upsert` (no over-flagging).
+
+**Scanned PDFs are OCR'd** (wired 2026-06-03): a `.pdf` with no text layer
+(`pdf_extract.py` exit `10 DocumentScanned`) is run through the `pdf` skill's
+`pdf_ocr.py` (`ocrmypdf`, default languages **`eng+rus`**) → searchable text → ingest.
+If the OCR engine isn't installed (`bash <pdf-skill>/scripts/install.sh --with-ocr`
++ system tesseract/ghostscript), the file is flagged **`needs-ocr`** and skipped —
+never silently dropped.
+
+**Config** — `<vault>/.wiki/sync.yaml` (optional): `zones`, `exclude`, `tag_namespace`
+(default `wiki`), and `extensions` overrides. Strict schema (a misspelled key is a load
+error); an untrusted file is size-capped (256 KiB) + anchor-banned + symlink-refused.
+
+**Recipe (test on a copy first):**
+
+```bash
+# 1. PLAN — deterministic, writes nothing; review every action + reason
+wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
+
+# 2. EXECUTE the plan — the orchestrator recipe (convert/ingest/upsert/skip per file).
+#    Invoke /wiki-sync, or follow workflows/wiki-sync.md step by step.
+
+# 3. RE-RUN — every recorded file now reports is_unchanged (a no-op).
+wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
+```
+
+**Idempotency & safety:** the executor writes a `source_state` commit-marker per file
+**only on full success** — a partial failure records nothing, so the file is re-planned
+next run (no half-done state survives). The plan is **deterministic** (entries sorted by
+path, no timestamp → two scans byte-identical). Per-file isolation: one bad file
+(`needs-ocr` / unconvertible / oversize) is flagged and skipped, never crashing the batch.
+**Zero DDL** — idempotency rides a `source_state` partition on the existing schema.
+
+> **`wiki-sync` vs the two-vault split:** they compose. Use the two-vault `ignore`
+> boundary to keep search-only areas out of the enrich machinery; use `wiki-sync`
+> *inside* an enrich zone to route its heterogeneous drops per-file. See
+> `skills/wiki-sync/SKILL.md` for the full plan-JSON + exit-code contract.
 
 ---
 
@@ -823,6 +925,7 @@ skill's `SKILL.md`. Quick index:
 | `wiki-search` | FTS5 + metadata search across vaults | [skills/wiki-search](../../skills/wiki-search/SKILL.md) |
 | `wiki-query` | RAG: retrieve → cited synth → file the answer | [skills/wiki-query](../../skills/wiki-query/SKILL.md) |
 | `wiki-verify-multi` | 4-critic audit of a filed answer | [skills/wiki-verify-multi](../../skills/wiki-verify-multi/SKILL.md) |
+| `wiki-sync` | Format-aware dispatcher: `scan` a zone → plan → convert/ingest/upsert/skip (+ scanned-PDF OCR); `record` = commit-marker | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
 | `wiki-enrich` | Ingest a raw source, then index it | [skills/wiki-enrich](../../skills/wiki-enrich/SKILL.md) |
 | `wiki-extract-concepts` | Two-pass concept extraction | [skills/wiki-extract-concepts](../../skills/wiki-extract-concepts/SKILL.md) |
 | `wiki-append-log` | Append a structured log event | [skills/wiki-append-log](../../skills/wiki-append-log/SKILL.md) |
