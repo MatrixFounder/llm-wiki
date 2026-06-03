@@ -143,7 +143,34 @@ the §D8 durability acceptance (UC-14/UC-15) in
 `tests/test_entity_resolution_durability.py`. **Unblocks R-X5** (cross-project
 entity graph, gated on Epic 7).
 
-### R-11. `wiki-sync` — format-aware, tag-routed ingest/upsert dispatcher — PROPOSED (P1)
+### R-11. `wiki-sync` — format-aware, tag-routed ingest/upsert dispatcher — ✅ SHIPPED (TASK 018, 2026-06-03)
+**Shipped** as TASK 018 (`task-018-wiki-sync`): `wiki-sync scan` (deterministic
+plan JSON — own bounded walk → classify → sha256 → `is_unchanged`) +
+`wiki-sync record` (executor commit-marker) + `workflows/wiki-sync.md` (the
+Decision-17 orchestrator: convert→`_raw/.staging/` · `.vtt`/`.srt` de-timestamp ·
+**H-6 fence** · summarise · enrich · extract · upsert · skip · per-vault lock ·
+per-file isolation) + `skills/wiki-sync/SKILL.md` + `config/sync-config.schema.yaml`.
+**Zero DDL** — idempotency rides a new `source_state` `source_kind='sync'`
+partition via two generic DAL methods (`get/set_source_state`); `user_version`
+stays 5. Hardened by **two adversarial gates**: the per-phase 3-critic pass (security:
+anchorless deep-nesting DoS → controlled exit 6; logic: 2 crash-on-malformed-
+frontmatter + 1 idempotency `None`-hash false-positive; performance: ext-set
+hoist) **and** a final full-surface `/vdd-multi` converging to clean-pass on all
+three (security MED `.md`-read OOM cap; logic MED UTF-8-BOM parity + `record`
+FK-test; sec LOW canonical-path + full-path config-symlink containment; workflow
+H-6 nonce / `flock`-primary / SEC-A3 staging guard). **73 new tests**
+(`tests/test_wiki_sync.py` + `tests/test_wiki_sync_e2e.py` over committed
+`tests/fixtures/sync/**` incl. a real `yaml:dbfolder` sidecar; **986 pytest +4
+skipped** overall). **Residual (P2,
+deferred — recorded, not silent):** the perf MED — a `.md` is read twice (decoded
+for classify + re-opened for hash); the architecture pre-accepted this "honest,
+bounded" read-cost (binaries pruned pre-read, zones scoped). A future fuse reads
+the bytes once. **Out of scope (unchanged):** binary-attachment indexing at
+scale, daily-block dedup, PDF-OCR completion (upstream Universal-skills —
+`wiki-sync` only flags `needs-ocr`).
+
+<details><summary>Original proposal (for history)</summary>
+
 The automation that actually **closes the 3→10–15 pages-per-ingest gap** on a
 *real, mixed* personal vault. The static layout engine (R-X1) classifies files by
 **path** and only *indexes* `.md` that already exists; it cannot (a) bring in
@@ -218,6 +245,8 @@ an operator runs a mixed vault where dropping a transcript / office doc into a
 collection folder should "just" become a compounding wiki without hand-invoking
 `wiki-enrich` per file. **Effort**: ~1 small TASK (Stub-First; mostly orchestration
 over existing CLIs + a shell-out conversion stage).
+
+</details>
 
 ---
 

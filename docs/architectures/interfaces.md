@@ -57,32 +57,51 @@
 
 ### 5.4. Sync Dispatcher — `wiki-sync` (TASK 018 / R-11)
 
-**CLI surface (deterministic core):**
+**CLI surface (deterministic core — two subcommands, as shipped):**
 
 ```
-wiki-sync scan <zone> [--vault <vid>] [--vault-root <path>] [--dry-run] [--db-path <p>]
+wiki-sync scan   <zone> [--vault <vid>] [--vault-root <path>] [--dry-run] [--db-path <p>]
+wiki-sync record <vault-rel-path> --source-hash <sha256> --vault <vid> [--db-path <p>]
 ```
 
 - **`scan`** walks the zone (its **own** bounded walk — *not* `iter_pages`, which is
   `.md`-only; EC-1/ID-5), classifies each file, and emits the **plan JSON** envelope
   on stdout (full schema in `functional-architecture.md` → *Sync Dispatcher → Plan
   JSON*). It is **deterministic** (no LLM, no network, no mutation) and reads the
-  `wiki-sync` `source_state` partition for `is_unchanged`.
+  `wiki-sync` `source_state` partition for `is_unchanged`. A `.md` over
+  `WIKI_SYNC_MD_MAX_BYTES` (8 MiB) is **skipped (`oversize-source`) before any
+  read** — the one unbounded-RAM lever, bounded (vdd-multi SEC-MED); the
+  convert/text hash read is chunk-streamed.
+- **`record`** is the executor's post-success **commit-marker** (the only way the
+  orchestrator workflow — not Python — can write the DAL): it `set_source_state`s
+  the `sync` row so the next `scan` short-circuits the file as `is_unchanged`.
+  Called by `workflows/wiki-sync.md` **only** after a file's pipeline *fully*
+  succeeds (a partial failure records nothing → the file is re-planned). Validates
+  a 64-hex `--source-hash` + a **canonical** vault-relative `path` (no
+  `..`/`.`/NUL/control/backslash/absolute; `pp.as_posix()==path`); a FK-miss on an
+  unregistered vault → `VAULT_NOT_REGISTERED`. *(The spec earlier named only
+  `set_source_state`; `record` is its necessary orchestrator-facing CLI surface.)*
 - **`--dry-run`** prints the human-readable plan (per-file action + reason + action
   counts) and writes nothing — identical classification, presentation only.
 - Zone is a CLI arg (MVP); persistent multi-zone config lives in
   **`<vault>/.wiki/sync.yaml`** (`zones`, `exclude`, `tag_namespace`, `extensions`),
   validated against a new **`config/sync-config.schema.yaml`** (strict, like
   `layout-config`; a misspelled key is a load error; `exclude`×`keep` precedence
-  pinned at the loader — META-4). The read is **size-capped** (≤256 KiB) **and parsed
-  by a custom `SafeLoader` that forbids YAML anchors/aliases** — note `yaml.safe_load`
-  alone does NOT stop an anchor-bomb (it still expands aliases; SEC-A5/SEC-N3), so the
-  size-cap + anchor-ban together are the bound.
+  pinned at the loader — META-4). The loader is hardened against an untrusted file:
+  (0) **full-path symlink containment** — the leaf is refused if symlinked AND the
+  resolved path must be inside the vault (so a symlinked *parent* `.wiki/` cannot
+  redirect the read out-of-vault; vdd-multi SEC-MED); (1) a **256 KiB size-cap**
+  (`stat().st_size` before read); (2) a custom **`SafeLoader` that forbids YAML
+  anchors/aliases** + maps `RecursionError` (deep-nesting DoS) to a controlled
+  error — note `yaml.safe_load` alone does NOT stop an anchor-bomb (it still
+  expands aliases; SEC-A5/SEC-N3), so the size-cap + anchor-ban + recursion-guard
+  together are the bound.
 
 **Exit codes (consistent with the suite):** `0` ok · `2` precondition
-(zone missing / not inside the vault / vault unregistered) · `6`
-config-invalid (`.wiki/sync.yaml` schema violation). The error envelope never
-echoes untrusted file content (CWE-209/117).
+(`scan`: zone missing / not inside the vault / vault unregistered; `record`:
+`INVALID_HASH` / `INVALID_PATH` / `VAULT_NOT_REGISTERED`) · `6` config-invalid
+(`.wiki/sync.yaml` schema violation / symlink / oversize / anchor / deep-nesting).
+The error envelope never echoes untrusted file content (CWE-209/117).
 
 **DAL surface (corrected — the earlier "no new DAL surface" claim was wrong, F2/ID-2/CONS-2).**
 `wiki-sync` adds **two generic, zero-DDL `source_state` methods** to `IndexRepository`

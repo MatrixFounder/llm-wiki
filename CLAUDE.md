@@ -134,6 +134,43 @@ Dogfood found + fixed **DF-017-1** (SEV-3, pre-existing): `check_drift` type-mis
 config-driven layout `type_mapping` → 56 false positives on the dev-project docs vault;
 `_is_intentional_mapping` now unions `config.type_mapping` → 56→0. **909 pytest (+4 skipped), mypy
 strict (69 files).** See `docs/TASK.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md` §3.5/§8.4, `docs/tasks/task-017-*.md`.
+**TASK 018 (wiki-sync — R-11 ROADMAP) SHIPPED 2026-06-03** (uncommitted, branch
+`task-018-wiki-sync`): the **15th CLI** `wiki-sync` — a format-aware, tag-routed
+ingest dispatcher closing the *Mixed vault* (search-only areas + enrich-able course
+zones) automation gap. **`wiki-sync scan <zone>`** = deterministic plan-only walk
+(`scripts/wiki_skills/wiki_sync.py` + the routing brain `_sync.py`): own bounded
+walk (one `lstat`/candidate, ext-prune-before-stat, symlink-refuse,
+`_raw/.staging`/dot-dir prune) → `classify_file` (extension front-stage →
+`#wiki/{raw,skip,keep}` tag precedence **skip>raw>keep>default** → generated-view
+sidecar + **only-a-view guard** [DB Folder/Bases/Dataview/folder-note skip ONLY
+when essentially one view block; embeds-a-view+prose → upsert] → **layout-general**
+unmappable-type via the indexer's own `normalize_frontmatter`, W-1) → `sha256(bytes)`
+→ `is_unchanged` → strict **plan JSON** (sorted by vault-rel POSIX path,
+deterministic, no timestamp; `--dry-run` writes nothing). **`wiki-sync record`** =
+the executor commit-marker. **`workflows/wiki-sync.md`** = the Decision-17
+orchestrator (convert→non-walked `_raw/.staging/` · `.vtt`/`.srt` de-timestamp ·
+**H-6 fence** before `summarizing-meetings` · `wiki-enrich` · `wiki-extract-concepts`
+· `wiki-index-upsert` · per-vault lock · per-file isolation · `needs-ocr` flag).
+**Zero DDL** (`user_version` 5): idempotency rides a new `source_state`
+`source_kind='sync'` partition via two generic DAL methods (`get/set_source_state`)
++ `config/sync-config.schema.yaml` (strict; 256 KiB cap + anchor-ban `SafeLoader` +
+`RecursionError`-safe → controlled `INVALID_SYNC_CONFIG`). **No `import anthropic`**
+(grep-guarded). Full VDD pipeline + per-phase Sarcasmotron + **two adversarial
+gates**: the per-phase 3-critic pass (security HIGH anchorless-deep-nesting DoS →
+controlled exit 6; logic 2× malformed-frontmatter crash + 1× idempotency
+`None`-hash false-positive; perf ext-set hoist) **and** a final full-surface
+`/vdd-multi` (Logic ✓ Security ✓ Performance ✓ — converged L=2/S=3/P=1):
+security MED `.md`-read OOM → `WIKI_SYNC_MD_MAX_BYTES` 8 MiB `oversize-source`
+skip-before-read; logic MED UTF-8-BOM `.md` mis-skip → BOM-strip parity with the
+indexer; logic MED `record` FK-path test; sec LOW `_is_clean_rel` canonicalisation
++ **full-path config-symlink containment** (a symlinked parent `.wiki/` can't
+redirect the read out-of-vault); + workflow H-6 nonce-sentinel / `flock`-primary
+lock / SEC-A3 staging-write guard — all fixed with regressions. **73 new tests**
+(`tests/test_wiki_sync.py` + `tests/test_wiki_sync_e2e.py` over committed
+`tests/fixtures/sync/**` incl. a real `yaml:dbfolder` sidecar). **986 pytest (+4
+skipped), mypy strict (72 files).** Residual P2 (recorded in ROADMAP, not silent):
+the `.md`-read-twice fuse. See `docs/TASK.md`, `docs/PLAN.md`,
+`docs/tasks/task-018-*.md`, `docs/reviews/`.
 
 ## Knowledge lookup priority
 

@@ -54,7 +54,7 @@ layer.
 | **Type** | Multi-vault knowledge-base index + CLI toolkit |
 | **Canonical source** | Markdown in the Obsidian vault (Class A) |
 | **Derived cache** | One global SQLite DB (FTS5 + WAL), partitioned by `vault_id` (Class B/C) |
-| **Surface** | 14 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
+| **Surface** | 15 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
 | **I/O contract** | stdin/args in → one-line JSON envelope on stdout + exit code |
 | **Core invariant** | The DB is 100% rebuildable from markdown (`wiki-reindex --full`) |
 | **Schema** | `user_version = 5` (`sql/wiki-index-v2.sql`) |
@@ -182,7 +182,7 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 
 ## The command vocabulary, by purpose
 
-The 14 CLIs are not a flat list — each plays a role in the loop above. Below,
+The 15 CLIs are not a flat list — each plays a role in the loop above. Below,
 each command is given as *why it exists* and *when to reach for it*, not just its
 flags (those live in each [`SKILL.md`](../../skills/)).
 
@@ -600,11 +600,14 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 - The **personal vault stays untouched** (indexed only); enrich writes solely into
   the course zone.
 
-> **Per-note routing is planned.** Today the split is per *folder* (search vault vs
-> enrich vault). Routing per *note* inside a mixed folder — a `#wiki/raw` tag that
+> **Per-note routing has shipped (`wiki-sync`, TASK 018).** Beyond the per-*folder*
+> split above, routing per *note* inside a mixed folder — a `#wiki/raw` tag that
 > sends one note through full ingest while its neighbours are upserted as-is, plus
-> folder-note/sidecar skipping — is the proposed **`wiki-sync` dispatcher**
-> (ROADMAP R-11). Until it lands, separate raw vs ready by folder/vault as above.
+> generated-view-sidecar/folder-note skipping — is now the **`wiki-sync`
+> dispatcher**: `wiki-sync scan <zone> --vault <id>` emits a deterministic plan
+> (convert / ingest / upsert / skip per file by extension + `#wiki/*` tags), and
+> [`workflows/wiki-sync.md`](../../workflows/wiki-sync.md) executes it idempotently.
+> See `skills/wiki-sync/SKILL.md` for the contract.
 
 ---
 

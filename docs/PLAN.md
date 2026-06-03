@@ -90,6 +90,13 @@ Design is **locked** across two adversarial gates (`docs/reviews/adversarial-018
 
 ## Verification (end-to-end)
 
+> **SHIPPED 2026-06-03** — all 17 beads green; full VDD pipeline + `/vdd-multi`
+> 3-critic convergence (Logic ✓ Security ✓ Performance ✓). Final: **986 pytest
+> (+4 skipped), mypy strict (72 files)**, zero DDL (`user_version` 5). Shipped
+> surface adds the `wiki-sync record` commit-marker CLI (the orchestrator-facing
+> `set_source_state`) + vdd-multi hardening (8 MiB `.md` oversize cap, BOM parity,
+> full-path config-symlink containment).
+
 1. `pytest -q` ≥ 909 (+4 skipped) + `mypy --strict scripts/` clean at **every** bead;
    `wiki-sync` import carries **no `anthropic`** (grep-guarded).
 2. **AC-1/10** — `wiki-sync scan` emits valid plan JSON; two scans of an untouched zone are

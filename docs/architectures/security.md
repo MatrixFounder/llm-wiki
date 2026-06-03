@@ -104,8 +104,12 @@ conversion), so its security posture is explicit:
   MUST fence each raw/converted body with a sentinel **before** `summarizing-meetings`,
   not only at the extractor. File content is **never executed**.
 - **Resource bounds + YAML anchor-bomb (SEC-A5 corrected — SEC-N3, the binding fix):**
-  binaries are skipped by extension *before* any read; text/converted reads are
-  size-bounded. ⚠️ **`yaml.safe_load` does NOT defang a billion-laughs/anchor-bomb** —
+  binaries are skipped by extension *before* any read; a `.md` over
+  `WIKI_SYNC_MD_MAX_BYTES` (8 MiB) is **skipped (`oversize-source`) before
+  `read_text`** — the one unbounded-RAM lever in `scan`, now bounded (vdd-multi
+  SEC-MED); the convert/text hash read is chunk-streamed (bounded RAM). A
+  symlinked `.wiki/sync.yaml` is refused (`O_NOFOLLOW`). ⚠️ **`yaml.safe_load`
+  does NOT defang a billion-laughs/anchor-bomb** —
   it only blocks arbitrary-object construction (`!!python/object`), and **still
   expands aliases/anchors** (a 232-byte bomb expands to ~531 k nodes; a sub-256 KiB
   bomb reaches 10⁸). So the `.wiki/sync.yaml` defense is: (1) a **256 KiB input

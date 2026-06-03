@@ -1189,6 +1189,38 @@ class SQLiteRepository(IndexRepository):
                 (vault_id, verification_slug, verify_hash, now),
             )
 
+    def get_source_state(
+        self, vault_id: str, source_kind: str, scope: str, key: str
+    ) -> str | None:
+        """TASK 018 / Q-018-8 — generic `source_state` read. Defensive NULL guard
+        mirrors `check_query_state` (a corrupt `value IS NULL` row → None)."""
+        row = self._connect().execute(
+            "SELECT value FROM source_state "
+            "WHERE vault_id = ? AND source_kind = ? AND scope = ? AND key = ?",
+            (vault_id, source_kind, scope, key),
+        ).fetchone()
+        if row is None or row["value"] is None:
+            return None
+        return str(row["value"])
+
+    def set_source_state(
+        self, vault_id: str, source_kind: str, scope: str, key: str, value: str
+    ) -> None:
+        """TASK 018 / Q-018-8 — generic `source_state` UPSERT (commit marker).
+        `'sync'` needs no DDL: `source_state.source_kind` has no CHECK, so the
+        partition is pure data (`user_version` stays 5)."""
+        conn = self._connect()
+        now = datetime.now(timezone.utc).isoformat()
+        with conn:
+            conn.execute(
+                "INSERT INTO source_state "
+                "(vault_id, source_kind, scope, key, value, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(vault_id, source_kind, scope, key) DO UPDATE SET "
+                "value = excluded.value, updated_at = excluded.updated_at",
+                (vault_id, source_kind, scope, key, value, now),
+            )
+
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """R-5.6: in-DB (legacy) + cross-table alias collisions. The Class A
         frontmatter scan lives in the Lint Layer."""

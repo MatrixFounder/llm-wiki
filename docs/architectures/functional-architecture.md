@@ -822,7 +822,9 @@ Therefore `wiki-sync` owns its own partition:
 - **`scan`** computes `sha256` of the discovered file (original binary for
   `convert+ingest`) and reads the row via a new **read-only DAL getter**
   `get_source_state(...)`; `is_unchanged = (stored == computed)`.
-- **executor** writes/updates the row via `set_source_state(...)` **only after the
+- **executor** writes/updates the row via the **`wiki-sync record <rel>
+  --source-hash <sha256>`** CLI (its orchestrator-facing surface over
+  `set_source_state(...)` — the workflow is prose+bash, not Python) **only after the
   per-file chain fully succeeds** — a **commit marker**. A mid-chain failure leaves
   **no** `sync` row → the next run re-attempts, while the downstream tools' own
   idempotency (enrich footer, extract-concepts `source_state`) short-circuits the
@@ -834,8 +836,8 @@ Therefore `wiki-sync` owns its own partition:
 | `action` | Orchestrator steps |
 |---|---|
 | `skip` | no-op (recorded in report). |
-| `upsert` | `wiki-index-upsert --vault <vid> --source <path>` → on success `set_source_state(sync,…)`. |
-| `ingest` | `[.vtt/.srt]` de-timestamp pre-step (deterministic — reuse transcript-fetcher `scripts/sources/_vtt_to_text.py`, RC-1) → **H-6 fence the raw/converted body** (SEC-A1) → `summarizing-meetings` (raw→summary) → `wiki-enrich --source <summary>` (files `_sources/` + indexes + log) → `wiki-extract-concepts` prepare/apply → on full success `set_source_state(sync,…)`. |
+| `upsert` | `wiki-index-upsert --vault <vid> --source <path>` → on success `wiki-sync record <rel> --source-hash …`. |
+| `ingest` | `[.vtt/.srt]` de-timestamp pre-step (deterministic — reuse transcript-fetcher `scripts/sources/_vtt_to_text.py`, RC-1) → **H-6 fence the raw/converted body** with a per-run **nonce** sentinel (SEC-A1) → `summarizing-meetings` (raw→summary) → `wiki-enrich --source <summary>` (files `_sources/` + indexes + log) → `wiki-extract-concepts` prepare/apply → on full success `wiki-sync record <rel> --source-hash …`. |
 | `convert+ingest` | convert via the `docx`/`pdf`/`pptx`/`xlsx` skill → collision-safe `_raw/.staging/<slug(stem)>-<ext>.md` (refuse-overwrite-different-content SEC-A4; in the **non-walked** `.staging/` so it is never re-ingested, RG-1/W-3/SEC-N5); **converter reports `needs-ocr`** (image-only PDF) → record flagged, **skip the rest for this file, continue** (no `sync` row written); else proceed as `ingest`. |
 
 > **H-6 (SEC-A1, binding):** the *first* LLM stage here is `summarizing-meetings`,

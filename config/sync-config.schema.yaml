@@ -1,0 +1,74 @@
+$schema: 'https://json-schema.org/draft/2020-12/schema'
+$id: 'https://github.com/sergey/obsidian-llm-wiki/config/sync-config.schema.yaml'
+title: 'sync-config'
+description: >
+  JSON Schema 2020-12 for the per-vault `.wiki/sync.yaml` (TASK 018 / R-11). This
+  configures `wiki-sync` — the format-aware, tag-routed ingest dispatcher — and is
+  a SEPARATE config system from both the per-vault identity config
+  (config/wiki-config.schema.yaml) and the per-layout grammar
+  (config/layout-config.schema.yaml). The file is OPTIONAL: a vault with no
+  `.wiki/sync.yaml` uses the built-in defaults (empty zones/exclude, `wiki`
+  namespace, built-in extension routing in scripts/wiki_skills/_sync.py).
+
+  STRICT (additionalProperties: false everywhere) so a misspelled key is a
+  load-time error (INVALID_SYNC_CONFIG, exit 6) rather than a silent no-op —
+  same posture as layout-config.schema.yaml. The error NEVER echoes the offending
+  value (CWE-209/CWE-117). Defense-in-depth against an untrusted config file is
+  enforced in the loader (scripts/wiki_index/sync_config.py): a 256 KiB size cap
+  before read + a SafeLoader subclass that REFUSES YAML anchors/aliases
+  (`yaml.safe_load` alone still EXPANDS aliases → billion-laughs DoS; SEC-N3).
+
+$defs:
+  # ----------------------------------------------------------------------------
+  # Extensions — optional operator overrides that EXTEND the built-in routing
+  # sets (they never shrink them). `convert` → office/PDF convert+ingest; `text`
+  # → raw text-source ingest; `skip` → force-skip an extension.
+  # ----------------------------------------------------------------------------
+  Extensions:
+    type: object
+    additionalProperties: false
+    properties:
+      convert:
+        type: array
+        items: {type: string}
+        default: []
+      text:
+        type: array
+        items: {type: string}
+        default: []
+      skip:
+        type: array
+        items: {type: string}
+        default: []
+
+  # ----------------------------------------------------------------------------
+  # SyncConfig — the merged config the dispatcher consumes.
+  # ----------------------------------------------------------------------------
+  SyncConfig:
+    type: object
+    additionalProperties: false
+    properties:
+      zones:
+        type: array
+        items: {type: string}
+        default: []
+        description: 'Vault-root-relative globs of sync zones (advisory; `wiki-sync scan <zone>` takes an explicit zone).'
+      exclude:
+        type: array
+        items: {type: string}
+        default: []
+        description: >
+          Vault-root-relative globs pruned from the walk. A NON-`.md` match is
+          pruned immediately; a `.md` match is still read so a `#wiki/keep` tag
+          can rescue it (precedence pinned in the loader).
+      tag_namespace:
+        type: string
+        default: 'wiki'
+        description: 'Routing-tag namespace; `#<ns>/{raw,skip,keep}` + a `<ns>:` frontmatter field.'
+      extensions:
+        $ref: '#/$defs/Extensions'
+
+# Top-level: library of $defs (mirrors layout-config.schema.yaml). The loader
+# validates a merged config against #/$defs/SyncConfig explicitly.
+type: object
+description: 'Library of $defs. Validate against #/$defs/SyncConfig.'

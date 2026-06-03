@@ -28,7 +28,7 @@ from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
   - [B. Install for development of this repo](#b-install-for-development-of-this-repo)
 - [Quick start: put a vault under the index](#quick-start-put-a-vault-under-the-index)
 - [The `prepare` / `apply` pattern (agent-driven skills)](#the-prepare--apply-pattern-agent-driven-skills)
-- [CLI reference — all 14 commands](#cli-reference--all-14-commands)
+- [CLI reference — all 15 commands](#cli-reference--all-15-commands)
 - [External dependency: `wiki-ingest`](#external-dependency-wiki-ingest)
 - [Repo layout](#repo-layout)
 - [Development](#development)
@@ -236,8 +236,8 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 909 passed, 4 skipped (~3s)
-mypy --strict scripts/  # clean on 69 source files (vendored package excluded
+pytest tests/           # 986 passed, 4 skipped (~24s)
+mypy --strict scripts/  # clean on 72 source files (vendored package excluded
                         # via mypy.ini override per Decision-14)
 ```
 
@@ -306,7 +306,7 @@ inside Claude Code, the agent drives all three steps for you.
 
 ---
 
-## CLI reference — all 14 commands
+## CLI reference — all 15 commands
 
 Each command has a `SKILL.md` under [`skills/`](skills/) with the full contract,
 exit codes, and JSON-envelope schema, plus a slash-command wrapper under
@@ -350,6 +350,7 @@ binaries.
 
 | Command | What it does |
 |---|---|
+| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes the plan with per-file idempotency (`wiki-sync record`). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
 | `wiki-enrich --vault <vid> --source <file>` | End-to-end: invoke (vendored) `wiki-ingest` on a raw source, then mirror its manifest into the index. |
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
@@ -416,7 +417,7 @@ scripts/
   wiki_index/               DAL: repository, sqlite_repository, lint, reindex,
                             rendering, normalization, security, layout, layout_config
   wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml
-  wiki_skills/              14 CLI entry points + _common/_retrieval/_manifest_consumer
+  wiki_skills/              15 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
   wiki_source/              source adapters (base, manual, parsing)
   wiki_ingest/              vendored file layer (snapshot of external wiki-ingest)
   benchmark.py              synthetic-vault SLO harness
@@ -438,7 +439,7 @@ samples/                    gitignored scratch tree for dogfooding vaults
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 909 passed, 4 skipped
+pytest tests/           # 986 passed, 4 skipped
 mypy --strict scripts/  # clean on 69 source files (the contract for scripts/)
 ```
 

@@ -4,7 +4,14 @@
 - **Task ID:** 018
 - **Slug:** `wiki-sync`
 - **Mode:** VDD (full pipeline — `/vdd-start-feature`)
-- **Status:** 🟡 **DRAFT — Analysis phase** (awaiting task-review gate)
+- **Status:** ✅ **SHIPPED 2026-06-03** (uncommitted on branch `task-018-wiki-sync`).
+  All 17 beads (018-00..16) merged + green; full VDD pipeline + `/vdd-multi`
+  3-critic convergence (Logic ✓ Security ✓ Performance ✓). **986 pytest (+4
+  skipped), mypy strict (72 files)**, zero DDL (`user_version` 5), no `anthropic`
+  import. Shipped surface = `wiki-sync scan` + `wiki-sync record` +
+  `workflows/wiki-sync.md` + `skills/wiki-sync/SKILL.md` + `config/sync-config.schema.yaml`
+  + 2 generic `source_state` DAL methods. See `docs/PLAN.md`, `docs/tasks/task-018-*.md`,
+  `docs/reviews/`.
 - **Source:** ROADMAP **R-11** (`docs/ROADMAP.md` → P1 — Epic 7 entry-point) + the
   *Mixed vault* section of `docs/manuals/obsidian-llm-wiki_manual.md`.
 - **First-cut scope (operator decision 2026-06-03):** **Full R-11** — all three

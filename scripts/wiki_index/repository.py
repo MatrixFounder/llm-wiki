@@ -476,6 +476,42 @@ class IndexRepository(abc.ABC):
         ``record_query_state``."""
         ...
 
+    # =========================================================================
+    # Generic source-state accessors — TASK 018 (R-11 wiki-sync idempotency)
+    # =========================================================================
+
+    @abc.abstractmethod
+    def get_source_state(
+        self, vault_id: str, source_kind: str, scope: str, key: str
+    ) -> str | None:
+        """TASK 018 / Q-018-8 — generic read of the `source_state` table for an
+        arbitrary ``(source_kind, scope, key)`` triple, or ``None`` if absent.
+
+        Backs the ``wiki-sync``-owned idempotency partition
+        (``source_kind='sync'``, ``scope`` = vault-relative POSIX path,
+        ``key='source_hash'``) read by ``wiki-sync scan``'s ``is_unchanged``
+        short-circuit. Unlike the query/verify-specific accessors this takes
+        ``source_kind`` and ``key`` as parameters — no new table and no new
+        ``source_kind`` CHECK, so ``'sync'`` is legal data (**zero DDL**,
+        ``user_version`` stays 5). Defensive NULL guard: a corrupt
+        ``value IS NULL`` row → ``None`` (re-plan)."""
+        ...
+
+    @abc.abstractmethod
+    def set_source_state(
+        self, vault_id: str, source_kind: str, scope: str, key: str, value: str
+    ) -> None:
+        """TASK 018 / Q-018-8 — UPSERT a generic ``source_state`` row
+        (``INSERT … ON CONFLICT(vault_id, source_kind, scope, key) DO UPDATE``,
+        ISO-8601 ``updated_at``).
+
+        Written by the ``wiki-sync`` executor as the per-file **commit marker**
+        after a *full* successful ingest/upsert — a partial failure leaves no
+        row, so the next scan re-plans that file. No raw SQL in skills (NFR-2);
+        sibling of ``record_query_state``/``record_verify_state`` but generic
+        over ``source_kind``/``key``."""
+        ...
+
     @abc.abstractmethod
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """All alias collisions (R-5.6), each tagged by ``AliasCollision.kind``:

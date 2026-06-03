@@ -220,7 +220,13 @@
 > See §3.5 + §8.4 + Q-017-1..4. Archived: `docs/tasks/task-017-*` + `docs/plans/plan-017-*`.
 >
 > **TASK 018 (R-11 `wiki-sync` — format-aware, tag-routed ingest/upsert dispatcher) —
-> 🟡 IN DESIGN (Architecture phase).** The compounding-driver automation over a *real mixed*
+> ✅ SHIPPED 2026-06-03** (uncommitted, branch `task-018-wiki-sync`; 17 beads, full VDD +
+> `/vdd-multi` 3-critic convergence; **986 pytest +4 skipped, mypy strict 72 files**; the
+> shipped surface adds `wiki-sync scan` + the `wiki-sync record` commit-marker CLI +
+> `workflows/wiki-sync.md` + `skills/wiki-sync/SKILL.md` + `config/sync-config.schema.yaml`
+> + 2 generic `source_state` DAL methods; hardened with an 8 MiB `.md` oversize cap, BOM
+> parity, and full-path config-symlink containment — see §11a Q-018-* + interfaces §5.4).
+> The compounding-driver automation over a *real mixed*
 > personal vault: walk an enrich zone, classify every file by **extension** (office/PDF →
 > convert→ingest; `.txt`/`.vtt`/`.srt` → implicit-raw→ingest; `.md` → tag/view rules;
 > binary → skip) and by **content** (`#wiki/raw|skip|keep` tag vocabulary;
