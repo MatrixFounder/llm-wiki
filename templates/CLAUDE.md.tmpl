@@ -11,7 +11,11 @@ Claude is launched at the vault root. All paths below are relative to it.
 
 - **vault_id**: `${vault_id}` (REQUIRED, ADR-002 §D1.1; defined in `WIKI_SCHEMA.md`)
 - **language**: `${language}`
-- **layout**: `${layout}` (flat = single-tier; per-project = two-tier with `Lessons/<Course>/`)
+- **layout**: `${layout}` — one of `karpathy`/`flat`/`per-project` (the
+  `_sources/_concepts/_entities` tiers below), `dev-project` (a code-repo `docs/`
+  tree), or `obsidian-personal` (a real PARA vault: numbered folders, MOCs,
+  multilingual names). Tune per-vault via `<vault>/.wiki/layout.yaml` (extend
+  `ignore`) + `<vault>/.wiki/sync.yaml` (sync zones) — see `WIKI_SCHEMA.md`.
 
 ---
 
@@ -120,12 +124,14 @@ concept/entity pages, intervene when Claude over- or under-extracts.
 # fast path — FTS5 hits + snippets
 /wiki-search "what is X" --vaults ${vault_id}
 
-# LLM synthesis with citations (when wiki-query lands; Epic 7)
-# /wiki-ingest query "compare X and Y"
+# RAG: retrieve → orchestrator-cited synthesis → file a compounding _queries/<slug>.md
+/wiki-query prepare "compare X and Y" --vault ${vault_id} --vault-root .
+#   (orchestrator synthesises a cited answer, then) /wiki-query apply …
+# Optional audit: /wiki-verify-multi prepare/apply  (off-by-default 4-critic check)
 ```
 
-Every claim in an answer should carry a `[^src-<slug>]` footnote that
-resolves to a `_sources/` page — so it traces back to the raw source.
+Every claim in an answer should carry a `[^src-<slug>]` footnote (or a `cited:`
+ref) that resolves to a `_sources/` page — so it traces back to the raw source.
 
 ### 3. Lint — health-check
 
@@ -165,6 +171,35 @@ When `lint` flags that the same canonical name exists in `_concepts/` of
 ≥ 2 courses *and* you've confirmed they describe the same thing, run
 `/wiki-ingest promote "<Name>"`. Inverse: `/wiki-ingest demote "<Name>"
 --to "<Course>"`. See `WIKI_SCHEMA.md` for the promotion rules.
+
+### 7. Auto-sync a mixed zone (`/wiki-sync`)
+
+For a *mixed* folder — transcripts, office/PDF docs, ready notes, and Obsidian
+generated-view sidecars all together — `/wiki-sync` is a **format-aware,
+tag-routed dispatcher** that auto-routes each file instead of hand-invoking
+`/wiki-enrich` per file. `scan` is deterministic (emits a plan; no LLM/mutation);
+the orchestrator then executes it with per-file idempotency.
+
+```bash
+# preview the plan (writes nothing): per-file action + reason + counts
+/wiki-sync scan "<zone>" --vault ${vault_id} --dry-run
+#   then execute the plan via workflows/wiki-sync.md (per-file isolation, re-run no-op)
+```
+
+How each file is routed:
+
+- **transcripts** (`.vtt`/`.srt`/`.txt`) → de-timestamp → summarise → enrich →
+  extract concepts.
+- **office / PDF** (`.docx`/`.pptx`/`.xlsx`/`.pdf`) → convert → ingest; a
+  **scanned/image-only PDF is OCR'd** (`pdf_ocr.py`, eng+rus) before ingest.
+- **ready `.md`** (a mappable note) → `wiki-index-upsert` as-is.
+- **generated-view sidecars** (DB Folder / Bases / Dataview / folder-notes) →
+  **auto-skipped** (navigation, not knowledge).
+
+Per-note tags override the default (precedence **skip > raw > keep > default**):
+`#wiki/raw` = force full ingest (distil this note), `#wiki/skip` = never touch
+(drafts), `#wiki/keep` = rescue a note from an excluded zone. Configure zones /
+exclusions / tag namespace in `<vault>/.wiki/sync.yaml`.
 
 ---
 
@@ -229,8 +264,11 @@ maintained.
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, promotion rules.
 - **`00-Vault-Index/index.md`** — read-only catalog (auto-generated).
 - **`00-Vault-Index/log/`** — monthly append-only journal.
-- **obsidian-llm-wiki** — the index layer; provides `/wiki-search`,
-  `/wiki-lint`, `/wiki-reindex`, `/wiki-enrich`, etc. Install per its
-  `README.md`; ensure its `bin/` is on `PATH`.
+- **obsidian-llm-wiki** — the index layer (15 CLIs). Search/RAG: `/wiki-search`,
+  `/wiki-query`, `/wiki-verify-multi`. Construction: `/wiki-enrich`,
+  `/wiki-extract-concepts`, `/wiki-sync` (mixed-zone auto-router), `/wiki-append-log`.
+  Entity graph: `/wiki-confirm`, `/wiki-alias`, `/wiki-merge`. Lifecycle/health:
+  `/wiki-init`, `/wiki-reindex`, `/wiki-index-upsert`, `/wiki-index-render`,
+  `/wiki-lint`. Install per its `README.md`; ensure its `bin/` is on `PATH`.
 - **wiki-ingest** — the file-layer skill; must be on `PATH` (typically
   `~/.claude/skills/wiki-ingest/`).

@@ -40,6 +40,8 @@ def test_scaffold_new_creates_layout(tmp_path):
     assert out["action"] == "scaffolded"
     assert (vault / "WIKI_SCHEMA.md").exists()
     assert (vault / "CLAUDE.md").exists()
+    assert (vault / "GEMINI.md").exists()      # per-vendor agent files
+    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
     for sub in ["_sources", "_concepts", "_entities", "_raw/.locks",
                 "_raw/failed", "00-Vault-Index/log"]:
         assert (vault / sub).is_dir(), f"missing {sub}"
@@ -82,6 +84,58 @@ def test_register_existing_minimal_vault(minimal_vault: Path, tmp_path):
     assert out["action"] == "registered"
     assert out["vault_id"] == "minimal-test"
     assert out["is_two_tier"] is False
+
+
+def test_register_existing_writes_agent_files_if_absent(tmp_path):
+    """A registered vault with no agent files gets one PER vendor (CLAUDE.md +
+    GEMINI.md) so any agent CLI launched at its root has wiki operating
+    instructions (DF-018-INIT-1). GEMINI.md is an exact copy of CLAUDE.md for now."""
+    vault = tmp_path / "personal-x"
+    vault.mkdir()
+    (vault / "WIKI_SCHEMA.md").write_text(
+        '---\nvault_id: personal-x\nlayout: obsidian-personal\nlanguage: ru\n'
+        'description: "My PARA vault"\n---\n# schema\n', encoding="utf-8")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0 and out["action"] == "registered"
+    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
+    body = (vault / "CLAUDE.md").read_text()
+    assert "personal-x" in body and "wiki-sync" in body   # rendered + substituted
+    assert (vault / "GEMINI.md").read_text() == body       # exact copy for now
+
+
+def test_register_existing_preserves_operator_agent_file(tmp_path):
+    """An operator's own CLAUDE.md is NEVER clobbered without --force; the OTHER
+    vendor (GEMINI.md) is still created (non-destructive, per-file)."""
+    vault = tmp_path / "has-claude"
+    vault.mkdir()
+    (vault / "WIKI_SCHEMA.md").write_text(
+        '---\nvault_id: has-claude\nlayout: karpathy\n---\n# schema\n', encoding="utf-8")
+    (vault / "CLAUDE.md").write_text("# MY OWN INSTRUCTIONS\n", encoding="utf-8")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"]["CLAUDE.md"] == "exists"
+    assert (vault / "CLAUDE.md").read_text() == "# MY OWN INSTRUCTIONS\n"
+    assert out["agent_files"]["GEMINI.md"] == "written"   # other vendor still scaffolded
+
+
+def test_write_agent_files_resilient_to_missing_template(tmp_path, monkeypatch):
+    """vdd-adversarial: a vendor pointing at a missing/misconfigured template must
+    NOT crash init — the working vendors still get written, the broken one is
+    reported as 'error' (best-effort, never a partial-state crash)."""
+    from scripts.wiki_skills import wiki_init as wi
+    monkeypatch.setattr(
+        wi, "_agent_file_specs",
+        lambda: [("CLAUDE.md", "CLAUDE.md.tmpl"), ("GEMINI.md", "MISSING.tmpl")],
+    )
+    ph = {"vault_id": "x-vault", "language": "en", "layout": "karpathy", "description": "y"}
+    res = wi._write_agent_files(tmp_path, ph, force=False)   # must not raise
+    assert res == {"CLAUDE.md": "written", "GEMINI.md": "error"}
+    assert (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / "GEMINI.md").exists()
 
 
 def test_register_existing_two_tier_detected(multi_vault: dict[str, Path], tmp_path):

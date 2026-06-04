@@ -90,7 +90,8 @@ def index_from_manifest(
     it is reused directly and NOT closed here. When ``repo`` is None, one
     connection is opened and closed by this function (H-PERF-3 / P-8 fix).
 
-    Top-level system files (index.md, log.md, WIKI_SCHEMA.md, CLAUDE.md)
+    Top-level system files (index.md, log.md, WIKI_SCHEMA.md, and the per-vendor
+    agent files CLAUDE.md/GEMINI.md — the full set is `layout.SYSTEM_FILES`)
     are skipped — Class B/C per ADR-002 §D8: index.md is projected by
     wiki-index-render, log.md is mirrored via log_event below. Filter is
     top-level-only so legitimate subdir pages like ``_concepts/index.md``

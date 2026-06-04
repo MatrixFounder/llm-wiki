@@ -73,6 +73,66 @@ def _suggested_vault_id(vault_root: Path) -> str:
     return base or "my-vault"
 
 
+def _sanitize_desc(desc: str | None, vault_id: str) -> str:
+    """Description for the templates' double-quoted YAML scalar (DF-3): drop the
+    `"`/newlines that would break the quoted scalar (and thus the §D8
+    rebuild-from-Class-A path)."""
+    d = desc or f"LLM Wiki vault: {vault_id}"
+    return d.replace('"', "'").replace("\n", " ").replace("\r", " ")
+
+
+_AGENT_FILES_CONFIG = _TEMPLATES_DIR / "agent-files.yaml"
+
+
+def _agent_file_specs() -> list[tuple[str, str]]:
+    """``[(filename, template_name), …]`` for the configured vendors
+    (``templates/agent-files.yaml`` — e.g. CLAUDE.md/Claude Code,
+    GEMINI.md/Gemini CLI). Falls back to the Claude default if that config is
+    missing/malformed, so a vault always gets at least a CLAUDE.md."""
+    fallback = [("CLAUDE.md", "CLAUDE.md.tmpl")]
+    try:
+        doc = yaml.safe_load(_AGENT_FILES_CONFIG.read_text(encoding="utf-8"))
+        vendors = doc["vendors"]
+        order = doc.get("default_vendors") or list(vendors)
+        specs = [(str(vendors[v]["filename"]), str(vendors[v]["template"])) for v in order]
+        return specs or fallback
+    except Exception:  # noqa: BLE001 — trusted repo file; any fault → safe default
+        return fallback
+
+
+def _write_agent_files(
+    vault_root: Path, placeholders: dict[str, str], *, force: bool
+) -> dict[str, str]:
+    """Render one agent-instructions file PER configured vendor into the vault
+    root (CLAUDE.md, GEMINI.md, …) so agents launched there get the wiki
+    operating instructions. NON-destructive: writes each only if absent (or
+    ``--force``) — never clobbers an operator's own file. Returns
+    ``{filename: "written"|"exists"}``. Shared by `scaffold_new` and
+    `register_existing` — a registered existing vault is otherwise agent-unusable
+    (dogfood DF-018-INIT-1)."""
+    out: dict[str, str] = {}
+    for filename, template_name in _agent_file_specs():
+        target = vault_root / filename
+        if target.exists() and not force:
+            out[filename] = "exists"
+            continue
+        # Per-vendor resilience: a missing/misconfigured template (or a stray `$`
+        # in it) must NOT crash init — the vault is already registered and the
+        # other vendors' files are unaffected. Record "error" and continue
+        # (vdd-adversarial: missing-template FileNotFoundError used to crash
+        # scaffold/register after the repo write, leaving a half-done state).
+        try:
+            rendered = Template(
+                (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+            ).substitute(placeholders)
+        except (OSError, KeyError, ValueError):
+            out[filename] = "error"
+            continue
+        target.write_text(rendered)
+        out[filename] = "written"
+    return out
+
+
 def scaffold_new(args: argparse.Namespace) -> int:
     # Require --vault explicitly. Silently defaulting to cwd ("." ) has
     # caused accidental scaffolds inside the project repo. Operator must
@@ -104,8 +164,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
     # MISSING_VAULT_ID on --register-existing (the §D8 rebuild-from-Class-A
     # path). Quoting fixes the colon; sanitize embedded `"`/newlines so the
     # quoted scalar stays well-formed even for an operator-supplied --description.
-    _desc = (args.description or f"LLM Wiki vault: {vault_id}")
-    _desc = _desc.replace('"', "'").replace("\n", " ").replace("\r", " ")
+    _desc = _sanitize_desc(args.description, vault_id)
     placeholders = {
         "vault_id": vault_id,
         "language": args.language or "en",
@@ -118,12 +177,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
             Template((_TEMPLATES_DIR / "WIKI_SCHEMA.md.tmpl").read_text())
             .substitute(placeholders)
         )
-    claude_path = vault_root / "CLAUDE.md"
-    if not claude_path.exists() or args.force:
-        claude_path.write_text(
-            Template((_TEMPLATES_DIR / "CLAUDE.md.tmpl").read_text())
-            .substitute(placeholders)
-        )
+    agent_files = _write_agent_files(vault_root, placeholders, force=bool(args.force))
     if _karpathy:
         idx = vault_root / VAULT_INDEX_DIR / "index.md"
         if not idx.exists():
@@ -157,6 +211,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
         "vault_id": vault_id,
         "vault_root": str(vault_root),
         "db_path": str(db_path),
+        "agent_files": agent_files,
     })
 
 
@@ -225,12 +280,28 @@ def register_existing(args: argparse.Namespace) -> int:
             }, exit_code=6)
     finally:
         repo.close()
+    # Make the registered vault agent-workable: write the per-vendor agent files
+    # (CLAUDE.md, GEMINI.md, …) from their templates if absent (non-destructive —
+    # never clobber an operator's own file without --force). Without them, an
+    # agent launched at the vault root has no wiki operating instructions
+    # (DF-018-INIT-1).
+    agent_files = _write_agent_files(
+        vault_root,
+        {
+            "vault_id": vault_id,
+            "language": str(fm.get("language") or "en"),
+            "layout": str(fm.get("layout") or "per-project"),
+            "description": _sanitize_desc(fm.get("description"), vault_id),
+        },
+        force=bool(args.force),
+    )
     return _emit({
         "action": action,
         "vault_id": vault_id,
         "vault_root": str(vault_root),
         "is_two_tier": is_two_tier,
         "db_path": str(db_path),
+        "agent_files": agent_files,
     })
 
 

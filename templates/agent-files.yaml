@@ -1,0 +1,29 @@
+# Vendor → agent-instruction-file mapping for `wiki-init` scaffolding.
+#
+# `wiki-init` (scaffold-new AND register-existing) renders one agent-instructions
+# file per vendor below, so a vault is usable by every supported agent CLI
+# launched at its root. Each file is rendered from `template` (a
+# `string.Template` in templates/) substituting the vault's
+# vault_id/language/layout/description, and written to `<vault>/<filename>` —
+# NON-destructively (an existing file is never clobbered without `--force`).
+#
+# All scaffolded agent filenames MUST also be in `scripts/wiki_index/layout.py`
+# SYSTEM_FILES so the indexer (reindex) and `wiki-sync` skip them — they are
+# operating instructions, not vault knowledge.
+#
+# For now Gemini reuses the Claude template VERBATIM (an exact copy). When
+# vendor-specific guidance diverges, add a `GEMINI.md.tmpl` and point `gemini`
+# at it — no other code change needed.
+
+schema_version: "1.0"
+
+# Vendors rendered by default (order = render order). Subset/extend freely.
+default_vendors: [claude, gemini]
+
+vendors:
+  claude:
+    filename: CLAUDE.md        # Claude Code
+    template: CLAUDE.md.tmpl
+  gemini:
+    filename: GEMINI.md        # Gemini CLI
+    template: CLAUDE.md.tmpl   # exact copy of the Claude base for now

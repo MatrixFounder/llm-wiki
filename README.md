@@ -7,10 +7,11 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 017**
-> (`drift-delta-redos-timeout`, shipped 2026-06-02). Schema **v5**
-> (`user_version = 5`). **913 pytest collected (909 pass + 4 skipped),
-> `mypy --strict` clean on 69 source files.** The repo's own `docs/` is
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 018**
+> (`wiki-sync` — the format-aware, tag-routed ingest dispatcher with scanned-PDF
+> OCR + per-vendor agent files, shipped 2026-06-03). Schema **v5**
+> (`user_version = 5`). **990 pytest passed (+4 skipped),
+> `mypy --strict` clean on 72 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -62,6 +63,7 @@ with no semantic loss. That means you can delete the `.db` at any time and rebui
 it, and that hand-edits to markdown are first-class — not something the tooling
 will clobber.
 
+![Overview-infographic](Images/Overview-infographic.png)
 ---
 
 ## Anatomy: how the system is layered
@@ -213,9 +215,9 @@ bash bin/install-globally.sh
 
 | Source | Target | Count |
 |---|---|---|
-| `bin/wiki-*` | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) | 14 shell wrappers |
-| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` | 16 skill definitions |
-| `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` | 14 slash commands |
+| `bin/wiki-*` | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) | 15 shell wrappers |
+| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` | 17 skill definitions |
+| `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` | 15 slash commands |
 
 Ensure `~/.local/bin` is on your `PATH` (the installer warns if not). Then jump
 to [Quick start](#quick-start-put-a-vault-under-the-index).
@@ -236,7 +238,7 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 986 passed, 4 skipped (~24s)
+pytest tests/           # 990 passed, 4 skipped (~24s)
 mypy --strict scripts/  # clean on 72 source files (vendored package excluded
                         # via mypy.ini override per Decision-14)
 ```
@@ -273,6 +275,11 @@ wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 ```
 
 For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
+Both `--scaffold-new` and `--register-existing` write **per-vendor agent-instruction
+files** (`CLAUDE.md` for Claude Code, `GEMINI.md` for Gemini CLI — configured in
+[`templates/agent-files.yaml`](templates/agent-files.yaml)) into the vault root, so
+an agent launched there has the wiki operating instructions. Existing files are
+never clobbered.
 
 The DB lives at `~/Library/Application Support/wiki-index/global.db` on macOS
 (`~/.local/share/wiki-index/...` on Linux). **iCloud paths are auto-rejected** to
@@ -350,7 +357,7 @@ binaries.
 
 | Command | What it does |
 |---|---|
-| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes the plan with per-file idempotency (`wiki-sync record`). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
+| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file; `#wiki/raw\|skip\|keep` tags; generated-view sidecars auto-skipped). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it with per-file idempotency (`wiki-sync record`) — office/PDF convert, **scanned-PDF OCR** (eng+rus), transcript de-timestamp → summarise → enrich → extract. The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
 | `wiki-enrich --vault <vid> --source <file>` | End-to-end: invoke (vendored) `wiki-ingest` on a raw source, then mirror its manifest into the index. |
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
@@ -409,13 +416,14 @@ need no `wiki-ingest`. `wiki-extract-concepts` calls the Anthropic API directly
 docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, plans/, issues/
   adr/                      ADR-001 (wrap+index), ADR-002 (multi-vault + Class A/B/C)
   KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
-config/                     layout-config.schema.yaml, wiki-config.schema.yaml
+config/                     layout-config / wiki-config / sync-config schema.yaml (the 3 config systems)
 sql/wiki-index-v2.sql       the SQLite DDL (user_version = 5)
-templates/                  WIKI_SCHEMA.md.tmpl, CLAUDE.md.tmpl for new vaults
+templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md)
+                            mapped in agent-files.yaml — for new/registered vaults
 
 scripts/
-  wiki_index/               DAL: repository, sqlite_repository, lint, reindex,
-                            rendering, normalization, security, layout, layout_config
+  wiki_index/               DAL: repository, sqlite_repository, lint, reindex, rendering,
+                            normalization, security, layout, layout_config, sync_config
   wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml
   wiki_skills/              15 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
   wiki_source/              source adapters (base, manual, parsing)
@@ -423,13 +431,13 @@ scripts/
   benchmark.py              synthetic-vault SLO harness
   sync_wiki_ingest.sh       refresh the vendored snapshot
 
-skills/                     17 canonical SKILL.md dirs (16 wiki-* + concept-extraction)
-commands/wiki-*.md          14 slash-command wrappers (Claude Code)
-workflows/wiki-*.md         multi-step orchestration recipes
-bin/wiki-*                  14 shell wrappers (cd + venv + exec)
+skills/                     18 canonical SKILL.md dirs (17 wiki-* + concept-extraction)
+commands/wiki-*.md          15 slash-command wrappers (Claude Code)
+workflows/wiki-*.md         multi-step orchestration recipes (incl. wiki-sync executor)
+bin/wiki-*                  15 shell wrappers (cd + venv + exec)
 bin/install-globally.sh     global install (path A)
 bin/install-project-symlinks.sh   repo-local symlinks (dev path B)
-tests/                      pytest suite (913 collected) + fixtures
+tests/                      pytest suite (990 passed, 4 skipped) + fixtures
 samples/                    gitignored scratch tree for dogfooding vaults
 ```
 
@@ -439,8 +447,8 @@ samples/                    gitignored scratch tree for dogfooding vaults
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 986 passed, 4 skipped
-mypy --strict scripts/  # clean on 69 source files (the contract for scripts/)
+pytest tests/           # 990 passed, 4 skipped
+mypy --strict scripts/  # clean on 72 source files (the contract for scripts/)
 ```
 
 Conventions:

@@ -34,6 +34,7 @@ from typing import Any, Literal
 import frontmatter
 from slugify import slugify
 
+from scripts.wiki_index.layout import SYSTEM_FILES
 from scripts.wiki_index.layout_config import LayoutConfig
 from scripts.wiki_index.normalization import UnmappedTypeError, normalize_frontmatter
 from scripts.wiki_index.sync_config import SyncConfig
@@ -209,6 +210,12 @@ def classify_file(
     in_exclude_zone: bool,
 ) -> Decision:
     """Classify a single discovered file into a `Decision`."""
+    # Vault system files (per-vendor agent instructions CLAUDE.md/GEMINI.md,
+    # WIKI_SCHEMA.md, index.md, log.md) are operating instructions / projections,
+    # NOT knowledge — skip them, consistent with the indexer's `iter_pages`
+    # (so a `wiki-sync scan .` over the vault root never upserts them).
+    if path.name in SYSTEM_FILES:
+        return Decision("skip", "system-file")
     name_lower = path.name.lower()
     ext = path.suffix.lower()
     convert_exts, text_exts, skip_exts = _ext_route_sets(config)

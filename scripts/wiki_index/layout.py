@@ -85,9 +85,12 @@ SCAFFOLD_DIRS: tuple[str, ...] = (
 # `Lessons/<Course>/` root) is how config-discovery identifies a vault.
 SCHEMA_FILE: str = "WIKI_SCHEMA.md"
 
-# System files (always at vault root; never moved by migrations).
+# System files (always at vault root; never moved by migrations). Agent-
+# instruction files are per-vendor (`CLAUDE.md` = Claude Code, `GEMINI.md` =
+# Gemini CLI; see templates/agent-files.yaml) — operating instructions, NOT
+# vault knowledge, so the indexer (iter_pages) AND wiki-sync skip them.
 SYSTEM_FILES: frozenset[str] = frozenset({
-    SCHEMA_FILE, "CLAUDE.md", "log.md", "index.md",
+    SCHEMA_FILE, "CLAUDE.md", "GEMINI.md", "log.md", "index.md",
 })
 
 # Sentinel value for `pages.project` when a page lives at the vault root
