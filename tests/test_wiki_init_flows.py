@@ -40,8 +40,9 @@ def test_scaffold_new_creates_layout(tmp_path):
     assert out["action"] == "scaffolded"
     assert (vault / "WIKI_SCHEMA.md").exists()
     assert (vault / "CLAUDE.md").exists()
-    assert (vault / "GEMINI.md").exists()      # per-vendor agent files
-    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
+    # default: ONE agent file (CLAUDE.md); GEMINI.md only with --vendor
+    assert not (vault / "GEMINI.md").exists()
+    assert out["agent_files"] == {"CLAUDE.md": "written"}
     for sub in ["_sources", "_concepts", "_entities", "_raw/.locks",
                 "_raw/failed", "00-Vault-Index/log"]:
         assert (vault / sub).is_dir(), f"missing {sub}"
@@ -86,54 +87,92 @@ def test_register_existing_minimal_vault(minimal_vault: Path, tmp_path):
     assert out["is_two_tier"] is False
 
 
-def test_register_existing_writes_agent_files_if_absent(tmp_path):
-    """A registered vault with no agent files gets one PER vendor (CLAUDE.md +
-    GEMINI.md) so any agent CLI launched at its root has wiki operating
-    instructions (DF-018-INIT-1). GEMINI.md is an exact copy of CLAUDE.md for now."""
-    vault = tmp_path / "personal-x"
-    vault.mkdir()
+def _schema(vault: Path, vault_id: str, layout: str = "obsidian-personal") -> Path:
+    vault.mkdir(parents=True, exist_ok=True)
     (vault / "WIKI_SCHEMA.md").write_text(
-        '---\nvault_id: personal-x\nlayout: obsidian-personal\nlanguage: ru\n'
-        'description: "My PARA vault"\n---\n# schema\n', encoding="utf-8")
+        f'---\nvault_id: {vault_id}\nlayout: {layout}\nlanguage: ru\n'
+        'description: "My vault"\n---\n# schema\n', encoding="utf-8")
+    return vault
+
+
+def test_register_existing_writes_default_agent_file(tmp_path):
+    """A registered vault with no agent file gets exactly ONE by default
+    (CLAUDE.md) so an agent launched at its root has wiki operating instructions
+    (DF-018-INIT-1). GEMINI.md is NOT written without --vendor."""
+    vault = _schema(tmp_path / "personal-x", "personal-x")
     code, out = _run([
         "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
     ])
     assert code == 0 and out["action"] == "registered"
-    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
+    assert out["agent_files"] == {"CLAUDE.md": "written"}
     body = (vault / "CLAUDE.md").read_text()
     assert "personal-x" in body and "wiki-sync" in body   # rendered + substituted
-    assert (vault / "GEMINI.md").read_text() == body       # exact copy for now
+    assert not (vault / "GEMINI.md").exists()
+
+
+def test_register_existing_vendor_gemini(tmp_path):
+    """`--vendor gemini` writes ONLY GEMINI.md (an exact copy of the Claude base)."""
+    vault = _schema(tmp_path / "gem-x", "gem-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "gemini", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"] == {"GEMINI.md": "written"}
+    assert (vault / "GEMINI.md").exists() and not (vault / "CLAUDE.md").exists()
+
+
+def test_register_existing_vendor_all(tmp_path):
+    """`--vendor all` (or `claude,gemini`) writes both; GEMINI == CLAUDE for now."""
+    vault = _schema(tmp_path / "both-x", "both-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "all", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
+    assert (vault / "GEMINI.md").read_text() == (vault / "CLAUDE.md").read_text()
+
+
+def test_register_existing_invalid_vendor(tmp_path):
+    """An unknown --vendor → INVALID_VENDOR (exit 2), names the known set."""
+    vault = _schema(tmp_path / "bad-x", "bad-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "copilot", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 2 and out["error"] == "INVALID_VENDOR"
+    assert "copilot" in out["unknown"] and "claude" in out["known"]
 
 
 def test_register_existing_preserves_operator_agent_file(tmp_path):
     """An operator's own CLAUDE.md is NEVER clobbered without --force; the OTHER
-    vendor (GEMINI.md) is still created (non-destructive, per-file)."""
+    selected vendor (GEMINI.md, via --vendor all) is still created (per-file)."""
     vault = tmp_path / "has-claude"
     vault.mkdir()
     (vault / "WIKI_SCHEMA.md").write_text(
         '---\nvault_id: has-claude\nlayout: karpathy\n---\n# schema\n', encoding="utf-8")
     (vault / "CLAUDE.md").write_text("# MY OWN INSTRUCTIONS\n", encoding="utf-8")
     code, out = _run([
-        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "all", "--db-path", str(tmp_path / "g.db"),
     ])
     assert code == 0
     assert out["agent_files"]["CLAUDE.md"] == "exists"
     assert (vault / "CLAUDE.md").read_text() == "# MY OWN INSTRUCTIONS\n"
-    assert out["agent_files"]["GEMINI.md"] == "written"   # other vendor still scaffolded
+    assert out["agent_files"]["GEMINI.md"] == "written"   # other selected vendor still scaffolded
 
 
-def test_write_agent_files_resilient_to_missing_template(tmp_path, monkeypatch):
+def test_write_agent_files_resilient_to_missing_template(tmp_path):
     """vdd-adversarial: a vendor pointing at a missing/misconfigured template must
     NOT crash init — the working vendors still get written, the broken one is
     reported as 'error' (best-effort, never a partial-state crash)."""
     from scripts.wiki_skills import wiki_init as wi
-    monkeypatch.setattr(
-        wi, "_agent_file_specs",
-        lambda: [("CLAUDE.md", "CLAUDE.md.tmpl"), ("GEMINI.md", "MISSING.tmpl")],
-    )
+    vendors = {"claude": ("CLAUDE.md", "CLAUDE.md.tmpl"),
+               "gemini": ("GEMINI.md", "MISSING.tmpl")}
     ph = {"vault_id": "x-vault", "language": "en", "layout": "karpathy", "description": "y"}
-    res = wi._write_agent_files(tmp_path, ph, force=False)   # must not raise
-    assert res == {"CLAUDE.md": "written", "GEMINI.md": "error"}
+    res = wi._write_agent_files(tmp_path, ph, vendors, ["claude", "gemini"], force=False)
+    assert res == {"CLAUDE.md": "written", "GEMINI.md": "error"}   # must not raise
     assert (tmp_path / "CLAUDE.md").exists()
     assert not (tmp_path / "GEMINI.md").exists()
 

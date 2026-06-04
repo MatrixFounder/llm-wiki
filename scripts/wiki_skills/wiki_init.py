@@ -84,43 +84,63 @@ def _sanitize_desc(desc: str | None, vault_id: str) -> str:
 _AGENT_FILES_CONFIG = _TEMPLATES_DIR / "agent-files.yaml"
 
 
-def _agent_file_specs() -> list[tuple[str, str]]:
-    """``[(filename, template_name), …]`` for the configured vendors
-    (``templates/agent-files.yaml`` — e.g. CLAUDE.md/Claude Code,
-    GEMINI.md/Gemini CLI). Falls back to the Claude default if that config is
-    missing/malformed, so a vault always gets at least a CLAUDE.md."""
-    fallback = [("CLAUDE.md", "CLAUDE.md.tmpl")]
+def _load_vendor_config() -> tuple[dict[str, tuple[str, str]], list[str]]:
+    """``({vendor: (filename, template_name)}, default_vendors)`` from
+    ``templates/agent-files.yaml`` (CLAUDE.md/Claude Code, GEMINI.md/Gemini CLI,
+    …). Falls back to Claude-only if the config is missing/malformed, so a vault
+    always gets at least a CLAUDE.md."""
+    fallback: tuple[dict[str, tuple[str, str]], list[str]] = (
+        {"claude": ("CLAUDE.md", "CLAUDE.md.tmpl")}, ["claude"],
+    )
     try:
         doc = yaml.safe_load(_AGENT_FILES_CONFIG.read_text(encoding="utf-8"))
-        vendors = doc["vendors"]
-        order = doc.get("default_vendors") or list(vendors)
-        specs = [(str(vendors[v]["filename"]), str(vendors[v]["template"])) for v in order]
-        return specs or fallback
+        vendors = {
+            str(k): (str(v["filename"]), str(v["template"]))
+            for k, v in doc["vendors"].items()
+        }
+        default = [str(x) for x in (doc.get("default_vendors") or list(vendors))]
+        return (vendors or fallback[0], default or fallback[1])
     except Exception:  # noqa: BLE001 — trusted repo file; any fault → safe default
         return fallback
 
 
+def _resolve_vendors(
+    arg: str | None, vendors: dict[str, tuple[str, str]], default: list[str]
+) -> tuple[list[str], list[str]]:
+    """Resolve the ``--vendor`` selection → ``(selected, unknown)``. ``None`` →
+    `default` (one vendor — CLAUDE.md); ``"all"`` → every configured vendor;
+    else a comma-separated list. ``unknown`` lists any name not in the config."""
+    if not arg or not arg.strip():
+        selected = list(default)
+    elif arg.strip().lower() == "all":
+        selected = list(vendors)
+    else:
+        selected = [v.strip() for v in arg.split(",") if v.strip()]
+    unknown = [v for v in selected if v not in vendors]
+    return selected, unknown
+
+
 def _write_agent_files(
-    vault_root: Path, placeholders: dict[str, str], *, force: bool
+    vault_root: Path, placeholders: dict[str, str],
+    vendors: dict[str, tuple[str, str]], selection: list[str], *, force: bool,
 ) -> dict[str, str]:
-    """Render one agent-instructions file PER configured vendor into the vault
-    root (CLAUDE.md, GEMINI.md, …) so agents launched there get the wiki
-    operating instructions. NON-destructive: writes each only if absent (or
-    ``--force``) — never clobbers an operator's own file. Returns
-    ``{filename: "written"|"exists"}``. Shared by `scaffold_new` and
-    `register_existing` — a registered existing vault is otherwise agent-unusable
-    (dogfood DF-018-INIT-1)."""
+    """Render the agent-instructions file for each SELECTED vendor into the vault
+    root (default: CLAUDE.md only; `--vendor` picks others/all) so an agent
+    launched there gets the wiki operating instructions. NON-destructive: writes
+    each only if absent (or ``--force``) — never clobbers an operator's own file.
+    Returns ``{filename: "written"|"exists"|"error"}``. Shared by `scaffold_new`
+    and `register_existing` (a registered vault is otherwise agent-unusable —
+    DF-018-INIT-1)."""
     out: dict[str, str] = {}
-    for filename, template_name in _agent_file_specs():
+    for vendor in selection:
+        filename, template_name = vendors[vendor]
         target = vault_root / filename
         if target.exists() and not force:
             out[filename] = "exists"
             continue
         # Per-vendor resilience: a missing/misconfigured template (or a stray `$`
         # in it) must NOT crash init — the vault is already registered and the
-        # other vendors' files are unaffected. Record "error" and continue
-        # (vdd-adversarial: missing-template FileNotFoundError used to crash
-        # scaffold/register after the repo write, leaving a half-done state).
+        # other vendors' files are unaffected (vdd-adversarial).
         try:
             rendered = Template(
                 (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
@@ -147,6 +167,13 @@ def scaffold_new(args: argparse.Namespace) -> int:
     if not _validate_vault_id(vault_id):
         return _emit({"error": "INVALID_VAULT_ID", "received": vault_id,
                       "pattern": _VAULT_ID_RE.pattern}, exit_code=6)
+    # Resolve --vendor FAIL-FAST — before any dir/schema write, so a typo'd
+    # vendor leaves no partial scaffold (vdd-adversarial).
+    _vendors, _default_vendors = _load_vendor_config()
+    _selection, _unknown = _resolve_vendors(args.vendor, _vendors, _default_vendors)
+    if _unknown:
+        return _emit({"error": "INVALID_VENDOR", "unknown": _unknown,
+                      "known": sorted(_vendors)}, exit_code=2)
     vault_root = Path(args.vault).resolve()
     vault_root.mkdir(parents=True, exist_ok=True)
     # TASK 012 / R-X2.1: only the Karpathy family gets the two-tier page-subdir
@@ -177,7 +204,8 @@ def scaffold_new(args: argparse.Namespace) -> int:
             Template((_TEMPLATES_DIR / "WIKI_SCHEMA.md.tmpl").read_text())
             .substitute(placeholders)
         )
-    agent_files = _write_agent_files(vault_root, placeholders, force=bool(args.force))
+    agent_files = _write_agent_files(
+        vault_root, placeholders, _vendors, _selection, force=bool(args.force))
     if _karpathy:
         idx = vault_root / VAULT_INDEX_DIR / "index.md"
         if not idx.exists():
@@ -247,6 +275,13 @@ def register_existing(args: argparse.Namespace) -> int:
             "received": vault_id,
             "pattern": _VAULT_ID_RE.pattern,
         }, exit_code=6)
+    # Resolve --vendor FAIL-FAST — before registering, so a typo'd vendor never
+    # leaves a registered-but-errored state (vdd-adversarial).
+    vendors, default_vendors = _load_vendor_config()
+    selection, unknown = _resolve_vendors(args.vendor, vendors, default_vendors)
+    if unknown:
+        return _emit({"error": "INVALID_VENDOR", "unknown": unknown,
+                      "known": sorted(vendors)}, exit_code=2)
     is_two_tier = any((vault_root / COURSE_TIER_DIR).glob(f"*/{SCHEMA_FILE}"))
     config: dict[str, Any] = {"vault_id": vault_id}
     if args.db_path:
@@ -280,11 +315,11 @@ def register_existing(args: argparse.Namespace) -> int:
             }, exit_code=6)
     finally:
         repo.close()
-    # Make the registered vault agent-workable: write the per-vendor agent files
-    # (CLAUDE.md, GEMINI.md, …) from their templates if absent (non-destructive —
-    # never clobber an operator's own file without --force). Without them, an
-    # agent launched at the vault root has no wiki operating instructions
-    # (DF-018-INIT-1).
+    # Make the registered vault agent-workable: write the selected vendor's agent
+    # file(s) (CLAUDE.md by default; --vendor for GEMINI.md/all) if absent
+    # (non-destructive — never clobber an operator's own file without --force).
+    # Without one, an agent launched at the vault root has no wiki operating
+    # instructions (DF-018-INIT-1). --vendor was validated fail-fast above.
     agent_files = _write_agent_files(
         vault_root,
         {
@@ -293,6 +328,7 @@ def register_existing(args: argparse.Namespace) -> int:
             "layout": str(fm.get("layout") or "per-project"),
             "description": _sanitize_desc(fm.get("description"), vault_id),
         },
+        vendors, selection,
         force=bool(args.force),
     )
     return _emit({
@@ -375,6 +411,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--language", default=None)
     p.add_argument("--layout", default=None, choices=_LAYOUT_CHOICES)
     p.add_argument("--description", default=None)
+    p.add_argument(
+        "--vendor", default=None,
+        help="Which agent-instruction file(s) to write (scaffold/register). "
+             "Default: CLAUDE.md only. One (`gemini`), a comma-list "
+             "(`claude,gemini`), or `all`. Vendors are configured in "
+             "templates/agent-files.yaml.")
     p.add_argument("--force", action="store_true")
     p.add_argument("--confirm", action="store_true")
     return p

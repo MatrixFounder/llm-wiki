@@ -1,13 +1,17 @@
 # Vendor → agent-instruction-file mapping for `wiki-init` scaffolding.
 #
-# `wiki-init` (scaffold-new AND register-existing) renders one agent-instructions
-# file per vendor below, so a vault is usable by every supported agent CLI
-# launched at its root. Each file is rendered from `template` (a
-# `string.Template` in templates/) substituting the vault's
-# vault_id/language/layout/description, and written to `<vault>/<filename>` —
-# NON-destructively (an existing file is never clobbered without `--force`).
+# `wiki-init` (scaffold-new AND register-existing) renders an agent-instructions
+# file for the SELECTED vendor(s) so a vault is usable by the agent CLI launched
+# at its root. Each file is rendered from `template` (a `string.Template` in
+# templates/) substituting the vault's vault_id/language/layout/description, and
+# written to `<vault>/<filename>` — NON-destructively (an existing file is never
+# clobbered without `--force`).
 #
-# All scaffolded agent filenames MUST also be in `scripts/wiki_index/layout.py`
+# Selection (the `--vendor` flag): omit → `default_vendors` (CLAUDE.md only);
+# `--vendor gemini` → GEMINI.md only; `--vendor claude,gemini` (or `--vendor all`)
+# → both. By default exactly ONE file is written.
+#
+# All vendor filenames MUST also be in `scripts/wiki_index/layout.py`
 # SYSTEM_FILES so the indexer (reindex) and `wiki-sync` skip them — they are
 # operating instructions, not vault knowledge.
 #
@@ -17,8 +21,9 @@
 
 schema_version: "1.0"
 
-# Vendors rendered by default (order = render order). Subset/extend freely.
-default_vendors: [claude, gemini]
+# Vendor(s) written when --vendor is omitted (order = render order). Default:
+# Claude Code only — one file. Set to e.g. [claude, gemini] to write both by default.
+default_vendors: [claude]
 
 vendors:
   claude:

@@ -277,11 +277,12 @@ wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 ```
 
 For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
-Both `--scaffold-new` and `--register-existing` write **per-vendor agent-instruction
-files** (`CLAUDE.md` for Claude Code, `GEMINI.md` for Gemini CLI — configured in
-[`templates/agent-files.yaml`](templates/agent-files.yaml)) into the vault root, so
-an agent launched there has the wiki operating instructions. Existing files are
-never clobbered.
+Both `--scaffold-new` and `--register-existing` write an **agent-instructions file**
+into the vault root so an agent launched there has the wiki operating instructions —
+**`CLAUDE.md` by default**; pass `--vendor gemini` for `GEMINI.md` (Gemini CLI), or
+`--vendor claude,gemini` / `--vendor all` for both. Vendors are configured in
+[`templates/agent-files.yaml`](templates/agent-files.yaml); existing files are never
+clobbered.
 
 The DB lives at `~/Library/Application Support/wiki-index/global.db` on macOS
 (`~/.local/share/wiki-index/...` on Linux). **iCloud paths are auto-rejected** to
@@ -334,8 +335,8 @@ binaries.
 
 | Command | What it does |
 |---|---|
-| `wiki-init --register-existing --vault <path>` | Register a pre-existing vault in the index (one-time, per vault). |
-| `wiki-init --scaffold-new --vault <path> [--layout <name>]` | Scaffold a brand-new vault layout. `--layout` ∈ `karpathy` · `dev-project` · `obsidian-personal` (+ custom). |
+| `wiki-init --register-existing --vault <path> [--vendor <list>]` | Register a pre-existing vault in the index (one-time, per vault). Also writes the agent file if absent (`CLAUDE.md` by default; `--vendor gemini`/`all`), so the vault is agent-workable. |
+| `wiki-init --scaffold-new --vault <path> [--layout <name>] [--vendor <list>]` | Scaffold a brand-new vault layout + an agent file (`CLAUDE.md` by default; `--vendor` picks Gemini/both). `--layout` ∈ `karpathy` · `dev-project` · `obsidian-personal` (+ custom). |
 | `wiki-init --reconcile --vault <path>` | Rename / re-point a registered vault. |
 | `wiki-reindex --full --vault <vid>` | Wipe + rebuild the DB from markdown (the Class A→B gate; rare, authoritative). |
 | `wiki-reindex --delta --vault <vid>` | Incremental mtime/hash-based reindex after manual edits. |
