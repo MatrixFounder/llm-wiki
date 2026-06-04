@@ -63,7 +63,7 @@ with no semantic loss. That means you can delete the `.db` at any time and rebui
 it, and that hand-edits to markdown are first-class — not something the tooling
 will clobber.
 
-![Overview-infographic](Images/Overview-infographic.png)
+![Overview-infographic](Images/overview-infographic.png)
 ---
 
 ## Anatomy: how the system is layered
@@ -118,6 +118,8 @@ itself stays vault-free.)
 ---
 
 ## Data model
+
+![data-model-infopraphic](Images/data-model-infopraphic.png)
 
 One global DB (`sql/wiki-index-v2.sql`, `user_version = 5`), every table
 partitioned by `vault_id`. The three-class contract (ADR-002 §D8):
