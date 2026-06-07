@@ -429,7 +429,19 @@ def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutC
         # presence of the key is exact per-list provenance (R-X1-REDOS-RT).
         paths_op = "paths" in override_dict
         refs_op = "ref_extraction" in override_dict
+        # `ignore` is the one ADDITIVE list (TASK 019 dogfood finding): a per-vault
+        # override EXTENDS the base ignore set rather than discarding the built-in
+        # `.obsidian/**`/`.trash/**`/`_templates/**`/`**/*.base` exclusions — which is
+        # what the `wiki-init` CLAUDE.md/WIKI_SCHEMA templates already promise
+        # ("extend `ignore`"). Captured BEFORE deep_merge (which would replace it) and
+        # re-unioned after, base-first, deduped. (paths/ref_extraction stay REPLACE for
+        # their ReDoS provenance contract.)
+        base_ignore = list(merged.get("ignore") or [])
         merged = deep_merge(merged, override_dict)
+        if "ignore" in override_dict:
+            merged["ignore"] = list(
+                dict.fromkeys(base_ignore + list(override_dict.get("ignore") or []))
+            )
 
     _validate(merged)
     cfg = _build(merged, paths_operator_supplied=paths_op,

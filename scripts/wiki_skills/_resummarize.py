@@ -306,14 +306,29 @@ def _scope_key_index(
     if cached is not None:
         return cached
     keys: set[str] = set()
+    n_files = 0
     deadline = time.monotonic() + _lc.WIKI_REDOS_BUDGET_S
     # `recurse_symlinks=False` (explicit, not relying on the 3.13+ default) keeps the
     # mirror walk aligned with wiki-sync's O_NOFOLLOW discipline (vdd-multi security
     # DiD) — a symlinked subdir under `scope` is never descended into.
     for summ in scope.rglob("*" + ext, recurse_symlinks=False):
+        n_files += 1
         k = _compose_key(summ.stem, summ_pat, template, deadline=deadline)
         if k is not None:
             keys.add(k)
+    # Dead-detector guard (TASK 019 dogfood finding): mirror is enabled and the scope
+    # has summary files, yet the operator regex keyed NONE of them — almost always a
+    # misconfigured `group_key`/`key` (e.g. a YAML double-backslash `^(\\d+)` that
+    # compiles to "literal-backslash + d"). Without this the detector is SILENTLY inert
+    # and the gate quietly leans on D1/D2a alone. WARN once per scope (the index is
+    # memoized, so this fires at most once per (scope, pattern)).
+    if n_files and not keys:
+        _LOG.warning(
+            "[resummarize] mirror match=%s keyed 0 of %d summaries in %s — the "
+            "group_key/key regex matched nothing (likely a misconfigured pattern, e.g. "
+            "a YAML double-backslash); D2b mirror is inert for this scope.",
+            "group-key", n_files, scope,
+        )
     result = frozenset(keys)
     caches.mirror[ck] = result
     return result
@@ -358,8 +373,12 @@ def _mirror_match(
     raw_pat = _with_flags(raw_pat, flags)
     summ_pat = _with_flags(summ_pat, flags)
     _assert_mirror_regexes(raw_pat, summ_pat)  # load-gate (cached) → exit 6 on catastrophic
+    # Build the (memoized) summary-key index FIRST so the dead-detector WARN in
+    # `_scope_key_index` fires even when the raw stem itself yields no key — the exact
+    # symptom of a misconfigured regex that matches NEITHER side (dogfood finding).
+    summary_keys = _scope_key_index(scope, summ_pat, template, mirror.summary_ext, caches)
     rkey = _compose_key(path.stem, raw_pat, template,
                         deadline=time.monotonic() + _lc.WIKI_REDOS_BUDGET_S)
     if rkey is None:
         return False
-    return rkey in _scope_key_index(scope, summ_pat, template, mirror.summary_ext, caches)
+    return rkey in summary_keys

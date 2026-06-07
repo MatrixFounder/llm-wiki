@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
                 "scope": "all-vaults",
                 "vaults_processed": len(results),
                 "pages_indexed": sum(r["pages"] for r in results),
+                "slug_collisions": [c for r in results for c in r["slug_collisions"]],
                 "results": results,
             })
         if args.full:

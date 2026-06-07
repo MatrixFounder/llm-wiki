@@ -33,6 +33,35 @@ def test_delta_no_changes_is_fast(populated):
     result = reindex_delta(r, "minimal-test")
     assert result["touched"] == 0
     assert result["deleted"] == 0
+    assert result["slug_collisions"] == []  # TASK 020: field present, empty
+
+
+def test_delta_surfaces_slug_collision_within_batch(tmp_path):
+    """TASK 020: `--delta` surfaces a within-batch `(slug, project)` collision (both
+    files newer than the cutoff are processed → the later overwrites the earlier)."""
+    root = tmp_path / "vault"
+    (root / ".wiki").mkdir(parents=True)
+    (root / ".wiki" / "layout.yaml").write_text(
+        "schema_version: '2.0'\nlayout: karpathy\nslug_strategy: identity\n"
+        "paths:\n"
+        "  - {glob: 'a/*.md', type: summary, project: '_vault_'}\n"
+        "  - {glob: 'b/*.md', type: summary, project: '_vault_'}\n"
+        "type_mapping:\n  summary: {db_type: summary, tag: null}\n",
+        encoding="utf-8",
+    )
+    (root / "a").mkdir(); (root / "b").mkdir()
+    (root / "a" / "01.md").write_text("# A\nx\n", encoding="utf-8")
+    (root / "b" / "01.md").write_text("# B\ny\n", encoding="utf-8")
+    r = SQLiteRepository(tmp_path / "g.db")
+    r.apply_schema()
+    r.register_vault(Vault(
+        vault_id="col-delta", name="t", root_path=root,
+        schema_version="2.0", registered_at=datetime(2026, 5, 26),
+    ))
+    result = reindex_delta(r, "col-delta")  # cutoff = registered_at < both mtimes
+    cols = result["slug_collisions"]
+    assert len(cols) == 1 and cols[0]["slug"] == "01"
+    assert {cols[0]["kept"], cols[0]["dropped"]} == {"a/01.md", "b/01.md"}
 
 
 def test_delta_picks_up_modified_file(populated):

@@ -660,6 +660,32 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   serve the RAW-dict partial-merge, so the resolver re-reads each level incl. the root);
   (e) `--force` sets reason `forced` uniformly across `never`/`if-missing`; `_compose_key`
   empty-key → no-match; `_norm` is `isascii()`-guarded. **1039 pytest (+4 skipped), mypy strict.**
+- **Q-019-11 (TASK 019): post-ship dogfood hardening (2026-06-08).** A full end-to-end
+  dogfood on the operator's real `samples/Demand-generation` vault (6 modules + Lessons,
+  159 files) + a 14-agent adversarial verification workflow proved the gate **correct with
+  zero data-loss** (all 88 skips cross-checked to a real covering summary; D1∪D2a∪D2b all
+  exercised, incl. the date-key per-folder override + stem-relpath same-dir; the union's
+  value confirmed — a transcript D2a missed under a transiently-incomplete index was caught
+  by the FS-based D2b). Two fixes landed:
+  (a) **dead-detector WARN** — `_resummarize._scope_key_index` now logs once per scope when
+  mirror is enabled but the `group_key`/`key` regex keys **0 of N** summaries (the silent
+  symptom of a misconfigured pattern, e.g. a YAML double-backslash `'^(\\d+)'` that compiles
+  to "literal-backslash + d"); the index is built BEFORE the raw-side `rkey` short-circuit so
+  the WARN fires even when the regex matches neither side;
+  (b) **`ignore` UNION** — `load_layout_config` now EXTENDS (base ∪ override, base-first,
+  deduped) rather than replaces the base `ignore` on a per-vault `.wiki/layout.yaml` override
+  (paths/ref_extraction stay REPLACE for their ReDoS provenance), making the `wiki-init`
+  CLAUDE.md/WIKI_SCHEMA "extend `ignore`" guidance true and stopping a real Obsidian vault's
+  `.obsidian/`/`_templates/` from leaking into the index the moment an operator sets a custom
+  ignore. **1041 pytest, mypy strict.**
+  **Separate finding (NOT fixed — TASK-012 surface):** `wiki-reindex` SILENTLY drops a page
+  on an intra-project slug collision (two identically-titled lessons in one `project`) —
+  it reports the file count but the DB has fewer rows and `skipped`/`alias_collisions` are
+  empty, so the operator gets no signal and D2a then under-detects. Mitigated in the dogfood
+  by giving each module its own `project` (project_pattern); the indexer-side warn/guard
+  **shipped in TASK 020 [LIGHT]** — `reindex_full`/`reindex_delta` now emit a
+  `slug_collisions` envelope field (`{slug, project, kept, dropped}`) + a one-shot WARN
+  (detection-only). See `docs/tasks/task-020-reindex-slug-collision.md`.
 
 ### 11b. Defer-able (не блокирует Architecture, можно решать в Plan/Dev)
 

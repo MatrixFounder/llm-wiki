@@ -197,8 +197,23 @@ mypy strict (73 files).** Dogfood fixture `samples/Demand-generation` (6 modules
 patterns A group-key / B same-dir stem / C date-key) + committed e2e
 `tests/test_wiki_sync_resummarize_e2e.py`. Cross-task prereq (NOT in scope): obsidian-personal
 `type_mapping` lacks `lesson-summary` → the summary `upsert` leg needs a layout mapping
-(TASK 012 surface; ARCHITECTURE Q-019-9). See `docs/TASK.md`, `docs/PLAN.md`,
-`docs/tasks/task-019-*.md`, `docs/reviews/{task,architecture,plan}-019-review.md`.
+(TASK 012 surface; ARCHITECTURE Q-019-9). **Post-ship dogfood hardening (2026-06-08,
+ARCHITECTURE Q-019-11):** full end-to-end run on the real `samples/Demand-generation` vault
++ 14-agent adversarial verify → correct, **zero data-loss**; two fixes — (a) a **dead-mirror-
+detector WARN** (`_scope_key_index`: "mirror keyed 0 of N summaries" when a `group_key` regex
+matches nothing, e.g. a YAML double-backslash), (b) **`ignore` now UNIONs** the base layout
+ignores on a `.wiki/layout.yaml` override (was replace) — `1041 pytest`. See `docs/tasks/task-019-sync-resummarize-policy.md`,
+`docs/plans/plan-019-sync-resummarize-policy.md`, `docs/tasks/task-019-*.md` (beads),
+`docs/reviews/{task,architecture,plan}-019-review.md`.
+**TASK 020 (reindex-slug-collision) — [LIGHT] SHIPPED 2026-06-08** (uncommitted): the TASK 019
+dogfood's separate finding fixed — `wiki-reindex --full`/`--delta` SILENTLY overwrote a page on
+an intra-project `(vault_id, slug, project)` PK collision (reported N files, DB had fewer rows,
+`skipped`/`alias_collisions` empty). Now both emit a new **`slug_collisions`** envelope field
+(`{slug, project, kept, dropped}`, sibling of `alias_collisions`) + a one-shot WARN, via a shared
+`reindex._detect_slug_collision` (detection-only — operator disambiguates via a per-folder
+`project`/`project_pattern`; full=complete, delta=within-batch). **Zero DDL** (`user_version` 5),
+additive envelope, no new deps. **1043 pytest (+4 skipped), mypy strict.** See `docs/TASK.md`,
+`docs/tasks/task-020-reindex-slug-collision.md`.
 
 ## Knowledge lookup priority
 

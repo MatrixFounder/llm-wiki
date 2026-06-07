@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from dataclasses import replace
@@ -40,6 +41,35 @@ from scripts.wiki_source.parsing import extract_refs, first_h1
 
 if TYPE_CHECKING:
     from scripts.wiki_index.repository import IndexRepository
+
+_LOG = logging.getLogger("wiki_index.reindex")
+
+
+def _detect_slug_collision(
+    seen: dict[tuple[str, str], str], slug: str, project: str, rel: str,
+    collisions: list[dict[str, Any]],
+) -> None:
+    """TASK 020 — surface a silent `(vault_id, slug, project)` PK collision (two
+    distinct files resolving to the same DB identity → the later `upsert_page`
+    overwrites the earlier row with NO signal). Call AFTER a successful
+    `upsert_page`: if this `(slug, project)` was already written this run by a
+    DIFFERENT file, record `{slug, project, kept, dropped}` (kept = the later
+    POSIX-sorted file now in the DB; dropped = the earlier clobbered one) + WARN.
+    Detection-only — the operator disambiguates via a per-folder `project`/
+    `project_pattern`; we never auto-resolve."""
+    key = (slug, project)
+    prior = seen.get(key)
+    if prior is not None and prior != rel:
+        collisions.append({"slug": slug, "project": project,
+                           "kept": rel, "dropped": prior})
+        _LOG.warning(
+            "[reindex] slug collision: %r and %r both resolve to "
+            "(slug=%s, project=%s) — the later overwrote the earlier in the index "
+            "(no row lost-count signal otherwise). Disambiguate via a per-folder "
+            "project / project_pattern in .wiki/layout.yaml.",
+            prior, rel, slug, project,
+        )
+    seen[key] = rel
 
 
 def _coerce_is_candidate(fm: dict[str, Any]) -> int:
@@ -286,6 +316,8 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     t0 = time.perf_counter()
     run_id = repo.begin_batch_run(vault_id, "delta")
     skipped: list[dict[str, Any]] = []
+    slug_collisions: list[dict[str, Any]] = []          # TASK 020 (within-batch only)
+    seen_keys: dict[tuple[str, str], str] = {}
     try:
         row = repo._connect().execute(
             "SELECT MAX(event_ts) AS m FROM log_events WHERE vault_id = ?",
@@ -345,6 +377,9 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   delta_refs)
                 touched += 1
+                _detect_slug_collision(
+                    seen_keys, out.page_slug, out.project,
+                    str(path.relative_to(vault_root)), slug_collisions)
             except (UnmappedTypeError, BodyNormalizationError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
             except (PathTraversalError, OSError, ValueError) as e:
@@ -397,6 +432,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     return {
         "action": "reindexed", "mode": "delta", "vault_id": vault_id,
         "touched": touched, "deleted": deleted, "skipped": skipped,
+        "slug_collisions": slug_collisions,
         "auto_rendered": auto_rendered,
         "duration_seconds": round(duration, 3),
     }
@@ -429,6 +465,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     skipped: list[dict[str, Any]] = []
     alias_collisions: list[dict[str, Any]] = []
     cite_skipped: list[dict[str, Any]] = []
+    slug_collisions: list[dict[str, Any]] = []          # TASK 020
+    seen_keys: dict[tuple[str, str], str] = {}          # (slug, project) → first file
     try:
         # Step 1: wipe existing rows in a short atomic transaction.
         conn.execute("BEGIN IMMEDIATE")
@@ -485,6 +523,9 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   all_refs)
                 pages_count += 1
+                _detect_slug_collision(
+                    seen_keys, out.page_slug, out.project,
+                    str(path.relative_to(vault_root)), slug_collisions)
                 # Register entity row for _concepts/_entities files.
                 # entities.type follows the frontmatter's `type:` field
                 # (concept | person | company | product | group | event |
@@ -665,6 +706,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         "log_events": log_events_count,
         "aliases": aliases_count,
         "alias_collisions": alias_collisions,
+        "slug_collisions": slug_collisions,
         "cite_skipped": cite_skipped,
         "skipped": skipped,
         "auto_rendered": auto_rendered,

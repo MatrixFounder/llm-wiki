@@ -128,6 +128,22 @@ def test_override_replaces_paths(tmp_path: Path) -> None:
     assert cfg.paths == (PathEntry(glob="docs/**/*.md", project="_vault_"),)
 
 
+def test_override_unions_ignore(tmp_path: Path) -> None:
+    """TASK 019 dogfood fix: `ignore` is ADDITIVE — a per-vault override EXTENDS the
+    base ignore set (it does NOT replace it like `paths`), so the built-in
+    `.obsidian/**`/`**/*.base` exclusions survive a custom `ignore:`. This makes the
+    `wiki-init` CLAUDE.md/WIKI_SCHEMA 'extend `ignore`' guidance true."""
+    root = _vault(tmp_path)
+    (root / ".wiki").mkdir()
+    (root / ".wiki" / "layout.yaml").write_text("ignore:\n  - 'custom/**'\n", encoding="utf-8")
+    cfg = load_layout_config(root, {"layout": "obsidian-personal"})
+    assert "custom/**" in cfg.ignore          # the override entry is present
+    assert ".obsidian/**" in cfg.ignore       # ... AND the base entries are NOT lost
+    assert "**/*.base" in cfg.ignore
+    # base-first order, deduped, override appended
+    assert cfg.ignore[-1] == "custom/**"
+
+
 def test_schema_rejects_misspelled_pathentry_key(tmp_path: Path) -> None:
     root = _vault(tmp_path)
     (root / ".wiki").mkdir()

@@ -18,6 +18,20 @@
   (c) D2b builds a **once-per-scope** summary-key index + a ReDoS **load-gate**
   (`is_pattern_redos_safe`), beyond the per-file deadline (vdd-multi PERF/SEC). See
   `docs/reviews/{task,architecture,plan}-019-review.md` + the `/vdd-multi` convergence.
+- **Post-ship dogfood hardening (2026-06-08).** Full end-to-end dogfood on the operator's
+  real `samples/Demand-generation` course vault (6 modules + Lessons, 159 files) + a
+  14-agent adversarial verification workflow: the gate is **correct on real data, zero
+  data-loss** (all 88 skips cross-checked to a real covering summary; the only 3 `ingest`
+  entries are genuinely-uncovered `08-*` lessons). The dogfood surfaced two issues, **both
+  fixed here**: (1) a **silent dead mirror detector** — a misconfigured `group_key` (e.g. a
+  YAML double-backslash `'^(\\d+)'`) that keys nothing left D2b inert with no signal →
+  `_scope_key_index` now WARNs "mirror keyed 0 of N summaries … likely a misconfigured
+  pattern"; (2) **`ignore` now UNIONs** (not replaces) the base layout's exclusions on a
+  per-vault `.wiki/layout.yaml` override (`layout_config.load_layout_config`), making the
+  `wiki-init` templates' "extend `ignore`" guidance true. **1041 pytest (+4 skipped), mypy
+  strict.** (Also confirmed by the dogfood: `wiki-reindex` SILENTLY drops a page on an
+  intra-project slug collision — a separate TASK-012 indexing gap, documented in
+  `docs/ARCHITECTURE.md` §11a Q-019-11, **not** fixed here.)
 - **Source:** Operator request 2026-06-07 — "пересуммаризацию делать только если
   `--force` указан или сама суммаризация отсутствует"; detection rules + per-folder
   overrides declared **in YAML**.

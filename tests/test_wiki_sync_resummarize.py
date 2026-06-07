@@ -571,6 +571,25 @@ def test_d2b_summary_dir_traversal_refused(tmp_path: Path) -> None:
                          vault_root=tmp_path, mirror=mirror, caches=Caches()) is False
 
 
+def test_d2b_dead_detector_warns(tmp_path: Path, caplog) -> None:
+    """Dead-detector guard (dogfood finding): mirror enabled + summaries present but the
+    group_key regex keys NONE of them (e.g. the YAML double-backslash bug) → no match +
+    a one-shot WARN, so the silent-inert detector becomes observable."""
+    import logging
+    mod = tmp_path / "Module-01"
+    _mk(mod / "Transcripts" / "01-1.txt")
+    _mk(mod / "Summary" / "01 - X.md")
+    _mk(mod / "Summary" / "02 - Y.md")
+    # a regex that matches neither the raw nor any summary stem (digits-then-ZZZ)
+    mirror = MirrorConfig(enabled=True, raw_dirs=("Transcripts",), summary_dir="Summary",
+                          match="group-key", group_key=r"(\d+)ZZZ")
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        out = _mirror_match(mod / "Transcripts" / "01-1.txt",
+                            vault_root=tmp_path, mirror=mirror, caches=Caches())
+    assert out is False
+    assert any("keyed 0 of 2 summaries" in r.getMessage() for r in caplog.records)
+
+
 def test_d2b_bad_regex_rejected_by_load_gate(tmp_path: Path) -> None:
     """The mirror-regex load-gate rejects an uncompilable / budget-busting operator
     regex (`INVALID_SYNC_CONFIG`, exit 6) BEFORE it runs on any file — closes the

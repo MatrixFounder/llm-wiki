@@ -42,6 +42,59 @@ def test_unit_02_course_kebab_slug(multi_vault):
     assert "course-a" in proj
 
 
+def _collision_vault(root: Path, *, collide: bool) -> None:
+    """A vault whose layout maps two dirs into one project with identity slugs.
+    `collide=True` → `a/01.md` + `b/01.md` both resolve to (slug='01', project='_vault_')
+    → a silent (vault_id, slug, project) PK collision (TASK 020)."""
+    (root / ".wiki").mkdir(parents=True, exist_ok=True)
+    (root / ".wiki" / "layout.yaml").write_text(
+        "schema_version: '2.0'\nlayout: karpathy\nslug_strategy: identity\n"
+        "paths:\n"
+        "  - {glob: 'a/*.md', type: summary, project: '_vault_'}\n"
+        "  - {glob: 'b/*.md', type: summary, project: '_vault_'}\n"
+        "type_mapping:\n  summary: {db_type: summary, tag: null}\n",
+        encoding="utf-8",
+    )
+    (root / "a").mkdir(exist_ok=True)
+    (root / "b").mkdir(exist_ok=True)
+    (root / "a" / "01.md").write_text("# A one\nalpha body\n", encoding="utf-8")
+    second = "01.md" if collide else "02.md"
+    (root / "b" / second).write_text("# B\nbeta body\n", encoding="utf-8")
+
+
+def test_reindex_full_surfaces_slug_collision(tmp_path, fresh_db):
+    """TASK 020: two files → same (slug, project) → `slug_collisions` reports BOTH
+    paths (was silently overwritten with `pages` over-counting the DB rows)."""
+    root = tmp_path / "vault"
+    _collision_vault(root, collide=True)
+    r = SQLiteRepository(fresh_db)
+    r.apply_schema()
+    _register_vault(r, "collide-test", root)
+    result = reindex_full(r, "collide-test")
+    cols = result["slug_collisions"]
+    assert len(cols) == 1
+    assert cols[0]["slug"] == "01" and cols[0]["project"] == "_vault_"
+    assert {cols[0]["kept"], cols[0]["dropped"]} == {"a/01.md", "b/01.md"}
+    # `pages` still counts discovered files (2); the DB holds only 1 row for that key.
+    rows = r._connect().execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='collide-test'").fetchone()[0]
+    assert result["pages"] == 2 and rows == 1
+
+
+def test_reindex_full_no_collision_empty(tmp_path, fresh_db):
+    """No collision → `slug_collisions: []` (back-compat) and all rows survive."""
+    root = tmp_path / "vault"
+    _collision_vault(root, collide=False)
+    r = SQLiteRepository(fresh_db)
+    r.apply_schema()
+    _register_vault(r, "ok-test", root)
+    result = reindex_full(r, "ok-test")
+    assert result["slug_collisions"] == []
+    rows = r._connect().execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='ok-test'").fetchone()[0]
+    assert result["pages"] == 2 and rows == 2
+
+
 def test_e2e_01_reindex_minimal_vault(minimal_vault, fresh_db):
     """Reindex on minimal-vault → all 3 pages indexed."""
     r = SQLiteRepository(fresh_db)
