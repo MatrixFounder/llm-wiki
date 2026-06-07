@@ -67,6 +67,87 @@ $defs:
         description: 'Routing-tag namespace; `#<ns>/{raw,skip,keep}` + a `<ns>:` frontmatter field.'
       extensions:
         $ref: '#/$defs/Extensions'
+      resummarize:
+        $ref: '#/$defs/Resummarize'
+
+  # ----------------------------------------------------------------------------
+  # Resummarize (TASK 019) — the re-summarization policy gate. OPT-IN: absence ≡
+  # TASK 018 behavior. A raw source (ingest / convert+ingest) is gated to
+  # `skip:summary-exists:*` unless `--force` or `mode: always`. "Summary exists"
+  # = union of D1 (source_state) ∪ D2a (provenance_ref) ∪ D2b (mirror). Per-folder
+  # overridable via `<folder>/.wiki/sync.yaml` (Option A cascade, deepest-wins).
+  # STRICT (additionalProperties:false) — a misspelled key is INVALID_SYNC_CONFIG.
+  # ----------------------------------------------------------------------------
+  Resummarize:
+    type: object
+    additionalProperties: false
+    properties:
+      mode:
+        type: string
+        enum: [if-missing, always, never]
+        description: 'if-missing (default): ingest only if no summary detected; always; never.'
+      detect:
+        $ref: '#/$defs/Detect'
+
+  Detect:
+    type: object
+    additionalProperties: false
+    properties:
+      source_state:
+        type: boolean
+        description: 'D1 — a wiki-sync `source_state` hash marker counts as "summary exists".'
+      provenance_ref:
+        $ref: '#/$defs/ProvenanceRef'
+      mirror:
+        $ref: '#/$defs/Mirror'
+
+  ProvenanceRef:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+      fields:
+        type: array
+        items: {type: string}
+        description: 'frontmatter keys checked (string or list value), e.g. [source, sources].'
+      match:
+        type: string
+        enum: [vault-rel-path, basename]
+
+  Mirror:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+      raw_dirs:
+        type: array
+        items: {type: string}
+        description: 'dir names that anchor a raw tree (e.g. _raw, _transcripts, Transcripts).'
+      summary_dir:
+        type: string
+        description: 'sibling dir holding summaries; "." = the raw file''s own folder.'
+      summary_ext: {type: string}
+      match:
+        type: string
+        enum: [stem-relpath, group-key]
+      group_key:
+        type: string
+        description: 'shorthand regex applied to BOTH sides (default `^(\d+)`); superseded by `key`.'
+      key:
+        $ref: '#/$defs/MirrorKey'
+
+  MirrorKey:
+    type: object
+    additionalProperties: false
+    properties:
+      raw_regex: {type: string}
+      summary_regex: {type: string}
+      template:
+        type: string
+        description: 'string.Template over named groups → the comparable key (e.g. ${module}-${lesson}).'
+      flags:
+        type: array
+        items: {type: string, enum: [ignorecase, unicode]}
 
 # Top-level: library of $defs (mirrors layout-config.schema.yaml). The loader
 # validates a merged config against #/$defs/SyncConfig explicitly.

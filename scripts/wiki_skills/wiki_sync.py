@@ -39,6 +39,7 @@ from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_index.sync_config import SyncConfig, SyncConfigError, load_sync_config
 from scripts.wiki_skills._sync import Decision, classify_file, iter_sync_candidates
+from scripts.wiki_skills._resummarize import Caches, apply_policy, resolve_policy
 from scripts.wiki_skills._common import emit
 
 GENERATED_BY = "wiki-sync/scan"
@@ -114,15 +115,18 @@ def scan(args: argparse.Namespace) -> int:
                          "reason": "zone resolves outside the vault root"}, 2)
 
         # `.wiki/sync.yaml` (optional) — INVALID_SYNC_CONFIG → exit 6.
+        # `.wiki/sync.yaml` (optional) AND any per-folder `resummarize:` override
+        # the cascade resolver reads inside `_build_entries` (TASK 019) — BOTH map
+        # an invalid config to exit 6, never a traceback/CWE-209 leak.
         try:
             config_obj = load_sync_config(vault_root)
+            layout = resolve_layout_config(vault_root)
+            entries = _build_entries(
+                repo, args.vault, zone, vault_root, config_obj, layout,
+                force=args.force)
         except SyncConfigError as exc:
             return emit({"error": exc.code, "field": "sync-config",
                          "reason": exc.detail}, 6)
-
-        layout = resolve_layout_config(vault_root)
-        entries = _build_entries(
-            repo, args.vault, zone, vault_root, config_obj, layout)
         plan: dict[str, Any] = {
             "vault_id": args.vault,
             "zone": _safe_zone_rel(zone, vault_root),
@@ -139,15 +143,25 @@ def scan(args: argparse.Namespace) -> int:
 
 def _build_entries(
     repo: IndexRepository, vault_id: str, zone: Path, vault_root: Path,
-    config: SyncConfig, layout: Any,
+    config: SyncConfig, layout: Any, force: bool = False,
 ) -> list[dict[str, Any]]:
-    """Walk → classify → hash (actionable only) → idempotency. Deterministic:
-    NO timestamp; `entries[]` sorted by vault-relative POSIX path (AC-10)."""
+    """Walk → classify → **re-summarization gate** (TASK 019) → hash (actionable
+    only) → idempotency. Deterministic: NO timestamp; `entries[]` sorted by
+    vault-relative POSIX path (AC-10). The gate (`apply_policy`) is monotone — it
+    can only turn an `ingest`/`convert+ingest` into a `skip`; `policy=None` (no
+    `resummarize:` block at any level) is a no-op (back-compat / AC-7). The policy
+    is resolved per file via the per-folder cascade, memoized per directory."""
     entries: list[dict[str, Any]] = []
+    caches = Caches()  # per-scan memo: resolved policy / D2a citation set / D2b key index
     for cand in iter_sync_candidates(zone, vault_root=vault_root, config=config):
         d: Decision = classify_file(
             cand.path, vault_root=vault_root, config=config, layout=layout,
             in_raw=cand.in_raw, in_exclude_zone=cand.in_exclude_zone,
+        )
+        policy = resolve_policy(cand.path, vault_root=vault_root, caches=caches)
+        d = apply_policy(
+            d, path=cand.path, rel=cand.rel, vault_root=vault_root,
+            repo=repo, vault_id=vault_id, policy=policy, force=force, caches=caches,
         )
         entry: dict[str, Any] = {
             "path": cand.rel, "action": d.action, "reason": d.reason,
@@ -271,6 +285,9 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Vault root. Derived from the registered vault when omitted.")
     sp.add_argument("--dry-run", action="store_true",
                     help="Print a human report of the plan; write nothing.")
+    sp.add_argument("--force", action="store_true",
+                    help="Re-summarise raw sources even if a summary exists "
+                         "(bypass the resummarize policy + detectors).")
     sp.add_argument("--db-path", default=None)
     sp.set_defaults(func=scan)
 

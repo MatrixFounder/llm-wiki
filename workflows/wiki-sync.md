@@ -30,10 +30,13 @@ reasoning steps run in the calling agent's context.
 ## Step 1 — Parse operator invocation
 
 ```text
-/wiki-sync <zone> --vault <id> [--vault-root <path>] [--dry-run]
+/wiki-sync <zone> --vault <id> [--vault-root <path>] [--dry-run] [--force]
 ```
 
-Capture `zone`, `vault`, `vault_root`, `--db-path`.
+Capture `zone`, `vault`, `vault_root`, `--db-path`, `--force`. `--force`
+re-summarises raw sources even when a summary already exists (TASK 019 — it
+bypasses the `resummarize:` policy + its detectors); without it, a raw whose
+summary already exists is planned as `skip:summary-exists:*`.
 
 ## Step 2 — Acquire the per-vault lock (mutual exclusion)
 
@@ -72,9 +75,13 @@ Either way: refuse, never block, on contention → exit 2 `SYNC_IN_PROGRESS`.
 ## Step 3 — Run `wiki-sync scan`
 
 ```bash
-wiki-sync scan "$ZONE" --vault "$VAULT" --vault-root "$VAULT_ROOT" [--db-path …]
+wiki-sync scan "$ZONE" --vault "$VAULT" --vault-root "$VAULT_ROOT" [--db-path …] [--force]
 ```
 
+- pass `--force` through verbatim when the operator gave it.
+- new skip reasons (TASK 019): `summary-exists:source_state` / `:provenance` /
+  `:mirror` (a summary already exists) and `resummarize-never` (`mode: never`) — all
+  carried into the report like any other skip.
 - `--dry-run` → print the plan + every skip-reason and **STOP** (no execution).
 - exit `2` → forward the precondition envelope (`ZONE_NOT_FOUND` /
   `ZONE_OUTSIDE_VAULT` / `INVALID_VAULT_ROOT`) and STOP.
@@ -163,6 +170,13 @@ a `.vtt`.
    (see `workflows`/the manual for the exact enrich contract).
 5. **Extract concepts**: `wiki-extract-concepts prepare … && … apply …` over the
    filed summary (the two-pass Decision-17 recipe).
+6. **Provenance writeback (TASK 019 / AC-13):** write the raw source path(s) this
+   summary was distilled from into the filed summary's frontmatter —
+   `sources: ["<raw vault-rel path>", …]` (a single source → a one-element list).
+   This makes the **next** `wiki-sync scan` detect the summary via the exact D2a
+   provenance signal (`source:`/`sources:`), independent of any naming heuristic —
+   so the raw is skipped `summary-exists:provenance` without relying on the D2b
+   mirror. Idempotent: re-writing the same list is a no-op.
 
 ### 4c — `upsert` (a ready, mappable `.md` — no LLM)
 

@@ -34,9 +34,14 @@ per-file isolation, H-6 fence, commit-marker).
 ## CLI surface (deterministic core)
 
 ```bash
-wiki-sync scan <zone> --vault <id> [--vault-root <path>] [--dry-run] [--db-path <p>]
+wiki-sync scan <zone> --vault <id> [--vault-root <path>] [--dry-run] [--force] [--db-path <p>]
 wiki-sync record <vault-rel-path> --source-hash <sha256> --vault <id> [--db-path <p>]
 ```
+
+- **`--force`** (TASK 019) — re-summarise raw sources even if a summary already
+  exists (bypass the `resummarize:` policy + detectors). Zone-scoped; the persistent
+  per-subtree equivalent is `resummarize: { mode: always }` in that folder's
+  `.wiki/sync.yaml`.
 
 - **`scan`** — own bounded walk (NOT `iter_pages`; heterogeneous extensions) →
   `classify_file` → `source_hash=sha256(bytes)` → `is_unchanged` via the
@@ -91,10 +96,25 @@ skip `reason`s: `wiki/skip`, `excluded-zone`, `empty-source`, `view:dbfolder` /
    Degenerate inputs (empty / unparseable frontmatter / unreadable) → skip,
    never raise.
 
+## Re-summarization policy (TASK 019, optional)
+
+A `resummarize:` block in `.wiki/sync.yaml` turns the dispatcher idempotent at the
+*knowledge* level: a raw source is `ingest`/`convert+ingest`-ed **only if** `--force`
+**or** no summary exists. "Summary exists" = a union of detectors — **D1**
+`source_state` (wiki-sync already ingested it), **D2a** `provenance_ref` (a page's
+`source:`/`sources:` frontmatter cites the raw vault-rel path), **D2b** `mirror`
+(a `_summary`-tree sibling: `stem-relpath` 1:1 or `group-key` N:1 via a configurable,
+ReDoS-guarded regex). `mode` ∈ `if-missing` (default) / `always` / `never`. The block
+is **per-folder overridable** — a `<folder>/.wiki/sync.yaml` `resummarize:` deep-merges
+deepest-wins over the vault root (a folder may set only `mode` and inherit `detect`).
+Absent block ≡ TASK 018 behavior. New skip reasons:
+`summary-exists:{source_state,provenance,mirror}` and `resummarize-never`.
+
 ## Config — `.wiki/sync.yaml` (optional)
 
 Keys: `zones`, `exclude`, `tag_namespace` (default `wiki`), `extensions`
-(`convert`/`text`/`skip` overrides that *extend* the built-ins). Strict schema
+(`convert`/`text`/`skip` overrides that *extend* the built-ins), `resummarize`
+(TASK 019, above). Strict schema
 (`config/sync-config.schema.yaml`) — a misspelled key is `INVALID_SYNC_CONFIG`.
 Hardened against an untrusted file: a 256 KiB size cap + a `SafeLoader` that
 refuses YAML anchors/aliases (a billion-laughs/deep-nesting payload → controlled

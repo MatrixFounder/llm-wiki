@@ -169,8 +169,36 @@ lock / SEC-A3 staging-write guard — all fixed with regressions. **73 new tests
 (`tests/test_wiki_sync.py` + `tests/test_wiki_sync_e2e.py` over committed
 `tests/fixtures/sync/**` incl. a real `yaml:dbfolder` sidecar). **986 pytest (+4
 skipped), mypy strict (72 files).** Residual P2 (recorded in ROADMAP, not silent):
-the `.md`-read-twice fuse. See `docs/TASK.md`, `docs/PLAN.md`,
-`docs/tasks/task-018-*.md`, `docs/reviews/`.
+the `.md`-read-twice fuse. See `docs/tasks/task-018-wiki-sync.md`, `docs/plans/plan-018-wiki-sync.md`,
+`docs/tasks/task-018-*.md` (beads), `docs/reviews/`.
+**TASK 019 (sync-resummarize-policy — `wiki-sync` re-summarization gate) SHIPPED 2026-06-07**
+(uncommitted): the dispatcher is now idempotent at the *knowledge* level — a raw source is
+`ingest`/`convert+ingest`-ed **only if** `--force` **or** no summary exists. A **monotone**
+gate in `wiki_sync._build_entries` (only `ingest`/`convert+ingest`→`skip`, never `upsert`),
+new SRP module `scripts/wiki_skills/_resummarize.py`. "Summary exists" = **D1** `source_state`
+∪ **D2a** provenance (two new read-only DAL methods over `frontmatter_json`:
+`find_pages_citing_source` + the bulk `all_cited_sources` hoisted once per scan; rel-path ∥
+basename; list-valued `sources:` ⇒ N:1) ∪ **D2b** filesystem mirror (`stem-relpath` 1:1 /
+`group-key` N:1 via a configurable `key{raw_regex,summary_regex,template,flags}`; a once-per-scope
+key index; ReDoS-guarded by a cached **load-gate** (`layout_config.is_pattern_redos_safe`) +
+`guarded_search` per-call deadline; `scope` vault-contained). Rules = a strict opt-in
+`$def Resummarize` in `config/sync-config.schema.yaml` under `SyncConfig.resummarize`
+(absent ≡ TASK 018 / byte-identity), **per-folder overridable** (Option-A cascade:
+`<folder>/.wiki/sync.yaml`, deepest-wins deep-merge on RAW dicts so a partial override inherits
+`detect`; resolved policy + citation set + mirror index all memoized on a per-scan `Caches` →
+O(S+R)/O(P+R)). `scan --force` (zone-scoped) + the executor's `sources:` writeback
+on generated summaries (`workflows/wiki-sync.md` 4b/AC-13). **Zero DDL** (`user_version` 5 —
+reuse `SourceState` + `frontmatter_json`); **no `import anthropic`**. Full VDD pipeline
+(task/arch/plan reviews APPROVED) + Stub-First green-throughout (`skill-tdd-strict` on the
+back-compat / DAL / gate-monotonicity / ReDoS beads) + **`/vdd-multi` converged** (Logic ✓
+Security ✓ Performance ✓; iter-1 → 2 HIGH perf + 1 MED sec + 2 MED/3 LOW logic → iter-2
+verified-fixed + 1 sec DiD). **1039 pytest (+4 skipped),
+mypy strict (73 files).** Dogfood fixture `samples/Demand-generation` (6 modules + Lessons;
+patterns A group-key / B same-dir stem / C date-key) + committed e2e
+`tests/test_wiki_sync_resummarize_e2e.py`. Cross-task prereq (NOT in scope): obsidian-personal
+`type_mapping` lacks `lesson-summary` → the summary `upsert` leg needs a layout mapping
+(TASK 012 surface; ARCHITECTURE Q-019-9). See `docs/TASK.md`, `docs/PLAN.md`,
+`docs/tasks/task-019-*.md`, `docs/reviews/{task,architecture,plan}-019-review.md`.
 
 ## Knowledge lookup priority
 

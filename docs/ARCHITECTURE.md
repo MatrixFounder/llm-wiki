@@ -257,6 +257,29 @@
 > [architecture-018](./reviews/architecture-018-review.md) ·
 > [adversarial-018](./reviews/adversarial-018-review.md). ROADMAP R-11.
 >
+> **TASK 019 (`wiki-sync` re-summarization policy — skip-if-summarized + `--force` +
+> per-folder rule overrides) — ✅ SHIPPED 2026-06-07** (uncommitted; full VDD pipeline +
+> `/vdd-multi` converged — Logic ✓ Security ✓ Performance ✓; 1039 pytest, mypy strict 73
+> files; zero DDL `user_version` 5; no `import anthropic`. Post-review hardening in
+> §11a Q-019-10: per-scan `Caches` [O(S+R)/O(P+R)], the bulk D2a DAL `all_cited_sources`,
+> a once-per-scope mirror index + operator-regex load-gate + scope containment). Extends the
+> TASK 018 deterministic `scan` half with a **policy gate** between `classify_file` and the
+> plan-entry build (`_build_entries`): a raw source (`ingest`/`convert+ingest`) is gated to
+> `skip:summary-exists:*` unless `--force` or `mode: always`; it **never** touches
+> `upsert`/`skip`. **"Summary exists" = union of D1** (`source_state` marker — existing) **∪
+> D2a** (provenance — a page's `source:`/`sources:` frontmatter cites the raw vault-rel path,
+> via `json_extract(frontmatter_json,…)`; + `sources:` **writeback** on generated summaries)
+> **∪ D2b** (structural mirror — configurable `raw_dirs`→`summary_dir`, `match ∈ {stem-relpath,
+> group-key}`, **extended** `key{raw_regex,summary_regex,template,flags}`, **ReDoS-guarded** via
+> TASK 017). Rules live in `.wiki/sync.yaml` `resummarize:`, **per-folder overridable (Option A
+> cascade, deepest-wins)**. `exclude:` (never-walk) **wins** over the policy. **Zero DDL**
+> (`user_version` 5 — reuse `SourceState` + `Page.frontmatter_json`; +2 read-only DAL
+> methods `find_pages_citing_source`/`all_cited_sources`). Dogfood fixture **`samples/Demand-generation`** (6 modules +
+> Lessons) exercises all 3 real patterns: (A) N:1 `Transcripts/KK-S….txt → Summary/KK-….md`
+> (group-key `^(\d+)`), (B) same-dir `Resources/X.docx ↔ Resources/X.md` (`summary_dir: "."`,
+> stem), (C) date-keyed `Lessons/` (`^(\d{8})` — divergent per-folder regex). Design: §11a
+> Q-019-1..9. Spec: [TASK 019](./tasks/) + [review](./reviews/task-019-review.md).
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -306,7 +329,7 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 
 ## 2. Functional Architecture
 
-Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`, **Sync Dispatcher** `wiki-sync` [TASK 018 / R-11 — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip]) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
+Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`, **Sync Dispatcher** `wiki-sync` [TASK 018 / R-11 — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip; **TASK 019** adds a re-summarization **policy gate** — skip-if-summarized (D1 `source_state` ∪ D2a provenance ∪ D2b mirror) + `--force` + per-folder `.wiki/sync.yaml` cascade overrides]) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
 
@@ -355,7 +378,7 @@ Architectural style (layered + plugin), system-component breakdown (Skill Layer 
 
 ## 4. Data Model (Conceptual)
 
-Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table), and the TASK 007 RAG additions (query page as a first-class compounding `type=query` artifact; `ref_type='cited'` query→source backlinks with the R-6.5e reindex read-side; `source_state` reuse for query idempotency — all **zero-DDL**, `user_version` stays 4).
+Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table), and the TASK 007 RAG additions (query page as a first-class compounding `type=query` artifact; `ref_type='cited'` query→source backlinks with the R-6.5e reindex read-side; `source_state` reuse for query idempotency — all **zero-DDL**, `user_version` stays 4). **TASK 019** (re-summarization policy) is likewise **zero-DDL**: D1 reuses `SourceState` (`source_kind='sync'`), D2a reads `Page.frontmatter_json` (`json_extract`/`json_each`, TASK 013 mechanism) through **two new read-only DAL methods** — `find_pages_citing_source` (single-source check) + `all_cited_sources` (the bulk citation set, hoisted once per scan, Q-019-10) — D2b is filesystem-only — **no new entity/column**, `user_version` stays **5**.
 
 → [details](./architectures/data-model.md)
 
@@ -534,6 +557,109 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   `normalize_frontmatter` resolution `wiki-index-upsert` uses, not a karpathy assumption. Re-gate
   residual after these = LOW/Planning only (RC-4 matcher, RC-5 reuse, SEC-N1 empty-slug,
   RG-5 wording). **Still zero DDL** (`user_version` 5).
+- **Q-019-1 (TASK 019): policy-gate placement + component layout.** **RESOLVED:** the
+  re-summarization policy is a **gate between the classifier and the plan-entry build**, in
+  `wiki_sync._build_entries`: after `classify_file` returns an action, if action ∈
+  `{ingest, convert+ingest}` the gate MAY downgrade it to `skip`; it **never** touches
+  `upsert`/`skip`/`record` (the gate is monotone — only `ingest → skip`). New module
+  `scripts/wiki_skills/_resummarize.py` (SRP; acyclic `wiki_sync.py → _resummarize.py`,
+  which consumes `_sync` types + the open `repo`; `_sync.py` stays the pure classifier).
+  D1/D2a take the open `repo`; D2b is pure FS. (AC-1.)
+- **Q-019-2 (TASK 019): config schema `$def Resummarize` (strict, opt-in).** **RESOLVED:**
+  new strict `$def Resummarize` under `SyncConfig.resummarize` in
+  `config/sync-config.schema.yaml` (`additionalProperties:false`); **absent ≡ TASK 018
+  behavior** (AC-7). Shape: `mode ∈ {if-missing(default), always, never}`; `detect:
+  {source_state:bool=true, provenance_ref:{enabled, fields:[source,sources]},
+  mirror:{enabled, raw_dirs:[…], summary_dir, summary_ext='.md', match ∈
+  {stem-relpath,group-key}, group_key(shorthand) | key:{raw_regex, summary_regex, template,
+  flags:[ignorecase,unicode]}}}`. Omitted `detect` → `{source_state:true}` (OQ-5).
+  `summary_dir: "."` = the raw file's own folder (Pattern B). Loader hardening reused from
+  `sync_config` (256 KiB cap + anchor-ban `SafeLoader`; `INVALID_SYNC_CONFIG` exit 6, value
+  never echoed — CWE-209/117). (AC-9/AC-11.)
+- **Q-019-3 (TASK 019): per-folder override = Option A cascade (operator-decided).**
+  **RESOLVED:** a `<folder>/.wiki/sync.yaml` carrying a `resummarize:` block overrides for
+  files **under** it. Per scanned file the resolver walks ancestor dirs from vault-root →
+  file-dir, reads each `<dir>/.wiki/sync.yaml` `resummarize`, **deep-merges deepest-wins**
+  over the vault-root global (dicts merge, scalars replace → partial override: set only
+  `mode`, inherit `detect`). **Per-directory memoization** (resolve once per dir, not per
+  file → AC-10 determinism + perf, §8). The `.wiki/` dir is **read directly** and is **pruned
+  from the content walk** (`_is_pruned_dir` dot-segment) → an override file is never itself
+  ingested. Path hardening reused from `.wiki/layout.yaml`: raw-`is_symlink` refuse +
+  `validate_inside_vault` + size-cap + anchor-ban. Scope = `resummarize` only (not
+  `zones`/`exclude`/`tag_namespace`/`extensions`). **Fixture anchor:** `Module-NN/.wiki/sync.yaml`
+  (`group_key '^(\d+)'`) vs `Lessons/.wiki/sync.yaml` (`group_key '^(\d{8})'`) — a real
+  divergence that *requires* the cascade. (AC-5.)
+- **Q-019-4 (TASK 019): detectors — union + cheapest-first short-circuit.** **RESOLVED:**
+  "summary exists" = **D1 ∪ D2a ∪ D2b** (any match → covered). Order: **D1** `get_source_state(
+  vault,'sync',rel,'source_hash')` present (existing, ~free) → **D2a** new read-only DAL
+  `find_pages_citing_source(vault_id, rel_path, fields)` = parameterized
+  `json_extract(frontmatter_json,'$.source')==? OR rel_path ∈ '$.sources[]'` (TASK 013
+  mechanism; vault-rel match, OQ-3) → **D2b** mirror (FS). Match → `skip:summary-exists:
+  {source_state|provenance|mirror}`. `mode: never` → `skip:resummarize-never` regardless;
+  `mode: always`/`--force` → bypass detectors (reason `forced` for `--force`). **Fixture
+  reality:** the `samples/Demand-generation` summaries currently carry **no** `source:`
+  frontmatter ⇒ D2a is dormant there and **D2b group-key is the operative detector**; the
+  writeback (Q-019-7) then populates D2a. (AC-1/2/3/3b/4/8.)
+- **Q-019-5 (TASK 019): D2b mirror algorithm + extended regex + ReDoS guard.** **RESOLVED:**
+  anchor = **nearest** ancestor of the raw file whose dir-name ∈ `raw_dirs`; scope = sibling
+  `<anchor.parent>/<summary_dir>/` (or the anchor dir itself when `summary_dir: "."`,
+  Pattern B). Strategies: **`stem-relpath`** (1:1 — `<scope>/<same-relpath-stem><summary_ext>`
+  exists; covers `Resources/X.docx ↔ Resources/X.md`) and **`group-key`** (N:1 — derive a key
+  from the raw stem via `key.raw_regex` named groups → `template`, and from each candidate
+  summary stem via `key.summary_regex`; covered iff some summary in scope shares the composed
+  key; `group_key` = same-regex-both-sides shorthand; default `^(\d+)`). **Operator regexes
+  are ReDoS-guarded** reusing TASK 017: `_redos_budget_check` load-gate at config-parse
+  (catastrophic → `INVALID_SYNC_CONFIG`, value not echoed) + per-file `guarded_search`
+  deadline at match (timeout → no-mirror-match + WARN, never hang). Empty/no-key → no match
+  (fall through). **Documented limitation:** a raw whose name yields no key (e.g.
+  `Transcripts/Модуль 1 Урок 4 ….pdf` under `^(\d+)`) falls through to convert/ingest; the
+  robust cover is D2a once `sources:` exist (Q-019-7). *Planning residual (LOW):* recursive-
+  vs-flat scope scan; multi-pair `raw_dirs↔summary_dir`. (AC-3/3b/12.)
+- **Q-019-6 (TASK 019): `--force` + `exclude > policy` precedence.** **RESOLVED:** `wiki-sync
+  scan <zone> [--force]` — `--force` bypasses detectors + `mode`, plans every raw actionable
+  (`reason="forced"`), **zone-scoped** (the zone arg is a course/module, never the whole
+  vault; persistent per-subtree force = `mode: always`). **`exclude:` wins:** an
+  `exclude:`-matched path is pruned in `iter_sync_candidates` (the walk) **before**
+  classification → it never reaches the gate. `exclude:` = "never walk"; policy = "walk but
+  skip-if-summarized". (AC-4; OQ-4/OQ-6.)
+- **Q-019-7 (TASK 019): provenance writeback (executor).** **RESOLVED:** when
+  `workflows/wiki-sync.md` *generates* a summary from N raw sources it writes `sources:
+  [<raw vault-rel paths>]` into that summary's frontmatter (deterministic, idempotent) → the
+  next scan detects via the exact D2a signal regardless of naming, making the corpus
+  self-describing. Also retro-fits `samples/Demand-generation` (whose summaries lack
+  `sources:`) on first wiki-sync-driven regeneration. (AC-13.)
+- **Q-019-8 (TASK 019): data model — zero DDL.** **RESOLVED:** no new entity/column. D1 =
+  existing `SourceState` (`source_kind='sync'`); D2a = existing `Page.frontmatter_json` via
+  parameterized `json_extract` (read-only); D2b = filesystem only. **One new read-only DAL
+  method** `find_pages_citing_source` (pure SELECT). `user_version` stays **5**. (AC-9.)
+- **Q-019-9 (TASK 019): back-compat + determinism + dogfood.** **RESOLVED:** no `resummarize`
+  block ⇒ **byte-identical** plan to TASK 018 (regression-locked, AC-7); per-dir-memoized
+  resolution is order-independent ⇒ byte-identical plans (AC-10); **no `import anthropic`**.
+  **Dogfood `samples/Demand-generation`** exercises patterns A (group-key modules), B
+  (same-dir stem Resources), C (date-key Lessons) end-to-end. **Cross-task prerequisite (NOT
+  TASK 019 scope):** the summaries use `type: lesson-summary`, unmapped by obsidian-personal's
+  `type_mapping` → `wiki-index-upsert` would `skip:unmappable-type`; the dogfood vault needs a
+  layout mapping `lesson-summary` (TASK 012 TYPE_MAPPING tag-route) for the summary `upsert`
+  leg — orthogonal to the re-summarization gate, flagged so dogfood isn't surprised.
+- **Q-019-10 (TASK 019): SHIPPED + `/vdd-multi` hardening (2026-06-07).** The as-built
+  implementation refines Q-019-3/4/5/8 after the 3-critic convergence (Logic ✓ Security ✓
+  Performance ✓):
+  (a) **per-scan `Caches`** (one per `_build_entries`) memoizes the resolved policy per parent
+  dir, the D2a citation set per `(fields, match)`, and the D2b summary-key index per scope —
+  collapsing the per-file hot path from O(R×S) mirror + O(R×F×P) provenance to **O(S+R)** +
+  **O(P+R)** per scan;
+  (b) D2a adds a **second** read-only DAL method `all_cited_sources(vault_id, fields) -> set`
+  (the bulk citation set, hoisted once) beside `find_pages_citing_source` (Q-019-8); `match:
+  basename` is now honored (was an orphaned knob);
+  (c) D2b's summary-key index is built **once per scope under a single shared ReDoS deadline**
+  (bounds the S-side aggregate) + an operator-regex **load-gate** (`layout_config.is_pattern_redos_safe`,
+  cached) rejecting an uncompilable/catastrophic pattern → `INVALID_SYNC_CONFIG` exit 6, no echo
+  (beyond the per-call deadline); the mirror `scope` is `validate_inside_vault`-contained +
+  walked `recurse_symlinks=False` (operator `summary_dir` can't probe out-of-vault);
+  (d) `resolve_policy` signature is `(path, *, vault_root, caches)` (the parsed config can't
+  serve the RAW-dict partial-merge, so the resolver re-reads each level incl. the root);
+  (e) `--force` sets reason `forced` uniformly across `never`/`if-missing`; `_compose_key`
+  empty-key → no-match; `_norm` is `isascii()`-guarded. **1039 pytest (+4 skipped), mypy strict.**
 
 ### 11b. Defer-able (не блокирует Architecture, можно решать в Plan/Dev)
 
@@ -580,7 +706,7 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 
 ## Verification Map
 
-Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), wiki-ingest Vendoring (R-45..R-57), Entity Resolver (R-4 + R-5, TASK 005), and RAG Query Layer (R-6, TASK 007).
+Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26), Concept Extractor (R-30..R-43), wiki-ingest Vendoring (R-45..R-57), Entity Resolver (R-4 + R-5, TASK 005), RAG Query Layer (R-6, TASK 007), and the **Sync Dispatcher re-summarization policy (TASK 019, AC-1..13 → Q-019-1..9)**.
 
 → [details](./architectures/verification-map.md)
 

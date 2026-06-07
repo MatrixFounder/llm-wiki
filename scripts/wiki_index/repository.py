@@ -513,6 +513,33 @@ class IndexRepository(abc.ABC):
         ...
 
     @abc.abstractmethod
+    def find_pages_citing_source(
+        self, vault_id: str, rel_path: str, fields: tuple[str, ...]
+    ) -> list[str]:
+        """TASK 019 / Q-019-4 — D2a provenance: slugs of indexed pages whose any
+        ``fields`` frontmatter key cites ``rel_path`` (a vault-relative POSIX path),
+        either as a scalar (``source: <rel>``) or as a list element
+        (``sources: [<rel>, …]`` — the N-raw→1-summary case).
+
+        Read-only over ``pages.frontmatter_json`` (``json_extract`` + ``json_each``),
+        scoped to ``vault_id``, values **bound** as parameters (injection-safe; reuses
+        the TASK 013 ``--where`` pattern). Each ``field`` is re-validated against the
+        metadata-filter allowlist; a non-conforming field is **skipped** (never raises
+        — a misconfigured `provenance_ref.fields` must not crash a scan). **Zero DDL**
+        (``user_version`` stays 5). Returns ``[]`` when no page cites the source."""
+        ...
+
+    @abc.abstractmethod
+    def all_cited_sources(self, vault_id: str, fields: tuple[str, ...]) -> set[str]:
+        """TASK 019 / Q-019-4 (perf) — the SET of EVERY source path cited by ANY
+        indexed page in ``vault_id`` across the given frontmatter ``fields`` (scalar
+        value or list element, via ``json_each``). Hoisted **once per scan** so the
+        D2a provenance detector is an O(1) set-membership test per file instead of an
+        N+1 of per-file ``find_pages_citing_source`` queries (vdd-multi PERF-HIGH).
+        Read-only, **zero DDL**; non-allowlisted fields are skipped."""
+        ...
+
+    @abc.abstractmethod
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """All alias collisions (R-5.6), each tagged by ``AliasCollision.kind``:
         ``in_table`` (legacy/pre-migration), ``cross_slug``/``cross_name`` (alias

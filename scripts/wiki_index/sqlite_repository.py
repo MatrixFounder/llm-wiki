@@ -1221,6 +1221,65 @@ class SQLiteRepository(IndexRepository):
                 (vault_id, source_kind, scope, key, value, now),
             )
 
+    def find_pages_citing_source(
+        self, vault_id: str, rel_path: str, fields: tuple[str, ...]
+    ) -> list[str]:
+        """TASK 019 / Q-019-4 — D2a provenance over `pages.frontmatter_json`.
+
+        For each allowlisted `field`, a page cites `rel_path` iff the frontmatter
+        value equals it as a **scalar** (`json_extract` + `CAST … AS TEXT`) OR as a
+        **list element** (`json_each`, the N:1 `sources: [...]` case). Both the JSON
+        path and the value are BOUND parameters (no operator string reaches the SQL
+        text). A field failing `validate_filter_field` is skipped (never raises)."""
+        conn = self._connect()
+        seen: set[str] = set()
+        out: list[str] = []
+        for field in fields:
+            try:
+                validate_filter_field(field)
+            except ValueError:
+                continue  # misconfigured field → skip, never crash the scan
+            json_path = f"$.{field}"
+            rows = conn.execute(
+                "SELECT slug FROM pages WHERE vault_id = ? AND ("
+                "  CAST(json_extract(frontmatter_json, ?) AS TEXT) = ?"
+                "  OR EXISTS (SELECT 1 FROM json_each(frontmatter_json, ?) "
+                "             WHERE value = ?)"
+                ")",
+                (vault_id, json_path, rel_path, json_path, rel_path),
+            ).fetchall()
+            for r in rows:
+                slug = str(r["slug"])
+                if slug not in seen:
+                    seen.add(slug)
+                    out.append(slug)
+        return out
+
+    def all_cited_sources(self, vault_id: str, fields: tuple[str, ...]) -> set[str]:
+        """TASK 019 / Q-019-4 (perf) — one `json_each` scan per field → the set of
+        all cited source paths. `json_each(frontmatter_json, '$.<field>')` yields the
+        scalar for a string field AND each element for a list field (`sources:`), so a
+        single query covers both shapes. Path bound as a parameter; field allowlisted
+        (non-conforming → skipped). Hoisted once per scan by `_resummarize` to replace
+        the per-file N+1 (vdd-multi PERF-HIGH)."""
+        conn = self._connect()
+        out: set[str] = set()
+        for field in fields:
+            try:
+                validate_filter_field(field)
+            except ValueError:
+                continue
+            json_path = f"$.{field}"
+            rows = conn.execute(
+                "SELECT je.value AS v FROM pages, "
+                "json_each(pages.frontmatter_json, ?) je "
+                "WHERE pages.vault_id = ? AND je.value IS NOT NULL",
+                (json_path, vault_id),
+            ).fetchall()
+            for r in rows:
+                out.add(str(r["v"]))
+        return out
+
     def find_alias_collisions(self, vault_id: str) -> list[AliasCollision]:
         """R-5.6: in-DB (legacy) + cross-table alias collisions. The Class A
         frontmatter scan lives in the Lint Layer."""

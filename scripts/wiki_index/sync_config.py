@@ -51,12 +51,74 @@ class SyncConfigError(ValueError):
         self.detail = detail
 
 
+# --------------------------------------------------------------------------- #
+# Resummarize policy (TASK 019) — typed, frozen mirror of `$def Resummarize`.
+# Built bead 01 (dataclasses + schema); populated by the loader in bead 02.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class MirrorKey:
+    """Extended D2b key extraction (TASK 019 / Q-019-5). Separate regex per side
+    (raw filenames vs summary filenames may differ) composed via a `string.Template`
+    over named groups; `flags` ∈ {ignorecase, unicode}."""
+
+    raw_regex: str | None = None
+    summary_regex: str | None = None
+    template: str | None = None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MirrorConfig:
+    """D2b structural-mirror detector. `match`: `stem-relpath` (1:1, same stem) or
+    `group-key` (N:1, key shared across many raw → one summary). `summary_dir: "."`
+    = the raw file's own folder (same-dir office↔md case)."""
+
+    enabled: bool = False
+    raw_dirs: tuple[str, ...] = ("_raw", "_transcripts")
+    summary_dir: str = "_summary"
+    summary_ext: str = ".md"
+    match: str = "group-key"
+    group_key: str | None = None
+    key: MirrorKey | None = None
+
+
+@dataclass(frozen=True)
+class ProvenanceConfig:
+    """D2a provenance detector — a page's frontmatter `fields` cites the raw file
+    by `match` (vault-rel-path | basename)."""
+
+    enabled: bool = False
+    fields: tuple[str, ...] = ("source", "sources")
+    match: str = "vault-rel-path"
+
+
+@dataclass(frozen=True)
+class DetectConfig:
+    """The detector union. Default (when `detect` omitted, OQ-5) = source_state only."""
+
+    source_state: bool = True
+    provenance_ref: ProvenanceConfig = field(default_factory=ProvenanceConfig)
+    mirror: MirrorConfig = field(default_factory=MirrorConfig)
+
+
+@dataclass(frozen=True)
+class ResummarizeConfig:
+    """The re-summarization policy (TASK 019). `mode` ∈ {if-missing, always, never}."""
+
+    mode: str = "if-missing"
+    detect: DetectConfig = field(default_factory=DetectConfig)
+
+
 @dataclass(frozen=True)
 class SyncConfig:
     """The merged `.wiki/sync.yaml` the dispatcher consumes.
 
     The `extensions_*` tuples are operator OVERRIDES that *extend* the built-in
-    routing sets in `scripts/wiki_skills/_sync.py` (they never shrink them)."""
+    routing sets in `scripts/wiki_skills/_sync.py` (they never shrink them).
+    `resummarize` (TASK 019) is the OPT-IN re-summarization policy; `None` ≡ the
+    TASK 018 behavior (back-compat / byte-identity)."""
 
     zones: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
@@ -64,6 +126,7 @@ class SyncConfig:
     extensions_convert: tuple[str, ...] = field(default_factory=tuple)
     extensions_text: tuple[str, ...] = field(default_factory=tuple)
     extensions_skip: tuple[str, ...] = field(default_factory=tuple)
+    resummarize: ResummarizeConfig | None = None
 
 
 class _NoAliasSafeLoader(yaml.SafeLoader):
@@ -133,19 +196,39 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
     (3) strict schema validation. Raises `SyncConfigError` (→ exit 6) on any
     failure, never echoing the offending value.
     """
-    path = vault_root / ".wiki" / "sync.yaml"
-    if not path.is_file():
+    raw = _load_validated_raw(vault_root)
+    if not raw:
         return SyncConfig()
+    ext = raw.get("extensions") or {}
+    return SyncConfig(
+        zones=tuple(raw.get("zones") or ()),
+        exclude=tuple(raw.get("exclude") or ()),
+        tag_namespace=str(raw.get("tag_namespace") or "wiki"),
+        extensions_convert=tuple(ext.get("convert") or ()),
+        extensions_text=tuple(ext.get("text") or ()),
+        extensions_skip=tuple(ext.get("skip") or ()),
+        resummarize=_parse_resummarize(raw.get("resummarize")),
+    )
 
-    # (0) symlink containment (O_NOFOLLOW posture, matching the walk +
-    # `_common.resolve_entity_file`). Two layers (critic-security MED): (a) refuse
-    # a symlinked LEAF `sync.yaml`; (b) resolve the FULL path + re-validate it is
-    # inside the vault, so a symlinked *parent* `.wiki/` dir cannot redirect
-    # `stat()`/`read_text` to an arbitrary out-of-vault YAML.
+
+def _load_validated_raw(root: Path) -> dict[str, Any]:
+    """Hardened read + strict-validate of ``<root>/.wiki/sync.yaml`` → the raw
+    config dict (``{}`` if absent/empty). The order is load-bearing: (0) symlink
+    containment, (1) 256 KiB size cap before read, (2) anchor-ban parse, (3) strict
+    schema. Shared by ``load_sync_config`` (vault root) AND the TASK 019 per-folder
+    cascade resolver — so EVERY override level inherits the SAME hardening. Raises
+    ``SyncConfigError`` (→ exit 6) on any failure, never echoing the value."""
+    path = root / ".wiki" / "sync.yaml"
+    if not path.is_file():
+        return {}
+
+    # (0) symlink containment (O_NOFOLLOW posture). Two layers: (a) refuse a
+    # symlinked LEAF `sync.yaml`; (b) resolve the FULL path + re-validate it is
+    # inside `root`, so a symlinked parent `.wiki/` cannot redirect the read out.
     if path.is_symlink():
         raise SyncConfigError("INVALID_SYNC_CONFIG", "config is a symlink")
     try:
-        validate_inside_vault(path, vault_root)
+        validate_inside_vault(path, root)
     except PathTraversalError as exc:
         raise SyncConfigError(
             "INVALID_SYNC_CONFIG", "config resolves outside the vault"
@@ -159,36 +242,89 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
     if path.stat().st_size > WIKI_SYNC_CONFIG_MAX_BYTES:
         raise SyncConfigError("INVALID_SYNC_CONFIG", "config exceeds the 256 KiB cap")
 
-    # (2) anchor-ban parse. The parse of an UNTRUSTED file must never propagate
-    # an internal error: besides `yaml.YAMLError`, PyYAML's *composer* is
-    # genuinely recursive (one Python frame per nesting level), so a sub-cap but
-    # deeply-nested anchorless payload (e.g. `zones: ` + `[`×2000) raises
-    # `RecursionError` (a `RuntimeError`, NOT a `YAMLError`) — the size cap alone
-    # does not bound nesting (critic-security HIGH). We map every non-
-    # `SyncConfigError` parse failure to the controlled `INVALID_SYNC_CONFIG`
-    # (exit 6, no traceback → no CWE-209 leak, never crashes the batch).
+    # (2) anchor-ban parse. PyYAML's composer is recursive, so a sub-cap but
+    # deeply-nested anchorless payload raises `RecursionError` (not `YAMLError`) —
+    # map every non-`SyncConfigError` parse failure to the controlled error.
     raw_text = path.read_text(encoding="utf-8")
     try:
         raw = yaml.load(raw_text, Loader=_NoAliasSafeLoader)  # noqa: S506 (custom safe loader)
     except SyncConfigError:
         raise
     except (yaml.YAMLError, RecursionError, ValueError) as exc:
-        # Never echo file content (CWE-209/CWE-117).
         raise SyncConfigError("INVALID_SYNC_CONFIG", "config is not parseable") from exc
     if raw is None:
-        return SyncConfig()
+        return {}
     if not isinstance(raw, dict):
         raise SyncConfigError("INVALID_SYNC_CONFIG", "config must be a YAML mapping")
 
     # (3) strict schema.
     _validate(raw)
+    return raw
 
-    ext = raw.get("extensions") or {}
-    return SyncConfig(
-        zones=tuple(raw.get("zones") or ()),
-        exclude=tuple(raw.get("exclude") or ()),
-        tag_namespace=str(raw.get("tag_namespace") or "wiki"),
-        extensions_convert=tuple(ext.get("convert") or ()),
-        extensions_text=tuple(ext.get("text") or ()),
-        extensions_skip=tuple(ext.get("skip") or ()),
+
+def load_resummarize_raw(root: Path) -> dict[str, Any] | None:
+    """The RAW (un-parsed, schema-validated) ``resummarize`` block of
+    ``<root>/.wiki/sync.yaml``, or ``None`` if absent. TASK 019: the cascade
+    resolver deep-merges these RAW dicts deepest-wins *before* applying defaults,
+    so a folder override that sets only ``mode`` correctly INHERITS the parent's
+    ``detect`` (partial override). Reuses ``_load_validated_raw`` (all hardening)."""
+    block = _load_validated_raw(root).get("resummarize")
+    return block if isinstance(block, dict) else None
+
+
+def _parse_resummarize(block: Any) -> ResummarizeConfig | None:
+    """Build the typed `ResummarizeConfig` from a schema-validated `resummarize`
+    block, applying the defaults jsonschema does NOT inject (TASK 019 / Q-019-2):
+      * absent block → `None` (≡ TASK 018 / AC-7);
+      * omitted `detect` → `{source_state: True}` only (OQ-5);
+      * `mirror.match` defaults to `group-key` when `key`/`group_key` is supplied,
+        else `stem-relpath`.
+    `block` is already strict-validated by `_validate`, so shapes/enums are sound.
+    """
+    if block is None:
+        return None
+    mode = str(block.get("mode") or "if-missing")
+    det = block.get("detect")
+    if not isinstance(det, dict):
+        return ResummarizeConfig(mode=mode, detect=DetectConfig())
+
+    prov_raw = det.get("provenance_ref") or {}
+    provenance = ProvenanceConfig(
+        enabled=bool(prov_raw.get("enabled", False)),
+        fields=tuple(prov_raw.get("fields") or ("source", "sources")),
+        match=str(prov_raw.get("match") or "vault-rel-path"),
+    )
+
+    mir_raw = det.get("mirror") or {}
+    key_raw = mir_raw.get("key")
+    key = None
+    if isinstance(key_raw, dict):
+        key = MirrorKey(
+            raw_regex=key_raw.get("raw_regex"),
+            summary_regex=key_raw.get("summary_regex"),
+            template=key_raw.get("template"),
+            flags=tuple(key_raw.get("flags") or ()),
+        )
+    if "match" in mir_raw:
+        match = str(mir_raw["match"])
+    elif key is not None or mir_raw.get("group_key"):
+        match = "group-key"
+    else:
+        match = "stem-relpath"
+    mirror = MirrorConfig(
+        enabled=bool(mir_raw.get("enabled", False)),
+        raw_dirs=tuple(mir_raw.get("raw_dirs") or ("_raw", "_transcripts")),
+        summary_dir=str(mir_raw.get("summary_dir") or "_summary"),
+        summary_ext=str(mir_raw.get("summary_ext") or ".md"),
+        match=match,
+        group_key=mir_raw.get("group_key"),
+        key=key,
+    )
+    return ResummarizeConfig(
+        mode=mode,
+        detect=DetectConfig(
+            source_state=bool(det.get("source_state", True)),
+            provenance_ref=provenance,
+            mirror=mirror,
+        ),
     )

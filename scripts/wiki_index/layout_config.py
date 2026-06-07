@@ -93,6 +93,31 @@ _REDOS_PAYLOADS = (
 )
 
 
+def is_pattern_redos_safe(pattern: str, *, operator: bool = True) -> bool:
+    """Return False iff `pattern` fails to compile OR its median search time over
+    the adversarial payloads exceeds the ceiling (catastrophic backtracking). The
+    boolean, value-free sibling of `_redos_budget_check` — reused by TASK 019's
+    mirror-regex load-gate, which must reject a catastrophic operator regex WITHOUT
+    echoing it (CWE-209). `operator` picks the runtime engine (`regex` vs stdlib `re`)
+    so the gate shares the dialect the pattern will actually run under."""
+    try:
+        compiled = regex.compile(pattern) if operator else re.compile(pattern)
+    except (re.error, regex.error):
+        return False
+    for payload in _REDOS_PAYLOADS:
+        times: list[float] = []
+        for _ in range(_REDOS_N):
+            t0 = time.perf_counter()
+            compiled.search(payload)
+            dt = time.perf_counter() - t0
+            times.append(dt)
+            if dt > _REDOS_CEILING_S:
+                break
+        if sorted(times)[len(times) // 2] > _REDOS_CEILING_S:
+            return False
+    return True
+
+
 # --- R-X1-REDOS-RT runtime per-file deadline (TASK 017) ----------------------- #
 # The load-gate above is a load-time heuristic; this is the sound backstop for a
 # pattern catastrophic only on long real file content. A per-file wall-clock budget
