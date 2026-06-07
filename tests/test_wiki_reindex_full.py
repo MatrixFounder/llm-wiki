@@ -74,11 +74,14 @@ def test_reindex_full_surfaces_slug_collision(tmp_path, fresh_db):
     cols = result["slug_collisions"]
     assert len(cols) == 1
     assert cols[0]["slug"] == "01" and cols[0]["project"] == "_vault_"
-    assert {cols[0]["kept"], cols[0]["dropped"]} == {"a/01.md", "b/01.md"}
+    # TASK 021 (R-021-4): assert DIRECTION + that the surviving DB row IS `kept`, not just
+    # set-membership (a swapped attribution would otherwise pass silently).
+    assert cols[0]["kept"] == "b/01.md" and cols[0]["dropped"] == "a/01.md"
     # `pages` still counts discovered files (2); the DB holds only 1 row for that key.
-    rows = r._connect().execute(
-        "SELECT COUNT(*) FROM pages WHERE vault_id='collide-test'").fetchone()[0]
-    assert result["pages"] == 2 and rows == 1
+    db = r._connect().execute(
+        "SELECT slug, file_path FROM pages WHERE vault_id='collide-test'").fetchall()
+    assert result["pages"] == 2 and len(db) == 1
+    assert db[0]["file_path"] == cols[0]["kept"]   # the row that survived == kept
 
 
 def test_reindex_full_no_collision_empty(tmp_path, fresh_db):

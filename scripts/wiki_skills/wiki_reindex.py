@@ -35,15 +35,23 @@ def main(argv: list[str] | None = None) -> int:
     repo = make_repo(config)
     try:
         if args.all_vaults:
-            results = [reindex_full(repo, v.vault_id) for v in repo.list_vaults()]
-            return emit({
+            # TASK 021 (MED): honour --delta across all vaults (was silently --full).
+            run = reindex_delta if args.delta else reindex_full
+            results = [run(repo, v.vault_id) for v in repo.list_vaults()]
+            envelope: dict[str, object] = {
                 "action": "reindexed",
                 "scope": "all-vaults",
+                "mode": "delta" if args.delta else "full",
                 "vaults_processed": len(results),
-                "pages_indexed": sum(r["pages"] for r in results),
                 "slug_collisions": [c for r in results for c in r["slug_collisions"]],
                 "results": results,
-            })
+            }
+            if args.delta:
+                envelope["touched"] = sum(r["touched"] for r in results)
+                envelope["deleted"] = sum(r["deleted"] for r in results)
+            else:
+                envelope["pages_indexed"] = sum(r["pages"] for r in results)
+            return emit(envelope)
         if args.full:
             return emit(reindex_full(repo, args.vault))
         # --delta (task-001-31)

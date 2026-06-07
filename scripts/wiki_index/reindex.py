@@ -316,7 +316,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     t0 = time.perf_counter()
     run_id = repo.begin_batch_run(vault_id, "delta")
     skipped: list[dict[str, Any]] = []
-    slug_collisions: list[dict[str, Any]] = []          # TASK 020 (within-batch only)
+    slug_collisions: list[dict[str, Any]] = []          # TASK 020 / 021 (cross-batch)
     seen_keys: dict[tuple[str, str], str] = {}
     try:
         row = repo._connect().execute(
@@ -327,6 +327,27 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                   else vault.registered_at)
         paths_on_disk = iter_pages(vault_root, config)
         on_disk_keys = {(d.slug, d.project) for d in paths_on_disk}
+        # TASK 021 (HIGH-2, refined by review L-1/L-2 + PERF-021-1): cross-batch collision
+        # detection. ONE pages read (`db_pages`), reused below for orphan deletion (was a
+        # second scan → PERF-021-1). Seed `seen_keys` ONLY with prior-batch rows whose file
+        # is STILL on disk AND NOT re-walked this batch (mtime <= cutoff): a touched file
+        # colliding with a genuinely-untouched prior row is reported, while a re-walked
+        # survivor is left to the within-batch loop (L-1: no double-count / inverted
+        # direction) and a renamed-away file is not falsely flagged (L-2). Uses the walk's
+        # own mtime — no extra stat; a hypothetical mtime-less source is treated as touched
+        # (conservative — only the within-batch loop can flag it). `_detect_slug_collision`'s
+        # `prior != rel` guard additionally makes a same-path self-update a no-op.
+        db_pages = repo._connect().execute(
+            "SELECT slug, project, file_path FROM pages WHERE vault_id = ?",
+            (vault_id,),
+        ).fetchall()
+        untouched_rels = {
+            str(d.path.relative_to(vault_root)) for d in paths_on_disk
+            if d.mtime is not None and datetime.fromtimestamp(d.mtime) <= cutoff
+        }
+        for pre in db_pages:
+            if pre["file_path"] in untouched_rels:
+                seen_keys[(pre["slug"], pre["project"])] = pre["file_path"]
         touched = 0
         adapter = ManualSourceAdapter()
         for disc in paths_on_disk:
@@ -385,11 +406,11 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
             except (PathTraversalError, OSError, ValueError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
 
-        # Delete orphan rows inside a single transaction (atomicity contract).
+        # Delete orphan rows inside a single transaction (atomicity contract). Reuses the
+        # `db_pages` snapshot read once above (PERF-021-1) — a row deleted from disk this
+        # run is in that pre-loop snapshot and absent from `on_disk_keys`; a newly-upserted
+        # row is on disk so never an orphan, so the pre-loop snapshot is sufficient.
         conn = repo._connect()
-        db_pages = conn.execute(
-            "SELECT slug, project FROM pages WHERE vault_id = ?", (vault_id,)
-        ).fetchall()
         deleted = 0
         conn.execute("BEGIN IMMEDIATE")
         try:

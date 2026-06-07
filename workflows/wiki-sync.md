@@ -204,6 +204,32 @@ Emit `plan.summary{}` augmented with the per-entry `result`
 (`done` / `skipped:<reason>` / `unchanged` / `needs-ocr` / `ocr-failed:<type>` /
 `error:<msg>` / `staging-collision`). The lock auto-releases on exit (Step 2 trap).
 
+**Surface the merge/split WARN (TASK 021 / HIGH-1).** When `wiki-sync scan` logs
+`[resummarize] mirror: '<raw>' shares key '<K>' with already-summarised '<S>' but is NOT
+cited by it — skipped`, carry it into the report as an operator action item — a *new* raw
+collapsed onto an already-summarised N:1 key without provenance. The skip is intentional
+(behaviour-preserving), but the operator must decide merge-vs-split per the runbook below.
+
+## Step 6 — Re-summarization curation (merge / split / supersede)
+
+`sources:` (provenance) is the **authoritative** record of which raws back which summary;
+the regex key is only the *default* grouping. Resolve a merge/split WARN with one lever:
+
+- **MERGE** (the new raw belongs to the existing summary): re-run
+  `wiki-sync scan <zone> --force` → in Step 4b regenerate the summary from ALL raws sharing
+  the key, and the 4b.6 writeback rewrites `sources: [raw1, raw2, …]`. Next scan → both skip
+  `summary-exists:provenance`, permanently. *Manual shortcut* (text already merged): just add
+  the new raw to the summary's `sources:` + `wiki-sync record <raw> --source-hash …`.
+- **SPLIT** (the new raw is a different topic): author a 2nd summary with `sources: [rawB]`
+  and remove `rawB` from summary-A's `sources:` (trim A's body). Next scan → each raw skips via
+  its own summary's provenance — **no `--force` needed**. To make it self-sustaining without
+  manual `sources:`, also give them distinct keys (finer `group_key` like `^(\d{8}-\d{2})`, or
+  a separate scope) so the mirror agrees with provenance.
+- **SUPERSEDE** (keep only the latest, drop the first): remove/archive the old raw (delete or
+  move under an `ignore`d `_raw/`), then `wiki-sync scan <zone> --force` → summarise from the
+  latest → `sources: [latest]`. If the old raw had its own now-obsolete summary, delete it and
+  `wiki-reindex --delta` to drop its index row.
+
 ## Fallback (vendor-agnostic)
 
 On vendors without a `Skill({...})` tool, inline the `summarizing-meetings`

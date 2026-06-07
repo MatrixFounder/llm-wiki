@@ -699,6 +699,27 @@ wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 ```
 
+**Re-summarization policy — don't re-summarise what's already summarised** (TASK 019,
+opt-in). Add a `resummarize:` block to `.wiki/sync.yaml` and `wiki-sync` will route a raw
+source to **`skip`** instead of `ingest` when a summary for it already exists — so re-running
+a scan over a course you've already summarised doesn't burn tokens redoing it. "A summary
+exists" is the union of three detectors (cheapest-first): **`source_state`** (this exact raw
+was synced before) ∪ **provenance** (some summary's frontmatter `source:`/`sources:` cites
+this raw) ∪ **filesystem mirror** (a `Summary/` sibling shares the raw's key — `stem-relpath`
+1:1, or `group_key`/`key` N:1 so many transcripts fold onto one lesson summary). `--force`
+bypasses the gate (re-summarise anyway). Rules are **per-folder overridable** (a deeper
+`<folder>/.wiki/sync.yaml` deep-merges over the vault root — e.g. a `Lessons/` zone keyed by
+date instead of lesson number).
+
+> **New raw under an already-summarised key → merge or split?** (TASK 021) If you drop a
+> *new* transcript whose key already has a summary that doesn't cite it, `wiki-sync` keeps
+> skipping it (your "group summarised → done" intent) but logs a **merge/split WARN**. Resolve
+> it explicitly: **MERGE** → `wiki-sync scan <zone> --force` regenerates the summary from all
+> raws sharing the key and writes them into `sources:`; **SPLIT** → give the new raw a distinct
+> key (finer `group_key` / own scope) or author a second summary citing it; **SUPERSEDE** →
+> archive the old raw, then `--force`. `sources:` is the authoritative record; the key is just
+> the default grouping. See `workflows/wiki-sync.md` Step 6.
+
 **Idempotency & safety:** the executor writes a `source_state` commit-marker per file
 **only on full success** — a partial failure records nothing, so the file is re-planned
 next run (no half-done state survives). The plan is **deterministic** (entries sorted by

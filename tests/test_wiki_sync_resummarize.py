@@ -35,6 +35,7 @@ from scripts.wiki_skills._resummarize import (
     _mirror_match,
     apply_policy,
     resolve_policy,
+    summary_exists,
 )
 from scripts.wiki_skills._sync import Decision
 from scripts.wiki_skills.wiki_sync import _build_entries, _build_parser
@@ -605,6 +606,122 @@ def test_d2b_bad_regex_rejected_by_load_gate(tmp_path: Path) -> None:
                       vault_root=tmp_path, mirror=mirror, caches=Caches())
     assert exc.value.code == "INVALID_SYNC_CONFIG"
     assert "(" not in str(exc.value).split(":", 1)[1]  # pattern not echoed in the detail
+
+
+# ---------------------------------------------------------------------------
+# TASK 021 / HIGH-1 — merge/split visibility for N:1 mirror skips (Option A)
+# ---------------------------------------------------------------------------
+
+
+def _groupkey_mirror() -> MirrorConfig:
+    return MirrorConfig(enabled=True, raw_dirs=("Transcripts",),
+                        summary_dir="Summary", match="group-key", group_key=r"^(\d+)")
+
+
+def test_high1_groupkey_uncited_warns(tmp_path: Path, caplog) -> None:
+    """An N:1 group-key match with `warn_uncited=True` keeps the match (skip) AND emits
+    the merge/split WARN naming the key, the raw, the colliding summary, and both levers.
+    The reachability invariant: `summary_exists` only sets `warn_uncited` once D1/D2a have
+    failed, so a `_mirror_match` warn is by construction the uncited-same-key case."""
+    import logging
+    mod = tmp_path / "Module-01"
+    _mk(mod / "Transcripts" / "07-2 brand new.txt")
+    _mk(mod / "Summary" / "07 - Лекция.md")
+    raw = mod / "Transcripts" / "07-2 brand new.txt"
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        out = _mirror_match(raw, vault_root=tmp_path, mirror=_groupkey_mirror(),
+                            caches=Caches(), warn_uncited=True)
+    assert out is True  # skip behaviour unchanged
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "07 - Лекция.md" in msg and "'7'" in msg  # _norm strips the leading zero
+    assert "MERGE" in msg and "SPLIT" in msg and "--force" in msg
+
+
+def test_high1_groupkey_default_no_warn(tmp_path: Path, caplog) -> None:
+    """`warn_uncited` defaults False → the N:1 match still skips, but stays silent
+    (back-compat: the dead-detector test + all prior callers keep their behaviour)."""
+    import logging
+    mod = tmp_path / "Module-01"
+    _mk(mod / "Transcripts" / "07-2 brand new.txt")
+    _mk(mod / "Summary" / "07 - Лекция.md")
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        out = _mirror_match(mod / "Transcripts" / "07-2 brand new.txt",
+                            vault_root=tmp_path, mirror=_groupkey_mirror(), caches=Caches())
+    assert out is True
+    assert not any("MERGE" in r.getMessage() for r in caplog.records)
+
+
+def test_high1_stem_relpath_never_warns(tmp_path: Path, caplog) -> None:
+    """`stem-relpath` (1:1, exact mirror) is unambiguous → never warns even with
+    `warn_uncited=True` (only the coarse N:1 group-key path surfaces merge/split)."""
+    import logging
+    mod = tmp_path / "Module-01"
+    _mk(mod / "Transcripts" / "lec.txt")
+    _mk(mod / "Summary" / "lec.md")
+    mirror = MirrorConfig(enabled=True, raw_dirs=("Transcripts",),
+                          summary_dir="Summary", match="stem-relpath", summary_ext=".md")
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        out = _mirror_match(mod / "Transcripts" / "lec.txt", vault_root=tmp_path,
+                            mirror=mirror, caches=Caches(), warn_uncited=True)
+    assert out is True
+    assert not any("MERGE" in r.getMessage() for r in caplog.records)
+
+
+def test_high1_summary_exists_uncited_warns(tmp_path: Path, caplog) -> None:
+    """Integration: provenance ENABLED but the raw is NOT cited → `summary_exists` falls
+    through D1/D2a to D2b, returns `"mirror"`, and (because `warn_uncited=pr.enabled`)
+    emits the merge/split WARN."""
+    import logging
+    repo = _repo(tmp_path)
+    _mk(tmp_path / "Module-01" / "Transcripts" / "07-2 brand new.txt")
+    _mk(tmp_path / "Module-01" / "Summary" / "07 - Лекция.md")
+    policy = ResummarizeConfig(mode="if-missing", detect=DetectConfig(
+        source_state=False, provenance_ref=ProvenanceConfig(enabled=True),
+        mirror=_groupkey_mirror()))
+    raw = tmp_path / "Module-01" / "Transcripts" / "07-2 brand new.txt"
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        which = summary_exists(raw, rel="Module-01/Transcripts/07-2 brand new.txt",
+                               vault_root=tmp_path, repo=repo, vault_id="demand-gen",
+                               policy=policy, caches=Caches())
+    assert which == "mirror"
+    assert any("MERGE" in r.getMessage() for r in caplog.records)
+
+
+def test_high1_summary_exists_cited_no_warn(tmp_path: Path, caplog) -> None:
+    """A raw that IS cited short-circuits at D2a (`"provenance"`) → mirror never runs →
+    no merge/split warn (the merge is already explicit in `sources:`)."""
+    import logging
+    repo = _repo(tmp_path)
+    rel = "Module-01/Transcripts/07-2 brand new.txt"
+    _mk(tmp_path / rel)
+    _mk(tmp_path / "Module-01" / "Summary" / "07 - Лекция.md")
+    _upsert_page(repo, "demand-gen", "07-lekciya", {"sources": [rel]})
+    policy = ResummarizeConfig(mode="if-missing", detect=DetectConfig(
+        source_state=False, provenance_ref=ProvenanceConfig(enabled=True),
+        mirror=_groupkey_mirror()))
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        which = summary_exists(tmp_path / rel, rel=rel, vault_root=tmp_path, repo=repo,
+                               vault_id="demand-gen", policy=policy, caches=Caches())
+    assert which == "provenance"
+    assert not any("MERGE" in r.getMessage() for r in caplog.records)
+
+
+def test_high1_provenance_disabled_no_warn(tmp_path: Path, caplog) -> None:
+    """Provenance DISABLED → operator opted into pure-key grouping → the N:1 skip stays
+    but no per-file warn (would be noise on every group member)."""
+    import logging
+    repo = _repo(tmp_path)
+    rel = "Module-01/Transcripts/07-2 brand new.txt"
+    _mk(tmp_path / rel)
+    _mk(tmp_path / "Module-01" / "Summary" / "07 - Лекция.md")
+    policy = ResummarizeConfig(mode="if-missing", detect=DetectConfig(
+        source_state=False, provenance_ref=ProvenanceConfig(enabled=False),
+        mirror=_groupkey_mirror()))
+    with caplog.at_level(logging.WARNING, logger="wiki_sync.resummarize"):
+        which = summary_exists(tmp_path / rel, rel=rel, vault_root=tmp_path, repo=repo,
+                               vault_id="demand-gen", policy=policy, caches=Caches())
+    assert which == "mirror"
+    assert not any("MERGE" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

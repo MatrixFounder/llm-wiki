@@ -60,13 +60,14 @@ class Caches:
       * `raw` — per-dir RAW `resummarize` block read (cascade input).
       * `resolved` — the parsed `ResummarizeConfig` per parent dir (cascade output).
       * `cited` — the D2a citation set per `(fields, match)`.
-      * `mirror` — the D2b summary-key index per `(scope, summ_pat, template, ext)`.
+      * `mirror` — the D2b summary-key index (`key → representative summary filename`)
+        per `(scope, summ_pat, template, ext)`.
     """
 
     raw: dict[Path, dict[str, Any] | None] = field(default_factory=dict)
     resolved: dict[Path, ResummarizeConfig | None] = field(default_factory=dict)
     cited: dict[tuple[tuple[str, ...], str], frozenset[str]] = field(default_factory=dict)
-    mirror: dict[tuple[str, str, str | None, str], frozenset[str]] = field(default_factory=dict)
+    mirror: dict[tuple[str, str, str | None, str], dict[str, str]] = field(default_factory=dict)
 
 
 def _ancestor_dirs(path: Path, vault_root: Path) -> list[Path]:
@@ -157,9 +158,13 @@ def summary_exists(
         target = PurePosixPath(rel).name if pr.match == "basename" else rel
         if target in c.cited[ckey]:
             return "provenance"
-    # D2b — filesystem mirror.
+    # D2b — filesystem mirror. Reaching here means D1/D2a did NOT prove a summary, so a
+    # group-key (N:1) hit is the uncited-same-key merge/split moment (TASK 021 / HIGH-1):
+    # warn iff provenance is enabled (else the operator opted into pure-key grouping and a
+    # per-file warn would be noise). The skip itself is unchanged.
     if det.mirror.enabled and _mirror_match(
-        path, vault_root=vault_root, mirror=det.mirror, caches=c
+        path, vault_root=vault_root, mirror=det.mirror, caches=c,
+        warn_uncited=pr.enabled,
     ):
         return "mirror"
     return None
@@ -296,16 +301,19 @@ def _assert_mirror_regexes(*patterns: str) -> None:
 
 def _scope_key_index(
     scope: Path, summ_pat: str, template: str | None, ext: str, caches: Caches,
-) -> frozenset[str]:
-    """The set of summary keys in `scope`, computed **once per scope** and memoized
-    (vdd-multi PERF-HIGH — was O(R×S), now O(S) + R lookups). A SINGLE shared
-    deadline bounds the whole scope build's regex cost (vdd-multi security MED — the
-    S-side aggregate is one budget, not S budgets)."""
+) -> dict[str, str]:
+    """Mapping `key → representative summary filename` for `scope`, computed **once per
+    scope** and memoized (vdd-multi PERF-HIGH — was O(R×S), now O(S) + R lookups). The
+    value (lexicographically-smallest filename sharing the key, deterministic) names the
+    colliding summary in the TASK 021 merge/split WARN; membership (`key in index`) and
+    falsiness (the dead-detector guard) are unchanged from the former set. A SINGLE
+    shared deadline bounds the whole scope build's regex cost (vdd-multi security MED —
+    the S-side aggregate is one budget, not S budgets)."""
     ck = (str(scope), summ_pat, template, ext)
     cached = caches.mirror.get(ck)
     if cached is not None:
         return cached
-    keys: set[str] = set()
+    keys: dict[str, str] = {}
     n_files = 0
     deadline = time.monotonic() + _lc.WIKI_REDOS_BUDGET_S
     # `recurse_symlinks=False` (explicit, not relying on the 3.13+ default) keeps the
@@ -314,8 +322,8 @@ def _scope_key_index(
     for summ in scope.rglob("*" + ext, recurse_symlinks=False):
         n_files += 1
         k = _compose_key(summ.stem, summ_pat, template, deadline=deadline)
-        if k is not None:
-            keys.add(k)
+        if k is not None and (k not in keys or summ.name < keys[k]):
+            keys[k] = summ.name
     # Dead-detector guard (TASK 019 dogfood finding): mirror is enabled and the scope
     # has summary files, yet the operator regex keyed NONE of them — almost always a
     # misconfigured `group_key`/`key` (e.g. a YAML double-backslash `^(\\d+)` that
@@ -329,13 +337,13 @@ def _scope_key_index(
             "a YAML double-backslash); D2b mirror is inert for this scope.",
             "group-key", n_files, scope,
         )
-    result = frozenset(keys)
-    caches.mirror[ck] = result
-    return result
+    caches.mirror[ck] = keys
+    return keys
 
 
 def _mirror_match(
     path: Path, *, vault_root: Path, mirror: MirrorConfig, caches: Caches,
+    warn_uncited: bool = False,
 ) -> bool:
     """D2b filesystem mirror (Q-019-5), index-independent.
 
@@ -345,6 +353,12 @@ def _mirror_match(
     NOT redirect the probe out — vdd-multi security LOW). `stem-relpath` (1:1) checks
     the structure-preserving sibling; `group-key` (N:1) folds many raw onto one
     summary sharing a composed key, via a once-per-scope key index.
+
+    TASK 021 / HIGH-1 (Option A): when `warn_uncited` and a **group-key** (N:1) match
+    causes the skip, emit ONE merge/split WARN. Reaching D2b means D1/D2a did NOT match
+    (the raw is genuinely uncited), so an N:1 key hit is the merge-vs-split moment — the
+    skip stays (behaviour-preserving), but the coarse-key ambiguity is surfaced.
+    `stem-relpath` (1:1, exact) never warns.
     """
     anchor = _nearest_anchor(path, frozenset(mirror.raw_dirs))
     if anchor is None:
@@ -381,4 +395,13 @@ def _mirror_match(
                         deadline=time.monotonic() + _lc.WIKI_REDOS_BUDGET_S)
     if rkey is None:
         return False
-    return rkey in summary_keys
+    matched = rkey in summary_keys
+    if matched and warn_uncited:
+        _LOG.warning(
+            "[resummarize] mirror: %r shares key %r with already-summarised %r but is "
+            "NOT cited by it — skipped. MERGE: re-run with --force to fold it into that "
+            "summary (the orchestrator rewrites its sources:); SPLIT: give it a distinct "
+            "key (finer group_key / own scope) or author a separate summary citing it.",
+            path.name, rkey, summary_keys[rkey],
+        )
+    return matched

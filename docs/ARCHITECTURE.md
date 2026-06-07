@@ -728,6 +728,40 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
 - **Q-A9 (TASK 007 — Task Reviewer O-2 / Arch-Reviewer M-1/M-2): dual ref-type coexistence + reindex mechanism.** A query page rendering both `cites:` (→ `'cited'` via R-6.5e) and body `## Sources` wikilinks (→ `'mentioned'` via `extract_wiki_links`) produces two `page_entity_refs` rows to the same target with different `ref_type`.
   - **Resolved (design):** allowed and consistent — the composite PK keeps the two rows distinct. **Mechanism (M-1):** both ref-types are written in the page's **single** `replace_refs` call (the `cited` refs are unioned into Step 2's `out.refs`) — never a second `replace_refs`, which is delete-all-then-insert and would clobber. **AM-3 (M-2):** Step 2.5 canonicalizes `cited` refs' `entity_slug` through the alias map just like `mentioned` refs (a merged-away cited target still resolves), rewriting `entity_slug` only — `ref_type` is preserved, so `cited` never degrades to `mentioned` (UC-20 holds structurally). `find_orphan_links`/backlink consumers key on the canonical slug and are unaffected. Whether to render body wikilinks at all (Q-A8) is the only residual sub-choice (`cites:` frontmatter is already authoritative). Non-blocking.
 
+- **Q-021-1 (TASK 021 / HIGH-1 — D2b mirror merge-vs-split visibility).** The D2b
+  filesystem mirror proves *key-equality*, not *"this raw was summarised"*. Under N:1
+  group-keying a new raw sharing a key with an already-summarised sibling is skipped —
+  the operator's intended "group summarised → don't re-summarise" semantics (TASK 019),
+  but the coarse-key/merge-vs-split ambiguity was invisible.
+  - **Resolved (Option A, operator-confirmed):** **behaviour-preserving + visibility.**
+    The skip stays (monotone gate untouched); when a **group-key** match results in a
+    skip **and provenance is enabled but does not cite this raw**, `summary_exists`
+    emits ONE WARN naming the composed key, the raw, a representative colliding summary,
+    and both resolution levers (MERGE = `--force` + AC-13 `sources:` writeback; SPLIT =
+    finer key / own scope / a 2nd summary citing the raw). Provenance is the authoritative
+    merge/split record; the key is only the default grouping. `stem-relpath` (1:1) is exact
+    → never warns. Provenance disabled → no per-file warn (operator opted into pure-key
+    grouping). No new state, log-only; B/C (auto-ingest / mirror-advisory) rejected as
+    behaviour-changing. The two latent sharp-edges are documented, not "fixed": `^(\d+)`
+    +`_norm` is a leading-zero-insensitive numeric equivalence class; `summary_ext` is
+    single-valued (one extension per mirror).
+
+- **Q-021-2 (TASK 021 / HIGH-2 — cross-batch delta slug-collision).** `reindex_delta`
+  detected only *within-batch* `(slug,project)` PK collisions (in-memory `seen_keys`),
+  so a delta file colliding with a row written by a *prior* batch (mtime ≤ cutoff, not
+  re-walked) silently clobbered it — the same silent-overwrite class TASK 020 closed for
+  `--full`, reopened across `--delta` runs (the documented primary workflow).
+  - **Resolved (refined by the `/vdd-multi`-style review L-1/L-2/PERF):** read the `pages`
+    rows **once** (`SELECT slug, project, file_path`) and seed `seen_keys` with ONLY the
+    prior-batch rows whose file is **still on disk AND not re-walked this batch**
+    (`mtime <= cutoff`). This makes the cross-batch report fire for a genuinely-untouched
+    prior row, while (L-1) a re-walked survivor is left to the within-batch loop — no
+    double-count / inverted-direction record — and (L-2) a renamed-away file is not falsely
+    flagged. The single read is reused for orphan deletion (PERF-021-1: was a second scan).
+    `_detect_slug_collision`'s `prior != rel` guard additionally no-ops a self-update. Zero
+    DDL (reuses `pages`); `slug_collisions` is no longer "within-batch only". The same fix
+    shape lets `wiki-reindex --all-vaults` honour `--delta` (was silently `--full`).
+
 ---
 
 ## Verification Map

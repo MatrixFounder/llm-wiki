@@ -127,12 +127,21 @@ $defs:
         type: string
         description: 'sibling dir holding summaries; "." = the raw file''s own folder.'
       summary_ext: {type: string}
+        # NOTE (TASK 021): single-valued — the mirror sees ONE summary extension. A
+        # date that has only a `.docx` summary (no `.md`) is invisible to D2b; rely on
+        # D2a provenance (`sources:`) for non-`.md` summaries.
       match:
         type: string
         enum: [stem-relpath, group-key]
       group_key:
         type: string
         description: 'shorthand regex applied to BOTH sides (default `^(\d+)`); superseded by `key`.'
+        # NOTE (TASK 021): the default `^(\d+)` + leading-zero normalisation define a
+        # leading-zero-INSENSITIVE numeric equivalence class (`01`/`1`/`001` → key `1`;
+        # `10-1` → `10`). For multi-component lessons use a delimited/`template` key
+        # (e.g. `^(\d+)-` or named groups) so distinct lessons do not collapse onto one
+        # key. A new raw sharing an already-summarised key is SKIPPED + a merge/split WARN
+        # (HIGH-1 / Option A) — resolve via `--force` (merge) or a finer key (split).
       key:
         $ref: '#/$defs/MirrorKey'
 

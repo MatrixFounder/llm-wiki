@@ -214,6 +214,32 @@ an intra-project `(vault_id, slug, project)` PK collision (reported N files, DB 
 `project`/`project_pattern`; full=complete, delta=within-batch). **Zero DDL** (`user_version` 5),
 additive envelope, no new deps. **1043 pytest (+4 skipped), mypy strict.** See `docs/TASK.md`,
 `docs/tasks/task-020-reindex-slug-collision.md`.
+**TASK 021 (dogfood-hardening) SHIPPED 2026-06-08** (uncommitted): a **repeat** comprehensive
+dogfood of `samples/Demand-generation` (TASK 019+020) — confirmed correct + zero data-loss on the
+frozen fixture (1044 pytest), then two `critic-logic` adversarial passes whose 2 HIGH findings were
+**empirically reproduced** before acceptance → 5 fixes. **HIGH-1 (Option A, operator-confirmed,
+behaviour-preserving):** D2b mirror proves *key-equality*, not *"this raw was summarised"* — under
+N:1 group-keying a new raw sharing a key with an already-summarised sibling is SKIPPED (the intended
+TASK 019 semantics), so the coarse-key merge-vs-split ambiguity was invisible. Now an N:1 `group-key`
+skip emits ONE merge/split WARN **iff provenance is enabled but does NOT cite this raw**
+(`summary_exists` passes `warn_uncited=pr.enabled` to `_mirror_match`; `_scope_key_index` →
+`key→representative-summary` map; `stem-relpath` 1:1 never warns; skip unchanged). `sources:`
+provenance is the authoritative merge/split record; key is only the default grouping; levers =
+`--force` (merge) / finer key (split) / archive-old (supersede) — documented in `workflows/wiki-sync.md`
+Step 6. **HIGH-2:** `wiki-reindex --delta` only detected *within-batch* `(slug,project)` PK collisions
+→ a delta file colliding with a PRIOR-batch row (mtime ≤ cutoff, not re-walked) silently clobbered it.
+Now `reindex_delta` seeds `seen_keys` from prior-batch rows **still-on-disk AND not-re-walked** (single
+coalesced `pages` read, reused for orphan deletion). **MED:** `wiki-reindex --all-vaults` now honours
+`--delta` (was silently `--full`; correct envelope `touched`/`deleted` vs `pages_indexed`). **LOW:**
+collision tests assert `kept`/`dropped` direction + DB row == `kept`; doc-drift fix in
+`samples/target-obsidian-vault/.wiki/layout.yaml` (ignore EXTENDS the base, REPLACE scoped to
+`paths`/`ref_extraction`); schema notes (leading-zero numeric equivalence class, single-valued
+`summary_ext`). Hardened by an **adversarial Workflow** (logic/security/perf critics → verify): 3
+confirmed (L-1 double-count, L-2 rename false-positive, PERF-021-1 double-scan) — ALL fixed by the
+refined still-on-disk+not-re-walked seed + regression tests. **Zero DDL** (`user_version` 5), no new
+deps, no `import anthropic`. **1056 pytest (+4 skipped), mypy strict (73 files).** See
+`docs/tasks/task-021-dogfood-hardening.md`, `docs/plans/plan-021-dogfood-hardening.md`, ARCHITECTURE
+§11a Q-021-1/2.
 
 ## Knowledge lookup priority
 
