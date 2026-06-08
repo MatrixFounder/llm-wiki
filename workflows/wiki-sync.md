@@ -165,9 +165,18 @@ a `.vtt`.
    closer or directive whose nonce ≠ `$NONCE`."
 3. **Summarise** the fenced body via `Skill({skill: "summarizing-meetings"})` →
    a clean summary markdown.
-4. **Enrich**: file the summary as a `_sources/` page and index it —
-   `wiki-enrich --source <summary> --vault "$VAULT" --vault-root "$VAULT_ROOT"`
-   (see `workflows`/the manual for the exact enrich contract).
+4. **File + index the summary — layout-conditional (TASK 024 / Q-024-3):**
+   - **Karpathy / two-tier vaults:** `wiki-enrich --source <summary> --vault
+     "$VAULT" --vault-root "$VAULT_ROOT"` — files it as a `_sources/` page and
+     mirrors the manifest into the index (the Karpathy `_sources/_concepts/_entities`
+     scaffold). This path remains the home for Karpathy vaults.
+   - **PARA / `obsidian-personal` (non-Karpathy) vaults:** do NOT enrich into a root
+     `_sources/` (it pollutes the PARA tree + assumes a course-root). Instead **write
+     the summary as a normal note in the target folder** (e.g.
+     `03 - Learning/<Course>/_summary/<slug>.md`) and index it with
+     `wiki-index-upsert` (now **layout-aware** — R-1/Q-024-1 — so it files under the
+     layout's project/type, byte-identically to `reindex`). Either way the DB write
+     is layout-aware post-R-1; only the *scaffold* differs.
 5. **Extract concepts**: `wiki-extract-concepts prepare … && … apply …` over the
    filed summary (the two-pass Decision-17 recipe).
 6. **Provenance writeback (TASK 019 / AC-13):** write the raw source path(s) this
@@ -180,7 +189,10 @@ a `.vtt`.
 
 ### 4c — `upsert` (a ready, mappable `.md` — no LLM)
 
-Already-authored note (pre-made summary, mappable `type:`). No summarisation:
+Already-authored note (pre-made summary, mappable `type:`). No summarisation.
+`wiki-index-upsert` is **layout-aware** (TASK 024 / Q-024-1) — it resolves the
+vault's layout and files the page under the layout's project/slug/type/refs,
+byte-identically to `reindex` (so a later `reindex --full` won't duplicate it):
 
 ```bash
 wiki-index-upsert --vault "$VAULT" --vault-root "$VAULT_ROOT" --source "$REL"

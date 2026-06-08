@@ -702,6 +702,53 @@ def derive_project_for_path(path: Path, vault_root: Path) -> str:
     return VAULT_TIER_PROJECT
 
 
+def derive_discovered_page(
+    path: Path, vault_root: Path, config: LayoutConfig
+) -> DiscoveredPage | None:
+    """TASK 024 / Q-024-1: the SINGLE-FILE equivalent of `iter_pages`' per-entry
+    construction — derive a file's full `DiscoveredPage` (slug / project /
+    extra_tags / raw_type) the same way the walk does, but for ONE already-known
+    path (so `wiki-index-upsert` files a page byte-identically to `reindex`).
+
+    Matches the FIRST `paths[]` entry whose glob matches via the
+    `PurePosixPath(rel).full_match(entry.glob)` predicate (same as
+    `derive_project_for_path`), threading `operator_supplied` into `_derive_project`
+    (the TASK 017 ReDoS-deadline seam). Returns `None` when no entry matches (the
+    caller falls back to the adapter's `derive_slug` identity — preserving the
+    legacy unmatched-file behaviour). `mtime` is unused on this path (the page
+    builder stats the file itself) → 0.0."""
+    try:
+        rel_posix = path.relative_to(vault_root).as_posix()
+    except ValueError:
+        return None
+    # NOTE (Q-024-residual-2): case-SENSITIVE `full_match` — the established
+    # single-path convention (cf. `derive_project_for_path`). `iter_pages` uses
+    # concrete-FS `vault_root.glob` (case-insensitive on macOS/Windows); upsert↔
+    # reindex parity is exact for case-matching paths — all built-in layouts use
+    # wildcarded/lower-case globs, so they are unaffected.
+    for entry in config.paths:
+        try:
+            matched = PurePosixPath(rel_posix).full_match(entry.glob)
+        except ValueError:
+            # A malformed/empty operator glob (`full_match("")` raises) must not
+            # crash upsert OUTSIDE its exit-6 envelope — skip the entry, fail-soft
+            # (parity with `_sync.py`'s guarded `full_match`; the load-gate already
+            # rejects most bad patterns).
+            continue
+        if matched:
+            return DiscoveredPage(
+                path=path,
+                slug=_apply_slug_strategy(path.stem, config.slug_strategy),
+                project=_derive_project(
+                    rel_posix, entry,
+                    operator_supplied=config.paths_operator_supplied),
+                extra_tags=tuple(entry.default_tags) + tuple(entry.extra_tags),
+                raw_type=entry.type,
+                mtime=0.0,
+            )
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Vault → LayoutConfig resolution (used by reindex.discover_pages)
 # --------------------------------------------------------------------------- #

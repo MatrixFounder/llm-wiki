@@ -18,8 +18,11 @@ from scripts.wiki_index.layout import (
     VAULT_INDEX_DIR,
 )
 from scripts.wiki_index.layout_config import (
+    DiscoveredPage,
+    LayoutConfig,
     RefRule,
     _apply_slug_strategy,
+    derive_discovered_page,
     iter_pages,
     resolve_layout_config,
 )
@@ -291,9 +294,69 @@ def _build_page(out: Any, vault_id: str, db_type: str,
         last_modified=last_modified,
         file_hash=out.file_hash,
         frontmatter_json=updated_fm,
-        body_excerpt=normalize_body_for_fts(out.body_text)[:1000],
+        # TASK 024 / Q-024-2 (R-2): store the FULL normalized body — `pages_fts`
+        # indexes this column, so the search corpus is now the whole body (was
+        # `[:1000]`, which made any term past char 1000 unfindable). Display stays
+        # bounded: every search result renders `snippet(pages_fts, …, 16)`; no
+        # consumer renders this column raw. The single write site (upsert + both
+        # reindex paths all route through `_build_page` after Q-024-1).
+        body_excerpt=normalize_body_for_fts(out.body_text),
         tags=list(updated_fm.get("tags") or []),
     )
+
+
+def derive_indexed_page(
+    adapter: ManualSourceAdapter,
+    item: SourceItem,
+    config: LayoutConfig,
+    disc: DiscoveredPage | None,
+    vault_id: str,
+    cite_skipped: list[dict[str, Any]],
+) -> tuple[Any, Page, dict[str, Any], list[PageRef]]:
+    """TASK 024 / Q-024-1: the SINGLE per-file derivation shared by `reindex_full`,
+    `reindex_delta`, AND `wiki-index-upsert.upsert_one` (3 sites → 1, prevents
+    full/delta/upsert drift).
+
+    Pipeline (byte-identical to the inline blocks it replaces — golden anchor):
+    `adapter.fetch` (RETAINS the `validate_inside_vault` + `parse_frontmatter` +
+    `compute_file_hash` seam) → layout-converged `(slug, project)` from `disc`
+    (`replace(out, …)`) → `_synthesize_fm` (PW-F title) → layout-aware
+    `normalize_frontmatter` (all 4 args: `type_mapping`, `path_type_fallback`,
+    `extra_tags`, `glob_type`) → `_build_page` → `_body_refs` (slug-strategy-slugified
+    targets) + `_frontmatter_refs`.
+
+    `disc` is the layout's `DiscoveredPage` (reindex passes the `iter_pages` result;
+    upsert passes `derive_discovered_page(...)`). `disc=None` (no layout glob matched)
+    keeps the adapter's `derive_slug` identity + no `extra_tags`/`glob_type` — the
+    legacy unmatched-file fallback (still uses the resolved layout's `type_mapping`).
+    `cite_skipped` accumulates `_frontmatter_refs` cite-parse warnings (reindex
+    surfaces it; `upsert_one` discards via `[]`). `UnmappedTypeError` /
+    `BodyNormalizationError` / `PathTraversalError` / `OSError` propagate to the
+    caller's per-file handler."""
+    out = adapter.fetch(item)
+    if disc is not None:
+        out = replace(out, page_slug=disc.slug, project=disc.project)
+        extra_tags: tuple[str, ...] = disc.extra_tags
+        glob_type: str | None = disc.raw_type
+    else:
+        extra_tags = ()
+        glob_type = None
+    fm = _synthesize_fm(out.frontmatter, out.body_text, config.frontmatter_synthesis)
+    updated_fm, db_type = normalize_frontmatter(
+        fm, source_path=item.source_path,
+        type_mapping=config.type_mapping,
+        path_type_fallback=config.path_type_fallback,
+        extra_tags=extra_tags,   # PW-N
+        glob_type=glob_type,     # PW-C/F glob-inferred type
+    )
+    page = _build_page(out, vault_id, db_type, item.source_path, item.vault_root,
+                       updated_fm)
+    refs = _body_refs(
+        out, config.ref_extraction, vault_id, config.slug_strategy,
+        ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
+    refs.extend(_frontmatter_refs(
+        db_type, updated_fm, vault_id, out.page_slug, out.project, cite_skipped))
+    return out, page, updated_fm, refs
 
 
 def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
@@ -368,33 +431,11 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
             try:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
-                out = adapter.fetch(item)
-                # C1/C4 convergence (PW-L) — see reindex_full.
-                out = replace(out, page_slug=disc.slug, project=disc.project)
-                fm = _synthesize_fm(out.frontmatter, out.body_text,
-                                    config.frontmatter_synthesis)  # PW-F
-                updated_fm, db_type = normalize_frontmatter(
-                    fm, source_path=path,
-                    type_mapping=config.type_mapping,
-                    path_type_fallback=config.path_type_fallback,
-                    extra_tags=disc.extra_tags,  # PW-N
-                    glob_type=disc.raw_type,     # PW-C/F glob-inferred type
-                )
-                page = _build_page(out, vault_id, db_type, path, vault_root,
-                                   updated_fm)
+                # TASK 024 / Q-024-1: shared per-file derivation (full/delta/upsert
+                # parity). Cite-parse warnings fold into `skipped` (R-6.5e symmetry).
+                out, page, _updated_fm, delta_refs = derive_indexed_page(
+                    adapter, item, config, disc, vault_id, skipped)
                 repo.upsert_page(page)
-                # R-6.5e (TASK 007 / vdd-multi-verify): mirror the query-page
-                # `cites:`→`'cited'` union into the delta path too, so editing a
-                # query page body + `wiki-reindex --delta` does NOT drop its
-                # `cited` refs (full/delta symmetry; matches reindex_full +
-                # _index_query_page). Cite-parse warnings fold into `skipped`.
-                delta_refs = _body_refs(
-                    out, config.ref_extraction, vault_id, config.slug_strategy,
-                    ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
-                delta_refs.extend(_frontmatter_refs(
-                    db_type, updated_fm, vault_id, out.page_slug, out.project,
-                    skipped,
-                ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   delta_refs)
                 touched += 1
@@ -508,39 +549,14 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
             try:
                 item = SourceItem(kind="manual", source_path=path,
                                   vault_root=vault_root, vault_id=vault_id)
-                out = adapter.fetch(item)
-                # C1/C4 convergence (PW-L): the config-driven discovered
-                # (slug, project) is authoritative — override the adapter's
-                # hardcoded derive_slug so dev/obsidian layouts index under the
-                # project_pattern/slug_strategy values (byte-identical for
-                # karpathy). All downstream out.* reads use the converged identity.
-                out = replace(out, page_slug=disc.slug, project=disc.project)
-                fm = _synthesize_fm(out.frontmatter, out.body_text,
-                                    config.frontmatter_synthesis)  # PW-F
-                updated_fm, db_type = normalize_frontmatter(
-                    fm, source_path=path,
-                    type_mapping=config.type_mapping,
-                    path_type_fallback=config.path_type_fallback,
-                    extra_tags=disc.extra_tags,  # PW-N
-                    glob_type=disc.raw_type,     # PW-C/F glob-inferred type
-                )
-                page = _build_page(out, vault_id, db_type, path, vault_root,
-                                   updated_fm)
+                # TASK 024 / Q-024-1: shared per-file derivation (full/delta/upsert
+                # parity). R-6.5e + R-8.5e: `_frontmatter_refs` unions a host-only
+                # compounding page's `cites:`/`verifies:` refs into the SINGLE
+                # replace_refs ref-set (a second call would clobber body refs, M-1).
+                # Step 2.5 (AM-3) below canonicalizes all refs' targets via aliases.
+                out, page, updated_fm, all_refs = derive_indexed_page(
+                    adapter, item, config, disc, vault_id, cite_skipped)
                 repo.upsert_page(page)
-                # R-6.5e + R-8.5e: for a host-only compounding page (query /
-                # verification), union the frontmatter-declared refs (`cites:`→
-                # 'cited'; `verifies:`→'verifies') into the SINGLE replace_refs
-                # call alongside the body-wikilink `mentioned` refs (replace_refs
-                # is delete-all-then-insert — a second call would clobber the
-                # body refs, M-1). Step 2.5 (AM-3) below canonicalizes all refs'
-                # targets through the alias map, ref_type preserved.
-                all_refs = _body_refs(
-                    out, config.ref_extraction, vault_id, config.slug_strategy,
-                    ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
-                all_refs.extend(_frontmatter_refs(
-                    db_type, updated_fm, vault_id, out.page_slug, out.project,
-                    cite_skipped,
-                ))
                 repo.replace_refs(vault_id, out.page_slug, out.project,
                                   all_refs)
                 pages_count += 1

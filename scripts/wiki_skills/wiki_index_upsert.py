@@ -7,19 +7,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import SCHEMA_FILE
-from scripts.wiki_index.models import Page
+from scripts.wiki_index.layout_config import (
+    derive_discovered_page,
+    resolve_layout_config,
+)
 from scripts.wiki_index.normalization import (
     BodyNormalizationError,
     UnmappedTypeError,
-    normalize_body_for_fts,
-    normalize_frontmatter,
 )
+from scripts.wiki_index.reindex import derive_indexed_page
 from scripts.wiki_skills._common import build_repo_config, emit
 from scripts.wiki_source.base import SourceItem
 from scripts.wiki_source.manual import ManualSourceAdapter
@@ -58,58 +59,34 @@ def upsert_one(
     Returns the envelope dict with private '_exit_code' key (does NOT call emit()).
     main() pops '_exit_code' and calls emit() with the appropriate exit code.
     """
+    # TASK 024 / Q-024-1: upsert is now LAYOUT-AWARE — it resolves the vault's
+    # layout and routes through the SAME shared per-file derivation as `reindex`
+    # (`derive_indexed_page`), so a single-file upsert files byte-identically to a
+    # reindex (project via the layout's project_pattern, slug via slug_strategy,
+    # type via the layout's type_mapping, refs via ref_extraction). Previously it
+    # used `derive_slug`'s `_vault_` fallback + the karpathy module `TYPE_MAPPING`,
+    # diverging on PARA/obsidian-personal vaults (→ `_vault_` rows + dup-on-reindex).
     adapter = ManualSourceAdapter()
     item = SourceItem(kind="manual", source_path=src, vault_root=vault_root,
                       vault_id=vault_id)
-    out = adapter.fetch(item)
+    config = resolve_layout_config(vault_root)
+    disc = derive_discovered_page(src, vault_root, config)
     try:
-        updated_fm, db_type = normalize_frontmatter(
-            out.frontmatter, source_path=src,
-        )
-        normalized_body = normalize_body_for_fts(out.body_text)
+        out, page, _updated_fm, refs = derive_indexed_page(
+            adapter, item, config, disc, vault_id, cite_skipped=[])
     except (UnmappedTypeError, BodyNormalizationError) as e:
         return {"error": type(e).__name__, "message": str(e),
                 "source": str(src), "_exit_code": 6}
 
-    title = str(updated_fm.get("title") or out.page_slug)
-    tldr_raw = updated_fm.get("tldr")
-    tldr_val = tldr_raw if isinstance(tldr_raw, str) else None
-    date_val: date | None = None
-    fm_date = updated_fm.get("date")
-    if isinstance(fm_date, date):
-        date_val = fm_date
-    elif isinstance(fm_date, str):
-        try:
-            date_val = date.fromisoformat(fm_date)
-        except ValueError:
-            date_val = None
-    last_modified = datetime.fromtimestamp(src.stat().st_mtime)
-    tags = list(updated_fm.get("tags") or [])
-
-    page = Page(
-        vault_id=vault_id,
-        slug=out.page_slug,
-        project=out.project,
-        type=db_type,  # type: ignore[arg-type]
-        title=title,
-        file_path=str(src.relative_to(vault_root)),
-        tldr=tldr_val,
-        date=date_val,
-        last_modified=last_modified,
-        file_hash=out.file_hash,
-        frontmatter_json=updated_fm,
-        body_excerpt=normalized_body[:1000],
-        tags=tags,
-    )
     outcome = repo.upsert_page(page)
     if outcome != "unchanged":
-        repo.replace_refs(vault_id, out.page_slug, out.project, out.refs)
+        repo.replace_refs(vault_id, out.page_slug, out.project, refs)
     return {
         "action": outcome,
         "vault_id": vault_id,
         "slug": out.page_slug,
         "project": out.project,
-        "refs_count": len(out.refs),
+        "refs_count": len(refs),
         "_exit_code": 0,
     }
 

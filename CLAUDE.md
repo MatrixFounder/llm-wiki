@@ -265,6 +265,45 @@ Performance ✓ (converged). **Zero DDL** (`user_version` 5), no new deps, no `i
 in `WikiProjectOverride`). See `docs/tasks/task-022-vault-local-db-resolution.md`,
 `docs/plans/plan-022-vault-local-db-resolution.md`, `docs/tasks/task-022-01..09-*.md`,
 `docs/reviews/{task,architecture,plan}-022-review.md`, ARCHITECTURE §11a Q-022-1/2/3/4.
+**TASK 023 (personal-vault dogfood hardening) SHIPPED 2026-06-08** (the ad-hoc batch that
+preceded TASK 024; no separate `docs/tasks/` doc — recorded here + in the auto-memory
+`personal-vault-adoption`): three framework features surfaced by a full end-to-end dogfood of
+a real PARA Obsidian vault (`samples/personal-vault-dogfood`). (1) **obsidian-personal
+`type_mapping`** gained `summary`/`lesson-summary`/`meeting-summary`/`webinar-summary`/`moc`
+→ `db_type: summary` (closes ARCHITECTURE Q-019-9 — a `type: lesson-summary` note used to raise
+`UnmappedTypeError` and be silently dropped at reindex / `skip:unmappable-type` in wiki-sync).
+(2) **Structured `sources:` provenance** — `SQLiteRepository.all_cited_sources` now harvests the
+scalar string members of OBJECT-valued `sources:` elements (the `{id, url, file}` shape
+`generate-detailed-meeting-summary` emits), so D2a provenance links a summary to its raw by the
+`file:` value; the global `generate-detailed-meeting-summary` workflow emits `file:` as a
+**vault-relative path** (agnostic wording). (3) **`transcript_dedup`** — a new opt-in
+`SyncConfig` block (`config/sync-config.schema.yaml` + `_sync.transcript_variant_skips`, wired
+into `wiki_sync._build_entries` before the resummarize gate): among transcript-format files
+sharing a (dir, identity) group only the highest-`prefer_ext` is ingested; lower ones →
+`skip:transcript-variant:<ext>` (identity `stem` | `before-first-dot` for YouTube-id captions;
+a lone caption is kept → still ingested). **Zero DDL** (`user_version` 5). Mirror/per-folder
+cascade unchanged. **1093 pytest, mypy strict.**
+**TASK 024 (upsert-layout-fts-hardening) SHIPPED 2026-06-08** (uncommitted): closes the
+remaining TASK 023-dogfood findings via the full VDD pipeline (task/arch/plan reviews APPROVED +
+`/vdd-multi` converged — Logic 1 MED + 2 LOW [LOW-2 fixed, MED-1/LOW-3 documented Q-024-residual-2],
+Security ✓, Performance ✓). **R-1 — `wiki-index-upsert` is now LAYOUT-AWARE** (HIGH bug): a new
+shared `reindex.derive_indexed_page` helper (single per-file derivation: `adapter.fetch` →
+slug/project from `layout_config.derive_discovered_page` → `_synthesize_fm` →
+`normalize_frontmatter(4 args)` → `_build_page` → `_body_refs`+`_frontmatter_refs`) serves all
+THREE sites (`reindex_full`, `reindex_delta`, `upsert_one`; the 4th indirect caller
+`_manifest_consumer.index_from_manifest` becomes layout-aware too) → upsert files
+byte-identically to reindex (project/slug/type/title/refs). Was `derive_slug`'s `_vault_`
+fallback + karpathy module `TYPE_MAPPING` → on PARA vaults it filed `_vault_` rows + duplicated
+on the next `reindex --full`, and would `UnmappedTypeError` on `note`/`moc`/`daily-note`.
+**R-2 — FTS full body**: `_build_page` drops the `body_excerpt=[:1000]` cap → `pages_fts` indexes
+the whole normalized body (deep terms searchable; dogfood: `"дофамин"` past char 1000 now hits);
+display stays bounded via `snippet()` (no consumer renders the column raw); zero-DDL Option B
+(existing DBs gain it on next `reindex`, Class-B rebuild). **R-3 — docs**: `workflows/wiki-sync.md`
+4b/4c documents the layout-conditional filing (PARA = note+`upsert`; Karpathy `_sources`/`wiki-enrich`
+still valid). **Zero DDL** (`user_version` 5), no new deps, `no import anthropic`. New
+`tests/test_upsert_layout_parity.py` (9 parity+FTS tests). **1102 pytest (+9), mypy strict (73
+files).** See `docs/tasks/task-024-upsert-layout-fts-hardening.md`,
+`docs/plans/plan-024-upsert-layout-fts-hardening.md`, ARCHITECTURE Q-024-1/2/3 (+residual-2).
 
 ## Knowledge lookup priority
 
@@ -312,10 +351,14 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Current: TASK 014
-  `dogfood-fixes`** (`docs/TASK.md`; closes R-X1-REF-SLUGIFY + 2 CLI-UX gaps from
-  the 2026-06-01 comprehensive dogfood; done compactly — no separate `docs/PLAN.md`,
-  the RTM/fix-plans are inline in TASK.md). Predecessors archived: `task-013-wiki-search-metadata-filter.md`
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 024
+  `upsert-layout-fts-hardening`** (archived `docs/tasks/task-024-upsert-layout-fts-hardening.md`
+  + `docs/plans/plan-024-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
+  completed and rotated). Preceded by the ad-hoc **TASK 023** personal-vault dogfood-hardening
+  batch (obsidian-personal summary `type_mapping` + structured `sources:` provenance +
+  `transcript_dedup`; recorded in the narrative above, no separate `docs/tasks/` doc → 023 gap is
+  intentional). Predecessors archived: `task-022-vault-local-db-resolution.md` (+ `task-022-01..09-*.md`)
+  + `plan-022-*`; `task-013-wiki-search-metadata-filter.md`
   (R-X3-META-FILTER, shipped `177fd5a`) + `plan-013-*`; `task-012-universal-layout-engine.md`
   (+ 17 per-bead `task-012-00..16-*.md`) + `plan-012-*`; `task-011`/`task-010`
   (wiki-verify eval-v3/v4); `task-009-wiki-verify-critic-rubric.md` (durable eval

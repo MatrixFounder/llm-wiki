@@ -113,8 +113,11 @@ class Page:
     """Full frontmatter as a Python dict (sourced from `python-frontmatter` parse)."""
 
     body_excerpt: str
-    """First 500 chars of body, normalized via R-07.5 (mermaid + SECTION
-    anchors stripped). Indexed in pages_fts."""
+    """The FULL normalized body (R-07.5: mermaid + SECTION anchors stripped) —
+    the FTS search corpus indexed in `pages_fts` (TASK 024 / Q-024-2; was capped
+    at the first 1000 chars, which made deeper terms unsearchable). Despite the
+    name it is NOT a display field: search results render `snippet(pages_fts, …)`,
+    a bounded match window — no consumer renders this column raw."""
 
     tags: list[str]
     """Denormalized from `frontmatter_json['tags']` for ergonomics. The JSON

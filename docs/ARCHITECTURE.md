@@ -866,6 +866,89 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
     and errors (`INDEX_DB_ALREADY_DECLARED`) on a conflicting prior value. Two adjacent residuals
     noted as out-of-scope follow-ups (pre-existing unwrapped `_split_frontmatter` `safe_load`;
     `--description`/`_sanitize_desc` doesn't strip U+2028/U+2029). 1083 pytest, mypy strict.
+- **Q-024-1 (TASK 024 / R-1 — `wiki-index-upsert` layout-awareness; corrects an
+  implementation gap vs the Q-018-10(e)/W-1 claim).** The architecture has asserted since
+  Q-018-9/10 that `wiki-index-upsert` resolves frontmatter "against the same
+  `normalize_frontmatter` resolution" as the layout (W-1, layout-general). **The
+  implementation never did:** `wiki_index_upsert.main` calls
+  `normalize_frontmatter(out.frontmatter, source_path=src)` with NO `type_mapping`/`glob_type`
+  (→ falls back to the module-level karpathy `TYPE_MAPPING`), and `ManualSourceAdapter.fetch`
+  derives identity via `derive_slug` (→ `_vault_` fallback, `parsing.py`) + hardcoded
+  `extract_wiki_links`. On an `obsidian-personal` (PARA) vault this filed pages at project
+  `_vault_` with karpathy types — diverging from `reindex` and (under a later `reindex --full`)
+  creating a DUPLICATE `(vault_id, slug, project)` row (2026-06-08 full-dogfood finding). Worse,
+  it would `UnmappedTypeError` on `type: note`/`moc`/`daily-note`/`clipping`/`webinar-summary`
+  (obsidian-personal types karpathy lacks). **RESOLVED:** the per-page derivation in
+  `reindex.reindex_full` (`reindex.py:506-545`: `iter_pages` → `replace(page_slug=disc.slug,
+  project=disc.project)` → `_synthesize_fm(frontmatter_synthesis)` →
+  `normalize_frontmatter(type_mapping, path_type_fallback, extra_tags=disc.extra_tags,
+  glob_type=disc.raw_type)` → `_build_page` + `_body_refs(slug_strategy)` + `_frontmatter_refs`)
+  is factored into a **single shared per-file helper** — first step `adapter.fetch(item)`
+  (which RETAINS the `validate_inside_vault` + `parse_frontmatter` + `compute_file_hash` seam,
+  `manual.py:30`), then `replace(slug,project)` → `_synthesize_fm` → `normalize_frontmatter(4
+  args)` → `_build_page` → `_body_refs(slug_strategy)` + `_frontmatter_refs` — that **THREE**
+  sites call → guaranteed byte-parity (slug, project, type, tags, title, refs): `reindex_full`
+  (`reindex.py:506-549`), `reindex_delta` (`reindex.py:368-394` — a byte-identical derivation
+  block today; collapsing it into the helper PREVENTS full/delta drift, arch-review C-2), and
+  `wiki-index-upsert.upsert_one`. The helper needs a **single-file `DiscoveredPage` derivation**
+  (`glob` first-match + `_derive_project` + `slug_strategy` + per-glob tags + `raw_type`)
+  extracted from `iter_pages`' per-entry logic (since `iter_pages` walks the whole vault);
+  `upsert_one` resolves the layout via `resolve_layout_config(vault_root)` first. The
+  `_frontmatter_refs` `cite_skipped` accumulator that `reindex` surfaces in its envelope is
+  **discarded** by `upsert_one` (it passes `[]`, the established pattern — cf.
+  `wiki_query.py:340`, `wiki_verify_multi.py:368`). **Karpathy byte-identical** (layout values
+  equal the old `derive_slug`/karpathy `TYPE_MAPPING` outputs for that grammar — golden anchor).
+  **Blast radius (was OQ-2):** `upsert_one` has a **fourth caller** the first draft missed —
+  `_manifest_consumer.index_from_manifest` (`_manifest_consumer.py:138`, the `wiki-enrich`
+  manifest path); making `upsert_one` layout-aware makes the enrich/manifest write layout-aware
+  too — **desirable** (a PARA enrich would otherwise mis-file at `_vault_`) and byte-identical
+  for karpathy/two-tier (a karpathy enrich/manifest regression test pins this; intersects R-3's
+  "enrich path stays valid"). Separately, `ManualSourceAdapter.fetch` is used DIRECTLY (not via
+  `upsert_one`) by `wiki-query`/`wiki-verify-multi`/`benchmark` to file host-only compounding
+  pages (`_queries/`, `_verifications/`); R-1 does NOT touch those call sites — their
+  page-filing layout-awareness is an out-of-scope residual (**Q-024-residual-1**, flagged not
+  silently changed). **Q-024-residual-2** (post-ship `/vdd-multi` logic critic, accepted):
+  `derive_discovered_page` uses case-SENSITIVE `full_match` (the established single-path
+  convention, shared with `derive_project_for_path`) while `iter_pages` uses concrete-FS
+  `vault_root.glob` (case-insensitive on macOS/Windows) — so upsert↔reindex parity is exact for
+  case-matching paths; all three built-in layouts use wildcarded/lower-case globs (unaffected),
+  and a custom layout with an upper-case LITERAL glob on a case-insensitive FS is the only
+  diverging edge. The `disc=None` fallback uses the resolved layout's `type_mapping` (an off-glob
+  file reindex never indexes can be upserted → self-heals on the next `reindex --full`). A
+  malformed/empty operator glob is `full_match`-`ValueError`-guarded (fail-soft, never escapes the
+  exit-6 envelope). **Zero DDL** (`user_version` 5).
+- **Q-024-2 (TASK 024 / R-2 — FTS indexes the FULL body, not `body_excerpt[:1000]`; resolves
+  OQ-1).** `pages_fts` is an **internal-content** FTS5 table whose `AFTER INSERT/UPDATE`
+  triggers index `new.body_excerpt` (`sql/wiki-index-v2.sql:358-389`), and `body_excerpt =
+  normalize_body_for_fts(body)[:1000]` (`reindex.py:294`, `wiki_index_upsert.py:101`). So the
+  **search corpus is only the first 1000 chars** — a term deeper in a long summary is unfindable
+  (dogfood: `"дофамин"` past char 1000 → no hit). **RESOLVED → zero-DDL (Option B):** drop the
+  `[:1000]` slice at the two write sites so `body_excerpt` stores the **full normalized body**
+  (= the FTS corpus); the triggers are unchanged. **Display stays bounded** — every search
+  result's shown text is `snippet(pages_fts, -1, …, 16)` (a ~16-token match window); grep
+  confirms **no consumer renders `pages.body_excerpt` raw** (the Page field is populated but
+  only `snippet()` is displayed; `wiki-verify-multi` computes its OWN excerpt from `file_path`
+  via `_EXCERPT_CHARS`, not the column). So AC-2.3's "display length contract" holds at the
+  *display* surface (the column is an internal corpus, not a display surface). **Rejected —
+  Option A** (new `body` column + trigger over it, keep `body_excerpt` as the 1000-char slice):
+  cleaner separation but `apply_schema` is `CREATE TABLE IF NOT EXISTS` only (no auto-ALTER) →
+  needs a migration helper + `user_version` bump, against the TASK-012..022 zero-DDL posture for
+  a column with no raw display consumer. **Rejected — Option C** (`content=''` contentless FTS):
+  breaks `snippet()`. **Migration: none** — `user_version` stays 5; existing DBs gain full-body
+  search on the next `reindex` (Class-B repopulation, ADR-002 §D8 — not a drop-from-scratch).
+  `body_excerpt`'s documented role becomes "full normalized FTS body" (column name retained to
+  stay zero-DDL; `models.py`/`base.py` docstrings updated). **Cost:** `pages.body_excerpt` + the
+  internal-content FTS index each store the full body (acceptable at personal-vault scale; noted).
+- **Q-024-3 (TASK 024 / R-3 — PARA-native ingest guidance; docs only).** `wiki-enrich`/vendored
+  `wiki-ingest` writes Karpathy `_sources/_concepts/_entities` at the vault root and needs a
+  two-tier course-root — wrong for a PARA (`obsidian-personal`) vault. **RESOLVED (docs):**
+  `workflows/wiki-sync.md` Step 4b states that on a non-Karpathy layout the generated summary is
+  filed as a **note in the target folder + indexed via the (now layout-aware, Q-024-1)
+  `wiki-index-upsert`/`reindex`**, NOT enriched into root `_sources/`; Step 4c notes `upsert` is
+  layout-aware post-R-1; the Karpathy `_sources`/`wiki-enrich` path is documented as **still
+  valid for Karpathy/two-tier vaults** (guidance is layout-conditional, not "never enrich").
+  Mirrored in the `CLAUDE.md` vault template / `README` pointer. No code/schema change;
+  `no import anthropic`. (Out of scope, user-owned elsewhere: the pptx→markdown extraction step.)
 
 ---
 
