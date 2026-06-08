@@ -112,13 +112,26 @@ class ResummarizeConfig:
 
 
 @dataclass(frozen=True)
+class TranscriptDedupConfig:
+    """TASK 023 — transcript FORMAT dedup. When several caption/transcript formats
+    of the same recording coexist, ingest only the highest-preference one. `None`
+    on `SyncConfig` (block absent) ≡ disabled (back-compat). `identity` ∈
+    {stem, before-first-dot}; `prefer_ext` is most-preferred-first."""
+
+    enabled: bool = False
+    prefer_ext: tuple[str, ...] = (".txt", ".vtt", ".srt")
+    identity: str = "stem"
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     """The merged `.wiki/sync.yaml` the dispatcher consumes.
 
     The `extensions_*` tuples are operator OVERRIDES that *extend* the built-in
     routing sets in `scripts/wiki_skills/_sync.py` (they never shrink them).
     `resummarize` (TASK 019) is the OPT-IN re-summarization policy; `None` ≡ the
-    TASK 018 behavior (back-compat / byte-identity)."""
+    TASK 018 behavior (back-compat / byte-identity). `transcript_dedup` (TASK 023)
+    is the OPT-IN transcript-format dedup; `None` ≡ disabled."""
 
     zones: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
@@ -127,6 +140,7 @@ class SyncConfig:
     extensions_text: tuple[str, ...] = field(default_factory=tuple)
     extensions_skip: tuple[str, ...] = field(default_factory=tuple)
     resummarize: ResummarizeConfig | None = None
+    transcript_dedup: TranscriptDedupConfig | None = None
 
 
 class _NoAliasSafeLoader(yaml.SafeLoader):
@@ -208,6 +222,21 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
         extensions_text=tuple(ext.get("text") or ()),
         extensions_skip=tuple(ext.get("skip") or ()),
         resummarize=_parse_resummarize(raw.get("resummarize")),
+        transcript_dedup=_parse_transcript_dedup(raw.get("transcript_dedup")),
+    )
+
+
+def _parse_transcript_dedup(block: Any) -> TranscriptDedupConfig | None:
+    """Build the typed `TranscriptDedupConfig` from a schema-validated
+    `transcript_dedup` block (`None` when absent ≡ disabled). `prefer_ext` is
+    lower-cased; an empty/missing list falls back to the (.txt, .vtt, .srt) default."""
+    if not block:
+        return None
+    pe = block.get("prefer_ext")
+    return TranscriptDedupConfig(
+        enabled=bool(block.get("enabled", False)),
+        prefer_ext=tuple(str(e).lower() for e in pe) if pe else (".txt", ".vtt", ".srt"),
+        identity=str(block.get("identity") or "stem"),
     )
 
 

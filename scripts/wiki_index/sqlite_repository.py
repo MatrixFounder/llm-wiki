@@ -1261,7 +1261,16 @@ class SQLiteRepository(IndexRepository):
         scalar for a string field AND each element for a list field (`sources:`), so a
         single query covers both shapes. Path bound as a parameter; field allowlisted
         (non-conforming → skipped). Hoisted once per scan by `_resummarize` to replace
-        the per-file N+1 (vdd-multi PERF-HIGH)."""
+        the per-file N+1 (vdd-multi PERF-HIGH).
+
+        TASK 023 — a `sources:` element may be a STRUCTURED OBJECT (e.g. the
+        ``{id, url, file}`` shape emitted by `generate-detailed-meeting-summary`)
+        rather than a bare path string. SQLite `json_each` over the list yields
+        such an element as the object's JSON text with `type='object'`; we parse
+        it and harvest every scalar string member, so a basename/path match can
+        still find the citeable value (all members describe the SAME source, so
+        harvesting the extra id/url alongside the file path is safe — a false
+        match would need an unrelated string to equal the target path/basename)."""
         conn = self._connect()
         out: set[str] = set()
         for field in fields:
@@ -1271,12 +1280,22 @@ class SQLiteRepository(IndexRepository):
                 continue
             json_path = f"$.{field}"
             rows = conn.execute(
-                "SELECT je.value AS v FROM pages, "
+                "SELECT je.value AS v, je.type AS t FROM pages, "
                 "json_each(pages.frontmatter_json, ?) je "
                 "WHERE pages.vault_id = ? AND je.value IS NOT NULL",
                 (json_path, vault_id),
             ).fetchall()
             for r in rows:
+                if r["t"] == "object":
+                    try:
+                        obj = json.loads(r["v"])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(obj, dict):
+                        for sv in obj.values():
+                            if isinstance(sv, str) and sv:
+                                out.add(sv)
+                    continue
                 out.add(str(r["v"]))
         return out
 

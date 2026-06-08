@@ -33,12 +33,15 @@ from scripts.wiki_index.sync_config import (
     WIKI_SYNC_CONFIG_MAX_BYTES,
     SyncConfig,
     SyncConfigError,
+    TranscriptDedupConfig,
     load_sync_config,
 )
 from scripts.wiki_skills._sync import (
+    Candidate,
     Decision,
     classify_file,
     iter_sync_candidates,
+    transcript_variant_skips,
 )
 
 
@@ -912,3 +915,77 @@ def test_view_in_exclude_zone_skips(tmp_path: Path) -> None:
     f = _md(tmp_path / "templates" / "DB.md", "database-plugin: dbfolder", "x")
     d = _classify(f, vault_root=tmp_path, in_exclude_zone=True)
     assert d.action == "skip" and d.reason == "excluded-zone"
+
+
+# --------------------------------------------------------------------------- #
+# TASK 023 — transcript FORMAT dedup (transcript_variant_skips)
+# --------------------------------------------------------------------------- #
+
+def _cand(rel: str) -> Candidate:
+    return Candidate(path=Path("/v") / rel, rel=rel, mtime=0.0,
+                     in_raw=False, in_exclude_zone=False)
+
+
+def test_dedup_before_first_dot_youtube_captions() -> None:
+    """YouTube-id captions: `.txt` wins; all `.vtt` variants (incl .ru-orig/.en)
+    demote to skip, keyed by the id before the first dot."""
+    cands = [_cand("t/ID.ru.txt"), _cand("t/ID.ru.vtt"),
+             _cand("t/ID.ru-orig.vtt"), _cand("t/ID.en.vtt")]
+    skips = transcript_variant_skips(cands, identity_mode="before-first-dot")
+    assert skips == {
+        "t/ID.ru.vtt": ".txt", "t/ID.ru-orig.vtt": ".txt", "t/ID.en.vtt": ".txt"}
+
+
+def test_dedup_stem_same_stem_only() -> None:
+    """'stem' groups only an exact same-stem .vtt with its .txt; the -orig/.en
+    variants have a DIFFERENT stem so they are NOT grouped (kept)."""
+    cands = [_cand("t/ID.ru.txt"), _cand("t/ID.ru.vtt"),
+             _cand("t/ID.ru-orig.vtt"), _cand("t/ID.en.vtt")]
+    assert transcript_variant_skips(cands, identity_mode="stem") == {
+        "t/ID.ru.vtt": ".txt"}
+
+
+def test_dedup_lone_caption_kept() -> None:
+    """A lone caption with no higher-preference sibling is KEPT (still ingested)."""
+    cands = [_cand("a/X.ru-orig.vtt"), _cand("b/Y.ru-orig.vtt")]
+    assert transcript_variant_skips(cands, identity_mode="before-first-dot") == {}
+
+
+def test_dedup_same_best_rank_ties_kept() -> None:
+    """Two files at the same best rank (two .txt) are BOTH kept — no data loss
+    from a wrong grouping; only a STRICTLY higher-preference format demotes."""
+    cands = [_cand("t/A.ru.txt"), _cand("t/A.en.txt")]
+    assert transcript_variant_skips(cands, identity_mode="before-first-dot") == {}
+
+
+def test_dedup_per_directory_grouping() -> None:
+    """Same identity in DIFFERENT directories is NOT cross-grouped."""
+    cands = [_cand("c1/ID.ru.txt"), _cand("c2/ID.ru.vtt")]
+    assert transcript_variant_skips(cands, identity_mode="before-first-dot") == {}
+
+
+def test_dedup_ignores_non_prefer_ext() -> None:
+    """Files whose suffix is not in prefer_ext (.md, .pdf) are never deduped."""
+    cands = [_cand("t/ID.ru.txt"), _cand("t/ID.md"), _cand("t/ID.pdf")]
+    assert transcript_variant_skips(cands, identity_mode="before-first-dot") == {}
+
+
+def test_dedup_config_parses_and_defaults(tmp_path: Path) -> None:
+    """`transcript_dedup` parses; absence ≡ None (disabled, back-compat)."""
+    assert load_sync_config(tmp_path).transcript_dedup is None  # no .wiki/sync.yaml
+    wiki = tmp_path / ".wiki"; wiki.mkdir()
+    (wiki / "sync.yaml").write_text(
+        "transcript_dedup:\n  enabled: true\n  identity: before-first-dot\n"
+        "  prefer_ext: ['.txt', '.vtt']\n", encoding="utf-8")
+    td = load_sync_config(tmp_path).transcript_dedup
+    assert td == TranscriptDedupConfig(
+        enabled=True, prefer_ext=(".txt", ".vtt"), identity="before-first-dot")
+
+
+def test_dedup_config_rejects_bad_identity(tmp_path: Path) -> None:
+    """A non-enum `identity` → INVALID_SYNC_CONFIG (strict schema), never a crash."""
+    wiki = tmp_path / ".wiki"; wiki.mkdir()
+    (wiki / "sync.yaml").write_text(
+        "transcript_dedup:\n  enabled: true\n  identity: bogus\n", encoding="utf-8")
+    with pytest.raises(SyncConfigError):
+        load_sync_config(tmp_path)

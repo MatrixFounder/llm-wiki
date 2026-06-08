@@ -38,8 +38,18 @@ from scripts.wiki_index.layout_config import resolve_layout_config
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_index.sync_config import SyncConfig, SyncConfigError, load_sync_config
-from scripts.wiki_skills._sync import Decision, classify_file, iter_sync_candidates
-from scripts.wiki_skills._resummarize import Caches, apply_policy, resolve_policy
+from scripts.wiki_skills._sync import (
+    Decision,
+    classify_file,
+    iter_sync_candidates,
+    transcript_variant_skips,
+)
+from scripts.wiki_skills._resummarize import (
+    ACTIONABLE,
+    Caches,
+    apply_policy,
+    resolve_policy,
+)
 from scripts.wiki_skills._common import (
     build_repo_config,
     emit,
@@ -152,11 +162,28 @@ def _build_entries(
     is resolved per file via the per-folder cascade, memoized per directory."""
     entries: list[dict[str, Any]] = []
     caches = Caches()  # per-scan memo: resolved policy / D2a citation set / D2b key index
-    for cand in iter_sync_candidates(zone, vault_root=vault_root, config=config):
+    cands = list(iter_sync_candidates(zone, vault_root=vault_root, config=config))
+    # TASK 023 — transcript FORMAT dedup (opt-in): demote redundant caption/transcript
+    # variants (e.g. ID.ru.vtt / ID.ru-orig.vtt when ID.ru.txt exists) to skip BEFORE
+    # the re-summarization gate, so only the preferred format is ever ingested. A lone
+    # caption with no higher-preference sibling is untouched (still ingested). `--force`
+    # re-arms only the PREFERRED format (a variant skip is not ACTIONABLE → unaffected).
+    dedup = config.transcript_dedup
+    variant_skips = (
+        transcript_variant_skips(
+            cands, prefer_ext=dedup.prefer_ext, identity_mode=dedup.identity)
+        if dedup is not None and dedup.enabled else {}
+    )
+    for cand in cands:
         d: Decision = classify_file(
             cand.path, vault_root=vault_root, config=config, layout=layout,
             in_raw=cand.in_raw, in_exclude_zone=cand.in_exclude_zone,
         )
+        if cand.rel in variant_skips and d.action in ACTIONABLE:
+            d = Decision(
+                action="skip",
+                reason=f"transcript-variant:{variant_skips[cand.rel]}",
+            )
         policy = resolve_policy(cand.path, vault_root=vault_root, caches=caches)
         d = apply_policy(
             d, path=cand.path, rel=cand.rel, vault_root=vault_root,

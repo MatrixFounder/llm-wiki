@@ -42,9 +42,19 @@ paths:
   - {glob: "*.md", type: note, project: "_root_"}
 
 type_mapping:
-  note:        {db_type: summary, tag: null}
-  daily-note:  {db_type: summary, tag: daily}
-  clipping:    {db_type: summary, tag: clipping}
+  note:            {db_type: summary, tag: null}
+  daily-note:      {db_type: summary, tag: daily}
+  clipping:        {db_type: summary, tag: clipping}
+  # AI/meeting/lesson summaries (summarizing-meetings / wiki-enrich output) +
+  # conference MOC notes. WITHOUT these, a note carrying `type: lesson-summary`
+  # (etc.) raises UnmappedTypeError and is SILENTLY dropped at reindex / flagged
+  # skip:unmappable-type by wiki-sync — i.e. the compounding-knowledge loop is
+  # dead for exactly the content this layout exists to capture (closes Q-019-9).
+  summary:         {db_type: summary, tag: null}
+  lesson-summary:  {db_type: summary, tag: lesson}
+  meeting-summary: {db_type: summary, tag: meeting}
+  webinar-summary: {db_type: summary, tag: webinar}
+  moc:             {db_type: summary, tag: moc}
 
 path_type_fallback: {}
 

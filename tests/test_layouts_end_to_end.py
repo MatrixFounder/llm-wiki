@@ -114,6 +114,50 @@ def _build_obsidian_vault(vault: Path) -> None:
     (vault / ".obsidian" / "workspace.json").write_text("{}", encoding="utf-8")
 
 
+def test_obsidian_personal_indexes_summary_types(tmp_path: Path) -> None:
+    """Q-019-9: obsidian-personal type_mapping must map the AI/meeting/lesson
+    summary types its vaults actually produce. Before the fix, a note carrying
+    ``type: lesson-summary`` (etc.) raised UnmappedTypeError and was silently
+    dropped into ``skipped`` — the compounding-knowledge loop was dead for exactly
+    the content this layout exists to capture. This pins the regression."""
+    vault = tmp_path / "sv"
+    _wiki_schema(vault, "sum-vault", "obsidian-personal")
+    # raw_type → (expected db_type, expected marker tag)
+    cases = {
+        "summary":         ("summary", None),
+        "lesson-summary":  ("summary", "lesson"),
+        "meeting-summary": ("summary", "meeting"),
+        "webinar-summary": ("summary", "webinar"),
+        "moc":             ("summary", "moc"),
+    }
+    for i, raw_type in enumerate(cases):
+        p = vault / "03 - Learning" / "Course" / f"{i:02d}-note.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            f"---\ntype: {raw_type}\ntitle: {raw_type} note\n---\n\nbody\n",
+            encoding="utf-8")
+    repo = SQLiteRepository(tmp_path / "g.db")
+    repo.apply_schema()
+    _register(repo, "sum-vault", vault)
+    try:
+        result = reindex_full(repo, "sum-vault")
+        # every summary note indexed — NONE dropped via UnmappedTypeError
+        assert result["pages"] == len(cases)
+        assert result["skipped"] == []
+        import json as _json
+        rows = {r["title"]: (r["type"], _json.loads(r["frontmatter_json"]).get("tags") or [])
+                for r in repo._connect().execute(
+                    "SELECT title, type, frontmatter_json FROM pages "
+                    "WHERE vault_id='sum-vault'").fetchall()}
+        for raw_type, (db_type, marker) in cases.items():
+            db_t, tags = rows[f"{raw_type} note"]
+            assert db_t == db_type, f"{raw_type} → db_type {db_t!r} (want {db_type!r})"
+            if marker is not None:
+                assert marker in tags, f"{raw_type} missing marker tag {marker!r} in {tags}"
+    finally:
+        repo.close()
+
+
 def test_obsidian_personal_indexes_without_collision(tmp_path: Path) -> None:
     vault = tmp_path / "ov"
     _build_obsidian_vault(vault)

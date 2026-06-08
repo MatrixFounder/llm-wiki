@@ -349,6 +349,33 @@ def test_all_cited_sources_set(tmp_path: Path) -> None:
     assert got == {"t/01.txt", "t/02-1.txt", "t/02-2.txt"}  # other-vault excluded
 
 
+def test_all_cited_sources_structured_objects(tmp_path: Path) -> None:
+    """TASK 023 — a `sources:` element may be a STRUCTURED OBJECT
+    (`generate-detailed-meeting-summary` emits ``{id, url, file}``), not a bare
+    path string. all_cited_sources must harvest the scalar string members so a
+    basename match on `file:` (the transcript basename) links the summary to its
+    raw. Mixed string + object lists and a scalar string field must still work."""
+    repo = _repo2(tmp_path)
+    _upsert_page(repo, "demand-gen", "lec-01", {"sources": [
+        {"id": "059RZHWA5Qg", "url": "https://youtu.be/059RZHWA5Qg",
+         "file": "059RZHWA5Qg.ru.txt"},
+    ]})
+    _upsert_page(repo, "demand-gen", "lec-02", {"sources": [
+        "t/plain.txt",  # legacy bare-string element alongside an object
+        {"file": "t/structured.txt"},
+    ]})
+    got = repo.all_cited_sources("demand-gen", ("source", "sources"))
+    # every scalar string member harvested (all describe the same source)
+    assert "059RZHWA5Qg.ru.txt" in got
+    assert "059RZHWA5Qg" in got
+    assert "https://youtu.be/059RZHWA5Qg" in got
+    assert "t/plain.txt" in got and "t/structured.txt" in got
+    # basename projection (provenance_ref.match=basename) finds the transcript
+    from pathlib import PurePosixPath
+    basenames = {PurePosixPath(x).name for x in got}
+    assert "059RZHWA5Qg.ru.txt" in basenames
+
+
 # ---------------------------------------------------------------------------
 # Phase 3 — the gate (bead 06): D1 ∪ D2a + mode + monotonicity
 # ---------------------------------------------------------------------------

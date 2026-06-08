@@ -115,6 +115,59 @@ class Candidate:
     in_exclude_zone: bool
 
 
+_DEFAULT_PREFER_EXT: tuple[str, ...] = (".txt", ".vtt", ".srt")
+
+
+def transcript_variant_skips(
+    candidates: list[Candidate],
+    *,
+    prefer_ext: tuple[str, ...] = _DEFAULT_PREFER_EXT,
+    identity_mode: str = "stem",
+) -> dict[str, str]:
+    """TASK 023 — transcript FORMAT dedup. The same recording often lands as
+    several caption/transcript formats (e.g. `ID.ru.txt` + `ID.ru.vtt` +
+    `ID.ru-orig.vtt` + `ID.en.vtt`); only ONE should be ingested. Returns
+    ``{rel: kept_ext}`` for every candidate to SKIP as a redundant variant — i.e.
+    a transcript-format file (suffix in `prefer_ext`) that shares a (parent-dir,
+    identity) group with a STRICTLY higher-preference format.
+
+    `identity_mode`:
+      * ``'stem'`` (default) — identity = filename minus its LAST extension; groups
+        a `.vtt` with its same-stem derived `.txt` (`lecture.vtt` ↔ `lecture.txt`).
+      * ``'before-first-dot'`` — identity = filename up to the first ``.``; groups
+        YouTube-id captions whose language/format live in dotted suffixes
+        (`ID.ru.txt` / `ID.ru.vtt` / `ID.ru-orig.vtt` / `ID.en.vtt`).
+
+    SAFE-by-design: only a strictly-higher-preference format demotes a sibling, so
+    a LONE caption (e.g. a single `ID.ru-orig.vtt` with no `.txt`) is KEPT (→ still
+    ingested), and same-best-rank collisions (two `.txt`) are ALL kept (a wrong
+    grouping never silently drops content — both still ingest). Files whose suffix
+    is not in `prefer_ext` are ignored entirely."""
+    ranks = {e.lower(): i for i, e in enumerate(prefer_ext)}
+    groups: dict[tuple[str, str], list[tuple[int, str]]] = {}
+    for c in candidates:
+        ext = c.path.suffix.lower()
+        if ext not in ranks:
+            continue
+        name = c.path.name
+        identity = (
+            name.split(".", 1)[0] if identity_mode == "before-first-dot"
+            else name[: -len(ext)]  # 'stem' — strip exactly the last suffix
+        )
+        groups.setdefault((c.path.parent.as_posix(), identity), []).append(
+            (ranks[ext], c.rel))
+    skips: dict[str, str] = {}
+    for members in groups.values():
+        best = min(rank for rank, _ in members)
+        if all(rank == best for rank, _ in members):
+            continue  # lone file or all same best-rank → keep all (no data loss)
+        kept_ext = prefer_ext[best].lower()
+        for rank, rel in members:
+            if rank > best:
+                skips[rel] = kept_ext
+    return skips
+
+
 def _walk_extensions(config: SyncConfig) -> set[str]:
     """The case-folded extension set the walk yields (convert ∪ text ∪ `.md`,
     plus operator overrides, minus operator skips). Anything else is pruned

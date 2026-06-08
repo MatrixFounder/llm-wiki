@@ -69,6 +69,33 @@ $defs:
         $ref: '#/$defs/Extensions'
       resummarize:
         $ref: '#/$defs/Resummarize'
+      transcript_dedup:
+        $ref: '#/$defs/TranscriptDedup'
+
+  # ----------------------------------------------------------------------------
+  # TranscriptDedup (TASK 023) — transcript FORMAT dedup. OPT-IN: absence ≡ no
+  # dedup. Among transcript-format files (suffix in `prefer_ext`) sharing a
+  # (parent-dir, identity) group, only the highest-preference format is ingested;
+  # lower-preference siblings → `skip:transcript-variant:<kept_ext>`. A lone
+  # caption with no higher-preference sibling is KEPT (still ingested).
+  # STRICT (additionalProperties:false) — a misspelled key is INVALID_SYNC_CONFIG.
+  # ----------------------------------------------------------------------------
+  TranscriptDedup:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+      prefer_ext:
+        type: array
+        items: {type: string, pattern: '^\.[A-Za-z0-9.]+$'}
+        description: 'Ordered format preference, most-preferred first (default [.txt, .vtt, .srt]).'
+      identity:
+        type: string
+        enum: [stem, before-first-dot]
+        description: >
+          Variant-grouping key: 'stem' (filename minus last extension — groups a
+          .vtt with its same-stem .txt) or 'before-first-dot' (filename up to the
+          first '.', for YouTube-id captions like ID.ru.txt / ID.ru-orig.vtt).
 
   # ----------------------------------------------------------------------------
   # Resummarize (TASK 019) — the re-summarization policy gate. OPT-IN: absence ≡
