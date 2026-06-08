@@ -113,18 +113,12 @@ editor/viewer of the Class-A markdown — but you can run them right inside the
 Obsidian window with the `Terminal` community plugin (an embedded real shell; see
 below), so in practice you needn't leave Obsidian at all. By default the SQLite index
 lives outside the vault entirely (`~/Library/Application Support/wiki-index/global.db` on
-macOS) — one global DB shared by all vaults, partitioned by `vault_id`. **Optionally
-(TASK 022)** a vault can own its DB: add `index_db: .wiki/index.db` to `WIKI_SCHEMA.md`
-(or `wiki-init … --local`) and the index travels *with* the vault (gitignored, rebuildable).
-Resolution precedence: `--db-path` > `index_db` > global; the path is vault-relative and
-**contained** (a symlink/`..` escape is refused). If the vault is iCloud/Dropbox-synced, SQLite must
-not live in the byte-syncing folder (WAL corruption — the iCloud guard enforces it): point `index_db`
-at an **absolute** non-synced path, which is **gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`** (because
-`WIKI_SCHEMA.md` travels with the vault, an absolute path from a cloned/synced vault could otherwise
-redirect writes — so it requires an explicit opt-in). A local-DB vault is an **island**:
-`--vault all` spans only its own DB (no cross-DB federation). The working loop is: **edit in
-Obsidian → run a command → reindex catches
-the cache up → search / query reflects it** — and Obsidian picks up the on-disk
+macOS) — one global DB shared by all vaults, partitioned by `vault_id`. A vault can instead
+own a **vault-local** index that travels with it (`index_db: .wiki/index.db` in
+`WIKI_SCHEMA.md`); you pick global vs local once, at init — see
+[Choosing the index database](#choosing-the-index-database-global-default-vs-vault-local)
+under Vault lifecycle. The working loop is: **edit in Obsidian → run a command → reindex
+catches the cache up → search / query reflects it** — and Obsidian picks up the on-disk
 changes live.
 
 ```mermaid
@@ -249,7 +243,48 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-init`** | Brings a vault under management. `--register-existing` indexes a pre-existing vault; `--scaffold-new --layout <name>` creates a fresh vault skeleton; `--reconcile` renames/re-points a registered vault. The one-time setup per vault. |
+| **`wiki-init`** | Brings a vault under management. `--register-existing` indexes a pre-existing vault; `--scaffold-new --layout <name>` creates a fresh vault skeleton; `--reconcile` renames/re-points a registered vault. Add `--local` (or `--index-db <path>`) to give the vault its **own** index DB instead of the shared global one — see below. The one-time setup per vault. |
+
+#### Choosing the index database: global (default) vs vault-local
+
+There are two ways to store a vault's index, and you choose **once, at init**:
+
+| | **Global (default)** | **Vault-local** |
+|---|---|---|
+| Where the DB lives | `~/Library/Application Support/wiki-index/global.db` (macOS) — *outside* every vault | inside the vault, e.g. `<vault>/.wiki/index.db` |
+| Declared in `WIKI_SCHEMA.md`? | no (`index_db` absent) | yes (`index_db: .wiki/index.db`) |
+| Good when | many vaults you search together; one machine | the vault must be **portable** — clone/move it and the index comes along; or you want one DB per project, gitignored & rebuildable |
+| `--vault all` reaches | every vault registered in the global DB | only this vault (it's an **island** — no cross-DB federation) |
+
+Three recipes — the **only** difference is what `wiki-init` writes into `WIKI_SCHEMA.md`:
+
+```bash
+# (a) GLOBAL — the default. Nothing extra to declare.
+wiki-init --register-existing --vault /path/to/MyVault
+
+# (b) VAULT-LOCAL — DB at <vault>/.wiki/index.db (vault-relative & contained:
+#     a symlink or `..` escape out of the vault is refused). --local writes
+#     `index_db: .wiki/index.db` into WIKI_SCHEMA.md and registers into THAT DB.
+wiki-init --register-existing --vault /path/to/MyVault --local
+#     ...or a custom in-vault path:
+wiki-init --register-existing --vault /path/to/MyVault --index-db db/index.db
+
+# (c) CLOUD-SYNCED vault (iCloud / Dropbox) — SQLite must NOT sit inside the
+#     byte-syncing folder (WAL/shm corruption). Point at an ABSOLUTE path OUTSIDE
+#     the sync root. Because WIKI_SCHEMA.md travels with the vault, an absolute
+#     path needs an explicit opt-in so a synced/cloned config can't silently
+#     redirect writes elsewhere on your disk:
+WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 \
+  wiki-init --register-existing --vault /path/to/MyVault \
+            --index-db ~/wiki-dbs/myvault.db
+```
+
+`--local` / `--index-db` are pure convenience — equivalently, hand-edit
+`WIKI_SCHEMA.md` and add `index_db: .wiki/index.db` to the frontmatter. **Precedence
+is always `--db-path` (a per-command override, mainly for tests) > `index_db`
+(in `WIKI_SCHEMA.md`) > global.** So a vault is global until the day you add
+`index_db`; remove the key and it's global again, byte-for-byte. **iCloud paths are
+auto-rejected wherever they appear**, to prevent SQLite WAL/shm corruption.
 
 ---
 

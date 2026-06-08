@@ -7,11 +7,11 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 018**
-> (`wiki-sync` — the format-aware, tag-routed ingest dispatcher with scanned-PDF
-> OCR + per-vendor agent files, shipped 2026-06-03). Schema **v5**
-> (`user_version = 5`). **990 pytest passed (+4 skipped),
-> `mypy --strict` clean on 72 source files.** The repo's own `docs/` is
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 022**
+> (vault-local DB resolution — a vault can keep a portable index that travels with
+> it, or share the one global DB; shipped 2026-06-08). Schema **v5**
+> (`user_version = 5`). **1083 pytest passed (+4 skipped),
+> `mypy --strict` clean on 73 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -250,8 +250,8 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 990 passed, 4 skipped (~24s)
-mypy --strict scripts/  # clean on 72 source files (vendored package excluded
+pytest tests/           # 1083 passed, 4 skipped (~24s)
+mypy --strict scripts/  # clean on 73 source files (vendored package excluded
                         # via mypy.ini override per Decision-14)
 ```
 
@@ -294,9 +294,43 @@ into the vault root so an agent launched there has the wiki operating instructio
 [`templates/agent-files.yaml`](templates/agent-files.yaml); existing files are never
 clobbered.
 
-The DB lives at `~/Library/Application Support/wiki-index/global.db` on macOS
-(`~/.local/share/wiki-index/...` on Linux). **iCloud paths are auto-rejected** to
-prevent SQLite corruption.
+### Choosing where the index lives: global (default) vs vault-local
+
+You don't have to decide anything up front — by default every vault shares **one
+global DB** (`~/Library/Application Support/wiki-index/global.db` on macOS,
+`~/.local/share/wiki-index/...` on Linux), partitioned by `vault_id`, and the steps
+above just work. A vault can instead **own its index** so the DB travels with it
+(portable, gitignored, rebuildable). You pick the variant at init time — the only
+difference is what `wiki-init` writes into `WIKI_SCHEMA.md`:
+
+```bash
+# (a) GLOBAL — the default. Nothing to declare; all vaults share one DB.
+wiki-init --register-existing --vault /path/to/MyVault
+
+# (b) VAULT-LOCAL — DB lives at <vault>/.wiki/index.db (vault-relative, contained).
+#     --local writes `index_db: .wiki/index.db` into WIKI_SCHEMA.md and registers
+#     into that local DB instead of the global one.
+wiki-init --register-existing --vault /path/to/MyVault --local
+
+# (b') VAULT-LOCAL at a custom in-vault path:
+wiki-init --register-existing --vault /path/to/MyVault --index-db db/index.db
+
+# (c) CLOUD-SYNCED vault (iCloud/Dropbox) — SQLite must NOT sit in the byte-syncing
+#     folder (WAL/shm corruption), so point at an ABSOLUTE path outside the sync
+#     root. Absolute paths require an explicit opt-in (the schema file travels with
+#     the vault, so a synced/cloned config could otherwise redirect writes):
+WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 \
+  wiki-init --register-existing --vault /path/to/MyVault \
+            --index-db ~/wiki-dbs/myvault.db
+```
+
+`--local`/`--index-db` are just a convenience — you can equally hand-edit
+`WIKI_SCHEMA.md` and add `index_db: .wiki/index.db` to the frontmatter yourself.
+**Resolution precedence is always `--db-path` (a per-command override, mainly for
+testing) > `index_db` (declared in `WIKI_SCHEMA.md`) > global.** A vault with a
+local DB is an **island**: `wiki-search --vaults all` spans only that DB, never the
+global one. **iCloud paths are auto-rejected** wherever they appear, to prevent
+SQLite corruption.
 
 Inside a Claude Code session, every command below is also invokable as a slash
 form (`/wiki-init`, `/wiki-search`, …); the agent auto-suggests them when trigger
@@ -450,7 +484,7 @@ workflows/wiki-*.md         multi-step orchestration recipes (incl. wiki-sync ex
 bin/wiki-*                  15 shell wrappers (cd + venv + exec)
 bin/install-globally.sh     global install (path A)
 bin/install-project-symlinks.sh   repo-local symlinks (dev path B)
-tests/                      pytest suite (990 passed, 4 skipped) + fixtures
+tests/                      pytest suite (1083 passed, 4 skipped) + fixtures
 samples/                    gitignored scratch tree for dogfooding vaults
 ```
 
@@ -460,8 +494,8 @@ samples/                    gitignored scratch tree for dogfooding vaults
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 990 passed, 4 skipped
-mypy --strict scripts/  # clean on 72 source files (the contract for scripts/)
+pytest tests/           # 1083 passed, 4 skipped
+mypy --strict scripts/  # clean on 73 source files (the contract for scripts/)
 ```
 
 Conventions:
