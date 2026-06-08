@@ -16,7 +16,7 @@ from scripts.wiki_index.rendering import (
     render_and_write_auto_indexes,
     render_index,
 )
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -27,15 +27,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--auto-indexes", action="store_true",
                    help="Render the layout's auto_indexes[] targets (PW-H, e.g. "
                         "docs/KNOWN_ISSUES.md) instead of index.md.")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        args.vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         vault = repo.get_vault(args.vault)

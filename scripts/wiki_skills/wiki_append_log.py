@@ -20,7 +20,7 @@ from scripts.wiki_index.logfile import (
     rotate_log_path,
 )
 from scripts.wiki_index.models import LogEvent
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,6 +30,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--subject", default=None)
     p.add_argument("--details-json", default=None,
                    help="Inline JSON string or path to file with JSON.")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -53,9 +55,9 @@ def _parse_details(arg: str | None) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        args.vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         vault = repo.get_vault(args.vault)

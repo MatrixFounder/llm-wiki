@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_skills._common import atomic_write_text, build_repo_config
 from scripts.wiki_index.layout import (
     COURSE_TIER_DIR,
     LOG_SUBDIR,
@@ -153,6 +154,57 @@ def _write_agent_files(
     return out
 
 
+def _index_db_value(args: argparse.Namespace) -> str | None:
+    """TASK 022 — the index_db to declare: ``--index-db`` wins; ``--local`` ⇒
+    ``.wiki/index.db``; else ``None`` (global DB, unchanged)."""
+    if getattr(args, "index_db", None):
+        return str(args.index_db)
+    if getattr(args, "local", False):
+        return ".wiki/index.db"
+    return None
+
+
+def _validate_index_db_rel(rel: str) -> bool:
+    """vdd-multi MED-S1 (frontmatter injection): an `index_db` written into the YAML
+    frontmatter must be a single, clean scalar. Reject empty / surrounding whitespace /
+    a `---` fence / and **any** character that is whitespace except a literal space or
+    tab — this bans not only `\\n`/`\\r` but the **Unicode line separators U+0085 (NEL),
+    U+2028, U+2029** that PyYAML treats as line breaks (an interior one survives
+    `.strip()` and would inject a sibling key, e.g. `vault_id`, overriding vault
+    identity — vdd-multi MED-S1 round-2 PoC) — plus NUL / control / DEL chars."""
+    # `": "` is the YAML block-mapping indicator: a value like `a: b` would write
+    # invalid frontmatter (`index_db: a: b`) → corrupt the Class-A file + an uncaught
+    # parse error on the next read (vdd-multi round-3 self-DoS note). No real path
+    # contains a colon-space, so banning it is safe.
+    if not rel or rel != rel.strip() or "---" in rel or ": " in rel:
+        return False
+    return all(
+        ch in " \t" or (not ch.isspace() and ord(ch) >= 0x20 and ord(ch) != 0x7f)
+        for ch in rel
+    )
+
+
+def _ensure_index_db(schema_path: Path, rel: str) -> str:
+    """Declare ``index_db: <rel>`` in the WIKI_SCHEMA.md frontmatter.
+
+    Returns ``"written"`` (inserted), ``"unchanged"`` (already declared == rel), or
+    ``"conflict"`` (already declared a DIFFERENT value — vdd-multi MED-L2: do NOT
+    silently honour the stale value). Fence-aware (splits on the `---\\n` frontmatter
+    fence, NOT a `find` that could match `---` inside a block scalar — vdd-multi LOW)
+    and **atomic** (`atomic_write_text`, never a torn Class-A file)."""
+    text = schema_path.read_text(encoding="utf-8")
+    fm = _split_frontmatter(text)
+    existing = fm.get("index_db") if isinstance(fm, dict) else None
+    if existing:
+        return "unchanged" if str(existing) == rel else "conflict"
+    parts = text.split("---\n", 2)  # ['', <frontmatter>, <body>]
+    if not text.startswith("---\n") or len(parts) < 3:
+        return "written"  # no parseable frontmatter — caller already validated vault_id
+    new_text = ("---\n" + parts[1].rstrip("\n") + f"\nindex_db: {rel}\n---\n" + parts[2])
+    atomic_write_text(schema_path, new_text)
+    return "written"
+
+
 def scaffold_new(args: argparse.Namespace) -> int:
     # Require --vault explicitly. Silently defaulting to cwd ("." ) has
     # caused accidental scaffolds inside the project repo. Operator must
@@ -204,6 +256,17 @@ def scaffold_new(args: argparse.Namespace) -> int:
             Template((_TEMPLATES_DIR / "WIKI_SCHEMA.md.tmpl").read_text())
             .substitute(placeholders)
         )
+    # TASK 022: declare a vault-local index_db (--local / --index-db) in WIKI_SCHEMA.md.
+    _idx = _index_db_value(args)
+    if _idx:
+        if not _validate_index_db_rel(_idx):
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index-db",
+                          "reason": "must be a single-line path (no newline/NUL/---)"},
+                         exit_code=2)
+        if _ensure_index_db(schema_path, _idx) == "conflict":
+            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index-db",
+                          "reason": "WIKI_SCHEMA.md already declares a different index_db"},
+                         exit_code=2)
     agent_files = _write_agent_files(
         vault_root, placeholders, _vendors, _selection, force=bool(args.force))
     if _karpathy:
@@ -216,9 +279,9 @@ def scaffold_new(args: argparse.Namespace) -> int:
         if not log_month.exists():
             log_month.write_text(f"# Log {now.strftime('%Y-%m')}\n\n")
 
-    config: dict[str, Any] = {"vault_id": vault_id}
-    if args.db_path:
-        config["db_path"] = str(args.db_path)
+    config = build_repo_config(  # TASK 022: index_db (if declared) → local DB
+        vault_id, vault_root=vault_root,
+        db_path_flag=str(args.db_path) if args.db_path else None)
     repo = make_repo(config)
     db_path = getattr(repo, "db_path", None)
     try:
@@ -283,9 +346,20 @@ def register_existing(args: argparse.Namespace) -> int:
         return _emit({"error": "INVALID_VENDOR", "unknown": unknown,
                       "known": sorted(vendors)}, exit_code=2)
     is_two_tier = any((vault_root / COURSE_TIER_DIR).glob(f"*/{SCHEMA_FILE}"))
-    config: dict[str, Any] = {"vault_id": vault_id}
-    if args.db_path:
-        config["db_path"] = str(args.db_path)
+    # TASK 022: declare a vault-local index_db (--local / --index-db) then register into it.
+    _idx = _index_db_value(args)
+    if _idx:
+        if not _validate_index_db_rel(_idx):
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index-db",
+                          "reason": "must be a single-line path (no newline/NUL/---)"},
+                         exit_code=2)
+        if _ensure_index_db(schema_path, _idx) == "conflict":
+            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index-db",
+                          "reason": "WIKI_SCHEMA.md already declares a different index_db"},
+                         exit_code=2)
+    config = build_repo_config(
+        vault_id, vault_root=vault_root,
+        db_path_flag=str(args.db_path) if args.db_path else None)
     repo = make_repo(config)
     db_path = getattr(repo, "db_path", None)
     try:
@@ -353,9 +427,9 @@ def reconcile(args: argparse.Namespace) -> int:
     if not new_vault_id or not _validate_vault_id(new_vault_id):
         return _emit({"error": "INVALID_VAULT_ID", "received": new_vault_id},
                      exit_code=6)
-    config: dict[str, Any] = {"vault_id": new_vault_id}
-    if args.db_path:
-        config["db_path"] = str(args.db_path)
+    config = build_repo_config(  # TASK 022: honour a declared index_db (no silent global)
+        new_vault_id, vault_root=vault_root,
+        db_path_flag=str(args.db_path) if args.db_path else None)
     repo = make_repo(config)
     try:
         existing = repo.get_vault_by_root_path(vault_root)
@@ -408,6 +482,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vault", help="Absolute path to the vault root.")
     p.add_argument("--vault-id", help="Override vault_id (scaffold-new only).")
     p.add_argument("--db-path", help="Override default DB path (testing).")
+    idb = p.add_mutually_exclusive_group()
+    idb.add_argument("--local", action="store_true",
+                     help="TASK 022: vault-local DB at .wiki/index.db (writes index_db "
+                          "into WIKI_SCHEMA.md; registers into the local DB, not global).")
+    idb.add_argument("--index-db", default=None,
+                     help="TASK 022: explicit vault-relative (or absolute) index DB path "
+                          "to declare in WIKI_SCHEMA.md.")
     p.add_argument("--language", default=None)
     p.add_argument("--layout", default=None, choices=_LAYOUT_CHOICES)
     p.add_argument("--description", default=None)

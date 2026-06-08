@@ -26,12 +26,7 @@ import frontmatter
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.security import PathTraversalError
-from scripts.wiki_skills._common import (
-    atomic_write_text,
-    emit,
-    resolve_entity_file,
-    sanitize_alias_surface,
-)
+from scripts.wiki_skills._common import atomic_write_text, build_repo_config, emit, resolve_entity_file, resolve_vault_root_for_cli, sanitize_alias_surface
 
 _log = logging.getLogger("wiki_merge")
 
@@ -43,6 +38,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vault", required=True, help="Vault id.")
     p.add_argument("--dry-run", action="store_true",
                    help="Report what would move; write nothing.")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -63,9 +60,9 @@ def _append_aliases(path: Path, surfaces: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        args.vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         from_ent = repo.resolve_entity(args.vault, args.from_slug)

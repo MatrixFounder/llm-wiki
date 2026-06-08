@@ -43,6 +43,7 @@ from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
     atomic_write_text,
+    build_repo_config,
     emit,
     sanitize_markdown_text,
 )
@@ -194,9 +195,8 @@ def prepare(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                      "reason": "does not exist"}, 2)
 
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022: vault_root already resolved (required flag)
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         loaded = _load_query_page(repo, args.vault, vault_root, args.query_slug)
@@ -385,9 +385,8 @@ def apply(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                      "reason": "does not exist"}, 2)
 
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022: vault_root already resolved (required flag)
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         # 1. Load the audited query page; recompute answer_hash (TOCTOU).

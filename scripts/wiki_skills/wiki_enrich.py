@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit
 # TASK 003 I-7.0 (Decision-16): manifest-consumer surface lives in the
 # neutral sub-layer module `_manifest_consumer`. The three symbols below
 # are re-exported here so existing test imports keep working for one
@@ -178,6 +178,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     vault_root = args.vault_root.resolve(strict=True)
+    # TASK 022 (M-2): resolve a vault-local index_db and thread it into the ingest so
+    # wiki-enrich writes into the SAME DB as the rest of the vault (no split-brain).
+    _db_path = build_repo_config(
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path).get("db_path")
     source = args.source.resolve(strict=True)
 
     # WIKI_ENRICH_NO_VENDORED accepts a truthy set (case-insensitive, stripped)
@@ -263,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                     exit_code=6)
 
     summary = index_from_manifest(
-        manifest, args.vault, vault_root, db_path=args.db_path,
+        manifest, args.vault, vault_root, db_path=_db_path,
     )
     if summary["failed"]:
         return emit({

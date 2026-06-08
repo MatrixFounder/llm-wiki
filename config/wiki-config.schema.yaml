@@ -157,6 +157,14 @@ $defs:
         $ref: '#/$defs/TranscriptConfig'
       light_summary:
         $ref: '#/$defs/LightSummaryConfig'
+      index_db:
+        type: string
+        minLength: 1
+        description: >
+          TASK 022 — optional per-vault index DB location (read from raw
+          WIKI_SCHEMA.md frontmatter only). Relative → contained under vault_root;
+          absolute/~ → explicit operator escape (cloud vaults). Path semantics are
+          validated in config_loader.resolve_index_db_path, NOT here (this is DiD).
     additionalProperties: true
 
   # ----------------------------------------------------------------------------
@@ -184,9 +192,16 @@ $defs:
         $ref: '#/$defs/LightSummaryConfig'
     # vault_id is intentionally NOT listed in properties; presence at this
     # scope is a configuration error (caught in task-001-13 config_loader).
-    not:
-      required:
-        - vault_id
+    # index_db (TASK 022) is identity too → also banned here. The single
+    # `not: required: [vault_id, index_db]` would only reject having BOTH, so each
+    # ban is its own `not` under allOf.
+    allOf:
+      - not:
+          required:
+            - vault_id
+      - not:
+          required:
+            - index_db
     additionalProperties: true
 
 # Top-level: this document is a *library of definitions*, not a directly-

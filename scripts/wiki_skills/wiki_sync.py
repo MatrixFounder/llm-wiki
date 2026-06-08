@@ -40,7 +40,11 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfig, SyncConfigError, load_sync_config
 from scripts.wiki_skills._sync import Decision, classify_file, iter_sync_candidates
 from scripts.wiki_skills._resummarize import Caches, apply_policy, resolve_policy
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import (
+    build_repo_config,
+    emit,
+    resolve_vault_root_for_cli,
+)
 
 GENERATED_BY = "wiki-sync/scan"
 _HASH_CHUNK = 65536
@@ -65,24 +69,16 @@ def _is_clean_rel(rel: str) -> bool:
     return pp.as_posix() == rel
 
 
-def _derive_vault_root(args: argparse.Namespace, repo: IndexRepository) -> Path | None:
-    """An explicit ``--vault-root`` wins; else the registered vault's
-    ``root_path``; ``None`` when neither is available."""
-    if args.vault_root:
-        return Path(args.vault_root)
-    vault = repo.get_vault(args.vault)
-    return Path(vault.root_path) if vault is not None else None
-
-
 def _empty_summary() -> dict[str, int]:
     return {"total": 0, "convert+ingest": 0, "ingest": 0,
             "upsert": 0, "skip": 0, "unchanged": 0}
 
 
 def scan(args: argparse.Namespace) -> int:
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    # TASK 022: resolve vault_root (flag → cwd walk-up) BEFORE make_repo so a
+    # vault-local index_db is honoured; the chain is --db-path > index_db > global.
+    vault_root = resolve_vault_root_for_cli(args)
+    config = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     try:
         repo = make_repo(config)
     except ValueError:
@@ -91,7 +87,10 @@ def scan(args: argparse.Namespace) -> int:
                      "reason": "vault_id missing or malformed"}, 2)
 
     try:
-        vault_root = _derive_vault_root(args, repo)
+        if vault_root is None:
+            # global vault addressed by id from outside → derive root from the DB.
+            v = repo.get_vault(args.vault)
+            vault_root = Path(v.root_path) if v is not None else None
         if vault_root is None:
             return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                          "reason": "vault not registered; pass --vault-root"}, 2)
@@ -254,9 +253,8 @@ def record(args: argparse.Namespace) -> int:
     if not _is_clean_rel(rel):
         return emit({"error": "INVALID_PATH", "field": "path",
                      "reason": "expected a clean vault-relative path"}, 2)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(
+        args.vault, vault_root=resolve_vault_root_for_cli(args), db_path_flag=args.db_path)
     try:
         repo = make_repo(config)
     except ValueError:
@@ -296,6 +294,8 @@ def _build_parser() -> argparse.ArgumentParser:
     rp.add_argument("path", help="Vault-relative POSIX path of the synced source.")
     rp.add_argument("--source-hash", required=True, help="sha256 of the source bytes (from the plan).")
     rp.add_argument("--vault", required=True)
+    rp.add_argument("--vault-root", default=None,
+                    help="Vault root (resolve a local index_db). Walks up from CWD when omitted.")
     rp.add_argument("--db-path", default=None)
     rp.set_defaults(func=record)
     return p

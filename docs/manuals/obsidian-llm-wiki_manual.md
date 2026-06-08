@@ -111,9 +111,19 @@ The `wiki-*` commands are ordinary **shell CLIs** that operate on the vault's
 markdown files. Obsidian itself does not *execute* them — Obsidian's role is the
 editor/viewer of the Class-A markdown — but you can run them right inside the
 Obsidian window with the `Terminal` community plugin (an embedded real shell; see
-below), so in practice you needn't leave Obsidian at all. The SQLite index lives
-outside the vault entirely (`~/Library/Application Support/wiki-index/global.db` on
-macOS). The working loop is: **edit in Obsidian → run a command → reindex catches
+below), so in practice you needn't leave Obsidian at all. By default the SQLite index
+lives outside the vault entirely (`~/Library/Application Support/wiki-index/global.db` on
+macOS) — one global DB shared by all vaults, partitioned by `vault_id`. **Optionally
+(TASK 022)** a vault can own its DB: add `index_db: .wiki/index.db` to `WIKI_SCHEMA.md`
+(or `wiki-init … --local`) and the index travels *with* the vault (gitignored, rebuildable).
+Resolution precedence: `--db-path` > `index_db` > global; the path is vault-relative and
+**contained** (a symlink/`..` escape is refused). If the vault is iCloud/Dropbox-synced, SQLite must
+not live in the byte-syncing folder (WAL corruption — the iCloud guard enforces it): point `index_db`
+at an **absolute** non-synced path, which is **gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`** (because
+`WIKI_SCHEMA.md` travels with the vault, an absolute path from a cloned/synced vault could otherwise
+redirect writes — so it requires an explicit opt-in). A local-DB vault is an **island**:
+`--vault all` spans only its own DB (no cross-DB federation). The working loop is: **edit in
+Obsidian → run a command → reindex catches
 the cache up → search / query reflects it** — and Obsidian picks up the on-disk
 changes live.
 

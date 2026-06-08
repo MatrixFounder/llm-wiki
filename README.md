@@ -150,6 +150,16 @@ The DB is a Class B cache, so schema upgrades are **not** in-place `ALTER`s — 
 `vN→vN+1` migration on a populated DB is "delete the `.db`/`-wal`/`-shm`, then
 `wiki-init --register-existing` + `wiki-reindex --full`" (see ADR-002 §D8).
 
+**Where the DB lives (TASK 022).** Default: one global DB (`~/Library/Application
+Support/wiki-index/global.db`), partitioned by `vault_id`. A vault may instead declare
+`index_db: .wiki/index.db` in `WIKI_SCHEMA.md` (or `wiki-init … --local`) to own a portable,
+in-vault DB. Precedence: `--db-path` > `index_db` > global; relative paths are vault-root-relative
+(contained — a symlink/`..` escape is rejected). For an iCloud/Dropbox vault, point `index_db` at an
+**absolute** non-synced path — but because `WIKI_SCHEMA.md` travels with the vault (a cloned/synced
+vault is attacker-shippable), an absolute `index_db` is **gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`**
+(and the iCloud WAL-corruption guard still applies). A local-DB vault is an **island** — `--vault all`
+spans only the connected DB.
+
 ---
 
 ## The universal layout engine

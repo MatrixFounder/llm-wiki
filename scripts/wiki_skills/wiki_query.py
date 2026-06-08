@@ -33,7 +33,9 @@ from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
     atomic_write_text,
+    build_repo_config,
     emit,
+    resolve_vault_root_for_cli,
     sanitize_markdown_text,
 )
 from scripts.wiki_skills._retrieval import fts_quote
@@ -236,9 +238,10 @@ def prepare(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_SLUG", "field": "slug",
                      "reason": "must be kebab-case ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"}, 2)
 
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    # TASK 022: resolve index_db BEFORE make_repo (the downstream _derive_vault_root then
+    # reads the same local DB the helper opened).
+    config = build_repo_config(
+        args.vault, vault_root=resolve_vault_root_for_cli(args), db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         try:
@@ -361,9 +364,8 @@ def apply(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_SLUG", "field": "query-slug",
                      "reason": "must be kebab-case"}, 2)
 
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(
+        args.vault, vault_root=resolve_vault_root_for_cli(args), db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         # TASK 014 / R-MF14-2: --vault-root is optional. When omitted, derive it

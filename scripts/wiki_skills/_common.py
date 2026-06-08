@@ -127,3 +127,70 @@ def resolve_entity_file(repo: Any, vault_id: str, slug: str) -> Path | None:
     if raw.is_symlink():
         raise PathTraversalError(f"entity file is a symlink (refusing to follow): {rel}")
     return validate_inside_vault(raw, Path(vault.root_path))
+
+
+def build_repo_config(
+    vault_id: str, *, vault_root: Path | None, db_path_flag: str | None
+) -> dict[str, Any]:
+    """TASK 022 — the DB resolution chain → a `factory.make_repo` config dict.
+
+    Precedence **`--db-path` flag > `index_db` (WIKI_SCHEMA.md) > global**: an explicit
+    flag wins; else, if a `vault_root` is known, a declared `index_db` is resolved
+    (`config_loader.resolve_index_db_path`); else the dict carries no `db_path` and
+    `make_repo` falls back to the global DB — byte-identical to the pre-TASK-022 behaviour.
+    `make_repo` is UNCHANGED: it still applies the R-03 iCloud guard + global fallback to
+    whatever `db_path` (if any) this helper sets. `config_loader` is imported **lazily**
+    inside the body (no top-level `_common → wiki_index` edge — `rendering` imports `_common`).
+    """
+    cfg: dict[str, Any] = {"vault_id": vault_id}
+    if db_path_flag:
+        cfg["db_path"] = db_path_flag
+        return cfg
+    if vault_root is not None:
+        from scripts.wiki_index.config_loader import (
+            ConfigValidationError,
+            resolve_index_db_path,
+        )
+        from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
+        # vdd-multi HIGH-L1: only honour a vault's index_db when the root belongs to the
+        # addressed vault (a CWD walk-up must not redirect a by-id command to a different
+        # vault's DB). The global sentinel ("all") opts out of the check — island intent.
+        expected = None if vault_id == GLOBAL_VAULT_SENTINEL else vault_id
+        try:
+            resolved = resolve_index_db_path(vault_root, expected_vault_id=expected)
+        except ConfigValidationError:
+            # vdd-multi MED-2: a malformed/unsafe index_db must fail as a clean JSON
+            # envelope (the orchestrator parses stdout), never a raw traceback. The value
+            # is NOT echoed (CWE-209). Centralised here so all CLIs inherit it.
+            emit({"error": "INVALID_INDEX_DB", "field": "index_db",
+                  "reason": "index_db is unsafe or malformed (escapes the vault, is a "
+                            "symlink, or is absolute without WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                 exit_code=6)
+            raise SystemExit(6)
+        if resolved is not None:
+            cfg["db_path"] = str(resolved)
+    return cfg
+
+
+def resolve_vault_root_for_cli(args: Any) -> Path | None:
+    """TASK 022 — resolve a CLI's `vault_root` BEFORE `make_repo`, so a vault-local
+    `index_db` is honoured (the ordering inversion). Precedence: an explicit
+    `--vault-root` flag → a walk-up from CWD to the nearest `WIKI_SCHEMA.md`
+    (`config_loader.find_vault_root`, like `.git`/`.obsidian`) → `None`.
+
+    `None` is the global-DB case (no flag, not inside a vault) — `build_repo_config`
+    then injects no `db_path` and `make_repo` falls back to global (byte-identity). Used
+    uniformly by every subcommand so `record`/`apply` resolve the SAME local DB as
+    `scan`/`prepare` (no split-brain). `config_loader` is imported lazily.
+    """
+    flag = getattr(args, "vault_root", None)
+    if flag:
+        return Path(flag)
+    from scripts.wiki_index.config_loader import (
+        VaultRootNotFoundError,
+        find_vault_root,
+    )
+    try:
+        return find_vault_root(Path.cwd())
+    except (VaultRootNotFoundError, OSError):  # OSError: CWD deleted (vdd-multi LOW)
+        return None

@@ -240,6 +240,31 @@ refined still-on-disk+not-re-walked seed + regression tests. **Zero DDL** (`user
 deps, no `import anthropic`. **1056 pytest (+4 skipped), mypy strict (73 files).** See
 `docs/tasks/task-021-dogfood-hardening.md`, `docs/plans/plan-021-dogfood-hardening.md`, ARCHITECTURE
 §11a Q-021-1/2.
+**TASK 022 (vault-local-db-resolution) SHIPPED 2026-06-08** (uncommitted): a vault may declare
+**`index_db:` in `WIKI_SCHEMA.md`** (the *identity* layer) → its SQLite index DB lives **with** the
+vault (portable, gitignored, ADR-002 §D8-rebuildable); absent ⇒ the global DB, **byte-identical** to
+before. Precedence **`--db-path` > `index_db` > global**. Two new units — `config_loader.resolve_index_db_path`
+(reads RAW frontmatter, bypassing the `CLAUDE.md::wiki:` overlay) + `_common.build_repo_config`
+(lazy-imports `config_loader`) — plus `_common.resolve_vault_root_for_cli` (`--vault-root` flag →
+`find_vault_root(cwd)` walk-up). **`factory.make_repo` is UNCHANGED**; the **ordering inversion** runs
+the resolution BEFORE `make_repo` across all 15 CLIs (incl. `wiki-init --local`/`--index-db` writing
+into all 3 subcommands; `wiki-enrich`/`extract` thread the resolved `db_path` — no split-brain).
+**Island** model (OQ-1): `--vault all` spans only the connected DB (no cross-DB federation). **Cloud
+(OQ-5):** an iCloud/Dropbox vault uses an absolute non-synced path. Full VDD pipeline (task/arch/plan
+reviews APPROVED) + Stub-First green-throughout. **`/vdd-multi` post-ship hardening** (it found real
+holes the happy path missed): **HIGH-S1** leaf-symlink containment escape (now full-path resolve +
+leaf-symlink refusal), **HIGH-S2** absolute `index_db` arbitrary-write under an attacker-shippable
+config → gated behind **`WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`** (amends OQ-5), **HIGH-L1** CWD walk-up
+opening a *different* vault's DB → `resolve_index_db_path(..., expected_vault_id=)`, **MED** uncaught
+`ConfigValidationError` → central `INVALID_INDEX_DB` JSON envelope + exit 6 (CWE-209 no-echo),
+**MED-S1** YAML frontmatter key-injection via `--index-db` (Unicode line-separators U+0085/U+2028/
+U+2029) → `_validate_index_db_rel` bans every `str.isspace()` break + `": "`; `_ensure_index_db`
+fence-aware atomic write + `INDEX_DB_ALREADY_DECLARED` conflict. Re-verified Logic ✓ Security ✓
+Performance ✓ (converged). **Zero DDL** (`user_version` 5), no new deps, no `import anthropic`.
+**1083 pytest (+27), mypy strict (73 files).** New schema key `index_db` in `WikiRootConfig` (banned
+in `WikiProjectOverride`). See `docs/tasks/task-022-vault-local-db-resolution.md`,
+`docs/plans/plan-022-vault-local-db-resolution.md`, `docs/tasks/task-022-01..09-*.md`,
+`docs/reviews/{task,architecture,plan}-022-review.md`, ARCHITECTURE §11a Q-022-1/2/3/4.
 
 ## Knowledge lookup priority
 

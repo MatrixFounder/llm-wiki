@@ -64,7 +64,7 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
 )
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit
 from scripts.wiki_skills._common import (  # noqa: F401 — facade re-export for wec._sanitize_markdown_text
     sanitize_markdown_text as _sanitize_markdown_text,
 )
@@ -308,10 +308,8 @@ def prepare(args: argparse.Namespace) -> int:
         return _batch_prepare(args)
 
     vault_root = args.vault_root.resolve(strict=True)
-    repo = make_repo({
-        "vault_id": args.vault,
-        **({"db_path": args.db_path} if args.db_path else {}),
-    })
+    repo = make_repo(build_repo_config(  # TASK 022: vault_root already resolved above
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
     try:
         known_out, missing_concept_files = _load_known_and_drift(
             repo, args.vault, vault_root,
@@ -491,10 +489,8 @@ def _batch_prepare(args: argparse.Namespace) -> int:
                     exit_code=2)
 
     vault_root = args.vault_root.resolve(strict=True)
-    repo = make_repo({
-        "vault_id": args.vault,
-        **({"db_path": args.db_path} if args.db_path else {}),
-    })
+    repo = make_repo(build_repo_config(  # TASK 022: vault_root already resolved above
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
     try:
         known_out, missing_concept_files = _load_known_and_drift(
             repo, args.vault, vault_root,
@@ -582,10 +578,8 @@ def apply(args: argparse.Namespace) -> int:
         return emit(validated, exit_code=v_exit)
 
     today = date.today()
-    repo = make_repo({
-        "vault_id": args.vault,
-        **({"db_path": args.db_path} if args.db_path else {}),
-    })
+    repo = make_repo(build_repo_config(  # TASK 022: vault_root already resolved above
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
     try:
         # Step 5 (write) on the open repo; R-015-5d shares this with batch.
         result = _apply_write(
@@ -925,10 +919,8 @@ def _batch_apply(args: argparse.Namespace) -> int:
     vault_root = args.vault_root.resolve(strict=True)
     orchestrator_id_val = getattr(args, "orchestrator_id", "orchestrator")
     today = date.today()
-    repo = make_repo({
-        "vault_id": args.vault,
-        **({"db_path": args.db_path} if args.db_path else {}),
-    })
+    repo = make_repo(build_repo_config(  # TASK 022: vault_root already resolved above
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
     batch_results: list[dict[str, Any]] = []
     try:
         # P-7: load known entities ONCE for the whole batch; `_apply_write`

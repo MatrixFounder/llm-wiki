@@ -187,3 +187,30 @@ def test_language_enum_rejects_unknown(validator, valid_root_config):
     cfg["language"] = "klingon"
     errors = list(validator.iter_errors(cfg))
     assert errors, "unknown language code should be rejected"
+
+
+# =============================================================================
+# TASK 022 / bead 02-03 — index_db (DiD: binding validation is in 02-01)
+# =============================================================================
+
+
+def test_index_db_string_accepted(validator, valid_root_config):
+    """A string `index_db` on an otherwise-valid root config validates."""
+    cfg = dict(valid_root_config)
+    cfg["index_db"] = ".wiki/index.db"
+    assert list(validator.iter_errors(cfg)) == []
+
+
+def test_index_db_non_string_rejected(validator, valid_root_config):
+    """A non-string `index_db` is rejected (type: string)."""
+    cfg = dict(valid_root_config)
+    cfg["index_db"] = 42
+    assert list(validator.iter_errors(cfg)), "non-string index_db should be rejected"
+
+
+def test_override_bans_index_db(override_validator):
+    """WikiProjectOverride forbids both vault_id AND index_db (identity not redirectable
+    by a project override), but accepts an empty override."""
+    assert list(override_validator.iter_errors({"index_db": "x"})), "override index_db banned"
+    assert list(override_validator.iter_errors({"vault_id": "v"})), "override vault_id banned"
+    assert list(override_validator.iter_errors({})) == []

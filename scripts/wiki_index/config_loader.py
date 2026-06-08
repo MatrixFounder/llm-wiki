@@ -20,6 +20,7 @@ R-01.3 fail-fast: ConfigValidationError exposes JSON pointer to offending field.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,70 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 _CLAUDE_WIKI_BLOCK = re.compile(
     r"^```yaml\s*\n(?P<yaml>.*?)\n```", re.DOTALL | re.MULTILINE
 )
+
+
+def resolve_index_db_path(
+    vault_root: Path, *, expected_vault_id: str | None = None
+) -> Path | None:
+    """TASK 022 — resolve a vault's optional `index_db` (raw `WIKI_SCHEMA.md`
+    frontmatter) to a DB `Path`, or `None` when unset.
+
+    Reads `index_db` from the **RAW** frontmatter via `_split_frontmatter` — NOT
+    `load_root_config`, so the `CLAUDE.md::wiki:` overlay is deliberately bypassed
+    (single-redirect-surface decision, ARCHITECTURE Q-022-1). Two forms:
+
+      * **relative** (default, e.g. `.wiki/index.db`) — resolved under `vault_root`;
+        the leaf must NOT be a symlink and the **full** candidate must `resolve()`
+        inside `vault_root` (vdd-multi HIGH-S1 — a parent-only check let a symlinked
+        leaf escape into an arbitrary-write primitive).
+      * **absolute / `~`** — gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB` (vdd-multi
+        HIGH-S2): `WIKI_SCHEMA.md` travels WITH the vault (clone/sync/handover), so it
+        is NOT the same trust source as a `--db-path` flag typed this session; an
+        ungated absolute path is an arbitrary-path write (`make_repo` mkdir+writes the
+        schema). The iCloud guard still applies downstream in `factory.make_repo`.
+
+    `expected_vault_id` (vdd-multi HIGH-L1): when the caller addresses a specific vault,
+    the index_db at `vault_root` only applies if the root actually BELONGS to that vault —
+    else a CWD walk-up (or a mismatched `--vault-root`) would silently open a DIFFERENT
+    vault's DB. A mismatch → `None` (fall back to global). The global sentinel passes
+    `None` here (the in-vault DB is wanted for an `--all` within the island).
+
+    Raises `ConfigValidationError` (never echoing the value, CWE-209) on a NUL byte, a
+    relative escape/symlink, or an ungated absolute. Missing key / non-string → `None`.
+    """
+    schema_path = vault_root / _WIKI_SCHEMA_MARKER
+    if not schema_path.is_file():
+        return None
+    base, _ = _split_frontmatter(schema_path.read_text())  # RAW — bypass the overlay
+    if (expected_vault_id is not None
+            and base.get("vault_id") not in (None, expected_vault_id)):
+        return None  # vault_root belongs to a DIFFERENT vault → not this command's DB
+    val = base.get("index_db")
+    if not isinstance(val, str) or not val.strip():
+        return None
+    val = val.strip()
+    if "\x00" in val:
+        raise ConfigValidationError("index_db contains a NUL byte")
+    expanded = Path(os.path.expanduser(val))  # `~` only; NO `$VAR` (env-in-config smell)
+    if expanded.is_absolute():
+        if os.environ.get("WIKI_ALLOW_ABSOLUTE_INDEX_DB", "").strip().lower() \
+                not in {"1", "true", "yes", "on"}:
+            raise ConfigValidationError(
+                "absolute index_db requires WIKI_ALLOW_ABSOLUTE_INDEX_DB=1")
+        return expanded
+    # Relative → reject a symlinked leaf, then resolve the FULL candidate (catches a
+    # symlinked leaf/middle/parent + embedded `..`) and require it inside the vault.
+    cand = vault_root / expanded
+    if cand.is_symlink():
+        raise ConfigValidationError("index_db is a symlink")
+    try:
+        full_resolved = cand.resolve(strict=False)
+        root_resolved = vault_root.resolve()
+    except OSError:
+        raise ConfigValidationError("index_db could not be resolved")
+    if not full_resolved.is_relative_to(root_resolved):
+        raise ConfigValidationError("index_db escapes the vault root")
+    return cand
 
 
 def load_root_config(vault_root: Path) -> dict[str, Any]:

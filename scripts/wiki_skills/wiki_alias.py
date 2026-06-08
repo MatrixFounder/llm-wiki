@@ -20,7 +20,7 @@ import frontmatter
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.security import PathTraversalError
 from scripts.wiki_index.sqlite_repository import AliasCollisionError
-from scripts.wiki_skills._common import atomic_write_text, emit, resolve_entity_file
+from scripts.wiki_skills._common import atomic_write_text, build_repo_config, emit, resolve_entity_file, resolve_vault_root_for_cli
 
 _ALIAS_TYPES = (
     "spelling_variant", "translation", "nickname",
@@ -43,6 +43,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Without a slug: every alias in the vault.")
     p.add_argument("--type", choices=_ALIAS_TYPES, default="spelling_variant",
                    help="alias_type for --add (Class B only; default spelling_variant).")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -75,9 +77,9 @@ def _sync_alias_frontmatter(path: Path, surface: str, *, add: bool) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        args.vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         # TASK 014 / R-MF14-3: `--list` with no slug → every alias in the vault.

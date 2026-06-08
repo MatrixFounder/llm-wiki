@@ -10,7 +10,7 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.models import PageHit
 from scripts.wiki_index.repository import validate_filter_field
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
 from scripts.wiki_skills._retrieval import expand_query as _expand_query
 from scripts.wiki_skills._retrieval import fts_quote as _fts_quote
 
@@ -61,6 +61,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Disable alias expansion (TASK 005 / R-5.5). By default "
                         "a query that resolves to an entity is OR-expanded with "
                         "that entity's canonical name + sibling aliases.")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -115,9 +117,9 @@ def main(argv: list[str] | None = None) -> int:
     # When --vaults is not narrowed to a specific id, use the _global_ sentinel
     # (ADR-002 §D1.1) — factory accepts it without inventing a fake vault name.
     factory_vault = vaults_list[0] if vaults_list else GLOBAL_VAULT_SENTINEL
-    config: dict[str, str] = {"vault_id": factory_vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        factory_vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         wf = where_fields or None

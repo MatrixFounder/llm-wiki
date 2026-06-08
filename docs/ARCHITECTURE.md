@@ -762,6 +762,111 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
     DDL (reuses `pages`); `slug_collisions` is no longer "within-batch only". The same fix
     shape lets `wiki-reindex --all-vaults` honour `--delta` (was silently `--full`).
 
+- **Q-022-1 (TASK 022 / vault-local-db-resolution — the resolution chain).** A vault may declare
+  its index DB in `WIKI_SCHEMA.md` (the **identity** layer) via an optional `index_db:` so the DB
+  lives with the vault; absent ⇒ byte-identical to today (global `global.db`, ADR-002 §D1). This
+  implements the "future per-vault opt-out flag" already named in `factory._resolve_db_path`.
+  - **Resolved (components — `make_repo` UNTOUCHED, YAGNI):** two small additions, no `factory`
+    change and no new `config_loader`→`factory` edge:
+    - `config_loader.resolve_index_db_path(vault_root) -> Path | None` — NEW pure function next to
+      the existing `find_vault_root`/`load_root_config`. Reads `index_db` from the **raw
+      `WIKI_SCHEMA.md` frontmatter only** (NOT the `CLAUDE.md::wiki:` overlay — single redirect
+      surface), validates, and resolves it.
+    - `_common.build_repo_config(vault_id, *, vault_root, db_path_flag) -> dict` — NEW CLI-shared
+      helper encoding the chain **`--db-path` flag > `index_db` (resolved) > global**. It simply
+      populates `config['db_path']`; `factory.make_repo` then takes its existing
+      `db_path_override` path and applies the **unchanged** R-03 iCloud guard + global fallback. So
+      `make_repo` stays path-only (no `config_loader` import; `factory` remains a leaf). `_common` is
+      an acyclic home, but `build_repo_config` **lazily imports `config_loader` inside the function**
+      (matching `_common.resolve_entity_file`'s lazy `security` import) — never a top-level
+      `_common→wiki_index` edge that `rendering` would transitively pull on every render. [arch-review M-3]
+  - **Data model:** zero DDL (`user_version` 5). The only new "data" is the optional `index_db`
+    frontmatter key (Class A identity). The `vaults` table is unchanged — for a local-DB vault its
+    single row simply lives in the local DB, not `global.db`.
+
+- **Q-022-2 (TASK 022 — the ordering inversion + CLI surface).** The fleet pattern is
+  `make_repo(config)` FIRST, then read `root_path` from the opened DB (`repo.get_vault(args.vault)`,
+  `wiki_query`/`wiki_sync._derive_vault_root`). For a local-DB vault that opens GLOBAL then fails
+  `get_vault` → the resolution MUST invert: resolve `vault_root` (`--vault-root` flag →
+  `config_loader.find_vault_root(cwd)` walk-up) **before** `make_repo`. `wiki-index-upsert` and
+  `wiki-extract-concepts prepare` already do this — the template.
+  - **Resolved (per-CLI inventory, 3 classes + internal sites):** (i) already root-before-make_repo
+    — `wiki-index-upsert`, `wiki-extract-concepts` (reuse helper); (ii) `--vault-root` flag but
+    derive-after — `wiki-query`, `wiki-sync`, `wiki-verify-multi` (move resolution earlier); (iii)
+    **no `--vault-root`** — `wiki-search`, `wiki-lint`, `wiki-reindex`, `wiki-index-render`,
+    `wiki-alias`, `wiki-confirm`, `wiki-merge`, `wiki-append-log` (ADD `--vault-root` or cwd
+    walk-up). The helper must also reach the internal ingest sites — **concretely (M-2,
+    split-brain risk):** `wiki_enrich.main` runs `build_repo_config(...)` and passes the resolved
+    `config['db_path']` down via the EXISTING `db_path=` kwarg of `_manifest_consumer.index_from_manifest`
+    (and `wiki_index_upsert.upsert_one` inherits via the open `repo`) — **no signature change**. If
+    skipped, `wiki-enrich` writes GLOBAL while the rest of the vault is local — worse than a clean
+    fallback. Bare `--vault <id>` + no discoverable root + not-in-global → an unresolved-root error;
+    **reuse the existing `VAULT_ROOT_NOT_FOUND` (`wiki_index_upsert`) / `INVALID_VAULT_ROOT`
+    (`wiki_sync`) code rather than mint a third near-duplicate** (MN-3); no path-content echo
+    (CWE-209/117), not a silent global hit.
+  - **`wiki-init`:** all three subcommands — `--register-existing`/`--scaffold-new` accept
+    `--index-db <relpath>` (or `--local` ⇒ `.wiki/index.db`), write `index_db:` into
+    `WIKI_SCHEMA.md`, and register the `vaults` row into the **local** DB; `--reconcile` honours a
+    declared `index_db` (no silent global open).
+
+- **Q-022-3 (TASK 022 — security, cloud posture, island; operator-resolved OQ-1/OQ-5).**
+  - **`index_db` validation (Security §7):** the **relative** form (default, e.g. `.wiki/index.db`)
+    is validated at the **string level** before any filesystem call (reject `..`/absolute-when-
+    relative/NUL), then its **parent is `resolve()`-d THEN checked** —
+    `(vault_root / rel).parent.resolve(strict=False).is_relative_to(vault_root.resolve())` — so a
+    symlinked `<vault>/.wiki/ → out-of-vault` (the TASK 018 SEC-A3 / `resolve_entity_file` F3
+    class) cannot escape; a lexical check alone is insufficient (arch-review M-1). This is NOT
+    `security.validate_inside_vault` on the not-yet-created DB file, which `resolve(strict=True)`s
+    and raises `FileNotFoundError` (the codebase already sidesteps this in `wiki_sync.scan`). The
+    **absolute/`~`** form is the explicit operator escape for cloud-synced vaults — same trust
+    surface as `--db-path` (`WIKI_SCHEMA.md` is Class A operator-authored), still subject to the
+    iCloud guard. JSON-schema: add `index_db: {type: string, minLength: 1}` to `WikiRootConfig`
+    (today `additionalProperties:true` → must be added; path semantics validated in code, not a
+    schema pattern — MN-2) and **ban** it in `WikiProjectOverride` via
+    `allOf:[{not:{required:[vault_id]}},{not:{required:[index_db]}}]` (a single
+    `not:required:[vault_id,index_db]` only rejects having BOTH — wrong; MN-1). DiD only —
+    `resolve_index_db_path` reads raw frontmatter, never the merged override.
+  - **OQ-5 → robust-to-both (cloud):** the R-03 iCloud guard (`validate_db_path`) STAYS and fires on
+    the resolved path. A relative in-vault DB works for non-synced folders; for an iCloud/Dropbox
+    vault the guard rejects the in-vault path with the relocation hint → the operator points
+    `index_db` at an explicit non-synced (absolute) path, or leaves it unset (global). No new
+    detection heuristic — the existing guard is the backstop.
+  - **OQ-1 → island (Scalability §8):** a local-DB vault is self-contained. `--vault all` /
+    `--all-vaults` resolve through `repo.list_vaults()` over the **connected** DB only — there is no
+    registry of local DBs, so cross-DB federation is architecturally impossible without new state
+    and is explicitly OUT of scope (YAGNI). Documented as the contract; ADR-002 §D1 partitioning is
+    untouched (global stays the default when `index_db` is absent). **Nested-vault consequence
+    (MN-4):** `find_vault_root` returns the NEAREST `WIKI_SCHEMA.md`, so a sub-vault that declares
+    its own `index_db` routes to a different DB than its parent — by-design island behaviour; note
+    it in the island contract / README so it does not read as a surprise.
+
+- **Q-022-4 (TASK 022 — `/vdd-multi` security hardening, post-implementation).** The adversarial
+  multi-critic pass found that `index_db` travels INSIDE the vault config, so a cloned/synced/handed
+  vault is an **attacker-shippable** config — a fundamentally different trust source than a `--db-path`
+  flag typed this session. Resolution (`resolve_index_db_path` / `build_repo_config`) was hardened:
+  - **Leaf-symlink escape (HIGH-S1):** the relative containment now refuses a symlinked **leaf** and
+    `resolve()`-s the **full** candidate (not just the parent) before `is_relative_to(vault_root)` —
+    the parent-only check let `<vault>/.wiki/index.db → /outside` become an arbitrary-write primitive
+    (`make_repo` mkdir+writes the schema through the symlink).
+  - **Absolute write primitive (HIGH-S2):** an absolute/`~` `index_db` is now gated behind the
+    explicit env `WIKI_ALLOW_ABSOLUTE_INDEX_DB` (else `ConfigValidationError`); `$VAR` expansion was
+    removed. This **amends OQ-5**: the cloud-vault "absolute non-synced path" escape now requires the
+    operator to set that env (a freshly-cloned vault can't silently redirect writes). The iCloud guard
+    still applies on top.
+  - **Wrong-DB via CWD walk-up (HIGH-L1):** `resolve_index_db_path(vault_root, *, expected_vault_id)`
+    returns `None` when the root's WIKI_SCHEMA `vault_id` ≠ the addressed vault — so a walk-up (or a
+    mismatched `--vault-root`) can't open a *different* vault's DB; `build_repo_config` passes the
+    addressed id (the global sentinel opts out → island). 
+  - **Error contract (MED):** a malformed/unsafe `index_db` → a single `INVALID_INDEX_DB` JSON
+    envelope + `SystemExit(6)` from `build_repo_config` (never a raw traceback; value never echoed,
+    CWE-209).
+  - **Frontmatter injection (MED-S1):** `wiki-init`'s `_validate_index_db_rel` rejects every YAML
+    line-break (proved to cover PyYAML's full break set via `str.isspace()` — incl. U+0085/U+2028/
+    U+2029), a `---` fence, and a `": "` map token; `_ensure_index_db` writes fence-aware + atomically
+    and errors (`INDEX_DB_ALREADY_DECLARED`) on a conflicting prior value. Two adjacent residuals
+    noted as out-of-scope follow-ups (pre-existing unwrapped `_split_frontmatter` `safe_load`;
+    `--description`/`_sanitize_desc` doesn't strip U+2028/U+2029). 1083 pytest, mypy strict.
+
 ---
 
 ## Verification Map

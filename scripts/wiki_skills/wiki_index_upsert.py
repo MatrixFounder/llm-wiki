@@ -20,7 +20,7 @@ from scripts.wiki_index.normalization import (
     normalize_body_for_fts,
     normalize_frontmatter,
 )
-from scripts.wiki_skills._common import emit
+from scripts.wiki_skills._common import build_repo_config, emit
 from scripts.wiki_source.base import SourceItem
 from scripts.wiki_source.manual import ManualSourceAdapter
 
@@ -126,9 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                          "from_path": str(src)}, exit_code=6)
         vault_root = found
 
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022: vault_root already resolved above
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         result = upsert_one(args.vault, src, vault_root, repo)

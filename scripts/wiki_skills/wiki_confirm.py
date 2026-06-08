@@ -23,7 +23,7 @@ import frontmatter
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.security import PathTraversalError
-from scripts.wiki_skills._common import atomic_write_text, emit, resolve_entity_file
+from scripts.wiki_skills._common import atomic_write_text, build_repo_config, emit, resolve_entity_file, resolve_vault_root_for_cli
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -39,6 +39,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Auto-promote mention threshold (default 3).")
     p.add_argument("--dry-run", action="store_true",
                    help="With --auto: report the would-promote set; write nothing.")
+    p.add_argument("--vault-root", default=None,
+                   help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
 
@@ -121,9 +123,9 @@ def _run_auto(repo: object, args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config: dict[str, str] = {"vault_id": args.vault}
-    if args.db_path:
-        config["db_path"] = args.db_path
+    config = build_repo_config(  # TASK 022
+        args.vault, vault_root=resolve_vault_root_for_cli(args),
+        db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
         if args.auto:
