@@ -300,10 +300,15 @@ the whole normalized body (deep terms searchable; dogfood: `"дофамин"` pa
 display stays bounded via `snippet()` (no consumer renders the column raw); zero-DDL Option B
 (existing DBs gain it on next `reindex`, Class-B rebuild). **R-3 — docs**: `workflows/wiki-sync.md`
 4b/4c documents the layout-conditional filing (PARA = note+`upsert`; Karpathy `_sources`/`wiki-enrich`
-still valid). **Zero DDL** (`user_version` 5), no new deps, `no import anthropic`. New
-`tests/test_upsert_layout_parity.py` (9 parity+FTS tests). **1102 pytest (+9), mypy strict (73
-files).** See `docs/tasks/task-024-upsert-layout-fts-hardening.md`,
-`docs/plans/plan-024-upsert-layout-fts-hardening.md`, ARCHITECTURE Q-024-1/2/3 (+residual-2).
+still valid). **R-4 — D2a provenance NFC/NFD normalisation** (dogfood #3, folded in 2026-06-09):
+`_resummarize.summary_exists` NFC-normalises both the citation set + the target, so a Cyrillic-named
+raw whose macOS FS-walked `rel` is NFD (`й`=и+◌̆) matches its NFC `sources:` (was re-converting every
+scan; localised to D2a — D1 NFD-self-consistent, D2b FS-vs-FS). Dogfood #3 also re-validated the
+**OCR convert+ingest path** end-to-end (scanned image-only PDF → `pdf_ocr.py` eng+rus → summary →
+layout-aware upsert → searchable). **Zero DDL** (`user_version` 5), no new deps, `no import anthropic`.
+New `tests/test_upsert_layout_parity.py` (9) + `test_gate_d2a_provenance_nfc_nfd`. **1103 pytest,
+mypy strict (73 files).** See `docs/tasks/task-024-upsert-layout-fts-hardening.md`,
+`docs/plans/plan-024-upsert-layout-fts-hardening.md`, ARCHITECTURE Q-024-1/2/3/4 (+residual-2).
 
 ## Knowledge lookup priority
 

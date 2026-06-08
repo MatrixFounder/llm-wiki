@@ -417,6 +417,21 @@ def test_gate_d2a_provenance(tmp_path: Path) -> None:
     assert out.action == "skip" and out.reason == "summary-exists:provenance"
 
 
+def test_gate_d2a_provenance_nfc_nfd(tmp_path: Path) -> None:
+    """TASK 024 / R-4 (dogfood #3): a Cyrillic-named raw whose filesystem `rel` is
+    NFD (macOS HFS+/APFS — `й` = и+◌̆) must match its summary's NFC `sources:`
+    value, else it re-converts every scan. Provenance must NFC-normalise both sides."""
+    import unicodedata
+    repo = _repo2(tmp_path)
+    nfc_path = unicodedata.normalize("NFC", "zone/Кейс Ярли.pptx")  # frontmatter (NFC)
+    nfd_rel = unicodedata.normalize("NFD", nfc_path)                # FS walk yields NFD
+    assert nfd_rel != nfc_path, "precondition: NFC and NFD forms must differ (й decomposes)"
+    _upsert_page(repo, "demand-gen", "yarly", {"sources": [nfc_path]})
+    out = _gate(repo, Decision("convert+ingest", "convert:pptx"),
+                _IF_MISSING_D2A, rel=nfd_rel)
+    assert out.action == "skip" and out.reason == "summary-exists:provenance"
+
+
 def test_gate_d2a_basename_match(tmp_path: Path) -> None:
     """vdd-multi MED-1 fix: `provenance_ref.match: basename` now actually matches by
     basename (was a silent no-op)."""

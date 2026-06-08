@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import string
 import time
+import unicodedata
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -154,9 +155,19 @@ def summary_exists(
             cited = repo.all_cited_sources(vault_id, pr.fields)
             if pr.match == "basename":
                 cited = {PurePosixPath(x).name for x in cited}
-            c.cited[ckey] = frozenset(cited)
+            # TASK 024 / R-4 (dogfood #3 finding): NFC-normalise the citation set.
+            # A frontmatter `sources:` value is typically NFC, but `rel` comes from
+            # the filesystem walk, which on macOS (HFS+/APFS) yields **NFD** for
+            # decomposable Cyrillic (`й`=и+◌̆, `ё`) etc. Without normalising both
+            # sides, a Cyrillic-named raw (`Кейс Ярли …pptx`) NEVER matches its
+            # summary's provenance and re-converts on EVERY scan. ASCII paths are
+            # unaffected (NFC≡NFD). D1 source_state stays NFD-on-both-sides
+            # (self-consistent); D2b mirror is FS-vs-FS (consistent) — only D2a
+            # crosses the FS↔frontmatter boundary, so the fix is localised here.
+            c.cited[ckey] = frozenset(
+                unicodedata.normalize("NFC", x) for x in cited)
         target = PurePosixPath(rel).name if pr.match == "basename" else rel
-        if target in c.cited[ckey]:
+        if unicodedata.normalize("NFC", target) in c.cited[ckey]:
             return "provenance"
     # D2b — filesystem mirror. Reaching here means D1/D2a did NOT prove a summary, so a
     # group-key (N:1) hit is the uncited-same-key merge/split moment (TASK 021 / HIGH-1):

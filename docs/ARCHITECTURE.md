@@ -949,6 +949,19 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   valid for Karpathy/two-tier vaults** (guidance is layout-conditional, not "never enrich").
   Mirrored in the `CLAUDE.md` vault template / `README` pointer. No code/schema change;
   `no import anthropic`. (Out of scope, user-owned elsewhere: the pptx→markdown extraction step.)
+- **Q-024-4 (TASK 024 / R-4 — D2a provenance NFC/NFD normalisation; dogfood #3 finding,
+  folded into TASK 024).** A Cyrillic-named raw source (`Кейс Ярли общая преза.pptx` — `й`
+  decomposes) re-converted on EVERY `wiki-sync scan` despite an existing, citing summary.
+  Root cause: `_resummarize.summary_exists` compared `cand.rel` — which the filesystem walk
+  yields in **NFD** on macOS (HFS+/APFS store decomposed) — against the D2a citation set built
+  from frontmatter `sources:`, which is **NFC**; the two Unicode forms are unequal so provenance
+  missed (ASCII YouTube-id transcripts were unaffected; dogfood #2 had masked it via the
+  `source_state` marker). **RESOLVED:** NFC-normalise BOTH sides at the D2a comparison boundary
+  (`unicodedata.normalize("NFC", …)` on the cited set + the target) — localised to D2a because
+  D1 `source_state` is NFD-on-both-sides (self-consistent: set + get both use the walked `rel`)
+  and D2b mirror is FS-vs-FS. Verified end-to-end: the pptx now `skip:summary-exists:provenance`,
+  zero `convert+ingest` remaining. Regression `test_gate_d2a_provenance_nfc_nfd`. **Zero DDL**
+  (`user_version` 5), no new deps. **1103 pytest, mypy strict.**
 
 ---
 
