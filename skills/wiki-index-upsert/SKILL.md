@@ -28,7 +28,7 @@ Lowest-level index operation: one markdown file → one DB row (with refs).
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_index_upsert \
+wiki-index-upsert \
     --vault <vault_id> \
     --source <abs-path-to-md-file> \
     [--vault-root <abs-path>] \

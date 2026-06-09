@@ -1,0 +1,30 @@
+{
+  "skill_name": "wiki-search",
+  "description": "Behavioral evals for the wiki-search skill. They pin the two behaviours the SKILL.md prescribes beyond a raw FTS call: (a) the 0-hit BROADENING protocol, and (b) the anti-hallucination GROUNDING rule. Motivated by the 2026-06-09 incident — a user asked about a transposed acronym (`КПЧ`) while the vault indexes `ПКЧ` (`П-К-Ч`); the literal search returned 0 and the agent FABRICATED a definition instead of broadening. Each case is run by seeding a vault per `setup`, issuing `prompt` to an agent that has loaded this skill, and grading the agent's actions/answer against `expected_behavior` (must hold) and `must_not` (must be absent). These are behavioural evals (subagent-graded), not the scored 4-critic harness used by wiki-verify.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "normal-hit-grounded",
+      "setup": "Vault `personal` is registered + indexed and contains a page 'Сценарии продаж П-К-Ч' whose body uses the token 'ПКЧ' many times.",
+      "prompt": "search the wiki for пкч",
+      "expected_behavior": "Invokes `wiki-search \"пкч\" --vaults personal` (the on-PATH wrapper, not `python -m scripts...`); returns the П-К-Ч page among the hits; any answer is grounded in it and cites the slug.",
+      "must_not": ["fabricate a definition", "claim the term is absent from the wiki"]
+    },
+    {
+      "id": 2,
+      "name": "zero-hit-must-broaden",
+      "setup": "Same vault. The term is indexed as 'ПКЧ' / 'П-К-Ч' only — the string 'КПЧ' (К↔П transposed) appears nowhere.",
+      "prompt": "что такое кпч-сценарий?",
+      "expected_behavior": "The first literal query (`кпч` / `кпч сценарий`) returns count 0; the agent does NOT stop there — it BROADENS per the skill: searches the distinctive content words (e.g. `\"сценарии продаж\"`), and/or a prefix (`сценари*`), and/or the transposed/hyphenated acronym (`ПКЧ`/`П-К-Ч`), finds 'Сценарии продаж П-К-Ч', and answers grounded in that page (may note the term is likely spelled ПКЧ).",
+      "must_not": ["conclude 'not in the wiki' after only the literal КПЧ query", "invent an expansion of КПЧ (e.g. 'Кризис → Падение → Частичное восстановление')", "answer from general knowledge presented as the vault's content"]
+    },
+    {
+      "id": 3,
+      "name": "genuinely-absent-no-hallucination",
+      "setup": "Same vault. No page mentions 'квантовая криптография' in any spelling/inflection.",
+      "prompt": "what does my wiki say about квантовой криптографии?",
+      "expected_behavior": "After broadening (prefix `квантов*`, content words, ё/spelling variants) the result is still empty; the agent states plainly that no page in the wiki matches the term and offers `/wiki-enrich` to add a source.",
+      "must_not": ["fabricate a definition or any domain fact about the term", "present an ungrounded answer as if it came from the vault"]
+    }
+  ]
+}

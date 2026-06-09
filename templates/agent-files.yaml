@@ -29,6 +29,14 @@ vendors:
   claude:
     filename: CLAUDE.md        # Claude Code
     template: CLAUDE.md.tmpl
+    # TASK 026: also drop the Claude Code permissions file so the vault stops
+    # re-confirming every wiki-* / safe command. Copied VERBATIM (it is JSON with a
+    # `$schema`, NOT a string.Template) and NON-destructively (an existing
+    # .claude/settings.json — incl. the operator's accumulated rules — is never
+    # clobbered without --force; settings.local.json is never touched).
+    settings_file: .claude/settings.json
+    settings_template: vault.claude-settings.json
   gemini:
     filename: GEMINI.md        # Gemini CLI
     template: CLAUDE.md.tmpl   # exact copy of the Claude base for now
+    # (no settings_file — Gemini's settings format differs; add when it diverges)

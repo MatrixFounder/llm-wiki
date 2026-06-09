@@ -36,7 +36,7 @@ rebuildability invariant.
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_reindex \
+wiki-reindex \
     (--full | --delta) \
     (--vault <vault_id> | --all-vaults) \
     [--db-path <override>]

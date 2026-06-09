@@ -24,7 +24,7 @@ Bootstrap or register a vault in the multi-vault SQLite index.
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_init <mode-flag> --vault <abs-path> \
+wiki-init <mode-flag> --vault <abs-path> \
     [--vault-id <slug>] [--db-path <override>] [--confirm]
 ```
 

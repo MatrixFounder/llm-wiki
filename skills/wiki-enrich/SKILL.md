@@ -43,7 +43,7 @@ reconstructable from the files via `wiki-reindex --full`.
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_enrich \
+wiki-enrich \
     --vault <vault_id> \
     --vault-root <abs-path-to-vault> \
     --source <abs-path-to-raw-file> \

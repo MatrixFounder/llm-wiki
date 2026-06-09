@@ -40,7 +40,7 @@ framework's `wiki-index-upsert` + `wiki-append-log` (index layer).
 
 4. **Index each written file**
    - For each `entry in manifest.written`:
-     - `python -m scripts.wiki_skills.wiki_index_upsert
+     - `wiki-index-upsert
        --vault <vault_id> --vault-root <root> --source <vault_root>/<path>`
      - Capture stdout JSON envelope; treat exit-non-zero or `"error"` key
        as failure.
@@ -67,10 +67,10 @@ Same flow, just run the steps manually:
 ```bash
 wiki-ingest ingest --source $SRC --vault $VAULT --output-format json > /tmp/m.json
 jq '.written[].path' /tmp/m.json | while read rel; do
-  python -m scripts.wiki_skills.wiki_index_upsert \
+  wiki-index-upsert \
       --vault $VID --vault-root $VAULT --source "$VAULT/$rel"
 done
-python -m scripts.wiki_skills.wiki_append_log --vault $VID \
+wiki-append-log --vault $VID \
     --event-type ingest --subject "$(jq -r '.log_event.subject' /tmp/m.json)"
 ```
 

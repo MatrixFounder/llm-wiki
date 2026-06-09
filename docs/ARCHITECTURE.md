@@ -1028,6 +1028,26 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   the `paths`/`ref_extraction` = REPLACE merge asymmetry (R-7) in the schema/manual and the
   custom-`type:` → per-vault `type_mapping` override need (R-8).
 
+- **Q-026-1 (TASK 026 — `wiki-init` ships the vault `.claude/settings.json`).** TASK 025 added
+  the Claude Code permissions template (`templates/vault.claude-settings.json`) that stops a vault
+  re-confirming every `wiki-*`/safe command, but the operator had to copy it by hand. **RESOLVED:**
+  `templates/agent-files.yaml` lets a vendor declare an optional `settings_file` + `settings_template`
+  (claude → `.claude/settings.json` + `vault.claude-settings.json`); `_load_vendor_config` returns a
+  third per-vendor `settings` map; `_write_agent_files` (both `scaffold_new` + `register_existing`)
+  drops it where the `--vendor` agent file is written. Three invariants: (a) **VERBATIM copy** — the
+  JSON carries a `$schema`, so it is `atomic_write_text`-copied, NEVER `string.Template.substitute`-d
+  (which would `KeyError` on `$schema`); (b) **INDEPENDENT of the agent file** — the prior
+  `target.exists() → continue` short-circuit was refactored to an if/else so an existing `CLAUDE.md`
+  no longer skips the settings write; (c) **NON-destructive** — an existing `.claude/settings.json`
+  (incl. the operator's accumulated rules) is `"exists"`/untouched without `--force`, and
+  `settings.local.json` is NEVER written (it stays the personal-override surface). Gemini declares no
+  `settings_file` → nothing written, no `.claude/` created. Layout-agnostic (same settings for any
+  layout). `.claude/settings.json` is `.json`, never indexed (file_extensions `['.md']` + dot-dir
+  prune) — no SYSTEM_FILES change. **Zero DDL** (`user_version` 5), no new deps. Live-verified on the
+  real test vault (settings written byte-identical, `settings.local.json` preserved). New tests in
+  `tests/test_wiki_init_flows.py`; the envelope-shape assertions updated (claude agent_files now also
+  carry `.claude/settings.json`). **1114 pytest, mypy strict.**
+
 ---
 
 ## Verification Map

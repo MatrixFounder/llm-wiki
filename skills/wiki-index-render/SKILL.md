@@ -36,7 +36,7 @@ verbatim after the auto-generated sections. The `name` field
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_index_render \
+wiki-index-render \
     --vault <vault_id> \
     [--output <abs-path.md> | default: <vault_root>/index.md] \
     [--db-path <override>]

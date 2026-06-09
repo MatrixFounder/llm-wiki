@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Thin wrapper: cd into repo, activate venv, exec the CLI.
+# Thin wrapper: activate the repo venv + set PYTHONPATH, exec the CLI.
+# NO `cd` (TASK 027) — preserves the caller's CWD so a vault's relative
+# --vault-root and the cwd-walk-up to WIKI_SCHEMA.md resolve the RIGHT vault.
 # Lets `/wiki-sync` slash command (and global PATH use) work from any CWD.
 set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
-cd "$REPO"
 # shellcheck disable=SC1091
-source .venv/bin/activate
+source "$REPO/.venv/bin/activate"
+export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+# Keep the caller's CWD OFF sys.path so a vault/folder containing a `scripts/`
+# dir cannot shadow the repo's `scripts` package (adversarial regression, TASK 027).
+export PYTHONSAFEPATH=1
 exec python -m scripts.wiki_skills.wiki_sync "$@"

@@ -36,7 +36,7 @@ Read-only consistency check between the SQLite index and the filesystem.
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_lint \
+wiki-lint \
     [--vault <vault_id> | omit for all-vaults] \
     [--report <abs-path.md>] \
     [--json-sidecar <abs-path.json>] \

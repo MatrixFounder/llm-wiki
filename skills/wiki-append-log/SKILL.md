@@ -24,7 +24,7 @@ Bi-directional sync between human-readable `log.md` (one per month, under
 ## Invocation
 
 ```bash
-python -m scripts.wiki_skills.wiki_append_log \
+wiki-append-log \
     --vault <vault_id> \
     --event-type <type> \
     [--subject "<one-line>"] \

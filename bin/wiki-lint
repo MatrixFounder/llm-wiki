@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
-cd "$REPO"
 # shellcheck disable=SC1091
-source .venv/bin/activate
+source "$REPO/.venv/bin/activate"
+export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+# Keep the caller's CWD OFF sys.path so a vault/folder containing a `scripts/`
+# dir cannot shadow the repo's `scripts` package (adversarial regression, TASK 027).
+export PYTHONSAFEPATH=1
 exec python -m scripts.wiki_skills.wiki_lint "$@"

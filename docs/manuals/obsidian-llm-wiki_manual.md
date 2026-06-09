@@ -1,11 +1,15 @@
 # obsidian-llm-wiki — Manual
 
+> 🇷🇺 Russian mirror: [`obsidian-llm-wiki_manual.ru.md`](obsidian-llm-wiki_manual.ru.md).
+
 > **Companion to [`README.md`](../../README.md).** The README is the *entry point*
 > (what the project is, how to install, the command index). **This manual is the
 > *methodology*** — why each command exists, how to work with the vault's markdown
 > documents (standard and custom layouts), and how to wire the wiki into another
 > agent as an external knowledge resource. If you only want to get running, read
-> the README. If you want to *operate* the wiki well, read this.
+> the README. If you want to *operate* the wiki well, read this. For a one-page
+> day-to-day cheat-sheet (main commands, manual + Claude CLI), see
+> [`cli-quick-reference.md`](cli-quick-reference.md).
 
 ---
 

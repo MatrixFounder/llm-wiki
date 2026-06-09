@@ -197,6 +197,45 @@ resummarize:
 > Per-folder overrides (`<folder>/.wiki/sync.yaml`, deepest-wins deep-merge) are
 > available if a specific course needs different `resummarize`/`mirror` keying.
 
+### `.claude/settings.json` (stop Claude CLI re-confirming every command)
+
+When you run Claude CLI inside the vault, it otherwise prompts for every Bash command
+(both safe reads and the `wiki-*` CLIs). Drop in the shipped permissions template so
+the known-good set auto-runs while dangerous ops stay gated:
+
+```bash
+mkdir -p "<vault>/.claude"
+cp /path/to/obsidian-llm-wiki/templates/vault.claude-settings.json "<vault>/.claude/settings.json"
+```
+
+What it does (verified against the Claude Code permissions schema):
+- **`defaultMode: "acceptEdits"`** — Claude can write/edit notes (file summaries) and run
+  `mkdir`/`mv`/`cp` **without prompting**; it still prompts for other Bash.
+- **`allow`** — every `wiki-*` CLI + safe read-only shell (`ls`/`cat`/`grep`/`find`/…) +
+  the pipe targets `jq` and `python3 -m json.tool` (pipes need EACH leg allow-listed) +
+  read-only `git`. These never prompt.
+- **`deny`** (hard block, overrides allow) — `rm -rf`, `sudo`, `git reset --hard`,
+  `git clean`, egress (`curl`/`wget`/`nc` — the H-6 untrusted-data posture), and writes to
+  `.claude/**` (so an injected instruction can't widen its own permissions). Anything not
+  listed still **prompts** (the safe default).
+
+Edits auto-reload (no restart). Per-machine tweaks go in `.claude/settings.local.json`
+(gitignored) — e.g. add `"Bash(sqlite3 *)"` to `allow` if you query the index directly,
+or remove the `curl`/`wget` deny if your flow needs egress.
+
+> **For the `wiki-*` allow rules to actually fire, the wrappers must be on `PATH`.**
+> Verify in the vault terminal: `which wiki-search`. If it's missing, Claude falls back
+> to `python -m scripts.wiki_skills.…` or absolute paths (`/usr/bin/…`) — which the
+> bare-name rules do NOT match (Claude Code does not normalise absolute paths), so it
+> keeps prompting. Fix the `PATH` (add the dir holding the `wiki-*` wrappers, e.g.
+> `~/.local/bin`, to your shell profile) rather than allow-listing `python`/`bash`.
+
+> **Do NOT carry over broad `Bash(bash *)` / `Bash(/bin/bash *)` / `Bash(python3 -c *)`
+> rules** that "Yes, don't ask again" accumulates in `settings.local.json` — each is
+> arbitrary code execution and re-opens the whole gate. If a wrapped command keeps
+> prompting, allow the SPECIFIC inner command, not the shell. Periodically prune
+> `settings.local.json` of such over-broad entries.
+
 ---
 
 ## Phased rollout

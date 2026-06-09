@@ -42,7 +42,8 @@ def test_scaffold_new_creates_layout(tmp_path):
     assert (vault / "CLAUDE.md").exists()
     # default: ONE agent file (CLAUDE.md); GEMINI.md only with --vendor
     assert not (vault / "GEMINI.md").exists()
-    assert out["agent_files"] == {"CLAUDE.md": "written"}
+    assert out["agent_files"] == {"CLAUDE.md": "written",
+                                   ".claude/settings.json": "written"}  # TASK 026
     for sub in ["_sources", "_concepts", "_entities", "_raw/.locks",
                 "_raw/failed", "00-Vault-Index/log"]:
         assert (vault / sub).is_dir(), f"missing {sub}"
@@ -104,7 +105,8 @@ def test_register_existing_writes_default_agent_file(tmp_path):
         "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
     ])
     assert code == 0 and out["action"] == "registered"
-    assert out["agent_files"] == {"CLAUDE.md": "written"}
+    assert out["agent_files"] == {"CLAUDE.md": "written",
+                                   ".claude/settings.json": "written"}  # TASK 026
     body = (vault / "CLAUDE.md").read_text()
     assert "personal-x" in body and "wiki-sync" in body   # rendered + substituted
     assert not (vault / "GEMINI.md").exists()
@@ -130,7 +132,8 @@ def test_register_existing_vendor_all(tmp_path):
         "--vendor", "all", "--db-path", str(tmp_path / "g.db"),
     ])
     assert code == 0
-    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written"}
+    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written",
+                                   ".claude/settings.json": "written"}  # TASK 026 (claude)
     assert (vault / "GEMINI.md").read_text() == (vault / "CLAUDE.md").read_text()
 
 
@@ -161,6 +164,67 @@ def test_register_existing_preserves_operator_agent_file(tmp_path):
     assert out["agent_files"]["CLAUDE.md"] == "exists"
     assert (vault / "CLAUDE.md").read_text() == "# MY OWN INSTRUCTIONS\n"
     assert out["agent_files"]["GEMINI.md"] == "written"   # other selected vendor still scaffolded
+
+
+# =============================================================================
+# .claude/settings.json (TASK 026)
+# =============================================================================
+
+
+def test_register_existing_writes_claude_settings(tmp_path):
+    """TASK 026: registering with the (default) claude vendor also drops
+    `.claude/settings.json` — byte-identical to the shipped template, in a created
+    `.claude/` dir — so the vault stops re-confirming wiki-* commands."""
+    vault = _schema(tmp_path / "set-x", "set-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"][".claude/settings.json"] == "written"
+    settings = vault / ".claude" / "settings.json"
+    assert settings.is_file()
+    # VERBATIM copy (not Template-substituted — the JSON carries `$schema`)
+    tmpl = Path(__file__).resolve().parent.parent / "templates" / "vault.claude-settings.json"
+    assert settings.read_text(encoding="utf-8") == tmpl.read_text(encoding="utf-8")
+    assert json.loads(settings.read_text())["defaultMode"] == "acceptEdits"  # valid JSON
+
+
+def test_register_existing_preserves_operator_settings(tmp_path):
+    """TASK 026: a pre-existing `.claude/settings.json` (the operator's accumulated
+    rules) is NEVER clobbered without --force; --force overwrites it; the personal
+    `settings.local.json` is NEVER touched either way."""
+    vault = _schema(tmp_path / "keep-set", "keep-set")
+    cdir = vault / ".claude"
+    cdir.mkdir()
+    (cdir / "settings.json").write_text('{"MINE": true}\n', encoding="utf-8")
+    (cdir / "settings.local.json").write_text('{"LOCAL": true}\n', encoding="utf-8")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0 and out["agent_files"][".claude/settings.json"] == "exists"
+    assert (cdir / "settings.json").read_text() == '{"MINE": true}\n'        # untouched
+    assert (cdir / "settings.local.json").read_text() == '{"LOCAL": true}\n'  # never touched
+    # --force overwrites settings.json with the template, but still NOT settings.local.json
+    _code2, out2 = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g2.db"),
+        "--force",
+    ])
+    assert out2["agent_files"][".claude/settings.json"] == "written"
+    assert '"defaultMode"' in (cdir / "settings.json").read_text()
+    assert (cdir / "settings.local.json").read_text() == '{"LOCAL": true}\n'
+
+
+def test_register_existing_gemini_writes_no_settings(tmp_path):
+    """TASK 026: a vendor that declares no `settings_file` (gemini) writes none, and
+    does not create `.claude/`."""
+    vault = _schema(tmp_path / "gem-set", "gem-set")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--vendor", "gemini",
+        "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert ".claude/settings.json" not in out["agent_files"]
+    assert not (vault / ".claude").exists()
 
 
 def test_write_agent_files_resilient_to_missing_template(tmp_path):

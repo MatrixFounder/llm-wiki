@@ -92,13 +92,19 @@ def _sanitize_desc(desc: str | None, vault_id: str) -> str:
 _AGENT_FILES_CONFIG = _TEMPLATES_DIR / "agent-files.yaml"
 
 
-def _load_vendor_config() -> tuple[dict[str, tuple[str, str]], list[str]]:
-    """``({vendor: (filename, template_name)}, default_vendors)`` from
-    ``templates/agent-files.yaml`` (CLAUDE.md/Claude Code, GEMINI.md/Gemini CLI,
-    …). Falls back to Claude-only if the config is missing/malformed, so a vault
-    always gets at least a CLAUDE.md."""
-    fallback: tuple[dict[str, tuple[str, str]], list[str]] = (
+def _load_vendor_config() -> tuple[
+    dict[str, tuple[str, str]], list[str], dict[str, tuple[str, str]]
+]:
+    """``({vendor: (filename, template_name)}, default_vendors, {vendor:
+    (settings_file, settings_template)})`` from ``templates/agent-files.yaml``
+    (CLAUDE.md/Claude Code, GEMINI.md/Gemini CLI, …). The third map is the optional
+    per-vendor settings file (TASK 026 — only vendors that declare both
+    ``settings_file`` + ``settings_template``; e.g. claude → ``.claude/settings.json``).
+    Falls back to Claude-only (incl. its settings) if the config is missing/malformed,
+    so a vault always gets at least a CLAUDE.md."""
+    fallback: tuple[dict[str, tuple[str, str]], list[str], dict[str, tuple[str, str]]] = (
         {"claude": ("CLAUDE.md", "CLAUDE.md.tmpl")}, ["claude"],
+        {"claude": (".claude/settings.json", "vault.claude-settings.json")},
     )
     try:
         doc = yaml.safe_load(_AGENT_FILES_CONFIG.read_text(encoding="utf-8"))
@@ -106,8 +112,13 @@ def _load_vendor_config() -> tuple[dict[str, tuple[str, str]], list[str]]:
             str(k): (str(v["filename"]), str(v["template"]))
             for k, v in doc["vendors"].items()
         }
+        settings = {
+            str(k): (str(v["settings_file"]), str(v["settings_template"]))
+            for k, v in doc["vendors"].items()
+            if v.get("settings_file") and v.get("settings_template")
+        }
         default = [str(x) for x in (doc.get("default_vendors") or list(vendors))]
-        return (vendors or fallback[0], default or fallback[1])
+        return (vendors or fallback[0], default or fallback[1], settings)
     except Exception:  # noqa: BLE001 — trusted repo file; any fault → safe default
         return fallback
 
@@ -130,15 +141,21 @@ def _resolve_vendors(
 
 def _write_agent_files(
     vault_root: Path, placeholders: dict[str, str],
-    vendors: dict[str, tuple[str, str]], selection: list[str], *, force: bool,
+    vendors: dict[str, tuple[str, str]], selection: list[str],
+    settings: dict[str, tuple[str, str]] | None = None, *, force: bool,
 ) -> dict[str, str]:
     """Render the agent-instructions file for each SELECTED vendor into the vault
     root (default: CLAUDE.md only; `--vendor` picks others/all) so an agent
     launched there gets the wiki operating instructions. NON-destructive: writes
     each only if absent (or ``--force``) — never clobbers an operator's own file.
-    Returns ``{filename: "written"|"exists"|"error"}``. Shared by `scaffold_new`
+    TASK 026: also drops the vendor's settings file (e.g. claude →
+    `.claude/settings.json`) if it declares one — copied VERBATIM (it is JSON with a
+    `$schema`, so NOT a `string.Template`) and INDEPENDENTLY of the agent file (so an
+    existing CLAUDE.md does not skip the settings write); equally non-destructive.
+    Returns ``{relpath: "written"|"exists"|"error"}``. Shared by `scaffold_new`
     and `register_existing` (a registered vault is otherwise agent-unusable —
     DF-018-INIT-1)."""
+    settings = settings or {}
     out: dict[str, str] = {}
     for vendor in selection:
         filename, template_name = vendors[vendor]
@@ -158,19 +175,45 @@ def _write_agent_files(
         target = vault_root / filename
         if target.exists() and not force:
             out[filename] = "exists"
-            continue
-        # Per-vendor resilience: a missing/misconfigured template (or a stray `$`
-        # in it) must NOT crash init — the vault is already registered and the
-        # other vendors' files are unaffected (vdd-adversarial).
-        try:
-            rendered = Template(
-                (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
-            ).substitute(placeholders)
-        except (OSError, KeyError, ValueError):
-            out[filename] = "error"
-            continue
-        target.write_text(rendered)
-        out[filename] = "written"
+        else:
+            # Per-vendor resilience: a missing/misconfigured template (or a stray `$`
+            # in it) must NOT crash init — the vault is already registered and the
+            # other vendors' files are unaffected (vdd-adversarial).
+            try:
+                rendered = Template(
+                    (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+                ).substitute(placeholders)
+            except (OSError, KeyError, ValueError):
+                out[filename] = "error"
+            else:
+                target.write_text(rendered)
+                out[filename] = "written"
+        # TASK 026: also drop the vendor's settings file (e.g. .claude/settings.json),
+        # INDEPENDENTLY of the agent file above (an existing CLAUDE.md must not skip it).
+        # VERBATIM copy — the JSON carries a `$schema`, so NEVER Template.substitute it.
+        if vendor in settings:
+            s_file, s_tmpl = settings[vendor]
+            # vdd-multi security LOW (CWE-22, defense-in-depth): settings_file comes from
+            # the trusted agent-files.yaml, but containment is cheap insurance — an
+            # absolute or `..`-bearing value would escape the vault (an absolute RHS makes
+            # `vault_root / s_file` discard vault_root). Mirror the _validate_index_db_rel
+            # posture: refuse anything not vault-relative.
+            s_rel = Path(s_file)
+            if s_rel.is_absolute() or ".." in s_rel.parts:
+                out[s_file] = "error"
+                continue
+            s_target = vault_root / s_rel
+            if s_target.exists() and not force:
+                out[s_file] = "exists"  # never clobber an operator's accumulated rules
+            else:
+                try:
+                    content = (_TEMPLATES_DIR / s_tmpl).read_text(encoding="utf-8")
+                    s_target.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_text(s_target, content)
+                except OSError:  # template unreadable OR write fault (RO dir/ENOSPC) —
+                    out[s_file] = "error"  # non-fatal: the vault is already registered
+                else:
+                    out[s_file] = "written"
     return out
 
 
@@ -241,7 +284,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
                       "pattern": _VAULT_ID_RE.pattern}, exit_code=6)
     # Resolve --vendor FAIL-FAST — before any dir/schema write, so a typo'd
     # vendor leaves no partial scaffold (vdd-adversarial).
-    _vendors, _default_vendors = _load_vendor_config()
+    _vendors, _default_vendors, _vendor_settings = _load_vendor_config()
     _selection, _unknown = _resolve_vendors(args.vendor, _vendors, _default_vendors)
     if _unknown:
         return _emit({"error": "INVALID_VENDOR", "unknown": _unknown,
@@ -300,7 +343,8 @@ def scaffold_new(args: argparse.Namespace) -> int:
                           "reason": "WIKI_SCHEMA.md already declares a different index_db"},
                          exit_code=2)
     agent_files = _write_agent_files(
-        vault_root, placeholders, _vendors, _selection, force=bool(args.force))
+        vault_root, placeholders, _vendors, _selection, _vendor_settings,
+        force=bool(args.force))
     if _karpathy:
         idx = vault_root / VAULT_INDEX_DIR / "index.md"
         if not idx.exists():
@@ -372,7 +416,7 @@ def register_existing(args: argparse.Namespace) -> int:
         }, exit_code=6)
     # Resolve --vendor FAIL-FAST — before registering, so a typo'd vendor never
     # leaves a registered-but-errored state (vdd-adversarial).
-    vendors, default_vendors = _load_vendor_config()
+    vendors, default_vendors, vendor_settings = _load_vendor_config()
     selection, unknown = _resolve_vendors(args.vendor, vendors, default_vendors)
     if unknown:
         return _emit({"error": "INVALID_VENDOR", "unknown": unknown,
@@ -446,7 +490,7 @@ def register_existing(args: argparse.Namespace) -> int:
             "layout": str(fm.get("layout") or "per-project"),
             "description": _sanitize_desc(fm.get("description"), vault_id),
         },
-        vendors, selection,
+        vendors, selection, vendor_settings,
         force=bool(args.force),
     )
     return _emit({
