@@ -15,6 +15,14 @@ description: >
   so a misspelled grammar key is a load-time error (exit 6), not a silent
   _unmatched_ flood (D-012-2 / architecture-review).
 
+  PER-VAULT OVERRIDE MERGE SEMANTICS (TASK 025 / R-7 — a sharp edge): when a
+  <vault>/.wiki/layout.yaml supplies a key, scalars overlay; `ignore` UNIONs the
+  built-in list and `type_mapping` deep-MERGES; but `paths` and `ref_extraction`
+  REPLACE the entire built-in list (Q-012-f — supplying the key also flags the
+  override as operator-supplied for the ReDoS engine). To EXTEND/deepen paths you
+  must re-declare the base layout's paths verbatim plus your new rule — a bare
+  one-rule `paths:` override silently discards all built-in routing.
+
 $defs:
   # ----------------------------------------------------------------------------
   # SlugStrategy — how a page slug is derived (PW-L). `identity` = verbatim stem

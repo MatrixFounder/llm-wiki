@@ -140,6 +140,15 @@ $defs:
       match:
         type: string
         enum: [vault-rel-path, basename]
+        description: >
+          How a summary's cited `file:` is matched to a raw source (TASK 019/025).
+          `vault-rel-path` (default): exact full-path equality — strict, only matches
+          summaries that cite the raw by its vault-relative path. `basename`: basenames
+          BOTH the cited value AND the raw target, so it matches summaries citing by
+          basename OR by full path — preferred when source basenames are globally unique
+          (e.g. YouTube-id transcripts) or an existing corpus already cites by basename;
+          its only failure mode is two distinct raws sharing a basename across folders.
+          The default is NOT basename (a default flip could merge such same-basename raws).
 
   Mirror:
     type: object

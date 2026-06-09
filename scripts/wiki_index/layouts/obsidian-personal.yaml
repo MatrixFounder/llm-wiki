@@ -10,6 +10,19 @@ ignore:
   - "_templates/**"                 # not content
   - "**/*.base"                     # Obsidian Bases — not md (also via file_extensions)
   - "**/.DS_Store"
+  # TASK 025 / R-4: keep raw/staging scratch markdown OUT of the search index — raw
+  # imports and the convert staging area are NOT distilled knowledge. These match at
+  # ANY depth (`**/`), which is INTENTIONALLY BROADER than (and distinct in purpose
+  # from) wiki-sync's own walk: wiki-sync prunes only `_raw/.staging|.locks|failed`
+  # and otherwise INGESTS top-level `_raw/` to distil it into summary notes — so the
+  # reindex search index and the wiki-sync ingest walk deliberately disagree on `_raw`.
+  # `_raw`/`.staging` are thus RESERVED scratch-dir names under this built-in layout (a
+  # user folder literally named `_raw`/`.staging` at any depth is silently excluded;
+  # `ignore` is UNION-only, so rename rather than try to subtract). `_transcripts` is
+  # NOT ignored: it holds the distilled `.txt` wiki-sync ingests, already excluded by
+  # `file_extensions: ['.md']`.
+  - "**/_raw/**"                    # raw imports staged for ingest (not distilled)
+  - "**/.staging/**"                # convert staging area
 file_extensions: ['.md']
 slug_strategy: preserve-unicode     # Cyrillic/CJK survive (single-OS workflows)
 
@@ -55,6 +68,16 @@ type_mapping:
   meeting-summary: {db_type: summary, tag: meeting}
   webinar-summary: {db_type: summary, tag: webinar}
   moc:             {db_type: summary, tag: moc}
+  # TASK 025 / R-3: the rest of the common summary family a real PARA vault captures.
+  # All route to db_type: summary (a tag-only distinction) → additive, zero
+  # re-classification. Closes the silent UnmappedTypeError-drop the 2026-06-09 dogfood
+  # hit on `tutorial-summary`.
+  tutorial-summary: {db_type: summary, tag: tutorial}
+  article-summary:  {db_type: summary, tag: article}
+  book-summary:     {db_type: summary, tag: book}
+  video-summary:    {db_type: summary, tag: video}
+  podcast-summary:  {db_type: summary, tag: podcast}
+  course-summary:   {db_type: summary, tag: course}
 
 path_type_fallback: {}
 

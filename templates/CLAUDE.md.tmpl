@@ -151,7 +151,8 @@ file-level catches semantic issues (operator-resolvable).
 ```bash
 # Rebuild the SQLite cache from canonical markdown.
 # Safe: ADR-002 §D8 makes the DB fully rebuildable from files.
-rm "$$HOME/Library/Application Support/wiki-index/global.db"
+# `wiki-reindex --full` wipes + rebuilds THIS vault's rows from Class-A markdown and
+# resolves the declared index_db — no manual DB file deletion needed (TASK 025).
 /wiki-init --register-existing --vault .
 /wiki-reindex --full --vault ${vault_id}
 ```

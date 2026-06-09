@@ -123,8 +123,10 @@ def test_validate_index_db_rel_blocks_yaml_injection():
 
 
 def test_init_rejects_injecting_index_db(tmp_path):
-    """End-to-end: `--index-db` carrying a U+0085 line break is rejected (exit 2) and the
-    WIKI_SCHEMA.md is left UNTOUCHED (no injected vault_id)."""
+    """End-to-end: `--index-db` carrying a YAML map token is rejected and the
+    WIKI_SCHEMA.md is left UNTOUCHED (no injected vault_id). TASK 025 / R-2: the
+    INVALID_INDEX_DB contract unifies to exit 6 / field `index_db` (was exit 2 /
+    `index-db`), matching the centralized _common emitter."""
     from scripts.wiki_skills import wiki_init
     vid = "inj-vault"
     root = tmp_path / vid
@@ -134,8 +136,83 @@ def test_init_rejects_injecting_index_db(tmp_path):
         f"layout: karpathy\n---\n", encoding="utf-8")
     rc, env = _run(wiki_init, ["--register-existing", "--vault", str(root),
                                "--index-db", "xvault_id: attacker"])
-    assert rc == 2 and env.get("error") == "INVALID_INDEX_DB"
+    assert rc == 6 and env.get("error") == "INVALID_INDEX_DB"
+    assert env.get("field") == "index_db"
     assert "attacker" not in (root / "WIKI_SCHEMA.md").read_text()
+
+
+def test_init_rejects_ungated_absolute_index_db_register(tmp_path, monkeypatch):
+    """TASK 025 / R-1 (the audit's partial-write footgun — regression that was ABSENT):
+    register-existing with an ABSOLUTE --index-db but WITHOUT WIKI_ALLOW_ABSOLUTE_INDEX_DB
+    is rejected (exit 6, field index_db) BEFORE the pre-existing operator WIKI_SCHEMA.md is
+    mutated — the schema must be byte-IDENTICAL afterward."""
+    from scripts.wiki_skills import wiki_init
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    vid = "abs-reg-vault"
+    root = tmp_path / vid
+    root.mkdir()
+    schema = root / "WIKI_SCHEMA.md"
+    original = (f"---\nvault_id: {vid}\nschema_version: '2.0'\nlanguage: en\n"
+                f"layout: karpathy\n---\n")
+    schema.write_text(original, encoding="utf-8")
+    rc, env = _run(wiki_init, ["--register-existing", "--vault", str(root),
+                               "--index-db", str(tmp_path / "external.db")])
+    assert rc == 6 and env.get("error") == "INVALID_INDEX_DB"
+    assert env.get("field") == "index_db"
+    assert schema.read_text(encoding="utf-8") == original  # byte-unchanged (no partial write)
+
+
+def test_init_rejects_ungated_absolute_index_db_scaffold(tmp_path, monkeypatch):
+    """TASK 025 / R-1: scaffold-new likewise rejects an ungated absolute --index-db
+    (exit 6) without writing index_db into the freshly scaffolded schema."""
+    from scripts.wiki_skills import wiki_init
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    vid = "abs-scaf-vault"
+    root = tmp_path / vid
+    abs_db = str(tmp_path / "ext2.db")
+    rc, env = _run(wiki_init, ["--scaffold-new", "--vault", str(root), "--vault-id", vid,
+                               "--layout", "obsidian-personal", "--index-db", abs_db])
+    assert rc == 6 and env.get("error") == "INVALID_INDEX_DB"
+    assert env.get("field") == "index_db"
+    # the rejected absolute value must NOT have been written into the frontmatter
+    # (the template's prose mentions the word "index_db" generically, so check the value)
+    assert abs_db not in (root / "WIKI_SCHEMA.md").read_text(encoding="utf-8")
+    assert f"index_db: {abs_db}" not in (root / "WIKI_SCHEMA.md").read_text(encoding="utf-8")
+
+
+def test_init_accepts_absolute_index_db_with_env(tmp_path, monkeypatch):
+    """TASK 025 / R-1: WITH WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 an absolute index_db is written
+    into WIKI_SCHEMA.md and the vault registered into that absolute DB."""
+    from scripts.wiki_skills import wiki_init
+    monkeypatch.setenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", "1")
+    vid = "abs-ok-vault"
+    root = tmp_path / vid
+    root.mkdir()
+    (root / "WIKI_SCHEMA.md").write_text(
+        f"---\nvault_id: {vid}\nschema_version: '2.0'\nlanguage: en\n"
+        f"layout: karpathy\n---\n", encoding="utf-8")
+    abs_db = tmp_path / "ext_ok.db"
+    rc, env = _run(wiki_init, ["--register-existing", "--vault", str(root),
+                               "--index-db", str(abs_db)])
+    assert rc == 0, env
+    assert f"index_db: {abs_db}" in (root / "WIKI_SCHEMA.md").read_text()
+    assert abs_db.is_file()
+
+
+def test_validate_index_db_value_is_pure(tmp_path, monkeypatch):
+    """TASK 025 / R-1 (arch M-2): validate_index_db_value validates the VALUE and returns
+    the resolved Path per branch WITHOUT reading the schema file (proved by a vault_root
+    whose WIKI_SCHEMA.md does not exist)."""
+    import pytest
+    from scripts.wiki_index.config_loader import (
+        ConfigValidationError, validate_index_db_value)
+    vault = tmp_path / "novault"  # no WIKI_SCHEMA.md — a file-reading validator would fail
+    assert validate_index_db_value(".wiki/index.db", vault) == vault / ".wiki" / "index.db"
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    with pytest.raises(ConfigValidationError):
+        validate_index_db_value(str(tmp_path / "abs.db"), vault)
+    monkeypatch.setenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", "1")
+    assert validate_index_db_value(str(tmp_path / "abs.db"), vault) == tmp_path / "abs.db"
 
 
 def test_enrich_threads_local_db_path(tmp_path, monkeypatch):

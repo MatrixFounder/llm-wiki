@@ -649,8 +649,11 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   collapsing the per-file hot path from O(R×S) mirror + O(R×F×P) provenance to **O(S+R)** +
   **O(P+R)** per scan;
   (b) D2a adds a **second** read-only DAL method `all_cited_sources(vault_id, fields) -> set`
-  (the bulk citation set, hoisted once) beside `find_pages_citing_source` (Q-019-8); `match:
-  basename` is now honored (was an orphaned knob);
+  (the bulk citation set, hoisted once) beside `find_pages_citing_source` (Q-019-8); `match`
+  has **two equally-supported modes** — `vault-rel-path` (default, strict full-path equality)
+  and `basename` (basenames BOTH sides → matches basename- OR path-cited summaries), the latter
+  preferred for globally-unique/basename-cited corpora (documented TASK 025 / Q-025-4 — no
+  longer an "orphaned knob");
   (c) D2b's summary-key index is built **once per scope under a single shared ReDoS deadline**
   (bounds the S-side aggregate) + an operator-regex **load-gate** (`layout_config.is_pattern_redos_safe`,
   cached) rejecting an uncompilable/catastrophic pattern → `INVALID_SYNC_CONFIG` exit 6, no echo
@@ -962,6 +965,68 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   and D2b mirror is FS-vs-FS. Verified end-to-end: the pptx now `skip:summary-exists:provenance`,
   zero `convert+ingest` remaining. Regression `test_gate_d2a_provenance_nfc_nfd`. **Zero DDL**
   (`user_version` 5), no new deps. **1103 pytest, mypy strict.**
+
+- **Q-025-1 (TASK 025 / R-1+R-2 — installer index_db pre-write guard + error-contract
+  unification; adoption-currency audit).** `wiki-init` validated an `index_db` flag value with
+  only `_validate_index_db_rel` (a YAML-injection check that an absolute path PASSES), wrote it
+  into `WIKI_SCHEMA.md` via `_ensure_index_db`, and only THEN — at `build_repo_config →
+  resolve_index_db_path` — rejected an ungated absolute path, leaving a **half-applied Class-A
+  mutation** on a failed command. **RESOLVED:** the path-safety validation (NUL / absolute→
+  `WIKI_ALLOW_ABSOLUTE_INDEX_DB` gate / relative symlink+escape) is extracted from
+  `resolve_index_db_path` into a **shared pure validator** `config_loader.validate_index_db_value(val,
+  vault_root)`; `wiki-init` calls it **before** `_ensure_index_db` writes (pre-write guard, mirroring
+  the existing fail-fast for the U+0085 injection case), so a rejected `index_db` never touches the
+  file. The validator stays the single source of truth (`resolve_index_db_path` now delegates to it).
+  Error contract unified: `INVALID_INDEX_DB` is exit **6** / `field: "index_db"` at every site
+  (was exit 2 / `index-db` in `wiki_init.py`, exit 6 / `index_db` in `_common`); the module
+  docstring exit-code legend gains exit 2 (INVALID_VENDOR, INDEX_DB_ALREADY_DECLARED). No DDL; no
+  behaviour change for valid inputs. New regression in `tests/test_cli_local_db_resolution.py`
+  (ungated-absolute → exit 6 + schema **unchanged**).
+
+- **Q-025-2 (TASK 025 / R-3+R-4 — obsidian-personal built-in adequacy; back-compatible
+  additive).** The PARA built-in silently dropped a note carrying a summary subtype absent from its
+  `type_mapping` (dogfood: `tutorial-summary` → UnmappedTypeError) and had no `ignore` for the
+  `_raw`/`.staging` scratch trees its companion `wiki-sync` already prunes (`_sync.py`
+  `_EXPLICIT_PRUNE_RELDIRS`), so raw scratch markdown could enter the search index. **RESOLVED:**
+  `type_mapping` pre-maps the common summary family (`tutorial-/article-/book-/video-/podcast-/
+  course-summary` → `db_type: summary` + a distinguishing tag — purely a tag distinction, all route
+  to `summary`, so zero re-classification risk); `ignore` adds `**/_raw/**` + `**/.staging/**`
+  (raw/staging markdown stays out of the search index at ANY depth). **Note (vdd-multi logic MED):**
+  this is INTENTIONALLY BROADER than — and distinct in purpose from — `wiki-sync`'s own walk, which
+  prunes only `_raw/.staging|.locks|failed` and otherwise INGESTS top-level `_raw/` to distil it;
+  the search index excludes ALL raw markdown (undistilled) while the sync walk distils it — they
+  deliberately disagree on `_raw`. `_raw`/`.staging` are reserved scratch-dir names under this
+  layout. Both are **additive** — they never change an
+  already-indexed page's type/slug/project and do not touch Karpathy/dev-project (golden-anchor
+  byte-identity preserved). `_transcripts` is deliberately NOT ignored (it holds the distilled
+  `.txt` that `wiki-sync` ingests; `.txt` is already excluded by `file_extensions: ['.md']`).
+
+- **Q-025-3 (TASK 025 / R-5 — layout-aware `CLAUDE.md` agent template).** `_write_agent_files`
+  rendered the single Karpathy-centric `CLAUDE.md.tmpl` for EVERY `--layout`, documenting
+  `_sources/_concepts/_entities`, promote/demote, and a rebuild step hardcoding `rm
+  "$HOME/Library/Application Support/wiki-index/global.db"` — actively wrong for a `dev-project`/
+  `obsidian-personal` vault (no Karpathy tiers; a local-`index_db` vault's DB is elsewhere).
+  **RESOLVED:** (a) the Karpathy template's rebuild snippet drops the `rm` (a `wiki-reindex --full`
+  rebuilds from Class-A without manually deleting any DB — and resolves the declared `index_db`);
+  (b) a layout-aware template `CLAUDE.layout.md.tmpl` (for the existing-tree layouts: reindex/upsert
+  in place, `.wiki/{layout,sync}.yaml` tuning, lookup-priority, no `_sources`/promote) is selected
+  per `--layout` in `_write_agent_files` (Karpathy family → `CLAUDE.md.tmpl`; non-Karpathy →
+  `CLAUDE.layout.md.tmpl`). Vendor mapping in `templates/agent-files.yaml` unchanged for the
+  Karpathy default; the layout switch lives in the renderer.
+
+- **Q-025-4 (TASK 025 / R-6 — `basename` provenance match documented as a first-class mode; docs
+  only).** The `match: basename` mode basenames BOTH the cited `file:` value AND the walked raw
+  target (`_resummarize.py` L156-170), so it matches summaries citing by basename OR by full
+  vault-rel path — the **correct** choice when source basenames are globally unique (YouTube-id
+  transcripts) or an existing corpus cites by basename. It was undocumented (ARCHITECTURE Q-019-10
+  called it an "orphaned knob"). **RESOLVED (docs):** schema `ProvenanceRef.match` gains a
+  description; the manual + `workflows/wiki-sync.md` state the choose-which rule; this Q softens the
+  "orphaned knob" framing — `basename` and `vault-rel-path` are equally-supported modes, `basename`
+  preferred for globally-unique/basename-cited corpora, `vault-rel-path` (the default) for
+  writeback-controlled corpora wanting strict full-path equality. **The default is NOT changed**
+  (back-compat: a default flip could merge distinct same-basename raws elsewhere). Also documents
+  the `paths`/`ref_extraction` = REPLACE merge asymmetry (R-7) in the schema/manual and the
+  custom-`type:` → per-vault `type_mapping` override need (R-8).
 
 ---
 

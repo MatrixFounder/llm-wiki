@@ -129,6 +129,13 @@ def test_obsidian_personal_indexes_summary_types(tmp_path: Path) -> None:
         "meeting-summary": ("summary", "meeting"),
         "webinar-summary": ("summary", "webinar"),
         "moc":             ("summary", "moc"),
+        # TASK 025 / R-3: the rest of the common summary family (additive, tag-only).
+        "tutorial-summary": ("summary", "tutorial"),
+        "article-summary":  ("summary", "article"),
+        "book-summary":     ("summary", "book"),
+        "video-summary":    ("summary", "video"),
+        "podcast-summary":  ("summary", "podcast"),
+        "course-summary":   ("summary", "course"),
     }
     for i, raw_type in enumerate(cases):
         p = vault / "03 - Learning" / "Course" / f"{i:02d}-note.md"
@@ -154,6 +161,33 @@ def test_obsidian_personal_indexes_summary_types(tmp_path: Path) -> None:
             assert db_t == db_type, f"{raw_type} → db_type {db_t!r} (want {db_type!r})"
             if marker is not None:
                 assert marker in tags, f"{raw_type} missing marker tag {marker!r} in {tags}"
+    finally:
+        repo.close()
+
+
+def test_obsidian_personal_ignores_raw_and_staging(tmp_path: Path) -> None:
+    """TASK 025 / R-4: the obsidian-personal built-in must keep the wiki-sync scratch
+    trees (`_raw/`, `.staging/`) OUT of the search index — raw imports and the convert
+    staging area are not distilled knowledge. A distilled note beside them IS indexed."""
+    vault = tmp_path / "rv"
+    _wiki_schema(vault, "raw-vault", "obsidian-personal")
+    files = {
+        "03 - Learning/Course/_raw/dump.md": "# raw dump\nundistilled\n",
+        "03 - Learning/Course/.staging/converted.md": "# staged\nconverted\n",
+        "03 - Learning/Course/real-note.md": "# Real note\ndistilled knowledge\n",
+    }
+    for rel, body in files.items():
+        p = vault / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    repo = SQLiteRepository(tmp_path / "g.db")
+    repo.apply_schema()
+    _register(repo, "raw-vault", vault)
+    try:
+        reindex_full(repo, "raw-vault")
+        slugs = {r["slug"] for r in repo._connect().execute(
+            "SELECT slug FROM pages WHERE vault_id='raw-vault'").fetchall()}
+        assert slugs == {"real-note"}, f"scratch trees leaked into the index: {slugs}"
     finally:
         repo.close()
 

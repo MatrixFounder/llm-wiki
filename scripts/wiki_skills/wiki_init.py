@@ -5,8 +5,11 @@ Real impl per tasks 001-21/22/23.
 Exit codes:
   0 — success
   1 — usage error
+  2 — INVALID_VENDOR / INDEX_DB_ALREADY_DECLARED (TASK 022)
   6 — MISSING_WIKI_SCHEMA / MISSING_VAULT_ID / INVALID_VAULT_ID /
-      VAULT_ID_COLLISION / VAULT_NOT_REGISTERED / VAULT_NOT_FOUND
+      VAULT_ID_COLLISION / VAULT_NOT_REGISTERED / VAULT_NOT_FOUND /
+      INVALID_INDEX_DB (TASK 022/025 — unified to exit 6, field `index_db`,
+      matching the centralized _common.build_repo_config emitter)
   7 — VAULT_RENAMED warning; requires --confirm to apply
 """
 
@@ -23,6 +26,10 @@ from typing import Any
 
 import yaml
 
+from scripts.wiki_index.config_loader import (
+    ConfigValidationError,
+    validate_index_db_value,
+)
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_skills._common import atomic_write_text, build_repo_config
 from scripts.wiki_index.layout import (
@@ -135,6 +142,19 @@ def _write_agent_files(
     out: dict[str, str] = {}
     for vendor in selection:
         filename, template_name = vendors[vendor]
+        # TASK 025 / R-5: the default vendor template (CLAUDE.md.tmpl) is Karpathy-centric
+        # (three-layer _sources/_concepts/_entities, promote/demote, a Lessons/ diagram) —
+        # wrong for an existing-tree layout. For dev-project / obsidian-personal select the
+        # layout-aware template instead, for EVERY selected vendor (the switch is
+        # layout-driven, not vendor-driven; the layout template's placeholders are a subset
+        # of the Karpathy one's, so .substitute below stays well-formed).
+        # NB (vdd-multi logic LOW): today every vendor maps to CLAUDE.md.tmpl, so this
+        # single override is correct. If a future vendor-specific template is added
+        # (e.g. GEMINI.md.tmpl per templates/agent-files.yaml), make this layout-suffix
+        # aware (derive "<base>.layout.md.tmpl") so a non-Karpathy vendor keeps its own
+        # template rather than silently reverting to the Claude layout file.
+        if placeholders.get("layout") not in _KARPATHY_LAYOUTS:
+            template_name = "CLAUDE.layout.md.tmpl"
         target = vault_root / filename
         if target.exists() and not force:
             out[filename] = "exists"
@@ -260,11 +280,23 @@ def scaffold_new(args: argparse.Namespace) -> int:
     _idx = _index_db_value(args)
     if _idx:
         if not _validate_index_db_rel(_idx):
-            return _emit({"error": "INVALID_INDEX_DB", "field": "index-db",
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
                           "reason": "must be a single-line path (no newline/NUL/---)"},
-                         exit_code=2)
+                         exit_code=6)
+        # TASK 025 / R-1: validate path-safety (absolute→WIKI_ALLOW_ABSOLUTE_INDEX_DB
+        # gate, symlink, escape, NUL) BEFORE _ensure_index_db writes, so a rejected
+        # index_db never leaves a half-applied Class-A mutation. `_idx` is already
+        # edge-whitespace-free (the _validate_index_db_rel check above).
+        try:
+            validate_index_db_value(_idx, vault_root)
+        except ConfigValidationError:
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
+                          "reason": "index_db is unsafe or malformed (escapes the vault, "
+                                    "is a symlink, or is absolute without "
+                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                         exit_code=6)
         if _ensure_index_db(schema_path, _idx) == "conflict":
-            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index-db",
+            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index_db",
                           "reason": "WIKI_SCHEMA.md already declares a different index_db"},
                          exit_code=2)
     agent_files = _write_agent_files(
@@ -350,11 +382,23 @@ def register_existing(args: argparse.Namespace) -> int:
     _idx = _index_db_value(args)
     if _idx:
         if not _validate_index_db_rel(_idx):
-            return _emit({"error": "INVALID_INDEX_DB", "field": "index-db",
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
                           "reason": "must be a single-line path (no newline/NUL/---)"},
-                         exit_code=2)
+                         exit_code=6)
+        # TASK 025 / R-1: validate path-safety (absolute→WIKI_ALLOW_ABSOLUTE_INDEX_DB
+        # gate, symlink, escape, NUL) BEFORE _ensure_index_db writes, so a rejected
+        # index_db never leaves a half-applied Class-A mutation. `_idx` is already
+        # edge-whitespace-free (the _validate_index_db_rel check above).
+        try:
+            validate_index_db_value(_idx, vault_root)
+        except ConfigValidationError:
+            return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
+                          "reason": "index_db is unsafe or malformed (escapes the vault, "
+                                    "is a symlink, or is absolute without "
+                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                         exit_code=6)
         if _ensure_index_db(schema_path, _idx) == "conflict":
-            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index-db",
+            return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index_db",
                           "reason": "WIKI_SCHEMA.md already declares a different index_db"},
                          exit_code=2)
     config = build_repo_config(

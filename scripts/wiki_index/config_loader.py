@@ -139,7 +139,29 @@ def resolve_index_db_path(
     val = base.get("index_db")
     if not isinstance(val, str) or not val.strip():
         return None
-    val = val.strip()
+    # TASK 025 / R-1: the path-safety validation is shared with wiki-init's pre-write
+    # guard. resolve_index_db_path owns the read + `expected_vault_id` short-circuit +
+    # strip (above); the pure validator owns NUL / absolute-gate / symlink / escape.
+    return validate_index_db_value(val.strip(), vault_root)
+
+
+def validate_index_db_value(val: str, vault_root: Path) -> Path:
+    """TASK 025 / R-1 — validate an already-``.strip()``-ed ``index_db`` VALUE (this does
+    NOT read any file) and return the resolved DB ``Path`` it denotes. Shared by
+    ``resolve_index_db_path`` (post-read) and ``wiki-init`` (PRE-WRITE guard, so a
+    rejected value never half-mutates the Class-A ``WIKI_SCHEMA.md``). Raises
+    ``ConfigValidationError`` (never echoing the value — CWE-209) on a NUL byte, an
+    ungated absolute path, or a relative escape/symlink. Returns the value-dependent
+    ``Path`` (``expanded`` for absolute, ``vault_root / expanded`` for relative) so the
+    two callers cannot drift on which branch was taken.
+
+      * absolute / ``~`` → gated behind ``WIKI_ALLOW_ABSOLUTE_INDEX_DB`` (vdd-multi
+        HIGH-S2): ``WIKI_SCHEMA.md`` travels WITH the vault, so it is not the same trust
+        source as a ``--db-path`` typed this session.
+      * relative → leaf must NOT be a symlink AND the FULL candidate must ``resolve()``
+        inside ``vault_root`` (vdd-multi HIGH-S1 — a parent-only check let a symlinked
+        leaf escape into an arbitrary-write primitive).
+    """
     if "\x00" in val:
         raise ConfigValidationError("index_db contains a NUL byte")
     expanded = Path(os.path.expanduser(val))  # `~` only; NO `$VAR` (env-in-config smell)

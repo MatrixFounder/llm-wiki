@@ -538,6 +538,23 @@ auto_indexes:
 Override per-vault via `<vault>/.wiki/layout.yaml` or a `WIKI_SCHEMA.md`
 frontmatter `layout_config:` pointer.
 
+> **Override merge semantics — a sharp edge (TASK 025).** A per-vault override does
+> NOT merge uniformly: scalars overlay; **`ignore` UNIONs** the built-in list and
+> **`type_mapping` deep-MERGES**; but **`paths` and `ref_extraction` REPLACE** the
+> entire built-in list the moment you supply the key. To extend/deepen `paths` (e.g.
+> add a per-module project rule to a course tree) you must **re-declare the base
+> layout's `paths` verbatim plus your new rule** — a bare one-rule `paths:` override
+> silently discards all built-in routing.
+
+> **Custom frontmatter `type:` (TASK 025).** A note whose `type:` is not in the
+> layout's `type_mapping` raises `UnmappedTypeError` and is skipped at reindex
+> (`skip:unmappable-type` at `wiki-sync`). If your vault carries a subtype the
+> built-in lacks, add it under `type_mapping:` in `.wiki/layout.yaml` (it deep-merges
+> over the base), e.g. `tutorial-summary: {db_type: summary, tag: tutorial}`. The
+> obsidian-personal built-in pre-maps the common summary family
+> (`summary`/`lesson-`/`meeting-`/`webinar-`/`tutorial-`/`article-`/`book-`/`video-`/
+> `podcast-`/`course-summary` + `moc`); anything else is yours to map.
+
 Two design facts worth internalising:
 
 - **Two separate config systems.** Per-vault *identity* (`config_loader.py` /
@@ -755,6 +772,17 @@ this raw) ∪ **filesystem mirror** (a `Summary/` sibling shares the raw's key �
 bypasses the gate (re-summarise anyway). Rules are **per-folder overridable** (a deeper
 `<folder>/.wiki/sync.yaml` deep-merges over the vault root — e.g. a `Lessons/` zone keyed by
 date instead of lesson number).
+
+> **Provenance match mode (TASK 025) — `vault-rel-path` vs `basename`.** The provenance
+> detector's `provenance_ref.match` chooses how a summary's cited `file:` is matched to a raw.
+> **`vault-rel-path`** (the default) is exact full-path equality — strict, but it MISSES a
+> summary that cites the raw by *basename* only. **`basename`** basenames BOTH the cited value
+> AND the raw target, so it matches summaries citing by basename OR by full path — the robust
+> choice when source basenames are globally unique (e.g. YouTube-id transcripts `ID.ru.txt`) or
+> an existing corpus already cites by basename. Its only failure mode is two distinct raws
+> sharing a basename across folders. Pick `basename` for id-named transcript corpora;
+> `vault-rel-path` when you control the writeback and want strict path equality. (The default
+> is intentionally `vault-rel-path` — flipping it could merge distinct same-basename raws.)
 
 > **New raw under an already-summarised key → merge or split?** (TASK 021) If you drop a
 > *new* transcript whose key already has a summary that doesn't cite it, `wiki-sync` keeps

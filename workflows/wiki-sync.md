@@ -186,6 +186,12 @@ a `.vtt`.
    provenance signal (`source:`/`sources:`), independent of any naming heuristic —
    so the raw is skipped `summary-exists:provenance` without relying on the D2b
    mirror. Idempotent: re-writing the same list is a no-op.
+   > **Match mode (TASK 025).** The `resummarize.detect.provenance_ref.match` config
+   > decides how the cited `file:` is compared to the raw: `vault-rel-path` (default,
+   > strict full-path equality) vs `basename` (basenames both sides → matches
+   > basename- OR path-cited summaries). For globally-unique id-named transcript
+   > corpora (e.g. `ID.ru.txt`), or a corpus that already cites by basename, set
+   > `match: basename` — it is the robust choice; writeback may then emit either form.
 
 ### 4c — `upsert` (a ready, mappable `.md` — no LLM)
 

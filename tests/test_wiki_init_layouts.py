@@ -44,3 +44,46 @@ def test_karpathy_still_scaffolds_page_subdirs(tmp_path: Path) -> None:
     assert (vault / "_sources").is_dir()
     assert (vault / "_concepts").is_dir()
     assert (vault / "00-Vault-Index").is_dir()
+
+
+# --------------------------------------------------------------------------- #
+# TASK 025 / R-5 — layout-aware CLAUDE.md agent template
+# --------------------------------------------------------------------------- #
+
+
+def test_obsidian_personal_writes_layout_aware_claude_md(tmp_path: Path) -> None:
+    """obsidian-personal (an existing-tree layout) must get the layout-aware CLAUDE.md,
+    NOT the Karpathy three-layer/_sources/global.db template."""
+    vault = tmp_path / "pv"
+    init_main(["--scaffold-new", "--vault", str(vault), "--vault-id", "para-vault",
+               "--layout", "obsidian-personal", "--db-path", str(tmp_path / "g.db")])
+    text = (vault / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "existing-tree" in text and ".wiki/sync.yaml" in text  # layout template markers
+    assert "The three layers" not in text   # Karpathy-only section header absent
+    assert "global.db" not in text          # no hardcoded DB delete
+
+
+def test_karpathy_claude_md_drops_hardcoded_global_db_rm(tmp_path: Path) -> None:
+    """R-5a: the Karpathy template keeps its three layers but no longer hardcodes
+    `rm …/global.db` in the rebuild step."""
+    vault = tmp_path / "kv2"
+    init_main(["--scaffold-new", "--vault", str(vault), "--vault-id", "karp2-vault",
+               "--layout", "karpathy", "--db-path", str(tmp_path / "g.db")])
+    text = (vault / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "_sources/" in text                       # still the Karpathy template
+    assert 'rm "' not in text and "global.db" not in text  # the hardcoded rm is gone
+
+
+def test_gemini_vendor_also_gets_layout_template(tmp_path: Path) -> None:
+    """R-5 (arch Q-025-3 / gate 🟢-1): the layout switch is layout-driven, not
+    vendor-driven — a non-Karpathy layout gives EVERY selected vendor the layout
+    template (GEMINI.md written, not silently errored)."""
+    vault = tmp_path / "gv"
+    rc = init_main(["--scaffold-new", "--vault", str(vault), "--vault-id", "gem-vault",
+                    "--layout", "obsidian-personal", "--vendor", "gemini",
+                    "--db-path", str(tmp_path / "g.db")])
+    assert rc == 0
+    gemini = vault / "GEMINI.md"
+    assert gemini.is_file(), "GEMINI.md not written (KeyError→silent error?)"
+    text = gemini.read_text(encoding="utf-8")
+    assert "existing-tree" in text and "The three layers" not in text

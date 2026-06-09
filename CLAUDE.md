@@ -309,6 +309,37 @@ layout-aware upsert → searchable). **Zero DDL** (`user_version` 5), no new dep
 New `tests/test_upsert_layout_parity.py` (9) + `test_gate_d2a_provenance_nfc_nfd`. **1103 pytest,
 mypy strict (73 files).** See `docs/tasks/task-024-upsert-layout-fts-hardening.md`,
 `docs/plans/plan-024-upsert-layout-fts-hardening.md`, ARCHITECTURE Q-024-1/2/3/4 (+residual-2).
+**TASK 025 (adoption-currency-hardening) SHIPPED 2026-06-09** (uncommitted): closes the
+findings of a **4-agent adoption-currency audit** run after the first real-vault dogfood of an
+obsidian-personal PARA iCloud vault (`Downloads/TestVault/ObsidianNotes`; runbook
+`docs/runbooks/personal-vault-adoption.md`). Schema↔code had **no drift** (verified); the gaps
+were adequacy + docs, none blocking. **R-1/R-2 (installer):** `wiki-init`'s absolute `--index-db`
+without `WIKI_ALLOW_ABSOLUTE_INDEX_DB` used to write `index_db` into `WIKI_SCHEMA.md` and THEN fail
+(partial Class-A mutation) — now a **pre-write guard** validates BEFORE `_ensure_index_db` via a
+shared pure `config_loader.validate_index_db_value(val, vault_root) -> Path` (extracted from
+`resolve_index_db_path`, which keeps read+strip+`expected_vault_id` short-circuit and delegates;
+byte-behaviour-identical, the HIGH-S1/S2/L1 posture preserved); `INVALID_INDEX_DB` unified to **exit
+6 / field `index_db`** at every site (was exit 2 / `index-db`), docstring legend updated. **R-3/R-4
+(obsidian-personal built-in, additive):** `type_mapping` pre-maps the common summary family
+(`tutorial-/article-/book-/video-/podcast-/course-summary` → `db_type: summary` + tag); `ignore` +=
+`**/_raw/**` + `**/.staging/**` (raw/staging markdown out of the search index at ANY depth —
+INTENTIONALLY broader than wiki-sync's own walk, which prunes only `_raw/.staging|.locks|failed` and
+INGESTS top-level `_raw/`; they deliberately disagree on `_raw`; `_raw`/`.staging` now reserved
+scratch names). **R-5 (agent template):** dropped the hardcoded `rm …/global.db` from the Karpathy
+`templates/CLAUDE.md.tmpl`; new layout-aware `templates/CLAUDE.layout.md.tmpl` selected per `--layout`
+in `_write_agent_files` for dev-project/obsidian-personal (every vendor). **R-6/7/8 (docs):** the
+`basename` provenance match mode (basenames BOTH sides; preferred for globally-unique/basename-cited
+corpora) documented in schema/manual/workflow + ARCHITECTURE Q-019-10 softened ("orphaned knob" →
+first-class mode); `paths`/`ref_extraction`=REPLACE merge asymmetry + custom-`type:`→per-vault
+`type_mapping` documented. The resummarize default `match` is **NOT changed** (back-compat). Full VDD
+pipeline (task/arch/plan reviews — arch+plan returned binding constraints, all incorporated) +
+**`/vdd-multi` converged** (security clean-pass: posture preserved, footgun closed; performance
+clean-pass: ignore globs a net syscall-saver; logic 1 MED + 2 LOW — all doc-accuracy, fixed:
+corrected the `_raw` "alignment" wording, vendor-coupling NB, reserved-name note) + **code-review
+APPROVED**. **Zero DDL** (`user_version` 5), no new deps, no `import anthropic`, Karpathy golden-anchor
+byte-identity preserved. **1111 pytest (+8), mypy strict (73 files).** See
+`docs/tasks/task-025-adoption-currency-hardening.md`, `docs/plans/plan-025-adoption-currency-hardening.md`,
+ARCHITECTURE Q-025-1/2/3/4.
 
 ## Knowledge lookup priority
 
@@ -356,10 +387,12 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 024
-  `upsert-layout-fts-hardening`** (archived `docs/tasks/task-024-upsert-layout-fts-hardening.md`
-  + `docs/plans/plan-024-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
-  completed and rotated). Preceded by the ad-hoc **TASK 023** personal-vault dogfood-hardening
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 025
+  `adoption-currency-hardening`** (archived `docs/tasks/task-025-adoption-currency-hardening.md`
+  + `docs/plans/plan-025-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
+  completed and rotated). Adoption runbook at `docs/runbooks/personal-vault-adoption.md`.
+  Preceded by **TASK 024 `upsert-layout-fts-hardening`** (`docs/tasks/task-024-upsert-layout-fts-hardening.md`
+  + `docs/plans/plan-024-*.md`). Preceded by the ad-hoc **TASK 023** personal-vault dogfood-hardening
   batch (obsidian-personal summary `type_mapping` + structured `sources:` provenance +
   `transcript_dedup`; recorded in the narrative above, no separate `docs/tasks/` doc → 023 gap is
   intentional). Predecessors archived: `task-022-vault-local-db-resolution.md` (+ `task-022-01..09-*.md`)

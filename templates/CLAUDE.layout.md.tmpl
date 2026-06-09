@@ -1,0 +1,128 @@
+# ${vault_id} — an LLM-Wiki vault (${layout} layout)
+
+This is an **existing-tree** wiki vault indexed by [obsidian-llm-wiki](https://github.com/)
+under the **`${layout}`** layout — a real tree (a project `docs/` for `dev-project`, or a
+PARA Obsidian vault with numbered folders / MOCs / multilingual names for
+`obsidian-personal`). Unlike the Karpathy layout, there is **no** `_sources/_concepts/
+_entities` scaffold and **no** promote/demote: notes live where you keep them and are
+indexed **in place**. The index is a rebuildable cache (ADR-002 §D8) — the markdown is
+the source of truth.
+
+Claude is launched at the vault root. All paths below are relative to it.
+
+- **vault_id**: `${vault_id}` (REQUIRED, ADR-002 §D1.1; defined in `WIKI_SCHEMA.md`)
+- **language**: `${language}`
+- **layout**: `${layout}` (an existing-tree layout — grammar in the built-in
+  `scripts/wiki_index/layouts/${layout}.yaml`; tune per-vault via the files below)
+
+---
+
+## Tuning — `<vault>/.wiki/`
+
+Two per-vault override files (both optional; the built-in `${layout}` grammar is the base):
+
+- **`.wiki/layout.yaml`** — what to INDEX. Keys merge over the built-in with different
+  rules:
+  - `ignore` **UNIONs** the built-in ignores (add extra excludes, e.g. attachment dirs).
+  - `type_mapping` **deep-MERGES** — add any custom frontmatter `type:` your notes carry
+    (e.g. `tutorial-summary: {db_type: summary, tag: tutorial}`); a `type:` not in the
+    map raises `UnmappedTypeError` and the note is skipped at reindex.
+  - `paths` / `ref_extraction` **REPLACE** the whole built-in list when you supply the
+    key — to deepen project granularity you must re-declare the base rules verbatim plus
+    your new rule (they do NOT merge).
+- **`.wiki/sync.yaml`** — how `wiki-sync` routes a mixed zone (transcripts to summarise,
+  office/PDF to convert, ready notes to upsert, generated-view sidecars to skip). Carries
+  `zones`, `exclude`, `transcript_dedup`, and the `resummarize` re-summarization gate.
+
+- **`index_db`** (in `WIKI_SCHEMA.md` frontmatter) — by default this vault shares the
+  global DB; set `index_db: .wiki/index.db` to make the index travel WITH the vault
+  (an **absolute** path needs `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` — e.g. for an iCloud vault
+  whose DB must live off the synced drive).
+
+---
+
+## Operations
+
+### Lookup priority
+
+When looking up domain facts, concepts, or prior decisions:
+
+1. **First** — `wiki-search "<query>" --vaults ${vault_id}` (FTS5, < 100 ms).
+2. **Then** — open the matched page in your editor / `Read` the file.
+3. **Only then** — fall back to `grep` / filesystem walk.
+
+This is what makes the wiki *compounding*: searches return your distilled notes.
+
+### Index a change (notes indexed in place — no `_sources` scaffold)
+
+```bash
+# After editing/adding notes: incremental reindex (mtime/hash-based).
+wiki-reindex --delta --vault ${vault_id}
+
+# Index a single ready note immediately (layout-aware: correct project/type/refs).
+wiki-index-upsert --vault ${vault_id} --source "./path/to/note.md" --vault-root .
+```
+
+### Auto-sync a mixed zone (`wiki-sync`)
+
+For a zone mixing transcripts, office/PDF docs, ready notes, and Obsidian
+generated-view sidecars, `wiki-sync` is a format-aware, tag-routed dispatcher. `scan`
+is deterministic (emits a plan; no LLM/mutation); the orchestrator executes it with
+per-file idempotency (see `workflows/wiki-sync.md`).
+
+```bash
+# preview the plan (writes nothing): per-file action + reason + counts
+wiki-sync scan "<zone>" --vault ${vault_id} --vault-root . --dry-run
+```
+
+Routing: transcripts (`.vtt`/`.srt`/`.txt`) → de-timestamp → summarise → upsert;
+office/PDF → convert (scanned PDFs OCR'd) → summarise → upsert; ready `.md` → upsert;
+generated-view sidecars → skipped. A summarised raw is re-summarised only if no summary
+exists (the `resummarize` gate); provenance is the summary's `sources:` frontmatter
+citing the raw. Per-note tags override the default (precedence **skip > raw > keep >
+default**).
+
+### Lint — health-check
+
+```bash
+wiki-lint --vault ${vault_id}   # drift, orphan links, hash mismatch, cross-vault dups
+```
+
+### Query (RAG)
+
+```bash
+# retrieve → orchestrator-cited synthesis → file a compounding _queries/<slug>.md
+wiki-query prepare "compare X and Y" --vault ${vault_id} --vault-root .
+# Optional audit: wiki-verify-multi prepare/apply (off-by-default 4-critic check)
+```
+
+### Rebuild — when in doubt
+
+```bash
+# Rebuild the SQLite cache from canonical markdown (ADR-002 §D8 — fully rebuildable).
+# wiki-reindex --full wipes + rebuilds THIS vault's rows and resolves the declared
+# index_db; no manual DB file deletion needed.
+wiki-init --register-existing --vault .
+wiki-reindex --full --vault ${vault_id}
+```
+
+---
+
+## The human's job, the LLM's job
+
+- **You curate** which sources to capture, **direct** the analysis, **ask good
+  questions**, **resolve contradictions**.
+- **Claude does** the bookkeeping — summarising, cross-referencing, filing, indexing,
+  keeping the search layer current.
+
+---
+
+## Useful pointers
+
+- **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, optional `index_db`.
+- **`.wiki/layout.yaml`** / **`.wiki/sync.yaml`** — per-vault index + sync tuning.
+- **obsidian-llm-wiki** — the index layer (15 CLIs). Search/RAG: `wiki-search`,
+  `wiki-query`, `wiki-verify-multi`. Construction: `wiki-sync` (mixed-zone auto-router),
+  `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`. Lifecycle/health:
+  `wiki-init`, `wiki-reindex`, `wiki-lint`, `wiki-index-render`. Install per its
+  `README.md`; ensure its `bin/` is on `PATH`.
