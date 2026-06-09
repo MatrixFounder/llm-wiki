@@ -1,12 +1,14 @@
 ---
 name: wiki-search
 description: >-
-  Use when looking up domain facts, prior decisions, or concept/entity
-  definitions before grep+Read — FTS5 full-text search across one or more
-  registered vaults, returning ranked hits with BM25 score + snippet.
-  Triggers: "search wiki", "find in vault", "wiki-search".
+  Use BEFORE answering ANY question about a vault's subject matter — a how-to,
+  a definition, domain facts, prior decisions, or a concept/entity lookup: search
+  the wiki first, do not answer from training. FTS5 full-text search across one or
+  more registered vaults, returning ranked hits with BM25 score + snippet.
+  Triggers: "search wiki", "find in vault", "wiki-search", "what is", "how do I",
+  any vault-domain question.
 tier: 2
-version: 1.1
+version: 1.2
 ---
 
 # wiki-search

@@ -10,6 +10,24 @@ the source of truth.
 
 Claude is launched at the vault root. All paths below are relative to it.
 
+> ## ⚠️ SEARCH-FIRST — the one rule that makes this a wiki
+> Before you answer **ANY** question that touches this vault's subject matter — a
+> how-to ("how do I X?"), a definition ("what is X?"), or any topic the user may have
+> notes on — you **MUST** run `wiki-search` **first**. Do **NOT** answer from your own
+> training knowledge until you have searched and confirmed the vault has nothing
+> relevant (and broaden once on 0 hits — content words / prefix `*` / spelling variants,
+> per the wiki-search skill — before concluding it's empty).
+> - **Vault has relevant pages** → ground the answer in them and **cite the page `slug`**.
+> - **Vault has nothing** → say so explicitly ("the wiki has no page on X") *before* any
+>   general-knowledge answer, label that answer as **NOT from the vault**, and offer
+>   `/wiki-enrich` to capture a real source.
+>
+> Answering a domain question from training **without searching first** — or presenting
+> training knowledge as if it came from the vault — defeats the entire point of a
+> compounding knowledge base. This holds for every model; a smaller/faster model
+> (e.g. Haiku) is **less reliable** at honouring it, so prefer a stronger model when
+> grounded answers matter.
+
 - **vault_id**: `${vault_id}` (REQUIRED, ADR-002 §D1.1; defined in `WIKI_SCHEMA.md`)
 - **language**: `${language}`
 - **layout**: `${layout}` (an existing-tree layout — grammar in the built-in
@@ -45,7 +63,7 @@ Two per-vault override files (both optional; the built-in `${layout}` grammar is
 
 ### Lookup priority
 
-When looking up domain facts, concepts, or prior decisions:
+The mechanics of the SEARCH-FIRST rule above — for **every** vault-domain question:
 
 1. **First** — `wiki-search "<query>" --vaults ${vault_id}` (FTS5, < 100 ms).
 2. **Then** — open the matched page in your editor / `Read` the file.
