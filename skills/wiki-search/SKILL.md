@@ -8,7 +8,7 @@ description: >-
   Triggers: "search wiki", "find in vault", "wiki-search", "what is", "how do I",
   any vault-domain question.
 tier: 2
-version: 1.2
+version: 1.3
 ---
 
 # wiki-search
@@ -50,14 +50,25 @@ Or `/wiki-search "<query>" [...]`.
 - Default output: JSON envelope with `hits[]` (each hit has `vault_id`,
   `slug`, `project`, `type`, `title`, `bm25_score`, `snippet`).
 
-## Broadening on 0 hits — and NEVER hallucinate
+## Search WELL — broaden, don't stop at the first hit, and NEVER hallucinate
 
-FTS5 is **literal** and **multi-term is implicit AND**, so ONE unmatched token
-(a typo, a mis-ordered acronym like `КПЧ` vs the indexed `ПКЧ`, a hyphenation like
-`П-К-Ч`) zeroes the whole result even when the other words match everywhere. A
-`count: 0` therefore does **NOT** mean "not in the wiki" — it usually means the query
-was too tight. Before concluding anything, BROADEN (the `query` is a full FTS5 MATCH
-expr — exploit it):
+FTS5 here is **literal**, **multi-term is implicit AND**, and there is **no stemming**.
+So one inflected form misses its siblings, one unmatched token zeroes everything, and
+the first lexical hit is often NOT the on-topic page. Two failure modes to design
+against:
+
+- **0 hits** does NOT mean "not in the wiki" — usually the query was too tight.
+- **A hit that looks tangential** (a generic word matched a side-mention) does NOT mean
+  you found the right page — the on-topic page may use a different inflection you didn't
+  match. **Do NOT answer from the first lexical match.** For a *"what is X / how do I X"*
+  question, gather the top hits and pick the page that's actually ABOUT X.
+
+So **search by the STEM of the DISTINCTIVE word, with a prefix `*`, from the start** —
+not one inflected form, and not the generic adjective. Real example: *"что такое
+продуктовое осведомление?"* — searching the literal `продуктовое` returns a tangential
+AI-panel page; searching the distinctive noun stem `осведомл*` (and/or `продуктов*`)
+ranks the correct course page `03-первое-касание` near the top. Then BROADEN further if
+needed (the `query` is a full FTS5 MATCH expr — exploit it):
 
 1. **Drop the rare/acronym token, search the distinctive CONTENT words.** For *"что
    такое кпч-сценарий?"* search `"сценарии продаж"` (not `кпч`) → it ranks the right

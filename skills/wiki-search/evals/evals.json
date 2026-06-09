@@ -25,6 +25,14 @@
       "prompt": "what does my wiki say about квантовой криптографии?",
       "expected_behavior": "After broadening (prefix `квантов*`, content words, ё/spelling variants) the result is still empty; the agent states plainly that no page in the wiki matches the term and offers `/wiki-enrich` to add a source.",
       "must_not": ["fabricate a definition or any domain fact about the term", "present an ungrounded answer as if it came from the vault"]
+    },
+    {
+      "id": 4,
+      "name": "inflection-tangential-hit-must-broaden",
+      "setup": "Vault `personal`. A QED course page '03 - Первое касание' is ABOUT 'продуктовое осведомление' (uses 'осведомление' ×33, 'продуктов…' ×18). A separate AI-panel page mentions 'продуктовое мышление' once, in passing. FTS has no stemming.",
+      "prompt": "что такое продуктовое осведомление?",
+      "expected_behavior": "Does NOT answer from the literal `продуктовое` search (which ranks the tangential AI-panel page first). Searches the DISTINCTIVE noun stem with a prefix — `осведомл*` (and/or `продуктов*`) — which ranks the on-topic '03 - Первое касание' near the top; answers grounded in THAT page, citing its slug.",
+      "must_not": ["answer from the tangential AI-panel 'продуктовое мышление' page", "stop at the first literal hit without broadening", "search only one inflected form (`продуктовое`) for a definition question"]
     }
   ]
 }
