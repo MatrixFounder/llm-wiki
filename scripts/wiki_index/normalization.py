@@ -7,6 +7,15 @@ R-07.5 (body normalization): strip ```mermaid``` fenced blocks and
 `<!-- SECTION:* -->` HTML anchors from body BEFORE indexing in FTS5 / storing
 in `body_excerpt`. Pinned regex with anti-tail-eat sanity check (unclosed
 fence → fail-fast).
+
+TASK 028 (R-028-4 / Q-028-5): the body is also `ё→е`-folded here so the FTS
+corpus is canonical (the `unicode61 remove_diacritics 2` tokenizer does NOT
+fold the precomposed `ё` U+0451). This is layout-agnostic and the one
+intentional indexing delta vs the Karpathy golden anchor (byte-identical
+otherwise, for ё-free content). It takes effect on the next `wiki-reindex
+--full` (Class-B rebuild, ADR-002 §D8). `pages.title`/`tldr` are NOT folded
+(display fidelity); `body_excerpt`'s only display consumer is `snippet()`, which
+will render the е-form — a deliberate, accepted cosmetic change for ru ё/е.
 """
 
 from __future__ import annotations
@@ -24,6 +33,9 @@ from scripts.wiki_index.layout import (
     QUERIES_SUBDIR,
     VERIFICATIONS_SUBDIR,
 )
+# One-directional import (TASK 028 / m-3): normalization → query_normalizer.
+# query_normalizer must NOT import normalization (no cycle).
+from scripts.wiki_index.query_normalizer import fold_yo
 
 
 def _json_safe(value: Any) -> Any:
@@ -52,7 +64,9 @@ class BodyNormalizationError(ValueError):
 
 
 def normalize_body_for_fts(body: str) -> str:
-    """Strip ```mermaid``` fences and `<!-- SECTION:* -->` anchors.
+    """Strip ```mermaid``` fences and `<!-- SECTION:* -->` anchors, then fold
+    `ё→е` (TASK 028 / R-028-4 — canonicalise the FTS body corpus; the query side
+    folds too, so `ещё`/`еще` match).
 
     Raises `BodyNormalizationError` if any mermaid fence is unclosed (sanity
     check vs anti-tail-eat regression — R-07.5 spec).
@@ -66,7 +80,7 @@ def normalize_body_for_fts(body: str) -> str:
         )
     out = _MERMAID_RE.sub("", body)
     out = _SECTION_RE.sub("", out)
-    return out
+    return fold_yo(out)
 
 
 # -----------------------------------------------------------------------------

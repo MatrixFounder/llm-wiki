@@ -38,6 +38,7 @@ from scripts.wiki_skills._common import (
     resolve_vault_root_for_cli,
     sanitize_markdown_text,
 )
+from scripts.wiki_index.query_normalizer import fold_yo, normalize_term
 from scripts.wiki_skills._retrieval import fts_quote
 
 _MAX_QUESTION_LEN = 1000
@@ -119,7 +120,7 @@ def _scope(args: argparse.Namespace) -> tuple[list[str] | None, list[str] | None
 
 def _build_match_query(
     repo: IndexRepository, question: str, vaults_list: list[str] | None,
-    expand: bool,
+    expand: bool, stem: bool,
 ) -> str:
     """Turn a natural-language QUESTION into an FTS5 OR-of-terms query (keyword
     retrieval — match-any, BM25-ranked), NOT a raw phrase.
@@ -132,19 +133,35 @@ def _build_match_query(
     nothing contribute nothing. Tokenisation is Unicode-aware (no hardcoded
     English stopword list — the vault may be multilingual / Cyrillic).
 
+    TASK 028 (Q-028-3, F-2): wiki-query already `fts_quote`s every token, so
+    stemming happens at the TOKEN level BEFORE quoting — each token →
+    ``normalize_term`` → ``"<stem>"*`` (broadening) or the folded literal
+    ``"<term>"`` (``--exact``, acronyms, short stems). ё is always folded. (The
+    acronym ALL-CAPS guard never fires here — tokens are lowercased for the
+    OR/match-any model, which is forgiving of mild over-broadening.) Alias
+    surfaces use the RAW token for lookup, folded + quoted, NEVER stemmed.
+
+    The final ``sorted`` join — not token order — is what anchors `question_hash`
+    determinism (C1); do not "optimise" the dedup away.
+
     When `expand`, each token is alias-expanded through the entity table
     (`expand_query_aliases`) so a surface like 'hermes' also pulls in its
     canonical name + sibling aliases (R-5.5 reuse, at token granularity)."""
     tokens = list(dict.fromkeys(re.findall(r"[^\W_]+", question.lower())))
     if not tokens:
-        return fts_quote(question)
-    surfaces: set[str] = set(tokens)
+        return fts_quote(fold_yo(question))
+    surfaces: set[str] = set()
+    for tok in tokens:
+        atom, is_prefix = normalize_term(tok, stem=stem)
+        q = fts_quote(atom)
+        surfaces.add(q + "*" if is_prefix else q)
     if expand:
         targets = vaults_list or [v.vault_id for v in repo.list_vaults()]
         for vid in targets:
             for tok in tokens:
-                surfaces.update(repo.expand_query_aliases(vid, tok))
-    return " OR ".join(fts_quote(s) for s in sorted(surfaces))
+                for s in repo.expand_query_aliases(vid, tok):
+                    surfaces.add(fts_quote(fold_yo(s)))
+    return " OR ".join(sorted(surfaces))
 
 
 def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) -> list[PageHit]:
@@ -154,7 +171,8 @@ def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) ->
     un-parseable expression after the DF-1 quoted-phrase fallback."""
     vaults_list, types_list = _scope(args)
     match_query = _build_match_query(
-        repo, question, vaults_list, not args.no_expand_aliases)
+        repo, question, vaults_list, not args.no_expand_aliases,
+        not args.exact)  # TASK 028: --exact disables stemming (fold stays)
 
     # Default-exclude prior query answers from RAG retrieval: a synthesised
     # answer grounds on PRIMARY sources, not on other answers (avoids circular
@@ -180,7 +198,9 @@ def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) ->
         return _search(match_query)
     except sqlite3.OperationalError:
         try:
-            return _search(fts_quote(question))
+            # DF-1 fallback: literal quoted phrase, ё-folded to stay consistent
+            # with the folded corpus (TASK 028).
+            return _search(fts_quote(fold_yo(question)))
         except sqlite3.OperationalError as exc:
             raise _InvalidQuery() from exc
 
@@ -524,6 +544,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--project", default=None)
     pp.add_argument("--limit", type=int, default=10)
     pp.add_argument("--no-expand-aliases", action="store_true")
+    pp.add_argument("--exact", "--no-stem", dest="exact", action="store_true",
+                    default=False,
+                    help="TASK 028: disable query-side stemming/inflection "
+                         "broadening (ё/е fold still applies). MUST match the "
+                         "value passed to `apply` or the question_hash diverges "
+                         "→ QUESTION_CHANGED.")
     pp.add_argument("--slug", default=None,
                     help="Override the derived query slug (kebab-case).")
     pp.add_argument("--min-hits", type=int, default=1)
@@ -547,6 +573,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--project", default=None)
     ap.add_argument("--limit", type=int, default=10)
     ap.add_argument("--no-expand-aliases", action="store_true")
+    ap.add_argument("--exact", "--no-stem", dest="exact", action="store_true",
+                    default=False,
+                    help="TASK 028: MUST match the value passed to `prepare` "
+                         "(retrieval must reproduce → same question_hash).")
     g_ans = ap.add_mutually_exclusive_group(required=True)
     g_ans.add_argument("--answer-stdin", action="store_true")
     g_ans.add_argument("--answer-file", default=None)

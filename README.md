@@ -47,7 +47,9 @@ This repo is the **index + tooling layer** for that pattern:
 - **Ingest** a raw source (transcript, article, meeting note) → LLM-synthesised
   concept/entity pages, additive merge, contradiction flagging, a `log.md` entry.
 - **Search** the whole corpus with FTS5 BM25 ranking + frontmatter-metadata
-  filters, across one vault or many.
+  filters, across one vault or many. Default search is **inflection-tolerant**
+  (per-term script-aware stemming — Cyrillic→russian, Latin→english) and
+  **ё/е-folded**; `--exact` opts out to literal terms.
 - **Resolve entities**: candidate → confirmed promotion, aliases (one surface
   string → one entity per vault), and merging of duplicates.
 - **Query (RAG)**: retrieve over FTS5 + the entity graph, synthesise a *cited*

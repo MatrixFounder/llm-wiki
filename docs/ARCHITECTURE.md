@@ -1048,6 +1048,93 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   `tests/test_wiki_init_flows.py`; the envelope-shape assertions updated (claude agent_files now also
   carry `.claude/settings.json`). **1114 pytest, mypy strict.**
 
+- **Q-028-1 (TASK 028 — the two-mechanism search-normalization split).** The FTS layer is
+  `unicode61 remove_diacritics 2`: no stemming, no ё/е fold. TASK 028 broadens recall WITHOUT a
+  tokenizer/DDL change by splitting the problem into two orthogonal mechanisms with different
+  on/off semantics. **(1) Normalization (ALWAYS on, NOT `--exact`-gated):** fold `ё→е`/`Ё→Е` (case-preserving) on
+  BOTH sides — the index body corpus (`body_excerpt`) and every query term. This is corpus
+  canonicalisation: both sides agree → `ещё`/`еще` are one token. **(2) Broadening (default on,
+  `--exact`/`--no-stem` disables):** per-term snowball stem + prefix `*`. Rationale (OQ-1): the two
+  production misses were *default* searches, so auto-broaden is the point; `--exact` is the
+  precision escape hatch. This split resolves the F-3 contradiction (a "byte-identical `--exact`
+  anchor" is impossible once the index is ё-folded) — the corrected anchor is **byte-identical for
+  ё-free content, folded-consistent for ё-content**. **Zero DDL** (`user_version` 5); the body fold
+  takes effect on the next `wiki-reindex --full` (Class-B rebuild, ADR-002 §D8) — stemming + the
+  query-side ё-fold work immediately, so only *body* ё-recall is reindex-gated (OQ-2).
+- **Q-028-2 (TASK 028 — engine, script generality, typing).** New pure module
+  `scripts/wiki_index/query_normalizer.py` over a thin typed wrapper `scripts/wiki_index/_snowball.py`.
+  Per-term: fold ё → **detect script** (Cyrillic→`russian`, Latin→`english`, any other script /
+  digits / too-short→**literal**, never mangled) → stem (when broadening) → guard. Generalises to
+  other languages by script, NOT Russian-only (snowball ships **36** stemmers, pure-Python); a
+  per-vault `language:`-driven Latin-stemmer override is a documented future extension; `--vaults all`
+  works because detection is per-term, not per-vault. **MIN gate on POST-stem length** (OQ-3 / F-6):
+  if `len(stem) < MIN` (≈3 Cyrillic) emit the term literal (no `*`) — a long word collapsing to a
+  2-char stem must NOT become a catch-all `аг*`. **Idempotency via the `*`-guard, not the stemmer**
+  (F-4): snowball is NOT idempotent (`осведомлен`→`осведомл`), but re-running the FTS rewrite on its
+  own output is a no-op because every produced term ends in `*` (and an already-`*` term is passed
+  through). **Typing (F-7):** `snowballstemmer` ships no `py.typed`; the single
+  `# type: ignore[import-untyped]` lives in `_snowball.py` (a per-language stemmer cache + typed
+  `str→str` facade), keeping the rest of `scripts/` strict-clean — no `types-snowballstemmer` exists.
+  **Determinism (C1):** the dep is pinned EXACT `snowballstemmer==3.1.1` (not `>=`) because a stem
+  change alters the retrieved **hit set**, which (not the stem text itself) is what feeds
+  `wiki-query`'s `question_hash`; a silent bump would change the hit set → break filed-answer
+  reproducibility — a stem-algorithm change is a deliberate, re-query/reindex-affecting event.
+- **Q-028-3 (TASK 028 — TWO distinct call sites, corrected composition).** The shared primitive is
+  the per-term core; the two consumers wire it DIFFERENTLY (F-2 — they must NOT collapse to one):
+  **(a) `wiki-search`** — an FTS-expression-aware lexer (F-9) walks the raw MATCH expr and stems+folds
+  ONLY bare, sigil-free, unquoted content tokens, passing through verbatim: quoted phrases, paren
+  groups, `NEAR(...)`+args, column filters (`col:`, `{a b}:`), the uppercase operator keywords
+  `AND/OR/NOT/NEAR`, any already-`*` term, and `^`/`-`/`+`-sigil terms. **Composition (OQ-4 / F-1,
+  corrected):** stem the bare query FIRST, then OR-in the (quoted, folded, **unstemmed**) alias
+  surfaces → `(<stemmed-folded-raw>) OR "alias1" OR "alias2"` — NOT `stem(expand_query(raw))`
+  (`expand_query` quotes the WHOLE raw query, so a quote-preserving stemmer would broaden nothing on
+  an alias hit). **(b) `wiki-query`** — `_build_match_query` already `fts_quote`s every token, so the
+  stem happens at the TOKEN level BEFORE `fts_quote`, emitting `"<stem>"*` (valid FTS5); alias
+  surfaces use the raw token for lookup, folded + quoted. The **DF-1** `OperationalError` fallback is
+  kept in shape (fold-aware: re-runs the literal folded quoted phrase), and the lexer is proven never
+  to PRODUCE an un-parseable expr from a valid input. `search_pages` (the DAL) is UNCHANGED — the
+  rewrite happens above it; no DAL signature/contract change. **Pre-existing perf note
+  (vdd-multi perf MED, NOT a TASK-028 regression — verified the loop pre-dates this task on
+  `main`):** `wiki-query._build_match_query`'s alias expansion is a V×T fan-out
+  (`for vid: for tok: expand_query_aliases`), invisible at 1–2 vaults but an N+1 on
+  `--vaults all` over a large fleet. TASK 028 kept the identical loop (added only the per-token
+  stem). A prefetch (`list_all_aliases` per vault → in-memory probe) is a future perf follow-up;
+  `wiki-search`'s `alias_surfaces` already does the cheaper one-lookup-per-vault shape.
+- **Q-028-4 (TASK 028 — `wiki-query` question_hash symmetry; C1).** `_question_hash` is recomputed in
+  `apply` (mismatch → `QUESTION_CHANGED`), so `--exact`/`--no-stem` is threaded SYMMETRICALLY through
+  `prepare` AND `apply` via the shared `_retrieve` (precedent: the existing `--no-expand-aliases`).
+  Verified semantics: prepare-default→apply-default reproduces the hash; prepare-default→apply-exact
+  → `QUESTION_CHANGED` (documented, expected, not a bug); the stemmer is byte-stable for the pinned
+  version. The RAG path's stemming is independently eval'd (not assumed from the wiki-search tests).
+- **Q-028-5 (TASK 028 — ё/е index fold site + display semantics).** The fold rides
+  `normalization.normalize_body_for_fts` → `body_excerpt` (the route taken by `wiki-index-upsert` +
+  both `reindex` paths through `_build_page`; the FTS triggers copy `body_excerpt` verbatim, so
+  folding at the row-write site needs no trigger change — zero DDL). `pages.title`/`tldr` are NOT
+  folded → titles keep `ё` (display fidelity); residual (vdd-multi logic MED, F-5 / R-028-4): only
+  `body_excerpt` is folded, but `pages_fts` ALSO indexes `title`, `tldr`, and `tags` UNFOLDED while
+  the query is always folded → a **ё-form** query for a term living ONLY in a `title`/`tldr`/`tag`
+  (no body occurrence) is a narrow ё-form-only recall regression vs pre-028, and `--exact` is
+  byte-identical only for ё-FREE content there. The е-form query (common Russian typing) is
+  unaffected; the body case is improved. Full symmetry needs trigger DDL (`tags` ride the trigger's
+  `json_extract`) → out of zero-DDL scope; folding `title`/`tldr` into the FTS shadow would also need
+  the trigger (folding `pages.title` itself would regress display). Alias resolution stays
+  ё-sensitive (exact-match) — a future fold-aware lookup is a documented consistency follow-up.
+  `snippet()` IS a real
+  display consumer of `body_excerpt` (corrects the spec's "no display consumer" wording) → result
+  snippets render the е-form — a deliberate, accepted cosmetic change for ru ё/е; `wiki-verify-multi`
+  reads the raw FILE (`_read_page_text`), so its excerpts keep `ё` (unaffected). Layout-agnostic
+  (applies to every layout incl. karpathy) — the one intentional indexing delta vs golden-anchor
+  byte-identity, which otherwise holds for ё-free content.
+- **Q-028-6 (TASK 028 — docs currency, R-028-5).** Only `skills/wiki-search/SKILL.md` (4 claim sites +
+  version + Contract) and `skills/wiki-search/evals/evals.json` (eval #4 + description) assert the
+  now-false "no stemming" / "ё is NOT folded" facts as current behaviour or prescribe manual
+  compensation; both are corrected (manual stem-prefix recast as a fallback/explicit-control lever).
+  Evals #1-#4 are reconciled with default-on stemming (eval #2 КПЧ↔ПКЧ transposition is NOT a
+  morphological variant → stemming does NOT fix it → it stays the fallback-broadening + anti-
+  hallucination contract; #3 grounding kept). Manuals (EN+RU), quick-ref (EN+RU), this ARCHITECTURE,
+  and README carry no false claim to delete but gain the new behaviour. The `tokenize=` DDL string
+  (`sql/wiki-index-v2.sql` L366, README L142) stays UNCHANGED — zero-DDL invariant.
+
 ---
 
 ## Verification Map

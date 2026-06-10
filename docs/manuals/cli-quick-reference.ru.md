@@ -31,7 +31,15 @@ wiki-search "lasso regularization"          --vaults personal --limit 5
 wiki-search "переговоры" --vaults personal --project "Learning/Переговоры"
 wiki-search --vaults personal --where "type=lesson-summary" --limit 10   # list by frontmatter field (no FTS query)
 wiki-search "smart money" --vaults personal --types summary               # restrict to a db type
+wiki-search "агент" --vaults personal --exact                            # точный поиск: без стемминга (ё/е всё равно сводятся)
 ```
+
+> Поиск по умолчанию **устойчив к словоформам**: одиночные термины автоматически
+> приводятся к основе с префиксом (`сценарии`→`сценар*`, `agents`→`agent*`) и
+> **сводят ё/е**, поэтому одна введённая форма находит свои словоформы, а `ещё`/`еще`
+> — один токен. `--exact` (`--no-stem`) ОТКЛЮЧАЕТ стемминг для точного буквального
+> поиска. Свёртка ё/е в теле требует разовой `wiki-reindex --full`; стемминг и
+> свёртка ё/е в запросе работают сразу.
 
 **Поддерживайте индекс в актуальном состоянии после правок/добавления заметок в Obsidian**
 ```bash

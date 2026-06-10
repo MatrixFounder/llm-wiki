@@ -31,7 +31,14 @@ wiki-search "lasso regularization"          --vaults personal --limit 5
 wiki-search "переговоры" --vaults personal --project "Learning/Переговоры"
 wiki-search --vaults personal --where "type=lesson-summary" --limit 10   # list by frontmatter field (no FTS query)
 wiki-search "smart money" --vaults personal --types summary               # restrict to a db type
+wiki-search "агент" --vaults personal --exact                            # literal: no stemming (ё/е still folded)
 ```
+
+> Default search is **inflection-tolerant**: bare terms are auto stemmed + prefixed
+> (`сценарии`→`сценар*`, `agents`→`agent*`) and **ё/е-folded**, so one typed form finds
+> its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) turns stemming OFF
+> for precise literal terms. The body ё/е fold needs a one-time `wiki-reindex --full`;
+> stemming + the query ё-fold work immediately.
 
 **Keep the index current after you edit/add notes in Obsidian**
 ```bash

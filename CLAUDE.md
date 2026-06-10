@@ -340,6 +340,42 @@ APPROVED**. **Zero DDL** (`user_version` 5), no new deps, no `import anthropic`,
 byte-identity preserved. **1111 pytest (+8), mypy strict (73 files).** See
 `docs/tasks/task-025-adoption-currency-hardening.md`, `docs/plans/plan-025-adoption-currency-hardening.md`,
 ARCHITECTURE Q-025-1/2/3/4.
+**TASK 026 (installer ships the vault `.claude/settings.json`) SHIPPED 2026-06-09** (committed
+`1ee638f` with TASK 027): `wiki-init` drops the selected vendor's settings file (VERBATIM copy,
+non-destructive, `--force` to overwrite) where the agent file is written, via a config-driven
+`settings_file`/`settings_template` on `templates/agent-files.yaml`. See ARCHITECTURE Q-026-1,
+`docs/tasks/task-026-installer-vault-claude-settings.md`.
+**TASK 028 (R-Y1 — query-side stemming + ё/е folding) SHIPPED 2026-06-09** (uncommitted, branch
+`task-028-query-stemming-yo-folding`): closes the two real-vault recall misses (literal multi-term
+AND missed inflected `Сценарии продаж`; `продуктовое осведомление` ranked a tangential page and
+missed the inflected `03-первое-касание`). Two orthogonal mechanisms, BOTH script-general:
+**(1) ё/е fold — ALWAYS on** (corpus canonicalisation: `body_excerpt` at index + every query term;
+the `unicode61 remove_diacritics 2` tokenizer does NOT fold precomposed `ё`); **(2) stemming —
+default-on, `--exact`/`--no-stem` opts out** (per-term by SCRIPT — Cyrillic→`russian`,
+Latin→`english`, other→literal; `snowballstemmer==3.1.1`, pure-Python, pinned EXACT because the stem
+changes the hit set that feeds `wiki-query`'s `question_hash`). New pure modules
+`scripts/wiki_index/{_snowball.py [the one type:ignore],query_normalizer.py}` (fold + script-detect +
+per-term `normalize_term` + the wiki-search FTS-expression lexer); **two distinct call sites** —
+wiki-search lexer (stems only bare sigil-free tokens; F-1 composition `(<stemmed>) OR "alias"`,
+NOT `stem(expand_query)`) and wiki-query per-token `"<stem>"*` before `fts_quote` (F-2); `--exact`
+threaded symmetrically through `prepare`+`apply` (C1 `question_hash`). Guards: post-STEM `MIN_STEM_LEN`
+(no catch-all `аг*`, F-6), ALL-CAPS acronym guard, and a **stem-must-be-a-prefix** guard (English
+`-y→-i` mutates → would miss the original; emit literal — found in dev). Body ё-fold rides
+`normalize_body_for_fts` (zero trigger change; takes effect on next `wiki-reindex --full`, Class-B).
+**Full VDD**: task/arch/plan reviews APPROVED (3-perspective task-review workflow) + `/vdd-multi`
+converged (Security CLEAN; Logic 1 MED documented [ё-fold column asymmetry — title/tldr/tags indexed
+unfolded, narrow ё-form-query residual] + 2 LOW fixed; Performance 1 MED **verified pre-existing**
+[wiki-query V×T alias fan-out, not a 028 regression] + 3 LOW micro-opts; code-review MERGE — 3 LOW
+fixed). **Zero DDL** (`user_version` 5), no `import anthropic`, Karpathy indexing byte-identical for
+ё-free content (ё→е body fold = the one intentional, layout-agnostic delta). `skills/wiki-search/`
+SKILL.md→v1.4 + evals.json (8 cases) + manuals EN/RU + README updated (R-028-5). A **second
+`/vdd-multi` pass** (operator re-verify) caught + fixed a regression the first pass's empty-base
+guard surfaced — `wiki-search "   "` (whitespace-only) crashed with an uncaught `ValueError`
+(lexer→`""`→`search_pages` rejects, DF-1 only caught `OperationalError`); now stripped at the CLI
+boundary → clean `INVALID_QUERY` (regression test added); re-converged Logic✓ Security✓
+Performance✓. **1204 pytest (+90/4 skip), mypy strict (75 files).** See `docs/tasks/task-028-query-stemming-yo-folding.md`,
+`docs/plans/plan-028-query-stemming-yo-folding.md`, `docs/reviews/task-028-{review,vdd-multi-review}.md`,
+ARCHITECTURE Q-028-1..6.
 
 ## Knowledge lookup priority
 
@@ -387,10 +423,13 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 025
-  `adoption-currency-hardening`** (archived `docs/tasks/task-025-adoption-currency-hardening.md`
-  + `docs/plans/plan-025-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
-  completed and rotated). Adoption runbook at `docs/runbooks/personal-vault-adoption.md`.
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 028
+  `query-stemming-yo-folding`** (archived `docs/tasks/task-028-query-stemming-yo-folding.md`
+  + `docs/plans/plan-028-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
+  completed and rotated). Preceded by **TASK 026 `installer-vault-claude-settings`**
+  (`docs/tasks/task-026-installer-vault-claude-settings.md`) + **TASK 025
+  `adoption-currency-hardening`** (`docs/tasks/task-025-adoption-currency-hardening.md`
+  + `docs/plans/plan-025-*.md`). Adoption runbook at `docs/runbooks/personal-vault-adoption.md`.
   Preceded by **TASK 024 `upsert-layout-fts-hardening`** (`docs/tasks/task-024-upsert-layout-fts-hardening.md`
   + `docs/plans/plan-024-*.md`). Preceded by the ad-hoc **TASK 023** personal-vault dogfood-hardening
   batch (obsidian-personal summary `type_mapping` + structured `sources:` provenance +

@@ -10,8 +10,9 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.models import PageHit
 from scripts.wiki_index.repository import validate_filter_field
+from scripts.wiki_index.query_normalizer import fold_yo as _fold_yo
 from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
-from scripts.wiki_skills._retrieval import expand_query as _expand_query
+from scripts.wiki_skills._retrieval import build_search_query as _build_search_query
 from scripts.wiki_skills._retrieval import fts_quote as _fts_quote
 
 
@@ -61,6 +62,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Disable alias expansion (TASK 005 / R-5.5). By default "
                         "a query that resolves to an entity is OR-expanded with "
                         "that entity's canonical name + sibling aliases.")
+    p.add_argument("--exact", "--no-stem", dest="exact", action="store_true",
+                   default=False,
+                   help="TASK 028: disable query-side stemming/inflection "
+                        "broadening (precise literal terms). The always-on ё/е "
+                        "fold still applies (the corpus is folded). Omit for "
+                        "default inflection-tolerant search.")
     p.add_argument("--vault-root", default=None,
                    help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
@@ -106,13 +113,18 @@ def main(argv: list[str] | None = None) -> int:
         seen_fields.add(field)
 
     # A bare invocation with neither an FTS term nor a metadata filter has
-    # nothing to search.
-    if not args.query and not where_fields:
+    # nothing to search. Strip the query at the boundary so a blank/whitespace-
+    # only term is treated as "no query" (TASK 028 vdd-multi: the stemming lexer
+    # collapses whitespace to '', which `search_pages` rejects with a ValueError
+    # the DF-1 OperationalError net never caught → uncaught crash). Mirrors
+    # wiki-query's question strip.
+    query_arg = args.query.strip() if args.query else None
+    if not query_arg and not where_fields:
         return emit({"error": "INVALID_QUERY", "field": "query",
                      "reason": "provide a search query or at least one metadata "
                                "filter (--where/--status/--severity)"}, 2)
 
-    metadata_only = not args.query
+    metadata_only = not query_arg
 
     # When --vaults is not narrowed to a specific id, use the _global_ sentinel
     # (ADR-002 §D1.1) — factory accepts it without inventing a fake vault name.
@@ -131,10 +143,14 @@ def main(argv: list[str] | None = None) -> int:
                 project=args.project, where_fields=wf, limit=args.limit,
             )
         else:
-            qstr: str = args.query  # truthy here (metadata_only is False)
-            match_query = qstr
-            if not args.no_expand_aliases:
-                match_query = _expand_query(repo, qstr, vaults_list)
+            assert query_arg is not None  # metadata_only False ⇒ query_arg truthy
+            qstr: str = query_arg
+            # TASK 028 (Q-028-3): stem+fold the bare query, then OR-in the exact
+            # alias surfaces (F-1 order). `--exact` disables stemming only — the
+            # ё/е fold stays on (the corpus is folded).
+            match_query = _build_search_query(
+                repo, qstr, vaults_list,
+                stem=not args.exact, expand=not args.no_expand_aliases)
 
             def _search(q: str) -> list[PageHit]:
                 return repo.search_pages(
@@ -152,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
                 hits = _search(match_query)
             except sqlite3.OperationalError:
                 try:
-                    hits = _search(_fts_quote(qstr))
+                    # DF-1 fallback: literal quoted phrase, ё-folded to stay
+                    # consistent with the folded corpus (TASK 028).
+                    hits = _search(_fold_yo(_fts_quote(qstr)))
                 except sqlite3.OperationalError:
                     return emit({"error": "INVALID_QUERY", "field": "query",
                                  "reason": "not a valid FTS5 expression; quote terms "
@@ -164,11 +182,11 @@ def main(argv: list[str] | None = None) -> int:
             "snippet": h.snippet,
         } for h in hits]
         if args.format == "json":
-            return emit({"action": "searched", "query": args.query,
+            return emit({"action": "searched", "query": query_arg,
                          "hits": results, "count": len(results)})
         # Metadata-only listings have no FTS query — describe the filter instead.
         heading = (
-            f'"{args.query}"' if args.query
+            f'"{query_arg}"' if query_arg
             else "filter " + " ".join(f"{f}={v}" for f, v in where_fields)
         )
         lines = [f'## {heading} — {len(results)} hits', ""]
