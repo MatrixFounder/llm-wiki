@@ -2,12 +2,14 @@
 
 What's deferred after Phase 3a, ordered by priority. Phase 3a (foundation,
 DAL, core ingest, search/lint, reindex, benchmark) is **complete** (see
-[ARCHITECTURE.md](ARCHITECTURE.md) status header). Phase 3b: TASK 004
-shipped 2026-05-27 (R-V1); TASK 003 v2 shipped 2026-05-28 (R-3 v1+v2);
-TASK 003 v3.1 shipped 2026-05-28 commit `43812f2` (Decision-17
-deterministic refactor + post-ship `/vdd-multi` 22-finding hardening).
-No active task at HEAD — archived specs under [tasks/](tasks/) +
-[plans/](plans/).
+[ARCHITECTURE.md](ARCHITECTURE.md) status header). **Phase 3b is
+substantially complete through TASK 028** (2026-06-09): Epic 7 entity
+resolver (R-3/4/5) + RAG layer (R-6/8), the universal config-driven layout
+engine (R-X1/X2/X3), `wiki-sync` (R-11), vault-local index DBs (TASK 022),
+the installer + real-vault adoption surface (TASK 025/026/027), and
+query-side stemming + ё/е folding (TASK 028) have all shipped. **No active
+task at HEAD** — every remaining roadmap item is **trigger-gated** (see the
+priority legend); archived specs under [tasks/](tasks/) + [plans/](plans/).
 
 Status legend:
 - **P0** — start when there is a concrete trigger / pain
@@ -368,7 +370,12 @@ CROSS-REPO change (separate branch/commit in agentic-development, with its tests
 no compile coupling either direction. **Trigger**: the wiki is in daily dev use + the
 R-X2 live bootstrap decision (above) is made. **See**: proposal §12.
 
-### R-X3. KNOWN_ISSUES → per-file migration (Phase D) ✅ ENGINE+SPLITTER DONE 2026-06-01 (TASK 012); live migration held with R-X2 bootstrap
+### R-X3. KNOWN_ISSUES → per-file migration (Phase D) ✅ DONE 2026-06-02 (engine+splitter TASK 012; live migration committed)
+> **Live migration COMPLETE (2026-06-02):** this repo's KNOWN_ISSUES was split on-disk —
+> **57 per-issue Class-A files** live in `docs/issues/*.md` and `docs/KNOWN_ISSUES.md` is now the
+> **auto-rendered Class-B ledger** (`<!-- GENERATED-AT … by wiki-index-render --auto-indexes -->`),
+> guarded by the PW-Q drift lint. Edit the per-issue files, never the ledger; regenerate with
+> `wiki-index-render --auto-indexes`. The R-X2 live dev-vault bootstrap it depended on is likewise done.
 Depends on R-X1 + R-X2. `scripts/migrate_known_issues_to_files.py` shipped (012-11):
 parses THIS repo's `## [date] <id> <title> [STATUS]` ledger format into per-issue
 Class-A files with verbatim bodies + a partial-confidence `.migration-report.md`
@@ -443,6 +450,18 @@ at N=100 (current default benchmark) but flag risk at 10k pages.
 
 Trigger: real vault crosses 1k pages and operations slow down.
 
+**Newer documented residuals** (recorded, not silent; none with an active trigger):
+- **wiki-query V×T alias fan-out** (ARCHITECTURE Q-028-3) — `_build_match_query` does one
+  `expand_query_aliases` SQL call per (vault × token). **Pre-existing** (predates TASK 028;
+  verified on `main`), invisible at single-vault (V=1) — the common case — and only bites
+  `--vaults all` over a large multi-vault DB. Fix = per-vault alias prefetch (`list_all_aliases`
+  → in-memory map) → O(V) queries. Deferred (YAGNI for island single-vault DBs).
+- **wiki-sync `.md` read twice** (R-11 residual) — a `.md` is decoded for classify + re-opened
+  for hash. Architecture pre-accepted (binaries pruned pre-read, zones scoped). A future fuse
+  reads the bytes once.
+- **Single-outer-transaction batching** (TASK 015 deferred) — batch `apply`/`prepare` reuse one
+  repo but not one transaction (SQLite nested-txn limit → needs batch-mode upsert methods).
+
 > **TASK 017 (`drift-delta-redos-timeout`) shipped 2026-06-02** — closes the only open
 > **SEV-2 R-X1-REDOS-RT** (runtime per-file `regex` `timeout=` deadline for operator-custom
 > layout patterns; built-ins stay stdlib `re`/byte-identity) **+ P-2 + P-3**. **Zero DDL**
@@ -504,6 +523,59 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 028 (query-stemming-yo-folding) — 2026-06-09.** Query-side, script-aware **stemming**
+  (default-on; `--exact`/`--no-stem` opt-out; per-term by script — Cyrillic→`russian`,
+  Latin→`english`, pinned pure-Python `snowballstemmer==3.1.1`) + always-on **ё/е folding**
+  (corpus + query) — closes two real recall misses on the personal vault. New
+  `scripts/wiki_index/{_snowball,query_normalizer}.py`; two call sites (wiki-search FTS-expr
+  lexer, F-1 `(<stemmed>) OR "alias"`; wiki-query per-token `"<stem>"*`, `--exact` symmetric
+  across prepare/apply for `question_hash`). Guards: post-stem MIN, ALL-CAPS acronym,
+  stem-must-be-prefix (English `-y→-i`). Full VDD + `/vdd-multi` ×2 converged (caught + fixed a
+  whitespace-query `ValueError` regression). **Zero DDL** (`user_version` 5), Karpathy
+  byte-identical for ё-free content. **1204 pytest**, mypy strict. Dogfooded on the real vault
+  (ё-fold 133→173, stemming 67→244). See `docs/tasks/task-028-*.md` + ARCHITECTURE Q-028-1..6.
+- **TASK 026/027 (installer ships vault `.claude/settings.json` + CLI works from a vault) —
+  2026-06-09** (committed `1ee638f`). (026) `wiki-init` drops the vendor's settings file
+  (VERBATIM, non-destructive) via config-driven `settings_file`/`settings_template`. (027) the
+  8 skill SKILL.mds + wrappers fixed so `wiki-*` works **from inside a vault** (on-PATH wrapper;
+  `bin/wiki-*` drop `cd`, `source $REPO/.venv` + `PYTHONPATH` + `PYTHONSAFEPATH=1`). See
+  ARCHITECTURE Q-026-1, `docs/tasks/task-026-*.md`.
+- **TASK 025 (adoption-currency-hardening) — 2026-06-09.** Closes a 4-agent adoption-currency
+  audit run after the first real-vault dogfood: installer absolute-`--index-db` pre-write guard
+  (`config_loader.validate_index_db_value`), `INVALID_INDEX_DB` unified exit 6; obsidian-personal
+  built-in `type_mapping` += the `*-summary` family + `_raw`/`.staging` ignore; layout-aware
+  `CLAUDE.layout.md.tmpl`; basename-provenance / paths=REPLACE / custom-type docs. Full VDD +
+  `/vdd-multi` converged. **Zero DDL**. See `docs/tasks/task-025-*.md` + ARCHITECTURE Q-025-1..4.
+- **TASK 024 (upsert-layout-fts-hardening) — 2026-06-08.** **R-1** `wiki-index-upsert` is now
+  LAYOUT-AWARE (shared `reindex.derive_indexed_page` serves all 3 sites → upsert files
+  byte-identically to reindex; fixes `_vault_`-misfiling + dup-on-reindex on PARA vaults). **R-2**
+  FTS indexes the FULL body (dropped `body_excerpt[:1000]`; deep terms searchable). **R-4** D2a
+  provenance NFC/NFD normalisation; OCR convert+ingest path re-validated. Full VDD + `/vdd-multi`.
+  **Zero DDL**. See `docs/tasks/task-024-*.md` + ARCHITECTURE Q-024-1..4.
+- **TASK 023 (personal-vault dogfood hardening) — 2026-06-08** (ad-hoc batch, no separate spec).
+  obsidian-personal `type_mapping` summary family; structured object-valued `sources:` provenance
+  (`all_cited_sources` harvests `{id,url,file}`); opt-in `transcript_dedup` SyncConfig. Zero DDL.
+- **TASK 022 (vault-local-db-resolution) — 2026-06-08.** A vault may declare `index_db:` in
+  `WIKI_SCHEMA.md` → its SQLite index travels WITH the vault (portable, gitignored). Precedence
+  `--db-path > index_db > global`; island model (`--vault all` spans only the connected DB).
+  `/vdd-multi` hardening (leaf-symlink containment, absolute-path gate
+  `WIKI_ALLOW_ABSOLUTE_INDEX_DB`, expected-vault-id guard, `INVALID_INDEX_DB`). **Zero DDL**. See
+  `docs/tasks/task-022-*.md` + ARCHITECTURE Q-022-1..4.
+- **TASK 019/020/021 (sync-resummarize + reindex-slug-collision + dogfood-hardening) —
+  2026-06-07/08.** (019) `wiki-sync` re-summarization gate — a raw is re-ingested only if `--force`
+  or no summary exists (D1 source_state ∪ D2a provenance ∪ D2b filesystem mirror; per-folder
+  cascade). (020) `wiki-reindex` now emits a `slug_collisions` envelope field on intra-project PK
+  collisions (was silent). (021) repeat dogfood + 2 adversarial `critic-logic` passes → merge/split
+  WARN + cross-batch delta collision seeding + `--all-vaults --delta`. **Zero DDL**. See
+  `docs/tasks/task-019-*.md` / `task-020-*.md` / `task-021-*.md`.
+- **TASK 018 (`wiki-sync`, R-11) — 2026-06-03.** See the R-11 entry above (P1) for the full
+  summary. Format-aware, tag-routed ingest dispatcher; **zero DDL** (`source_kind='sync'`); two
+  adversarial gates; 986 pytest.
+- **TASK 017 (drift-delta-redos-timeout) — 2026-06-02.** Closes the last open SEV-2
+  **R-X1-REDOS-RT** (runtime per-file `regex` `timeout=` ReDoS deadline for operator-custom layout
+  patterns; built-ins stay stdlib `re`/byte-identity) + **P-2** (single-stat delta walk) + **P-3**
+  (`check_drift` `type:` regex fast-path, 4.6× `wiki-lint` @1k). New dep `regex`(+`types-regex`).
+  **Zero DDL**. See `docs/tasks/task-017-*.md` + ARCHITECTURE Q-017-1..4.
 - **TASK 016 (split-extract-concepts-module) — 2026-06-01.** Pure structural refactor: the
   2174-line `scripts/wiki_skills/wiki_extract_concepts.py` god-module split into a **package**
   — facade `__init__.py` (orchestration: `prepare`/`apply`/`dispatch_to_indexer`/`_batch_*`/
