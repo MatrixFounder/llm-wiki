@@ -4,6 +4,18 @@
 - **Task ID:** 030 · **Slug:** `task-030-reindex-perf-hardening`
 - **Mode:** VDD (full pipeline). Code task (Python under `scripts/`), Stub-First,
   green-throughout, mypy `--strict`.
+- **As-built status (post-/update-docs):** ✅ **SHIPPED** — all 8 beads merged via
+  `/vdd-develop-all` (every bead REJECTED iter-1 → converged iter-2; 030-07 iter-3),
+  **committed `bbd92af`, merged to `main`**. Post-ship `/vdd-multi` **converged
+  iter-3** (7 net-new findings closed: SEC-HIGH `**`-glob walk DoS → `**`-collapse +
+  `_GLOB_MAX_SEGMENTS=64` operator load-gate; LOGIC-MED delta partial-write → per-file
+  atomic txn via the 030-02 helpers; PERF-M1 staging peak 63.6→33.4 MiB via per-row
+  buffer drain; PERF-M2 → residual `docs/issues/p-030-delta-bulk-ingest-per-file-txns.md`
+  + Q-030-3 cost-claim correction; +3 LOW). Full real-vault dogfood
+  (`Downloads/TestVault/ObsidianNotes-Test`, 2487 pages) GREEN. **1314 pytest (+5
+  skipped), mypy strict (75 files).** The spec below is the **v3 design intent** (the
+  ACs as planned); the as-built outcome + gate records live in the CLAUDE.md ship-log
+  + `docs/reviews/task-030-review.md`.
 - **Source:** operator request 2026-06-12 — "проработай качественно DF-029-1, P-1 (OPEN),
   R-X1-OBS-WALK"; Class-A sources
   `docs/issues/{df-029-1-reindex-delta-misses-mtime-preserved-rename,

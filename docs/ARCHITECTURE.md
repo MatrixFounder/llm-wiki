@@ -281,7 +281,7 @@
 > Q-019-1..9. Spec: [TASK 019](./tasks/) + [review](./reviews/task-019-review.md).
 >
 > **TASK 029 (R-12 `obsidian-cli` skill — native Obsidian CLI control layer for any
-> LLM agent) — ✅ SHIPPED 2026-06-12** (uncommitted, branch `task-029-obsidian-cli-skill`;
+> LLM agent) — ✅ SHIPPED 2026-06-12** (committed `c3a53f5`;
 > full VDD pipeline: task/arch/plan reviews APPROVED + 8 beads green-throughout with
 > per-bead Sarcasmotron [029-01 +3 MED, 029-04 +3 CRITICAL `wiki-*` syntax, all fixed]
 > + agentic eval **14/14 GREEN** [Sonnet routing, Fable+Sonnet injection canaries;
@@ -305,7 +305,7 @@
 > docs/TASK.md (TASK 029); design inline at §2.2 + §11a Q-029-1..5. ROADMAP R-12.
 >
 > **TASK 030 (reindex-perf-hardening — DF-029-1 + P-1 + R-X1-OBS-WALK) — ✅ SHIPPED
-> 2026-06-12** (uncommitted, branch `task-030-reindex-perf-hardening`; full VDD chain:
+> 2026-06-12** (committed `bbd92af`, merged to `main`; full VDD chain:
 > task/arch/plan gates [2 adversarial review workflows, 6× NEEDS-REVISION folded] + 8
 > beads via `/vdd-develop-all` with per-bead Sarcasmotron — EVERY bead REJECTED iter-1
 > and converged iter-2 [030-03 had a CRITICAL: mid-loop flush swallow, empirically
@@ -327,7 +327,7 @@
 > instrumented) + real `<prefix>/**` ignore-pruning. **Measured: PARA 2k-file scandirs
 > 140→61 (every dir ×1), wall 94.1→77.0 ms; delta-noop @10k 246.3→191.8 ms**. Q-030-1
 > gate: opt-in `WIKI_BENCH_SLO=1` SLO test + runbook (`docs/runbooks/perf-slo-gate.md`)
-> + committed before/after JSONs (`docs/benchmarks/030-*`); P-4 stays open. **1310+
+> + committed before/after JSONs (`docs/benchmarks/030-*`); P-4 stays open. **1314
 > pytest, mypy strict (75 files).** Spec: docs/TASK.md v3 (two adversarial gates;
 > [record](./reviews/task-030-review.md)); design Q-030-1..6 (Q-030-2 at v4).
 >

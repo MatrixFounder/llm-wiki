@@ -377,7 +377,7 @@ Performance✓. **1204 pytest (+90/4 skip), mypy strict (75 files).** See `docs/
 `docs/plans/plan-028-query-stemming-yo-folding.md`, `docs/reviews/task-028-{review,vdd-multi-review}.md`,
 ARCHITECTURE Q-028-1..6.
 **TASK 029 (R-12 — `obsidian-cli` skill: native Obsidian CLI control layer for any LLM)
-SHIPPED 2026-06-12** (uncommitted, branch `task-029-obsidian-cli-skill`): a **prompt-layer,
+SHIPPED 2026-06-12** (committed `c3a53f5`): a **prompt-layer,
 vendor-agnostic** skill `skills/obsidian-cli/` (SKILL.md + `references/{command-reference,recipes}.md`
 + `evals/`, symlinked into `.claude/skills/` + `.agent/skills/`) teaching agents to DRIVE the
 running Obsidian 1.12+ desktop app via its official CLI (link-safe rename/move, typed
@@ -405,7 +405,7 @@ strict 75 files** unchanged), no `import anthropic`, Karpathy byte-identity unaf
 `docs/tasks/task-029-*.md`, `docs/plans/plan-029-obsidian-cli-skill.md`, ARCHITECTURE §2.2 +
 Q-029-1..5, `docs/issues/df-029-1-*.md`, ROADMAP R-12.
 **TASK 030 (reindex-perf-hardening — DF-029-1 + P-1 + R-X1-OBS-WALK) SHIPPED 2026-06-12**
-(uncommitted, branch `task-030-reindex-perf-hardening`): three indexer fixes, one bounded
+(committed `bbd92af`, merged to `main`): three indexer fixes, one bounded
 cycle (TASK 017 precedent), **zero DDL** (`user_version` 5), no new deps. **(1) rename-aware
 `--delta`** (closes DF-029-1 SEV-2 in CODE — supersedes the TASK 029 skill-level `--full`
 mitigation): any on-disk path absent from `pages.file_path` ingests regardless of mtime
