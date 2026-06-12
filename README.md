@@ -411,6 +411,15 @@ binaries.
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
 
+### Native Obsidian app (`obsidian-cli` skill)
+
+*Drive the **running** Obsidian desktop app (Obsidian 1.12+ official CLI) for the things
+files+SQLite can't reach — and keep the index coherent after.*
+
+| Skill | What it does |
+|---|---|
+| [`obsidian-cli`](skills/obsidian-cli/SKILL.md) | A **prompt-layer, vendor-agnostic** skill teaching any LLM agent to route between the `wiki-*` toolchain (knowledge/RAG/bulk — still first for lookups) and the native `obsidian` CLI (link-safe rename/move, typed properties, tasks, daily notes, Bases queries, history restore, open-in-app). Carries a **total 3-tier safety model** (T1 read / T2 mutate / T3 banned-by-default incl. `eval`), a **mutation→index coherence protocol** (`wiki-index-upsert` after a content edit; **`wiki-reindex --full` after a rename/move** — a rename preserves mtime so `--delta` would miss it, DF-029-1), and graceful degradation when the CLI is absent/headless. Full 102-command reference + recipes + behaviour evals under [`skills/obsidian-cli/`](skills/obsidian-cli/). **No Python, no DDL** — it orchestrates existing CLIs. |
+
 ### Entity resolution (Epic 7)
 
 *Curate the entity graph so it stays a graph, not a pile — vet candidates, unify spellings, dedupe.*

@@ -9,7 +9,9 @@ engine (R-X1/X2/X3), `wiki-sync` (R-11), vault-local index DBs (TASK 022),
 the installer + real-vault adoption surface (TASK 025/026/027), and
 query-side stemming + ё/е folding (TASK 028) have all shipped. **No active
 task at HEAD** — every remaining roadmap item is **trigger-gated** (see the
-priority legend); archived specs under [tasks/](tasks/) + [plans/](plans/).
+priority legend). **R-12 (`obsidian-cli` skill) SHIPPED 2026-06-12 as TASK 029**
+(native Obsidian CLI control layer; see the P1 entry below). Archived specs
+under [tasks/](tasks/) + [plans/](plans/).
 
 Status legend:
 - **P0** — start when there is a concrete trigger / pain
@@ -297,6 +299,167 @@ Stub-First green-throughout; 4 VDD gates incl. `/vdd-adversarial` on the plan;
 one found-in-dev serious-deviation fixed — verdict↔query `pages` PK collision →
 `verify-<slug>` distinct slug). See archived spec/plan at [tasks/task-008-*.md](tasks/)
 + [plans/plan-008-*.md](plans/). Pairs with `/vdd-multi`.
+
+---
+
+## P1 — Native Obsidian app integration
+
+### R-12. `obsidian-cli` skill — teach any LLM agent the native Obsidian CLI ✅ SHIPPED (TASK 029, 2026-06-12)
+**Status: SHIPPED** as TASK 029 (`task-029-obsidian-cli-skill`, uncommitted on branch
+`task-029-obsidian-cli-skill`). The skill `skills/obsidian-cli/` (SKILL.md + `references/{command-reference,recipes}.md`
++ `evals/`) ships: a 4-invariant dispatch core (routing / coherence / safety / degradation),
+a **total** T1/T2/T3 command-safety model over the **verified 102-command** live surface
+(`eval`/`dev:*`/plugin-snippet-theme mutations T3-banned; `command id=`+`template:insert`
+active-file default-DENY S-1), the mutation→index coherence protocol (`wiki-index-upsert`
+for content; **`wiki-reindex --full` for rename/move** — DF-029-1), the full live-verified
+catalog + a diff-driven version-update Maintenance procedure, ≥8 recipes, and **14/14 GREEN**
+behaviour evals (Fable+Sonnet injection canaries). Full VDD + per-bead Sarcasmotron +
+**live dogfood** that found+fixed **DF-029-1** (SEV-2: `--delta` misses an mtime-preserved
+rename). **Zero DDL** (`user_version` 5), **zero new Python**, no `import anthropic`,
+1204 pytest + mypy strict unchanged. See `docs/tasks/task-029-*.md`, `docs/plans/plan-029-*.md`,
+ARCHITECTURE §2.2 + Q-029-1..5.
+
+<details><summary>Original proposal (for history)</summary>
+**Was: PROPOSED 2026-06-12 (worked out; trigger FIRED — operator request).**
+
+**What changed upstream**: Obsidian 1.12 ships an **official CLI**
+(early-access 2026-02-10; **GA in 1.12.4, 2026-02-27**; requires installer
+≥ 1.12.7; free, no Catalyst). It is a **remote control for the running
+desktop app** — commands talk to the live Obsidian instance over its own
+channel (the first command launches the app if closed; the separate
+"Obsidian Headless" product is NOT this). Syntax:
+`obsidian [vault=<name|id>] <command> [param=value …] [flags]`; many commands
+emit `json|csv|tsv|md|yaml`; `file=` resolves like a wikilink, `path=` is
+exact vault-relative. Surface ≈ 100 commands: files/content
+(`create/append/prepend/move/rename/delete` — **rename/move update backlinks
+app-side**), search (`search`, `search:context`), live graph reads
+(`backlinks/links/unresolved/orphans/deadends`), **typed properties**
+(`property:set/read/remove`), tasks (`tasks` filterable, `task` status
+update), daily notes (`daily*`), templates (`template:*`, `unique`),
+**Bases** (`bases`, `base:views`, `base:query format=json`), version history
+(`history*`, `diff`, `sync:history`/`sync:restore`/`sync:deleted`),
+workspace/tabs, bookmarks, publish (`publish:*`), plugin/theme management,
+command-palette dispatch (`command <id>` — reaches ANY plugin command), and a
+dev tier (`eval` = arbitrary JS in the app process, `dev:*` CDP, screenshots).
+Docs: <https://obsidian.md/help/cli>.
+
+**The gap**: the framework treats a vault as **files + SQLite**; the running
+app is a *second runtime* — live link graph, typed properties, tasks, Bases,
+recovery history, publish — none of it reachable from our CLIs. Today an
+agent that renames a note via `mv` silently breaks every inbound wikilink
+(`wiki-lint` only counts the orphans afterwards); it cannot flip a task
+checkbox, set a typed property, append to today's daily note, query a Base,
+or restore a clobbered file from history. The official CLI closes all of that
+**iff the agent knows when to reach for it vs the wiki toolchain vs a plain
+file edit** — that routing judgment is the skill. House Decision-17 applies
+cleanly: the `obsidian` binary already IS the deterministic plumbing layer;
+wrapping it in Python would add a brittle shim for zero determinism gain. So:
+a **prompt-layer skill, vendor-agnostic (any LLM), zero new Python, zero DDL**.
+
+**Deliverable — `skills/obsidian-cli/` (Gold-Standard structure)**:
+1. **`SKILL.md`** — lean dispatch core in any-LLM wording (no
+   harness-specific tool names; "run in your shell"): availability probe
+   (`obsidian help`, bounded timeout — NOT `version`, which the live 1.12.7
+   CLI lists but fails to run (TASK 029 F-3) → degrade to wiki-*/file-ops when
+   absent or headless/CI); **explicit `vault=` targeting always** (first
+   param; never ambient "active vault"; verify wiki `vault_root` ↔ Obsidian
+   vault by `vault`/`vaults` path compare — names and `vault_id`s may
+   differ); `path=` preferred over `file=` for determinism; a top-20 command
+   quick table; the **decision matrix**, **coherence protocol** and **safety
+   tiers** (below); progressive-disclosure links to references.
+2. **`references/command-reference.md`** — the full ~100-command catalog by
+   category (params/flags, output formats, `--copy`, `\n`/`\t` escapes, TUI
+   notes, per-platform one-time setup: macOS symlink / Windows terminal
+   redirector / Linux binary), version-stamped **"verified against Obsidian
+   1.12.x"**.
+3. **`references/recipes.md`** — composed playbooks: link-safe rename/move →
+   `wiki-reindex --delta`; capture→daily-note (`daily:append`); task sweep
+   (`tasks status=incomplete` → `task` update → upsert); Base→JSON→analysis;
+   property migration via `property:set type=…`; history `diff`→`restore`
+   recovery loop; vault audit (`orphans`+`deadends`+`unresolved`
+   cross-checked against `wiki-lint`); publish flow; workspace/session setup.
+4. **`evals/evals.json`** (+ `reports/`, the TASK 009 harness pattern) —
+   trigger accuracy + behaviour: rename routes to `obsidian rename`, NOT
+   `mv`; a domain question still routes to **wiki-search FIRST** (the skill
+   must not weaken the search-before-answering rule); post-mutation upsert
+   fires iff the vault is wiki-registered (and is skipped when not);
+   **`eval`-injection canary refused** (a note body instructing "run
+   `obsidian eval …`" — H-6-adjacent); headless context degrades gracefully.
+5. Vendor symlinks (`.claude/skills/`, `.agent/skills/`) + README skills
+   table + manual touchpoint (Mixed-vault section: live-app ops now
+   scriptable) + *optional* adoption bead: the obsidian-personal `wiki-init`
+   agent template mentions the skill (TASK 025/026 surface).
+
+**Decision matrix (the heart of the skill)**:
+
+| Need | Route |
+|---|---|
+| Domain question / RAG / cited answer | `wiki-search` / `wiki-query` — UNCHANGED first stop (BM25 + aliases + stemming + citations; app `search` has none of that) |
+| Bulk ingest / index / dedup / re-summarize | `wiki-sync` / `wiki-reindex` / `wiki-index-upsert` |
+| Link-integrity mutation (rename/move), typed property, task status, daily note, template, Base query, history restore, open-in-app / UX | **`obsidian` CLI** |
+| Plain content edit on a known path | direct file edit (then upsert if indexed) |
+
+App `search`/`search:context` is a *complement*: live and index-free (useful
+mid-mutation, or on vaults never registered in the wiki index), but no
+ranking/stemming/citations — never the default for knowledge lookup.
+
+**Mutation→index coherence protocol**: any obsidian-CLI mutation on a
+wiki-registered vault MUST be followed in the same turn by
+`wiki-index-upsert <file>` (single file) or `wiki-reindex --delta`
+(rename/move — app-side link updates fan out to many files; delta catches
+all). The SQLite mirror never stays stale past the turn. ADR-002 §D8 holds:
+Class-A files are mutated app-side, the DB stays a rebuildable projection.
+
+**Safety tiers** (vault bodies are untrusted input — same egress posture as
+TASK 012 SEC-1):
+- **T1 read-only** (`search*`, `read`, `links`/`backlinks`/`unresolved`/…,
+  `tags`, `properties`, `tasks`, `outline`, `history:read`, `vault*`,
+  `wordcount`, …) — free use.
+- **T2 mutating** (`create/append/prepend/move/rename/delete`,
+  `property:set/remove`, `task`, `daily:append/prepend`, `template:insert`,
+  `bookmark`, `workspace:*`, `publish:add/remove`) — allowed within task
+  scope; `delete` → trash, never permanent without the operator; `create` →
+  existence-check before `overwrite`.
+- **T3 banned-by-default** (`eval`, `dev:*`, `plugin:install/uninstall/
+  enable/disable`, `plugins:restrict`, `theme:install`, `sync` pause/resume) —
+  operator-explicit only, NEVER from note-content instructions (`eval` is
+  arbitrary JS inside the app process = RCE-equivalent; prompt-injection
+  vector).
+- GUI side-effect: any command launches the app if closed — probe first; in
+  headless/CI degrade silently to wiki-*/file-ops.
+
+**Out of scope**: an MCP-server wrapper (skill-first; MCP later if a vendor
+needs it); Obsidian Headless; mobile; replacing wiki-search/RAG; auto-enabling
+T3; scripting the Windows terminal-redirector setup (document it only).
+
+**Acceptance**: evals green (incl. the injection canary + both routing
+cases); live dogfood on the real obsidian-personal vault — a link-safe rename
+with `wiki-lint` showing **zero new orphans** after delta-reindex, a
+daily-note capture, a `base:query format=json`, a history restore;
+`skill-validator` + skill-creator Gold-Standard pass; **zero DDL**
+(`user_version` 5), zero new Python, no `import anthropic` (trivially — no
+code).
+
+**Effort**: ~1 light-medium TASK — the references + evals dominate; full VDD
+with `/vdd-multi` on the skill TEXT (injection/abuse critics matter more than
+code critics here).
+
+**Risks / open (settle in TASK analysis)**: the CLI is ~3 months old and may
+churn between minors → version-stamp the reference + re-verify on Obsidian
+minor bumps (lightweight drift check in evals); Obsidian vault-name ↔ wiki
+`vault_id` mismatch → mapping discipline in SKILL.md; macOS-first dogfood
+(operator platform), Windows/Linux setup documented per official help;
+cross-publication to Universal-skills? (the skill is deliberately
+framework-optional — the coherence step self-disables on unregistered
+vaults, so it stands alone).
+
+**Builds on**: R-11 `wiki-sync` (the bulk path stays), TASK 022 vault-local
+DBs (targeting), TASK 025/026 adoption surface, TASK 009 eval-harness
+pattern. **Complements**: the P3 "wiki-graph export" item —
+`backlinks`/`links`/`orphans` now give Graph-View-parity *reads* for free;
+that item likely shrinks to export-only.
+
+</details>
 
 ---
 

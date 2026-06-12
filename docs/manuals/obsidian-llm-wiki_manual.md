@@ -604,6 +604,17 @@ flowchart TD
     class L en;
 ```
 
+> **Driving the running Obsidian app (the `obsidian-cli` skill).** A mixed vault is
+> still a *live Obsidian vault*. The [`obsidian-cli`](../../skills/obsidian-cli/SKILL.md)
+> skill (Obsidian 1.12+ official CLI) lets an agent do the things files+SQLite can't —
+> a **link-safe** `rename`/`move` (the app rewrites backlinks; a plain `mv` would
+> orphan them), set typed properties, toggle tasks, append to the daily note, query a
+> Base as JSON, restore from file history. It routes knowledge lookups to
+> `wiki-search`/`wiki-query` first, carries a 3-tier safety model (read / mutate /
+> banned-by-default `eval`+`dev:*`), and after any app-side mutation refreshes the
+> index in the same turn — `wiki-index-upsert` for a content edit, **`wiki-reindex
+> --full` for a rename/move** (a rename preserves mtime, so `--delta` would miss it).
+
 **The boundary rule (the one invariant that must hold):** the search vault must
 `ignore` the enrich zone, and the enrich vault is rooted inside that zone. Then
 every file is indexed exactly once — no double-walk, no duplicate rows.

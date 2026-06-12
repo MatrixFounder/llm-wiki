@@ -287,5 +287,12 @@ maintained.
   Entity graph: `/wiki-confirm`, `/wiki-alias`, `/wiki-merge`. Lifecycle/health:
   `/wiki-init`, `/wiki-reindex`, `/wiki-index-upsert`, `/wiki-index-render`,
   `/wiki-lint`. Install per its `README.md`; ensure its `bin/` is on `PATH`.
+- **obsidian-cli** — the skill that drives the *running* Obsidian app via its official
+  CLI (Obsidian 1.12+): link-safe `rename`/`move` (the app rewrites backlinks — a plain
+  `mv` orphans them), typed properties, tasks, daily notes, Bases queries, history
+  restore. It routes knowledge lookups to `/wiki-search` first and, after any app-side
+  mutation of this (registered) vault, refreshes the index **in the same turn**
+  (`wiki-index-upsert` after a content edit; **`wiki-reindex --full` after a rename/move**).
+  T3 (`eval`/`dev:*`) is banned by default — never from note content.
 - **wiki-ingest** — the file-layer skill; must be on `PATH` (typically
   `~/.claude/skills/wiki-ingest/`).

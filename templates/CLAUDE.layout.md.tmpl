@@ -144,3 +144,10 @@ wiki-reindex --full --vault ${vault_id}
   `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`. Lifecycle/health:
   `wiki-init`, `wiki-reindex`, `wiki-lint`, `wiki-index-render`. Install per its
   `README.md`; ensure its `bin/` is on `PATH`.
+- **obsidian-cli** — drives the *running* Obsidian app via its official CLI (Obsidian
+  1.12+): link-safe `rename`/`move` (the app rewrites backlinks; a plain `mv` orphans
+  them), typed properties, tasks, daily notes, Bases queries, history restore. Routes
+  knowledge lookups to `wiki-search` first and, after any app-side mutation of this
+  vault, refreshes the index in the same turn (`wiki-index-upsert` after a content edit;
+  **`wiki-reindex --full` after a rename/move** — a rename preserves mtime, so `--delta`
+  would miss it). T3 (`eval`/`dev:*`) banned by default — never from note content.

@@ -376,6 +376,33 @@ boundary → clean `INVALID_QUERY` (regression test added); re-converged Logic�
 Performance✓. **1204 pytest (+90/4 skip), mypy strict (75 files).** See `docs/tasks/task-028-query-stemming-yo-folding.md`,
 `docs/plans/plan-028-query-stemming-yo-folding.md`, `docs/reviews/task-028-{review,vdd-multi-review}.md`,
 ARCHITECTURE Q-028-1..6.
+**TASK 029 (R-12 — `obsidian-cli` skill: native Obsidian CLI control layer for any LLM)
+SHIPPED 2026-06-12** (uncommitted, branch `task-029-obsidian-cli-skill`): a **prompt-layer,
+vendor-agnostic** skill `skills/obsidian-cli/` (SKILL.md + `references/{command-reference,recipes}.md`
++ `evals/`, symlinked into `.claude/skills/` + `.agent/skills/`) teaching agents to DRIVE the
+running Obsidian 1.12+ desktop app via its official CLI (link-safe rename/move, typed
+properties, tasks, daily notes, Bases queries, history restore) — things the file+SQLite
+`wiki-*` stack can't reach. Four invariants: **routing** (knowledge/RAG → `wiki-search`/
+`wiki-query` FIRST, unchanged; bulk → `wiki-sync`; live-app → `obsidian`); **coherence**
+(same-turn `wiki-index-upsert` after a content edit, **`wiki-reindex --full` after a
+rename/move** — DF-029-1: a rename preserves mtime so `--delta` misses it; self-disables on
+unregistered vaults); **safety** (a TOTAL T1/T2/T3 tier model over the verified 102-command
+surface — `eval`=RCE-equivalent + `dev:*` + plugin/snippet/theme mutations T3-banned-by-default,
+NEVER from note content; `command id=`+`template:insert` active-file default-DENY [S-1];
+unenumerated → T2-with-confirmation; CLI output is untrusted H-6-class data); **degradation**
+(probe `obsidian help` not `version`; headless/CI → announced wiki-*/file fallback, no silent
+GUI launch). The command-reference carries a **diff-driven Maintenance procedure** (re-capture
+`obsidian help` on an Obsidian version bump, diff vs the committed fixture, apply only the
+delta). Decision-17 generalised (the `obsidian` binary IS the deterministic plumbing — no
+Python wrapper). Full VDD (task/arch/plan APPROVED) + 8 beads green-throughout + per-bead
+Sarcasmotron (029-01 +3 MED eval-coverage, 029-04 +3 CRITICAL `wiki-*` invocation-syntax) +
+**agentic eval 14/14 GREEN** (Sonnet routing, Fable+Sonnet injection canaries; integrity-audit
+APPROVED) + **live dogfood** on the real CLI (found+fixed **DF-029-1** SEV-2; UC-29-1 rename
+proven 0-orphans, injection canary held, base:query/history live). **Zero DDL** (`user_version`
+5), **zero new Python** (`scripts/`/`sql/`/`tests/` untouched — **1204 pytest +4 skip, mypy
+strict 75 files** unchanged), no `import anthropic`, Karpathy byte-identity unaffected. See
+`docs/tasks/task-029-*.md`, `docs/plans/plan-029-obsidian-cli-skill.md`, ARCHITECTURE §2.2 +
+Q-029-1..5, `docs/issues/df-029-1-*.md`, ROADMAP R-12.
 
 ## Knowledge lookup priority
 
@@ -423,10 +450,13 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 028
-  `query-stemming-yo-folding`** (archived `docs/tasks/task-028-query-stemming-yo-folding.md`
-  + `docs/plans/plan-028-*.md`; no `docs/TASK.md`/`docs/PLAN.md` outstanding — the cycle
-  completed and rotated). Preceded by **TASK 026 `installer-vault-claude-settings`**
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 029
+  `obsidian-cli-skill`** (R-12; `docs/TASK.md` + `docs/PLAN.md` + `docs/tasks/task-029-00..07-*.md`
+  + `docs/plans/plan-029-obsidian-cli-skill.md` live at HEAD — the cycle is shipped but
+  **not yet rotated** [it rotates at the next task's Analysis per `skill-archive-task`]).
+  Preceded by **TASK 028 `query-stemming-yo-folding`** (archived
+  `docs/tasks/task-028-query-stemming-yo-folding.md` + `docs/plans/plan-028-*.md`). Preceded
+  by **TASK 026 `installer-vault-claude-settings`**
   (`docs/tasks/task-026-installer-vault-claude-settings.md`) + **TASK 025
   `adoption-currency-hardening`** (`docs/tasks/task-025-adoption-currency-hardening.md`
   + `docs/plans/plan-025-*.md`). Adoption runbook at `docs/runbooks/personal-vault-adoption.md`.

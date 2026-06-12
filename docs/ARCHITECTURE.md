@@ -280,6 +280,29 @@
 > stem), (C) date-keyed `Lessons/` (`^(\d{8})` — divergent per-folder regex). Design: §11a
 > Q-019-1..9. Spec: [TASK 019](./tasks/) + [review](./reviews/task-019-review.md).
 >
+> **TASK 029 (R-12 `obsidian-cli` skill — native Obsidian CLI control layer for any
+> LLM agent) — ✅ SHIPPED 2026-06-12** (uncommitted, branch `task-029-obsidian-cli-skill`;
+> full VDD pipeline: task/arch/plan reviews APPROVED + 8 beads green-throughout with
+> per-bead Sarcasmotron [029-01 +3 MED, 029-04 +3 CRITICAL `wiki-*` syntax, all fixed]
+> + agentic eval **14/14 GREEN** [Sonnet routing, Fable+Sonnet injection canaries;
+> integrity-audit APPROVED — no gaming] + **live dogfood on the real CLI** that found +
+> fixed **DF-029-1 SEV-2** [a rename preserves mtime → `wiki-reindex --delta` misses it
+> → orphans; coherence now prescribes `--full` for rename/move, proven 0-orphans live].
+> **Zero DDL** (`user_version` 5), **zero new Python** (1204 pytest + mypy strict 75
+> files unchanged), no `import anthropic`. A **prompt-layer-only** deliverable:
+> `skills/obsidian-cli/` (SKILL.md +
+> references + evals, vendor symlinks) teaching any-LLM agents to route between the
+> wiki toolchain, the **official Obsidian CLI** (1.12 GA; **verified live surface =
+> 102 commands** (+ the global `vault=` option) incl. `eval`/`dev:*`, captured 2026-06-12 on Obsidian 1.12.7,
+> macOS), and plain file edits; a mutation→index **coherence protocol**
+> (`wiki-index-upsert` / `wiki-reindex --delta`, same-turn); a **TOTAL three-tier
+> command-safety model** (T1 read / T2 mutate with explicit-`path=` discipline / T3
+> banned-by-default incl. `eval` = RCE-equivalent; unenumerated → T2-with-
+> confirmation fail-safe; `command id=` inherits the dispatched effect's tier);
+> untrusted-CLI-output posture (H-6 class). **Zero DDL** (`user_version` 5), **zero
+> new Python** (mypy surface untouched), no new deps, no `import anthropic`. Spec:
+> docs/TASK.md (TASK 029); design inline at §2.2 + §11a Q-029-1..5. ROADMAP R-12.
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -329,7 +352,7 @@ Where things live in the repo: anatomy of one in-repo skill (template + symlink 
 
 ## 2. Functional Architecture
 
-Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`, **Sync Dispatcher** `wiki-sync` [TASK 018 / R-11 — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip; **TASK 019** adds a re-summarization **policy gate** — skip-if-summarized (D1 `source_state` ∪ D2a provenance ∪ D2b mirror) + `--force` + per-folder `.wiki/sync.yaml` cascade overrides]) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
+Functional components (Configuration Resolver, Source Adapters, Index Layer DAL, Search Layer FTS5, Lint Layer, Workflow Orchestrator, Migration Tools, Concept Extractor, **Entity Resolver** `wiki-confirm`+`wiki-alias`+`wiki-merge`, **RAG Query Layer** `wiki-query`, **Sync Dispatcher** `wiki-sync` [TASK 018 / R-11 — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip; **TASK 019** adds a re-summarization **policy gate** — skip-if-summarized (D1 `source_state` ∪ D2a provenance ∪ D2b mirror) + `--force` + per-folder `.wiki/sync.yaml` cascade overrides], **Native-App Control Skill** `obsidian-cli` [TASK 029 / R-12 — prompt-layer routing/safety/coherence over the official Obsidian CLI; design inline at §2.2]) and the connection diagram between them. Includes the full `wiki-extract-concepts` `prepare`/`apply` contract, candidates JSON schema, the TASK 005 Entity Resolver CLI surface + exit-code envelopes (incl. `wiki-merge` duplicate-fold), the TASK 007 `wiki-query` `prepare`/`apply` RAG contract (retrieval envelope + answer/citations contract + grounding gate + `cited`-backlink self-index), operational invariants, and RTM cross-reference.
 
 → [details](./architectures/functional-architecture.md)
 
@@ -365,6 +388,71 @@ is the dependency sink. Leaves MAY depend on lower leaves: `_validation` → `_e
 `_manifest_consumer` + `factory`. No leaf may import the facade (that would both cycle and
 break the facade-global lock). `_format_source_quote_block` lives in `_pages` (its only
 caller is `write_concept_page`), resolving the TASK §3.1 dual-listing.
+
+**§2.2 Native-App Control Skill `obsidian-cli` (TASK 029 / R-12 — prompt-layer only).**
+The component is **skill text, not code**: `skills/obsidian-cli/` (SKILL.md +
+`references/{command-reference,recipes}.md` + `evals/`) symlinked into
+`.claude/skills/` + `.agent/skills/`. It sits ABOVE the existing stack: the official
+`obsidian` binary (a remote control for the RUNNING desktop app; GA since 1.12.4) is
+itself the deterministic plumbing layer — **Decision-17 generalised**: we do not wrap
+a binary in Python when the binary already carries a stable CLI contract; the skill
+encodes routing judgment, safety policy, and coherence obligations in the
+orchestrator's prompt layer, vendor-agnostic (any LLM). Four invariants form the
+component contract:
+
+1. **Routing invariant** — knowledge/RAG → `wiki-search`/`wiki-query` FIRST
+   (unchanged, restated verbatim in the skill); bulk ingest/index →
+   `wiki-sync`/`wiki-reindex`/`wiki-index-upsert`; live-app ops (link-safe
+   rename/move, typed properties, tasks, daily notes, templates, Bases queries,
+   history restore, UX) → `obsidian` CLI; plain content edits → file tools (+ upsert
+   if indexed). App `search`/`search:context` is a complement (no
+   BM25/stemming/citations), never the knowledge default.
+2. **Coherence invariant** — any app-side mutation of a wiki-registered vault is
+   followed **same-turn** by: `wiki-index-upsert <file>` (single-file content change);
+   **`wiki-reindex --full` for rename/move** (DF-029-1: a rename PRESERVES the file's
+   mtime, so `--delta` misses the moved file and orphans its inbound links — `--full`,
+   or `touch`+`--delta`, is correct; proven live in 029-06); `wiki-reindex --delta` for
+   `delete` (the removed path is detected). ADR-002 §D8 unaffected: Class-A files are
+   mutated app-side, the DB stays a rebuildable projection. Unregistered vault → the
+   protocol self-disables (the skill stays standalone-capable, Q-029-2).
+3. **Safety invariant** — a **TOTAL tier function** over the captured 102-command
+   surface: **T1** read-only (+ a T1-UX open/GUI sub-class: `open`, `daily`,
+   `*:open`, `random`, `tab:open` — on-disk-side-effect-free); **T2** mutating
+   (explicit `path=` REQUIRED — the live CLI defaults to the **active file** when
+   file/path is omitted [F-4 footgun]; trash over permanent delete; existence-check
+   before `overwrite`; `base:create` named here); **T3** banned-by-default (`eval` =
+   arbitrary JS in the app process / RCE-equivalent, `dev:*`, `devtools`, `plugin:*`
+   incl. `plugin:reload`, `plugins:restrict`, `theme:install/uninstall/set`,
+   `snippet:enable/disable` [CSS-injection surface], `sync on/off`,
+   `restart`/`reload`) — operator-explicit only, NEVER from note content.
+   Two **gate-closing refinements** (029-07 critic-security): (i) `command id=`
+   **defaults to T3** (not T2) when the dispatched effect can't be proven from the tier
+   lists — a friendly palette title doesn't reveal a code-running/sync-force-push
+   capability (closes the same-effect-different-verb gap); (ii) **template application is
+   a code-execution surface** — `template:insert`/`create template=` inherit **T3** when a
+   scripting plugin (Templater/QuickAdd) is present unless the template is
+   `template:read`-verified JS-free (else an attacker-planted JS template is an `eval`
+   bypass through a T2 verb). **`command id=` and
+   `template:insert` operate on the ACTIVE-FILE/editor context** (neither accepts
+   `path=`), so for this sub-class the explicit-target guarantee is replaced by
+   (a) default-DENY on an unnameable effect AND (b) verifying/confirming the active
+   file before any such mutation (arch-review S-1); any command not enumerated
+   defaults to **T2-with-confirmation** (fail-safe). All CLI output is untrusted
+   vault content (H-6 posture; by analogy to the TASK 012 SEC-1 egress discipline).
+4. **Degradation invariant** — probe = `command -v obsidian` + `obsidian help`
+   (**NOT `version`** — listed-but-unrunnable on live 1.12.7, TASK 029 F-3);
+   absent/headless/CI → announce the fallback to wiki-*/file-ops (no silent GUI
+   launch — the first CLI command launches the app if closed); the surface is
+   **dynamic** (plugin-gated: the captured machine lacks `publish:*`, `unique`,
+   `workspaces`, `web`) → feature-detect via `obsidian help <command>` before
+   relying on a gated command.
+
+Zero impact on §4 Data Model (no DDL, no DAL change), §5 Interfaces (no new
+CLI/JSON envelope — the skill consumes existing ones), §6 Stack (no deps). The eval
+harness is machine-checkable without a Python grader (per-case expectation fields,
+TASK 009 pattern — Q-029-1). Verified-surface snapshot:
+`samples/obsidian-cli-recon/` (scratch) → durable fixture lands under
+`skills/obsidian-cli/evals/` when the reference is authored (TASK 029 A-4).
 
 ---
 
@@ -402,7 +490,7 @@ Backend (Python 3.14, SQLite 3.35+ with FTS5 + WAL), frontmatter / pyyaml / pyth
 
 ## 7. Security
 
-Threat model (single-user trust scope), authN (N/A) + authZ (file-permission-only), path-traversal guard (`validate_inside_vault`), SQL-injection guard (parameterised statements only, no f-string composition), and the Vendoring Policy (§7.4) covering type fixups, drift detection, and third-party notices.
+Threat model (single-user trust scope), authN (N/A) + authZ (file-permission-only), path-traversal guard (`validate_inside_vault`), SQL-injection guard (parameterised statements only, no f-string composition), and the Vendoring Policy (§7.4) covering type fixups, drift detection, and third-party notices. **TASK 029** adds the prompt-layer command-safety surface for the `obsidian-cli` skill — the TOTAL T1/T2/T3 tier model (T3 ban on `eval`/`dev:*`/plugin/snippet/sync mutations; fail-safe T2-with-confirmation default) + the untrusted-CLI-output posture (H-6 class) — design inline at §2.2 (no code change; the threat actor is hostile note content steering an agent, not a second user).
 
 → [details](./architectures/security.md)
 
@@ -1134,6 +1222,24 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   hallucination contract; #3 grounding kept). Manuals (EN+RU), quick-ref (EN+RU), this ARCHITECTURE,
   and README carry no false claim to delete but gain the new behaviour. The `tokenize=` DDL string
   (`sql/wiki-index-v2.sql` L366, README L142) stays UNCHANGED — zero-DDL invariant.
+- **Q-029-1 (TASK 029 — eval grading without a Python grader).** **RESOLVED (default; task-review
+  finding #2 incorporated):** v1 grades agentically/manually, BUT every `evals.json` case carries
+  machine-checkable expectation fields (`expect_routes_to`, `expect_command_substring`,
+  `expect_command_absent` [e.g. `mv`], `expect_refusal`, `expect_tier_cited`) + a per-class
+  deterministic checklist in `evals/README.md` — PASS/FAIL stays replayable on an Obsidian minor
+  bump; a `grade.py` (TASK 009 pattern) is a follow-up only if eval volume grows.
+- **Q-029-2 (TASK 029 — Universal-skills cross-publication).** **RESOLVED: DEFER.** The skill is
+  designed standalone-capable (the §2.2 coherence invariant self-disables on unregistered vaults),
+  so a later copy is mechanical; no dual-home sync policy needed now.
+- **Q-029-3 (TASK 029 — `wiki-init` template mention).** **RESOLVED: optional non-MVP bead**
+  (TASK 029 I-4.3) on the TASK 025/026 adoption surface; dropped without ceremony if the task
+  runs long.
+- **Q-029-4 (TASK 029 — `version` listed-but-unrunnable anomaly, F-3).** **OPEN** (investigate at
+  dev; non-blocking — the availability probe avoids `version` entirely and uses `obsidian help`).
+  Working hypothesis: registration lag or plugin-gating misreport in 1.12.7. The finding feeds the
+  command-reference's `[core]`/`[plugin-gated]`/`[doc-only]` tagging.
+- **Q-029-5 (TASK 029 — skill tier).** **RESOLVED: `tier: 2`** (load-when-needed), matching the
+  `wiki-search` frontmatter convention.
 
 ---
 
@@ -1153,6 +1259,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Multi-vault**: every operation carries a `vault_id` predicate or is scoped to `vault_root`. Vendored `ingest()` accepts `vault_id` as explicit kwarg; no hash-fallback.
 - [x] **Stub-First**: TASK 005 Entity Resolver is designed Stub-First (DAL signatures + RED tests before logic); `resolve_entity` is promoted from deferred stub → implemented (R-4.5).
 - [x] **RAG Query Layer (TASK 007)**: `wiki-query` designed as a deterministic `prepare`/`apply` skill (Decision-17, no LLM in Python); query page is a first-class compounding `type=query` artifact; durability secured by the R-6.5e `cites:`→`'cited'` reindex read-side (the §D8 gate, mirroring R-5.3); zero schema DDL; grounding enforced in Python (`CITATION_NOT_RETRIEVED` / `NO_CONTEXT`).
+- [x] **Native-App Control Skill (TASK 029)**: prompt-layer only — routing/coherence/safety/degradation invariants designed (§2.2); zero DDL, zero new Python, no interface change; safety model TOTAL over the verified 102-command surface with fail-safe default (incl. the 029-07 `command id=`→T3 + Templater-template→T3 refinements); eval harness machine-checkable without a grader (Q-029-1).
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).
