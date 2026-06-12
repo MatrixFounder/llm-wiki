@@ -6,7 +6,7 @@ description: >-
   mismatches, cross-vault concept duplicates.
   Triggers: "lint vault", "wiki health", "wiki-lint".
 tier: 2
-version: 1.0
+version: 1.1
 ---
 
 # wiki-lint
@@ -55,10 +55,32 @@ Or `/wiki-lint [...]`.
 
 ## Output
 
-JSON envelope: `{"action": "linted", "vault": ..., "total_issues": N,
-"by_category": {"orphan-link": 3, "hash-mismatch": 1, ...}}`.
+**stdout is a SUMMARY only** — a histogram, NOT a per-issue list. The envelope is:
 
-Optional sidecar files written when `--report` / `--json-sidecar` set.
+```json
+{"action": "linted", "vault": "<id>", "total_issues": 42,
+ "by_category": {"orphan-link": 40, "hash-mismatch": 2}}
+```
+
+There is no `issues` key and no file paths in stdout — only counts. To **act on
+individual issues** (which file orphaned, which page drifted, which target is
+dangling) you MUST request the detail sidecar with `--json-sidecar <abs.json>`:
+its content is a **bare JSON array** (NOT wrapped in any object) of issue
+objects, each:
+
+```json
+[{"category": "orphan-link", "severity": "warning", "vault_id": "<id>",
+  "page_slug": "<slug>", "details": {"target": "<slug>", "project": "<proj>",
+  "line": 12}}]
+```
+
+`--report <abs.md>` writes the same issues as a human-readable markdown report.
+Pick the surface by intent: stdout for the count/health signal (CI gate via
+`total_issues` + `--strict`), the sidecar/report for per-issue remediation.
+
+> Gotcha (do not assume by analogy): unlike `wiki-search` (`hits`) /
+> `wiki-query` result envelopes, wiki-lint's stdout carries NO item list — the
+> per-issue data lives ONLY in the `--json-sidecar` array.
 
 ## Related
 
