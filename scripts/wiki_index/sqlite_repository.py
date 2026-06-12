@@ -231,49 +231,74 @@ class SQLiteRepository(IndexRepository):
     # rowid stability, CASCADE-delete page_entity_refs.
     # =========================================================================
 
-    def upsert_page(self, page: Page) -> Literal["inserted", "updated", "unchanged"]:
-        conn = self._connect()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+    def _upsert_page_in_txn(
+        self, conn: sqlite3.Connection, page: Page, *,
+        skip_unchanged_check: bool = False,
+    ) -> Literal["inserted", "updated", "unchanged"]:
+        """TASK 030 (R-030-2a): the txn-free DML body of `upsert_page`.
+
+        Contract: the CALLER MUST hold an open transaction — this method issues
+        no BEGIN/COMMIT/ROLLBACK. Never call it bare: under
+        `isolation_level=None` each statement would commit as its own implicit
+        transaction, forfeiting atomicity. Private by design: NOT on the
+        `IndexRepository` ABC; callers are the public wrapper below and the
+        `reindex_full` chunked flush (consumer-to-be, bead 030-03).
+        `skip_unchanged_check=True` skips the per-page hash pre-SELECT (the
+        full-rebuild path, F-6) — outcome bookkeeping is then nominal
+        ("inserted"; a within-batch PK conflict still resolves via ON CONFLICT,
+        deliberately letting the LAST file's row win — Q-030-5).
+        """
+        if not skip_unchanged_check:
             row = conn.execute(
                 "SELECT file_hash FROM pages WHERE vault_id=? AND slug=? AND project=?",
                 (page.vault_id, page.slug, page.project),
             ).fetchone()
             if row is not None and row["file_hash"] == page.file_hash:
-                conn.execute("COMMIT")
                 return "unchanged"
             outcome: Literal["inserted", "updated"] = (
                 "updated" if row is not None else "inserted"
             )
-            conn.execute(
-                """
-                INSERT INTO pages (vault_id, slug, project, type, title, file_path,
-                                   tldr, date, last_modified, file_hash,
-                                   frontmatter_json, body_excerpt, is_frozen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(vault_id, slug, project) DO UPDATE SET
-                    type=excluded.type,
-                    title=excluded.title,
-                    file_path=excluded.file_path,
-                    tldr=excluded.tldr,
-                    date=excluded.date,
-                    last_modified=excluded.last_modified,
-                    file_hash=excluded.file_hash,
-                    frontmatter_json=excluded.frontmatter_json,
-                    body_excerpt=excluded.body_excerpt,
-                    is_frozen=excluded.is_frozen
-                """,
-                (
-                    page.vault_id, page.slug, page.project, page.type, page.title,
-                    page.file_path, page.tldr,
-                    page.date.isoformat() if page.date is not None else None,
-                    page.last_modified.isoformat(),
-                    page.file_hash,
-                    json.dumps(page.frontmatter_json, ensure_ascii=False),
-                    page.body_excerpt,
-                    int(page.is_frozen),
-                ),
-            )
+        else:
+            outcome = "inserted"
+        conn.execute(
+            """
+            INSERT INTO pages (vault_id, slug, project, type, title, file_path,
+                               tldr, date, last_modified, file_hash,
+                               frontmatter_json, body_excerpt, is_frozen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(vault_id, slug, project) DO UPDATE SET
+                type=excluded.type,
+                title=excluded.title,
+                file_path=excluded.file_path,
+                tldr=excluded.tldr,
+                date=excluded.date,
+                last_modified=excluded.last_modified,
+                file_hash=excluded.file_hash,
+                frontmatter_json=excluded.frontmatter_json,
+                body_excerpt=excluded.body_excerpt,
+                is_frozen=excluded.is_frozen
+            """,
+            (
+                page.vault_id, page.slug, page.project, page.type, page.title,
+                page.file_path, page.tldr,
+                page.date.isoformat() if page.date is not None else None,
+                page.last_modified.isoformat(),
+                page.file_hash,
+                json.dumps(page.frontmatter_json, ensure_ascii=False),
+                page.body_excerpt,
+                int(page.is_frozen),
+            ),
+        )
+        return outcome
+
+    def upsert_page(self, page: Page) -> Literal["inserted", "updated", "unchanged"]:
+        """Owns its transaction (M-4 sibling contract) — delegates the DML to
+        `_upsert_page_in_txn` (TASK 030 split; behavior-equivalent: identical
+        statement trace, outcomes, and exception classes)."""
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            outcome = self._upsert_page_in_txn(conn, page)
             conn.execute("COMMIT")
             return outcome
         except Exception:
@@ -358,13 +383,21 @@ class SQLiteRepository(IndexRepository):
             ],
         )
 
-    def replace_refs(
+    def _replace_refs_in_txn(
         self,
+        conn: sqlite3.Connection,
         vault_id: str,
         page_slug: str,
         page_project: str,
         refs: list[PageRef],
     ) -> None:
+        """TASK 030 (R-030-2a): the txn-free DML body of `replace_refs`
+        (PK-dedupe + DELETE-all + INSERT). The CALLER MUST hold an open
+        transaction — same contract as `_upsert_page_in_txn`, and here the
+        hazard is concrete: a bare autocommit call makes the DELETE and each
+        INSERT row SEPARATE transactions, so a crash mid-call destroys every
+        ref for the page with no rollback. Never call it outside an open tx.
+        Private, not on the ABC."""
         # Dedupe by composite PK; first occurrence wins (preserves earliest
         # line_start/source_quote for provenance).
         seen: set[tuple[str, str, str, str, str]] = set()
@@ -375,28 +408,41 @@ class SQLiteRepository(IndexRepository):
                 continue
             seen.add(key)
             deduped.append(r)
+        conn.execute(
+            "DELETE FROM page_entity_refs WHERE vault_id=? AND page_slug=? "
+            "AND page_project=?",
+            (vault_id, page_slug, page_project),
+        )
+        if deduped:
+            conn.executemany(
+                "INSERT INTO page_entity_refs (vault_id, page_slug, page_project, "
+                "entity_slug, ref_type, line_start, line_end, source_quote, "
+                "trust_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        r.vault_id, r.page_slug, r.page_project, r.entity_slug,
+                        r.ref_type, r.line_start, r.line_end, r.source_quote,
+                        r.trust_level,
+                    )
+                    for r in deduped
+                ],
+            )
+
+    def replace_refs(
+        self,
+        vault_id: str,
+        page_slug: str,
+        page_project: str,
+        refs: list[PageRef],
+    ) -> None:
+        """Owns its transaction — delegates the DML to `_replace_refs_in_txn`
+        (TASK 030 split; behavior-equivalent, atomic DELETE+INSERT; the
+        pure-Python dedupe now runs inside the lock window — observably
+        identical, negligible delta)."""
         conn = self._connect()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "DELETE FROM page_entity_refs WHERE vault_id=? AND page_slug=? "
-                "AND page_project=?",
-                (vault_id, page_slug, page_project),
-            )
-            if deduped:
-                conn.executemany(
-                    "INSERT INTO page_entity_refs (vault_id, page_slug, page_project, "
-                    "entity_slug, ref_type, line_start, line_end, source_quote, "
-                    "trust_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        (
-                            r.vault_id, r.page_slug, r.page_project, r.entity_slug,
-                            r.ref_type, r.line_start, r.line_end, r.source_quote,
-                            r.trust_level,
-                        )
-                        for r in deduped
-                    ],
-                )
+            self._replace_refs_in_txn(conn, vault_id, page_slug, page_project, refs)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

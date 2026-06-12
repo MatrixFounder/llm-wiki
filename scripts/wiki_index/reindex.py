@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -46,6 +47,14 @@ if TYPE_CHECKING:
     from scripts.wiki_index.repository import IndexRepository
 
 _LOG = logging.getLogger("wiki_index.reindex")
+
+# TASK 030 (R-030-2b, P-1): chunked-commit bounds for the `reindex_full`
+# stage-then-flush loop. A chunk FLUSHES (one `BEGIN IMMEDIATE` … `COMMIT` of
+# DML only) when EITHER bound fills: K pages, or the staged full-body payload
+# (approximated as `len(page.body_excerpt)` chars) crosses the byte cap —
+# full-body pages since TASK 024 make an unbounded buffer a real memory risk.
+REINDEX_TX_CHUNK = 500
+REINDEX_TX_CHUNK_BYTES = 32 * 1024 * 1024
 
 
 def _detect_slug_collision(
@@ -268,7 +277,8 @@ def _body_refs(
 
 def _build_page(out: Any, vault_id: str, db_type: str,
                 src: Path, vault_root: Path,
-                updated_fm: dict[str, Any]) -> Page:
+                updated_fm: dict[str, Any],
+                walk_mtime: float | None = None) -> Page:
     title = str(updated_fm.get("title") or out.page_slug)
     tldr_raw = updated_fm.get("tldr")
     tldr_val = tldr_raw if isinstance(tldr_raw, str) else None
@@ -281,7 +291,12 @@ def _build_page(out: Any, vault_id: str, db_type: str,
             date_val = date_cls.fromisoformat(fm_date)
         except ValueError:
             date_val = None
-    last_modified = datetime.fromtimestamp(src.stat().st_mtime)
+    # vdd-multi 030 PERF-LOW: honor the walk's single-stat contract — reuse
+    # `DiscoveredPage.mtime` when the caller has it (full/touched-delta paths);
+    # fall back to a stat for non-walk callers (upsert's disc carries 0.0 →
+    # falsy → stat; wiki-query/verify/benchmark pass nothing).
+    last_modified = (datetime.fromtimestamp(walk_mtime) if walk_mtime
+                     else datetime.fromtimestamp(src.stat().st_mtime))
     return Page(
         vault_id=vault_id,
         slug=out.page_slug,
@@ -350,7 +365,8 @@ def derive_indexed_page(
         glob_type=glob_type,     # PW-C/F glob-inferred type
     )
     page = _build_page(out, vault_id, db_type, item.source_path, item.vault_root,
-                       updated_fm)
+                       updated_fm,
+                       walk_mtime=(disc.mtime if disc is not None else None))
     refs = _body_refs(
         out, config.ref_extraction, vault_id, config.slug_strategy,
         ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
@@ -360,12 +376,18 @@ def derive_indexed_page(
 
 
 def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
-    """mtime-based incremental reindex. Re-ingests files modified after the
-    last log event; deletes DB rows for files removed from disk.
+    """mtime-based incremental reindex, rename-aware since TASK 030 (R-030-1):
+    re-ingests files modified after the last log event AND any on-disk path
+    absent from `pages.file_path` regardless of mtime; deletes DB rows for
+    files removed from disk.
 
     Errors are recorded into the returned ``skipped`` list (parity with
-    ``reindex_full``) rather than silently dropped. ``PathTraversalError`` and
-    OS-level errors surface there; truly fatal sqlite errors propagate.
+    ``reindex_full``) rather than silently dropped. ``PathTraversalError``,
+    OS-level errors AND per-file ``sqlite3.Error`` surface there (the latter
+    since TASK 030 AC-1.6 — a systemic DB failure therefore degrades to
+    per-file ``sqlite:<Type>`` skips with batch status "success"; deliberate,
+    TASK-015 isolation precedent). Fatal-by-construction remain: the orphan-
+    delete transaction (re-raises), the log append, and batch bookkeeping.
     """
     from scripts.wiki_index.sqlite_repository import SQLiteRepository
     if not isinstance(repo, SQLiteRepository):
@@ -392,28 +414,41 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         on_disk_keys = {(d.slug, d.project) for d in paths_on_disk}
         # TASK 021 (HIGH-2, refined by review L-1/L-2 + PERF-021-1): cross-batch collision
         # detection. ONE pages read (`db_pages`), reused below for orphan deletion (was a
-        # second scan → PERF-021-1). Seed `seen_keys` ONLY with prior-batch rows whose file
-        # is STILL on disk AND NOT re-walked this batch (mtime <= cutoff): a touched file
-        # colliding with a genuinely-untouched prior row is reported, while a re-walked
-        # survivor is left to the within-batch loop (L-1: no double-count / inverted
-        # direction) and a renamed-away file is not falsely flagged (L-2). Uses the walk's
-        # own mtime — no extra stat; a hypothetical mtime-less source is treated as touched
-        # (conservative — only the within-batch loop can flag it). `_detect_slug_collision`'s
-        # `prior != rel` guard additionally makes a same-path self-update a no-op.
+        # second scan → PERF-021-1) AND for the R-030-1 new-path membership set. Seed
+        # `seen_keys` ONLY with prior-batch rows whose file is STILL on disk AND NOT part
+        # of this batch's ingest set (mtime <= cutoff AND path already in the DB — a
+        # mtime-stale NEW path is ingested by R-030-1 below, so it must not seed): a
+        # touched file colliding with a genuinely-untouched prior row is reported, while
+        # a re-walked survivor is left to the within-batch loop (L-1: no double-count /
+        # inverted direction) and a renamed-away file is not falsely flagged (L-2 — its
+        # row's file_path is no longer on disk). Seeded rows ∩ ingested files = ∅ by
+        # construction: a seeded row's file_path IS in `db_file_paths`, hence never
+        # "new-to-DB" (TASK 030 AC-1.3 invariant). Uses the walk's own mtime — no extra
+        # stat. `_detect_slug_collision`'s `prior != rel` guard additionally makes a
+        # same-path self-update a no-op.
         db_pages = repo._connect().execute(
             "SELECT slug, project, file_path FROM pages WHERE vault_id = ?",
             (vault_id,),
         ).fetchall()
+        # R-030-1 (DF-029-1): the vault-rel string convention here MUST stay
+        # `str(path.relative_to(vault_root))` — the same spelling `pages.file_path`
+        # stores (F-2). No extra query: derived from the TASK-021 coalesced read.
+        # The rel strings are computed ONCE per file and shared by the seeding
+        # comprehension AND the ingest loop (Sarcasmotron 030-01 HIGH: a second
+        # per-file `relative_to` on the no-op path measured +18% @10k).
+        db_file_paths = {pre["file_path"] for pre in db_pages}
+        disk_rels = [str(d.path.relative_to(vault_root)) for d in paths_on_disk]
         untouched_rels = {
-            str(d.path.relative_to(vault_root)) for d in paths_on_disk
+            rel for d, rel in zip(paths_on_disk, disk_rels, strict=True)
             if d.mtime is not None and datetime.fromtimestamp(d.mtime) <= cutoff
         }
         for pre in db_pages:
             if pre["file_path"] in untouched_rels:
                 seen_keys[(pre["slug"], pre["project"])] = pre["file_path"]
         touched = 0
+        new_path_ingested: list[str] = []
         adapter = ManualSourceAdapter()
-        for disc in paths_on_disk:
+        for disc, rel in zip(paths_on_disk, disk_rels, strict=True):
             path = disc.path
             # P-2 (TASK 017): reuse the mtime the `iter_pages` walk already stat'd —
             # no second `path.stat()` here. Fallback stat only for a hypothetical
@@ -426,7 +461,16 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 except OSError as e:
                     skipped.append({"path": str(path), "error": f"stat: {e}"})
                     continue
-            if mtime <= cutoff:
+            # R-030-1 (DF-029-1): a rename/move PRESERVES mtime, so the mtime gate
+            # alone misses the moved file (its inbound links then orphan). Any on-disk
+            # path absent from the vault's `pages.file_path` set is new-to-DB and must
+            # be ingested regardless of mtime (also covers `cp -p` / archive / sync-
+            # client imports, and the Q-030-3 fresh-vault first delta). Swap/rotation
+            # renames (destination path already in the DB) stay out of reach —
+            # documented residual (UC-30-1 A5): `wiki-lint` hash-drift detects,
+            # `--full` remedies.
+            is_new_path = rel not in db_file_paths
+            if mtime <= cutoff and not is_new_path:
                 continue
             try:
                 item = SourceItem(kind="manual", source_path=path,
@@ -435,17 +479,56 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # parity). Cite-parse warnings fold into `skipped` (R-6.5e symmetry).
                 out, page, _updated_fm, delta_refs = derive_indexed_page(
                     adapter, item, config, disc, vault_id, skipped)
-                repo.upsert_page(page)
-                repo.replace_refs(vault_id, out.page_slug, out.project,
-                                  delta_refs)
+                # vdd-multi 030 LOGIC-MED: page + file_path refresh + refs run as
+                # ONE per-file transaction (030-02 txn-free helpers) — a transient
+                # mid-file `sqlite3.Error` used to commit the page (new hash/FTS)
+                # while refs stayed stale, and the file was NEVER retried (in
+                # `db_file_paths` + mtime ≤ the advanced cutoff): a permanent
+                # page↔refs incoherence lint could not see. Now the whole file
+                # rolls back — CONSISTENT-stale (old row intact; recorded
+                # residual: re-ingest happens on the next touch or `--full`,
+                # the `skipped` entry is the operator signal). Bonus: 2-3 txns
+                # per touched file → 1.
+                conn_d = repo._connect()
+                conn_d.execute("BEGIN IMMEDIATE")
+                try:
+                    outcome = repo._upsert_page_in_txn(conn_d, page)
+                    if is_new_path and outcome == "unchanged":
+                        # Q-030-5 delta-sibling (arch-review HIGH-1): the hash
+                        # short-circuit returns BEFORE any UPDATE, so a moved-
+                        # but-unedited file's `file_path` would stay stale and
+                        # re-detect as "new" on EVERY future delta (a loop, not
+                        # a wave). One targeted refresh converges it (AC-1.9).
+                        conn_d.execute(
+                            "UPDATE pages SET file_path = ?, last_modified = ? "
+                            "WHERE vault_id = ? AND slug = ? AND project = ?",
+                            (rel, page.last_modified.isoformat(),
+                             vault_id, out.page_slug, out.project))
+                    repo._replace_refs_in_txn(conn_d, vault_id, out.page_slug,
+                                              out.project, delta_refs)
+                    conn_d.execute("COMMIT")
+                except BaseException:
+                    if conn_d.in_transaction:
+                        conn_d.execute("ROLLBACK")
+                    raise
                 touched += 1
+                if is_new_path:
+                    new_path_ingested.append(rel)
                 _detect_slug_collision(
-                    seen_keys, out.page_slug, out.project,
-                    str(path.relative_to(vault_root)), slug_collisions)
+                    seen_keys, out.page_slug, out.project, rel, slug_collisions)
             except (UnmappedTypeError, BodyNormalizationError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
             except (PathTraversalError, OSError, ValueError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
+            except sqlite3.Error as e:
+                # R-030-1 / AC-1.6 (TASK-015 per-entry precedent): a stale row
+                # holding this path under another (slug, project) raises
+                # IntegrityError on UNIQUE(vault_id, file_path) — isolate the
+                # file, never the run. No value echo (CWE-209 posture).
+                _LOG.warning("[delta-skip] sqlite error on %s: %s",
+                             rel, type(e).__name__)
+                skipped.append({"path": str(path),
+                                "error": f"sqlite:{type(e).__name__}"})
 
         # Delete orphan rows inside a single transaction (atomicity contract). Reuses the
         # `db_pages` snapshot read once above (PERF-021-1) — a row deleted from disk this
@@ -495,6 +578,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         "action": "reindexed", "mode": "delta", "vault_id": vault_id,
         "touched": touched, "deleted": deleted, "skipped": skipped,
         "slug_collisions": slug_collisions,
+        "new_path_ingested": sorted(new_path_ingested),  # R-030-1, additive (AC-1.4)
         "auto_rendered": auto_rendered,
         "duration_seconds": round(duration, 3),
     }
@@ -504,10 +588,16 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     """Rebuild all DB rows for `vault_id` from filesystem.
 
     NOT a single atomic transaction (F8, vdd-multi): Step 1 wipes + commits,
-    then Steps 2/2.5/3 run in autocommit (each `upsert_page`/`replace_refs`
-    owns its own short tx — see Step 2 note). A mid-rebuild crash leaves the
-    index half-populated; recovery is to re-run `reindex --full`. This is the
-    documented Phase-3a SLO trade-off (KNOWN_ISSUES P-1), not atomicity."""
+    then Step 2 runs as **stage-then-flush chunked transactions** (TASK 030 /
+    R-030-2b, closes P-1): per-file derivation (file I/O) STAGES outside any
+    transaction into a buffer bounded by `REINDEX_TX_CHUNK` pages ∧
+    `REINDEX_TX_CHUNK_BYTES`; each chunk then FLUSHES its DML (page + refs +
+    entity + alias rows, via the 030-02 txn-free helpers) under ONE
+    `BEGIN IMMEDIATE` — the write lock is held ms-scale, never across file
+    I/O (Q-030-5; concurrent writers on a shared global.db stay live).
+    Steps 2.5/3 ride autocommit as before. A mid-rebuild crash leaves the
+    index half-populated (now at chunk granularity); recovery is to re-run
+    `reindex --full` — the documented Phase-3a trade-off, not atomicity."""
     from scripts.wiki_index.sqlite_repository import SQLiteRepository
     if not isinstance(repo, SQLiteRepository):
         raise NotImplementedError("reindex_full supports SQLiteRepository only")
@@ -540,10 +630,108 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
             conn.execute("ROLLBACK")
             raise
 
-        # Step 2: rebuild row-by-row. upsert_page manages its own transaction
-        # per call; can't nest BEGIN IMMEDIATE. Phase 3a SLO (1K-10K pages)
-        # tolerates non-atomic rebuild; benchmark task (001-33) flags if scale
-        # demands chunked-tx strategy.
+        # Step 2 (TASK 030 / R-030-2b, closes P-1): STAGE-THEN-FLUSH. The
+        # pre-030 contingency note here ("benchmark task flags if scale demands
+        # chunked-tx strategy") is now implemented. Staging derives each file
+        # (all file I/O) OUTSIDE any transaction; a chunk flushes its DML under
+        # ONE caller-owned BEGIN IMMEDIATE via the 030-02 txn-free helpers —
+        # the write lock never spans file I/O (Q-030-5 / arch-review HIGH-2).
+        # Per-file error semantics: derivation errors isolate at STAGING with
+        # zero DML (strictly better than the old committed-partial); mid-flush
+        # DML errors are statement-atomic — the file's partial DML commits with
+        # the chunk while the file lands in `skipped` (equivalent end-state to
+        # the old per-call-txn path); a COMMIT/BEGIN failure is fatal → chunk
+        # ROLLBACK + batch "failed" (FTS triggers ride the same tx — no desync).
+        # staged tuple: (abs_path_str, page_slug, project, page,
+        # entity_args | None, aliases, refs); entity/alias rows are PRE-COMPUTED
+        # at staging (pure logic) so the flush is DML-only. Only the slug/project
+        # STRINGS are staged — not the whole SourceOutput (avoids retaining
+        # `body_text`+a second refs list on corpora where normalization copies).
+        # vdd-multi 030 PERF-M1, CORRECTED attribution (iter-2 verifier): the
+        # real ~2× peak (63.6 vs 32 MiB) was the **UTF-8 bind caches**
+        # `sqlite3_bind_text`/`PyUnicode_AsUTF8` attaches to each staged body
+        # string during the flush, held alive because `staged` survived until
+        # post-COMMIT `clear()`. The flush therefore DRAINS the buffer per-row
+        # (entry → None right after unpacking) so each body string + its bind
+        # cache is freeable as soon as its DML ran — measured peak ≈ 33 MiB
+        # (1× budget).
+        staged: list[tuple[str, str, str, Page, tuple[Any, ...] | None,
+                           list[str], list[PageRef]] | None] = []
+        staged_bytes = 0
+
+        def _flush_chunk() -> None:
+            nonlocal pages_count, entities_count, aliases_count, staged_bytes
+            if not staged:
+                return
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for _i in range(len(staged)):
+                    entry = staged[_i]
+                    assert entry is not None  # filled by staging, drained once
+                    (abs_path, s_slug, s_project, s_page, entity_args,
+                     s_aliases, s_refs) = entry
+                    staged[_i] = None  # PERF-M1 drain: free body + bind cache
+                    del entry
+                    try:
+                        repo._upsert_page_in_txn(conn, s_page,
+                                                 skip_unchanged_check=True)
+                        repo._replace_refs_in_txn(conn, vault_id,
+                                                  s_slug, s_project, s_refs)
+                        pages_count += 1
+                        _detect_slug_collision(
+                            seen_keys, s_slug, s_project,
+                            s_page.file_path, slug_collisions)
+                        if entity_args is not None:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO entities (vault_id, slug, "
+                                "type, name, project, is_candidate, first_seen, "
+                                "last_updated, file_path, mentions_count, "
+                                "metadata_json) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                                entity_args,
+                            )
+                            entities_count += 1
+                            # R-5.3: report-and-skip on the hard PK collision —
+                            # per-alias catch keeps the chunk tx alive
+                            # (statement-level atomicity).
+                            for alias in s_aliases:
+                                try:
+                                    conn.execute(
+                                        "INSERT INTO entity_aliases "
+                                        "(vault_id, alias, entity_slug, alias_type) "
+                                        "VALUES (?, ?, ?, 'spelling_variant')",
+                                        (vault_id, alias, s_slug),
+                                    )
+                                    aliases_count += 1
+                                except sqlite3.IntegrityError:
+                                    kept = conn.execute(
+                                        "SELECT entity_slug FROM entity_aliases "
+                                        "WHERE vault_id = ? AND alias = ?",
+                                        (vault_id, alias),
+                                    ).fetchone()
+                                    alias_collisions.append({
+                                        "alias": alias,
+                                        "kept_slug": (kept["entity_slug"]
+                                                      if kept else None),
+                                        "skipped_slug": s_slug,
+                                    })
+                    except Exception as e:
+                        # Q-030-5 A2: mid-flush DML error — partial per-file DML
+                        # stays in the chunk; the file is reported. A COMMIT
+                        # failure never lands here (outside this try).
+                        skipped.append({"path": abs_path, "error": str(e)})
+                conn.execute("COMMIT")
+            except Exception:
+                # Sarcasmotron 030-03 HIGH: SQLite auto-rolls-back on
+                # SQLITE_FULL/IOERR/NOMEM — an unconditional ROLLBACK would then
+                # raise "no transaction is active" and MASK the original fatal
+                # error (corrupting batch_runs.notes). Guard on in_transaction.
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+            staged.clear()
+            staged_bytes = 0
+
         for disc in iter_pages(vault_root, config):
             path = disc.path
             try:
@@ -556,14 +744,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # Step 2.5 (AM-3) below canonicalizes all refs' targets via aliases.
                 out, page, updated_fm, all_refs = derive_indexed_page(
                     adapter, item, config, disc, vault_id, cite_skipped)
-                repo.upsert_page(page)
-                repo.replace_refs(vault_id, out.page_slug, out.project,
-                                  all_refs)
-                pages_count += 1
-                _detect_slug_collision(
-                    seen_keys, out.page_slug, out.project,
-                    str(path.relative_to(vault_root)), slug_collisions)
-                # Register entity row for _concepts/_entities files.
+                # Pre-compute the entity row for _concepts/_entities files
+                # (pure logic — DML happens in the flush).
                 # entities.type follows the frontmatter's `type:` field
                 # (concept | person | company | product | group | event |
                 # work | external). Path is just the bucket discriminator;
@@ -571,6 +753,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 # wiki-ingest's typed entities (e.g. type=person) survive
                 # round-trip. Fall back: _concepts/* → concept, _entities/*
                 # → external when frontmatter has no `type:`.
+                entity_args: tuple[Any, ...] | None = None
+                alias_list: list[str] = []
                 rel_parts = path.relative_to(vault_root).parts
                 if any(p in (CONCEPTS_SUBDIR, ENTITIES_SUBDIR) for p in rel_parts):
                     fm_type = updated_fm.get("type")
@@ -587,57 +771,52 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                     # R-4.1: read is_candidate from Class A frontmatter (was
                     # omitted → schema default 0, which silently confirmed every
                     # candidate on a full rebuild).
-                    conn.execute(
-                        "INSERT OR IGNORE INTO entities (vault_id, slug, "
-                        "type, name, project, is_candidate, first_seen, "
-                        "last_updated, file_path, mentions_count, metadata_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-                        (vault_id, out.page_slug, e_type,
-                         # L-8 (TASK 006): concept pages emit `name:`, not
-                         # `title:` — fall back title→name→slug so the entity's
-                         # display name survives reindex (was: slug).
-                         (updated_fm.get("title") or updated_fm.get("name")
-                          or out.page_slug),
-                         out.project, _coerce_is_candidate(updated_fm),
-                         ts_iso, ts_iso,
-                         str(path.relative_to(vault_root)), "{}"),
+                    # L-8 (TASK 006): concept pages emit `name:`, not `title:` —
+                    # fall back title→name→slug so the entity's display name
+                    # survives reindex (was: slug).
+                    entity_args = (
+                        vault_id, out.page_slug, e_type,
+                        (updated_fm.get("title") or updated_fm.get("name")
+                         or out.page_slug),
+                        out.project, _coerce_is_candidate(updated_fm),
+                        ts_iso, ts_iso,
+                        str(path.relative_to(vault_root)), "{}",
                     )
-                    entities_count += 1
-                    # R-5.3: mirror Class A `aliases:` frontmatter → entity_aliases
-                    # (Class B). Report-and-skip on the hard PK (vault_id, alias)
-                    # collision — NEVER a silent INSERT OR IGNORE: two pages
-                    # claiming the same surface is operator-visible data the lint
-                    # layer must see. The flat Obsidian list carries no type, so
-                    # the mirror defaults to 'spelling_variant' (C-4 limitation).
+                    # R-5.3: mirror Class A `aliases:` frontmatter →
+                    # entity_aliases (Class B). The flat Obsidian list carries
+                    # no type → 'spelling_variant' default (C-4 limitation).
                     raw_aliases = updated_fm.get("aliases")
                     if isinstance(raw_aliases, list):
-                        for _alias in raw_aliases:
-                            if not isinstance(_alias, str) or not _alias.strip():
-                                continue
-                            alias = _alias.strip()
-                            try:
-                                conn.execute(
-                                    "INSERT INTO entity_aliases "
-                                    "(vault_id, alias, entity_slug, alias_type) "
-                                    "VALUES (?, ?, ?, 'spelling_variant')",
-                                    (vault_id, alias, out.page_slug),
-                                )
-                                aliases_count += 1
-                            except sqlite3.IntegrityError:
-                                kept = conn.execute(
-                                    "SELECT entity_slug FROM entity_aliases "
-                                    "WHERE vault_id = ? AND alias = ?",
-                                    (vault_id, alias),
-                                ).fetchone()
-                                alias_collisions.append({
-                                    "alias": alias,
-                                    "kept_slug": kept["entity_slug"] if kept else None,
-                                    "skipped_slug": out.page_slug,
-                                })
+                        alias_list = [a.strip() for a in raw_aliases
+                                      if isinstance(a, str) and a.strip()]
+                # Buffer accounting BEFORE the append (vdd-multi 030 LOGIC-LOW:
+                # a frontmatter value surviving `_json_safe` but not JSON-
+                # serializable raised HERE after the entry was already staged →
+                # the same file skipped TWICE — once at staging, once at flush).
+                # Honest approximation (Sarcasmotron 030-03 MED): full body +
+                # the frontmatter dump (~µs/page; the upsert dumps it again) +
+                # per-ref quote/slug payload, ×2 as a UTF-8 chars≈bytes fudge.
+                staged_bytes += 2 * (
+                    len(page.body_excerpt)
+                    + len(json.dumps(page.frontmatter_json, ensure_ascii=False))
+                    + sum(len(r.source_quote or "") + len(r.entity_slug) + 64
+                          for r in all_refs)
+                )
+                staged.append((str(path), out.page_slug, out.project, page,
+                               entity_args, alias_list, all_refs))
             except (UnmappedTypeError, BodyNormalizationError) as e:
                 skipped.append({"path": str(path), "error": str(e)})
             except Exception as e:
                 skipped.append({"path": str(path), "error": str(e)})
+            # Sarcasmotron 030-03 CRITICAL: the flush trigger lives OUTSIDE the
+            # per-file try — a fatal flush failure (e.g. "database is locked"
+            # BEGIN on a contended shared DB) must PROPAGATE to the batch
+            # "failed" path, never be swallowed as a per-file skip (which also
+            # double-counted pages and replayed the uncleared buffer O(N²)).
+            if (len(staged) >= REINDEX_TX_CHUNK
+                    or staged_bytes >= REINDEX_TX_CHUNK_BYTES):
+                _flush_chunk()
+        _flush_chunk()  # tail chunk
 
         # Parse log.md files → reconstruct log_events
         log_dir = vault_root / VAULT_INDEX_DIR / LOG_SUBDIR

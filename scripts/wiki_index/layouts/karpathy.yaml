@@ -10,8 +10,10 @@
 schema_version: '2.0'
 layout: karpathy
 
-# Karpathy walks only the named subdirs (never the root tree), so no ignore[]
-# is needed — see the per-subdir globs below.
+# Karpathy walks only the named subdirs — root SUBTREES outside them are never
+# entered (TASK 030: the alive-set descent predicate guarantees this BY
+# CONSTRUCTION, instrumented; the walk lists the root dir itself once) — so no
+# ignore[] is needed; see the per-subdir globs below.
 ignore: []
 file_extensions: ['.md']
 

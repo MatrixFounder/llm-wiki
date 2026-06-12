@@ -51,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.delta:
                 envelope["touched"] = sum(r["touched"] for r in results)
                 envelope["deleted"] = sum(r["deleted"] for r in results)
+                # TASK 030 / AC-1.4: summed total only — per-vault rel lists stay
+                # inside results[] (a flat cross-vault list would lose attribution).
+                envelope["new_path_ingested_total"] = sum(
+                    len(r["new_path_ingested"]) for r in results)
             else:
                 envelope["pages_indexed"] = sum(r["pages"] for r in results)
             return emit(envelope)

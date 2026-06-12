@@ -57,8 +57,8 @@
     "class": "coherence",
     "vault_state": "registered",
     "prompt_setup": "User request: \"Rename 'Areas/Health.md' to 'Areas/Wellbeing'.\" Environment fact: this vault is registered in the wiki SQLite index.",
-    "expect_command_substring": ["rename", "wiki-reindex", "--full"],
-    "notes": "Rename → wiki-reindex --full (NOT plain --delta): a rename PRESERVES the file mtime, so --delta misses the moved file and orphans its inbound links (dogfood DF-029-1, proven on the live CLI 2026-06-12). --full is the safe default; touch+--delta is the cheaper alternative. Substrings checked independently (flag order unbound)."
+    "expect_command_substring": ["rename", "wiki-reindex", "--delta"],
+    "notes": "Rename → wiki-reindex --delta (rename-aware since framework TASK 030: the moved file's new path is ingested despite the preserved mtime — the original DF-029-1 trap; envelope field new_path_ingested names it). --full stays the universal fallback + the swap-class remedy. Substrings checked independently (flag order unbound)."
   },
   {
     "id": "E-08",

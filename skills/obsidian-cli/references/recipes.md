@@ -35,14 +35,15 @@ obsidian vault=<v> rename path="Areas/Health.md" name="Wellbeing"
 obsidian vault=<v> move path="Notes/raw-idea.md" to="Archive/raw-idea.md"
 ```
 
-**Coherence:** a rename/move **preserves the file's mtime**, so a plain `--delta` MISSES the
-moved file and orphans its inbound links (dogfood DF-029-1). Use `--full` (safe default), or
-`touch` the new path then `--delta` (cheaper on a large vault):
+**Coherence:** since framework TASK 030 `wiki-reindex --delta` is **rename-aware** — it
+ingests the moved file's new path despite the preserved mtime (the original DF-029-1 trap)
+and reports it under `new_path_ingested`:
 ```bash
-wiki-reindex --full --vault <vid>                       # safe default
-# --- OR, cheaper on a large vault: ---
-# touch "$VR/Areas/Wellbeing.md" && wiki-reindex --delta --vault <vid>
+wiki-reindex --delta --vault <vid>             # rename-aware: absorbs the moved file
 wiki-lint --vault <vid> | grep -i orphan       # MUST equal the baseline — zero new orphans
+# Fallback (pre-TASK-030 framework, or the swap-class residual — two notes that
+# EXCHANGED paths are invisible to the delta predicate; lint hash-drift flags them):
+# wiki-reindex --full --vault <vid>
 ```
 **Failure handling:** target name already exists → the CLI errors; report it verbatim and
 propose a different name — never pass a force/overwrite flag to win a collision. If the

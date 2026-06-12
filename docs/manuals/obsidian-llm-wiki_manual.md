@@ -613,7 +613,8 @@ flowchart TD
 > `wiki-search`/`wiki-query` first, carries a 3-tier safety model (read / mutate /
 > banned-by-default `eval`+`dev:*`), and after any app-side mutation refreshes the
 > index in the same turn — `wiki-index-upsert` for a content edit, **`wiki-reindex
-> --full` for a rename/move** (a rename preserves mtime, so `--delta` would miss it).
+> --delta` for a rename/move** (rename-aware since TASK 030 — the moved file's new
+> path is ingested despite the preserved mtime; `--full` = fallback + swap-class remedy).
 
 **The boundary rule (the one invariant that must hold):** the search vault must
 `ignore` the enrich zone, and the enrich vault is rooted inside that zone. Then

@@ -27,6 +27,7 @@ module (PW-A) validates the config SCHEMA only.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import re
@@ -522,6 +523,21 @@ def _validate_path_patterns(
     Built-in patterns compile under stdlib `re`.
     """
     for entry in paths:
+        # vdd-multi 030 SEC-HIGH (glob-complexity gate, operator configs only):
+        # the alive-set walk's per-dir cost is O(positions × segments); the
+        # `**`-collapse in `_PatternState.for_glob` kills stacked-`**` blowup,
+        # but an ALTERNATING `**/x/**/x/…` glob still scales positions with
+        # segment count. Bound it at load (CWE-209: no glob echo beyond the
+        # established error style; 64 segments is far beyond any real layout —
+        # built-ins max at 5).
+        if operator_supplied:
+            n_segs = len(_PatternState.for_glob(entry.glob).segments)
+            if n_segs > _GLOB_MAX_SEGMENTS:
+                raise LayoutConfigError(
+                    f"paths[].glob (entry project={entry.project!r}) exceeds "
+                    f"{_GLOB_MAX_SEGMENTS} segments after `**`-collapse "
+                    f"({n_segs}) — refusing a pathological walk pattern"
+                )
         if entry.project_pattern is None:
             continue
         try:
@@ -605,6 +621,126 @@ def _matches_ignore(rel_posix: str, ignore: tuple[str, ...]) -> bool:
     return any(p.full_match(spec) for spec in ignore)
 
 
+# --------------------------------------------------------------------------- #
+# TASK 030 (R-030-3/6, bead 030-04) — pure alive-set matcher units for the
+# single-pass walk (wired into `iter_pages` in bead 030-05).
+# --------------------------------------------------------------------------- #
+
+# vdd-multi 030 SEC-HIGH: load-gate ceiling on operator glob complexity
+# (post-`**`-collapse segment count). Built-ins max at 5 segments.
+_GLOB_MAX_SEGMENTS = 64
+
+
+@dataclass(frozen=True)
+class _PatternState:
+    """NFA-style match state of ONE `paths[]` glob against a directory chain.
+
+    `positions` = the set of pattern-segment indices still reachable after the
+    consumed directory segments (`**` introduces nondeterminism: it may consume
+    any number of segments, including zero). Semantics mirror
+    `PurePosixPath.full_match` / `Path.glob` (Q-030-2 v4):
+
+    - segment wildcards (`*`, `?`, `[...]`) match ONE segment, case-SENSITIVE
+      (`fnmatch.fnmatchcase` — the UC-30-3 A4 enumerated delta);
+    - `**` consumes ≥0 segments — but consuming a SYMLINKED dir segment via
+      `**` is forbidden (Path.glob never recurses `**` into symlinks, F-10);
+      an explicit segment consume IS allowed across a symlink;
+    - PROPER-prefix descent (Q-030-6): a dir that fully exhausts the pattern
+      (a *directory* named `foo.md` vs `*.md`) cannot descend.
+    """
+
+    segments: tuple[str, ...]
+    positions: frozenset[int]
+    dirs_only: bool = False
+    """A trailing-slash glob (`docs/*.md/`) has 3.13+ dirs-only semantics: it
+    enumerates directories, which the engine then drops on `S_ISREG` — so it
+    yields NO file matches. `PurePosixPath.parts` silently eats the slash;
+    this flag preserves the parity (Sarcasmotron 030-04 MED-1)."""
+
+    @staticmethod
+    def for_glob(glob: str) -> "_PatternState":
+        # vdd-multi 030 SEC-HIGH: collapse consecutive `**` runs (mirror
+        # CPython's Path.glob, which folds them) — without this an operator
+        # glob of k stacked `**` makes the alive-set O(k) and every dir's
+        # advance O(k²) (measured 3.1 s vs 0.17 s on a 5k-dir tree at k=200).
+        segs: list[str] = []
+        for seg in PurePosixPath(glob).parts:
+            if seg == "**" and segs and segs[-1] == "**":
+                continue
+            segs.append(seg)
+        return _PatternState(tuple(segs), frozenset({0}),
+                             dirs_only=glob.endswith("/"))
+
+    def advance(self, segment: str, *, is_symlink: bool) -> "_PatternState | None":
+        """Consume one DIRECTORY segment; None = the pattern is dead below it."""
+        segs, n = self.segments, len(self.segments)
+        out: set[int] = set()
+        for i in self.positions:
+            j = i
+            while j < n:
+                pat = segs[j]
+                if pat == "**":
+                    if not is_symlink:      # `**`-consume forbidden across symlink
+                        out.add(j)          # `**` eats the segment, stays put
+                    j += 1                  # ε: `**` matches zero → try next
+                    continue
+                if fnmatch.fnmatchcase(segment, pat):
+                    out.add(j + 1)          # explicit consume (symlink-safe)
+                break
+        if not out:
+            return None
+        return _PatternState(segs, frozenset(out), dirs_only=self.dirs_only)
+
+    @property
+    def can_descend(self) -> bool:
+        """≥1 position can still consume a FURTHER segment (proper prefix)."""
+        return any(i < len(self.segments) for i in self.positions)
+
+    def matches_file(self, name: str) -> bool:
+        """Does the remaining pattern match exactly the filename? Includes the
+        trailing-`**` form (`Lessons/**` matches files on 3.13+) — but a
+        trailing `**` AFTER a final explicit segment must consume ≥1 segment
+        (`a.md/**` does NOT match the file `a.md`; `Path.glob`/`full_match`
+        parity — Sarcasmotron 030-04 HIGH). Trailing-slash globs are dirs-only
+        and never match files (MED-1)."""
+        if self.dirs_only:
+            return False
+        segs, n = self.segments, len(self.segments)
+        for i in self.positions:
+            j = i
+            while j < n and segs[j] == "**":
+                j += 1
+            if j == n:
+                if j > i:                   # ≥1 trailing `**` swallows the file
+                    return True
+                continue                    # i == n: exhausted — no
+            if j == n - 1 and fnmatch.fnmatchcase(name, segs[j]):
+                return True                 # explicit FINAL segment matches
+        return False
+
+
+def _prunable_prefixes(ignore: tuple[str, ...]) -> tuple[str, ...]:
+    """The `<prefix>` parts of `<prefix>/**`-shaped ignore globs — the ONLY
+    shapes that may prune a subtree (vdd-multi 030 PERF-LOW: hoisted once per
+    `iter_pages` instead of re-derived per directory)."""
+    return tuple(spec[:-3] for spec in ignore if spec.endswith("/**"))
+
+
+def _dir_pruned(dir_rel_posix: str, prefixes: tuple[str, ...]) -> bool:
+    p = PurePosixPath(dir_rel_posix)
+    return any(p.full_match(prefix) for prefix in prefixes)
+
+
+def _prunable_ignore(dir_rel_posix: str, ignore: tuple[str, ...]) -> bool:
+    """TASK 030 (R-030-6): True iff `ignore[]` implies EVERY descendant of this
+    directory is ignored — only then may the walk prune the subtree.
+    Conservative by design: ONLY `<prefix>/**`-shaped globs prune (the prefix
+    matching the dir itself); file-shaped patterns (`**/*.base`) never do.
+    Thin convenience over `_prunable_prefixes` + `_dir_pruned` (the walk hoists
+    the prefixes once)."""
+    return _dir_pruned(dir_rel_posix, _prunable_prefixes(ignore))
+
+
 def _apply_slug_strategy(stem: str, strategy: str) -> str:
     """PW-L: derive a page slug from its file stem per `slug_strategy`.
     `identity` = verbatim stem (Karpathy byte-identity); the others call
@@ -622,56 +758,112 @@ def _apply_slug_strategy(stem: str, strategy: str) -> str:
 
 
 def iter_pages(vault_root: Path, config: LayoutConfig) -> list[DiscoveredPage]:
-    """Config-driven page discovery (PW-B/J/K/M/L/N). Yields a `DiscoveredPage`
-    (path, slug, project, extra_tags) for every file matched by `config.paths[]`
-    (first-match-wins, declared order), after applying `ignore[]` (PW-K) +
-    `file_extensions` (PW-M) + the implicit ignore set (SYSTEM_FILES + every
-    `auto_indexes[].output` — architecture-review m1). Slug = `slug_strategy`
-    applied to the file stem (PW-L; `identity` = verbatim → Karpathy byte-identity).
-    `extra_tags` = the matched entry's `default_tags + extra_tags` (PW-N). Output
-    is stably sorted by vault-relative POSIX path (NFR-5, deterministic ≥ today).
+    """Config-driven page discovery (PW-B/J/K/M/L/N) — **single-pass walk**
+    since TASK 030 (R-030-3/6, closes R-X1-OBS-WALK). Yields a `DiscoveredPage`
+    for every file matched by `config.paths[]` (first-match-wins among the
+    patterns ALIVE at the containing dir, declared order), after applying
+    `ignore[]` (PW-K) + `file_extensions` (PW-M) + the implicit ignore set
+    (SYSTEM_FILES + every `auto_indexes[].output` — m1), in the F-9 filter
+    order: ext → SYSTEM_FILES → autoindex/ignore → single stat (P-2).
+
+    Engine (Q-030-2 v4 / Q-030-6): ONE iterative explicit-stack `os.scandir`
+    traversal (a Python-recursive walk would add a `RecursionError` DoS class —
+    AC-3.8); per-directory the per-pattern `_PatternState` alive-set advances
+    (`**` never consumes a SYMLINKED dir segment — exact per-entry `Path.glob`
+    union parity, F-10); descent iff the alive-set is non-empty (PROPER-prefix
+    rule) AND the dir is not under a `_prunable_ignore` subtree. Karpathy keeps
+    "root subtrees never walked" BY CONSTRUCTION (instrumented, AC-3.3ii);
+    every directory is scandir'd at most once (was ~N× per overlapping glob).
+    Enumerated behavior deltas vs the old per-glob engine: Q-030-2 v4 (i)–(iv).
+
+    Slug = `slug_strategy` on the file stem (PW-L; `identity` = verbatim →
+    Karpathy byte-identity). `extra_tags` = matched entry's
+    `default_tags + extra_tags` (PW-N). Output stably sorted by vault-relative
+    POSIX path (NFR-5).
     """
     exts = set(config.file_extensions)
     autoindex_outputs = {
         str(ai["output"]) for ai in config.auto_indexes if ai.get("output")
     }
-    seen: set[Path] = set()
+    entry_tags = [tuple(e.default_tags) + tuple(e.extra_tags)
+                  for e in config.paths]
+    prunable = _prunable_prefixes(config.ignore)
+    init_alive = [(i, _PatternState.for_glob(e.glob))
+                  for i, e in enumerate(config.paths)]
     out: list[DiscoveredPage] = []
-
-    for entry in config.paths:
-        entry_tags = tuple(entry.default_tags) + tuple(entry.extra_tags)
-        for path in vault_root.glob(entry.glob):
-            if path in seen:
-                continue
-            # Free string/glob filters FIRST — no syscall for non-.md / system /
-            # ignored glob hits (vdd-multi PERF-LOW; matters for broad-glob operator
-            # layouts; byte-identity-neutral — same files pass, sorted at the end).
-            if path.suffix not in exts:
-                continue
-            if path.name in SYSTEM_FILES:
-                continue
-            rel_posix = path.relative_to(vault_root).as_posix()
-            if rel_posix in autoindex_outputs or _matches_ignore(rel_posix, config.ignore):
-                continue
-            # P-2 (TASK 017): ONE stat per SURVIVING candidate — derive is-regular-file
-            # AND mtime from it (was `path.is_file()` + a separate `path.stat()` in
-            # reindex_delta). `is_file()` swallows OSError → False; mirror that.
-            try:
-                st = path.stat()
-            except OSError:
-                continue
-            if not stat.S_ISREG(st.st_mode):
-                continue
-            seen.add(path)
-            out.append(DiscoveredPage(
-                path=path,
-                slug=_apply_slug_strategy(path.stem, config.slug_strategy),
-                project=_derive_project(rel_posix, entry,
-                                        operator_supplied=config.paths_operator_supplied),
-                extra_tags=entry_tags,
-                raw_type=entry.type,
-                mtime=st.st_mtime,
-            ))
+    # explicit stack: (abs dir, rel POSIX dir ('' = root), alive (idx, state))
+    stack: list[tuple[Path, str, list[tuple[int, _PatternState]]]] = [
+        (vault_root, "", init_alive)]
+    while stack:
+        cur_dir, rel_dir, alive = stack.pop()
+        try:
+            it = os.scandir(cur_dir)
+        except OSError:
+            continue
+        with it:
+            while True:
+                # OSError parity with the old pathlib globber (Sarcasmotron
+                # 030-05 LOW): a mid-stream readdir failure ends THIS dir
+                # quietly instead of crashing the whole walk.
+                try:
+                    dent = next(it)
+                except StopIteration:
+                    break
+                except OSError:
+                    break
+                name = dent.name
+                rel = f"{rel_dir}/{name}" if rel_dir else name
+                try:
+                    is_dir = dent.is_dir(follow_symlinks=True)
+                    is_link = dent.is_symlink() if is_dir else False
+                except OSError:
+                    continue
+                if is_dir:
+                    nxt = [(i, adv) for i, s in alive
+                           if (adv := s.advance(name, is_symlink=is_link))
+                           is not None and adv.can_descend]
+                    if nxt and not _dir_pruned(rel, prunable):
+                        stack.append((Path(dent.path), rel, nxt))
+                    continue
+                # F-9 filter order (free string checks before the stat —
+                # vdd-multi PERF-LOW preserved).
+                if PurePosixPath(name).suffix not in exts:
+                    continue
+                if name in SYSTEM_FILES:
+                    continue
+                if rel in autoindex_outputs or _matches_ignore(rel, config.ignore):
+                    continue
+                # First match among the patterns ALIVE at this dir — declared
+                # order; alive-restriction prevents the H-1 overlap+symlink
+                # attribution flip / match-set inflation.
+                matched: int | None = None
+                for i, s in alive:
+                    if s.matches_file(name):
+                        matched = i
+                        break
+                if matched is None:
+                    continue
+                # P-2 (TASK 017): ONE stat per surviving candidate — regular-
+                # file gate AND mtime from the same call; follows a leaf
+                # symlink (F-10); OSError → skip (parity with `is_file()`).
+                try:
+                    st = dent.stat()
+                except OSError:
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                e = config.paths[matched]
+                out.append(DiscoveredPage(
+                    path=Path(dent.path),
+                    slug=_apply_slug_strategy(PurePosixPath(name).stem,
+                                              config.slug_strategy),
+                    project=_derive_project(
+                        rel, e,
+                        operator_supplied=config.paths_operator_supplied),
+                    extra_tags=entry_tags[matched],
+                    raw_type=e.type,
+                    mtime=st.st_mtime,
+                ))
 
     out.sort(key=lambda d: d.path.relative_to(vault_root).as_posix())
     return out

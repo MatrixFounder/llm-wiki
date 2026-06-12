@@ -210,13 +210,19 @@ Every DB query and every file-path write includes a `vault_id=?` predicate or is
 
 ##### Bulk-transaction semantics
 
-For one **single-page** `apply` call, all DB writes — `upsert_entity` (N calls),
-`replace_refs` (1 call), `source_state` update (1 call) — execute under a **single
-`BEGIN IMMEDIATE` transaction**. Concept-file writes happen first (atomic per-file via
-tempfile + rename + content-hash skip + symlink refuse). The DB commit ties them together.
-On any DB exception, the transaction rolls back, on-disk files remain (Class A canonical),
-and the next run replays via `source_state` mismatch — content-hash skip ensures files
-are not pointlessly rewritten if their content is already correct.
+**(Corrected at TASK 030 — the "single transaction" claim below was stale at HEAD;
+F-3 proved the DAL methods own their transactions and SQLite forbids nesting.)**
+For one **single-page** `apply` call, the DB writes — `upsert_entity` (N calls),
+`replace_refs` (1 call), `source_state` update (1 call) — each execute under their
+OWN per-call transaction/autocommit; there is NO enclosing single transaction.
+Atomicity is per-statement-group; recovery is idempotent: concept-file writes happen
+first (atomic per-file via tempfile + rename + content-hash skip + symlink refuse);
+on a DB exception the failed statement-group rolls back, on-disk files remain
+(Class A canonical), and the next run replays via `source_state` mismatch —
+content-hash skip ensures files are not pointlessly rewritten. (TASK 030's txn-free
+DAL helpers `_upsert_page_in_txn`/`_replace_refs_in_txn` now exist for callers that
+DO need a caller-owned chunk transaction — `reindex_full`'s stage-then-flush uses
+them; the extract-concepts path deliberately keeps per-call isolation.)
 
 **TASK 015 / P-7 — `apply --batch-candidates`:** each entry's DB writes execute under
 their **own independent `BEGIN IMMEDIATE` transaction** on the shared repo connection. A

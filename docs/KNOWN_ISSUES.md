@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-06-12T18:17:02.750003 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-06-13T00:42:45.111758 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## dogfood
@@ -33,11 +33,11 @@
 - **L-009-3** [[l-009-3-few-shot-defang-contract-is-a-token-allow-list-not-a-structural-check|few-shot defang contract is a token allow-list, not a structural check]] — severity `LOW`, status `open`, opened 2026-05-29
 - **L-9** [[l-9-entity-resolution-minor-logic-ux-nits-deferred|entity-resolution minor logic/UX nits (deferred)]] — severity `LOW`, status `open`, opened 2026-05-29
 - **R-X1-REF-SLUGIFY** [[r-x1-ref-target-not-slugified|wiki-link ref targets are not run through \`slug_strategy\` → links to existing pages flagged orphan under non-identity slug layouts]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
-- **DF-029-1** [[df-029-1-reindex-delta-misses-mtime-preserved-rename|wiki-reindex --delta misses an mtime-preserved rename → orphans its inbound links]] — severity `SEV-2`, status `mitigated`, opened 2026-06-12
+- **DF-029-1** [[df-029-1-reindex-delta-misses-mtime-preserved-rename|wiki-reindex --delta misses an mtime-preserved rename → orphans its inbound links]] — severity `SEV-2`, status `fixed`, opened 2026-06-12
 
 ## performance
 
-- **P-1** [[p-1-reindex-full-per-page-transactions|reindex_full per-page transactions]] — status `open`, opened 2026-05-26
+- **P-1** [[p-1-reindex-full-per-page-transactions|reindex_full per-page transactions]] — status `fixed`, opened 2026-05-26
 - **P-2** [[p-2-reindex-delta-no-op-walk-cost|reindex_delta no-op walk cost]] — status `fixed`, opened 2026-05-26
 - **P-3** [[p-3-check-drift-re-hashes-every-file|check_drift re-hashes every file]] — status `fixed`, opened 2026-05-26
 - **P-4** [[p-4-benchmark-suite-default-n-100-only|benchmark suite default n=100 only]] — status `open`, opened 2026-05-26
@@ -49,8 +49,9 @@
 - **P-9** [[p-9-missing-concept-files-o-n-stat-sweep-in-prepare|missing_concept_files O(N) stat sweep in prepare]] — severity `SEV-3`, status `open`, opened 2026-05-28
 - **P-11** [[p-11-find-alias-collisions-cross-name-join-on-unindexed-entities-name|find_alias_collisions cross-name join on unindexed entities.name]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **R-X1-CFG-COST** [[r-x1-layout-config-resolve-cost|Per-command layout-config resolve cost (no cache; per-file regex recompile)]] — severity `SEV-3`, status `open`, opened 2026-06-01
-- **R-X1-OBS-WALK** [[r-x1-obsidian-multiglob-rewalk|obsidian-personal multi-glob subtree re-walk]] — severity `SEV-3`, status `open`, opened 2026-06-01
+- **R-X1-OBS-WALK** [[r-x1-obsidian-multiglob-rewalk|obsidian-personal multi-glob subtree re-walk]] — severity `SEV-3`, status `fixed`, opened 2026-06-01
 - **R-X3-MF-SCAN** [[r-x3-metadata-filter-unindexed-scan|wiki-search metadata filter is an unindexed json_extract scan + filesort]] — severity `SEV-3`, status `open`, opened 2026-06-01
+- **P-030-DELTA-BULK** [[p-030-delta-bulk-ingest-per-file-txns|\`reindex_delta\` whole-vault bulk ingest keeps per-file transactions]] — severity `SEV-3`, status `open`, opened 2026-06-13
 
 ## quality
 

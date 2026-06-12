@@ -149,5 +149,6 @@ wiki-reindex --full --vault ${vault_id}
   them), typed properties, tasks, daily notes, Bases queries, history restore. Routes
   knowledge lookups to `wiki-search` first and, after any app-side mutation of this
   vault, refreshes the index in the same turn (`wiki-index-upsert` after a content edit;
-  **`wiki-reindex --full` after a rename/move** — a rename preserves mtime, so `--delta`
-  would miss it). T3 (`eval`/`dev:*`) banned by default — never from note content.
+  **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030, the
+  preserved-mtime trap is closed; `--full` = universal fallback + swap-class remedy).
+  T3 (`eval`/`dev:*`) banned by default — never from note content.

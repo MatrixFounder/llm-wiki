@@ -1,0 +1,77 @@
+{
+  "n_pages": 1000,
+  "results": [
+    {
+      "op": "wiki-reindex-full",
+      "runs": 1,
+      "min_ms": 226.902,
+      "p50_ms": 226.902,
+      "p95_ms": 226.902,
+      "max_ms": 226.902,
+      "slo_target_ms": 20000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-search",
+      "runs": 5,
+      "min_ms": 0.82,
+      "p50_ms": 0.971,
+      "p95_ms": 1.147,
+      "max_ms": 1.147,
+      "slo_target_ms": 50.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-index-upsert",
+      "runs": 5,
+      "min_ms": 0.292,
+      "p50_ms": 0.359,
+      "p95_ms": 0.509,
+      "max_ms": 0.509,
+      "slo_target_ms": 100.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-index-render",
+      "runs": 3,
+      "min_ms": 1.302,
+      "p50_ms": 1.306,
+      "p95_ms": 1.337,
+      "max_ms": 1.337,
+      "slo_target_ms": 1000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-lint",
+      "runs": 3,
+      "min_ms": 34.577,
+      "p50_ms": 34.952,
+      "p95_ms": 34.976,
+      "max_ms": 34.976,
+      "slo_target_ms": 2000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-reindex-delta",
+      "runs": 3,
+      "min_ms": 21.814,
+      "p50_ms": 21.878,
+      "p95_ms": 22.329,
+      "max_ms": 22.329,
+      "slo_target_ms": 500.0,
+      "slo_ok": true
+    }
+  ],
+  "all_pass": true,
+  "enforce_slos": false,
+  "_provenance": {
+    "protocol": "3 harness invocations; kept the run whose wiki-reindex-full p95 is the median (same as baseline)",
+    "wiki_reindex_full_p95_all_runs_ms": [
+      223.277,
+      227.285,
+      226.902
+    ],
+    "kept_run_index": 2,
+    "captured": "2026-06-12, bead 030-06 AFTER capture (post 030-01..05)"
+  }
+}

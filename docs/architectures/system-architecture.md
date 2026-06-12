@@ -518,27 +518,34 @@ consumer**, applied **only to operator-custom patterns**.
 
 #### Engine: `iter_pages(vault_root, config)` — one walk, all slug/project derivation converges
 
-- Per `paths[]` entry, resolve `Path(vault_root).glob(entry.glob)` (native `**`).
-  **First-match-wins** in declared order.
-- **Walk-cost note (scoped — architecture-review M1):** for **Karpathy-shaped**
-  layouts (globs anchored at named subdirs: `_sources/**/*.md`, …) this is
-  structurally identical to today's per-subdir `rglob` — the root tree is never
-  walked. For **multi-`**`-glob layouts** (obsidian-personal: a `*.md` root
-  catch-all + three overlapping `[0-9][0-9] - */…/**/*.md` globs) `Path.glob` runs
-  **once per `paths[]` entry**, so deep subtrees get re-walked once per overlapping
-  glob (dedup is first-match-wins, *after* enumeration). Bounded + deterministic;
-  acceptable at personal-vault scale (§8 = vertical, single-user). If a large
-  personal vault ever bites, the optimisation is a single-pass `os.walk` + an
-  in-memory per-entry matcher — **YAGNI-gated, not built now.** An NFR pins a
-  perf-floor at the obsidian-personal fixture scale to catch a future regression.
-- **Single-stat walk (TASK 017 / P-2).** The walk already stats each candidate once (via
-  `path.is_file()`). `iter_pages` now derives is-file **and** `st_mtime` from a single
-  `os.stat`/`DirEntry` and carries the mtime onto `DiscoveredPage.mtime`, so `reindex_delta`
-  reads `disc.mtime` instead of issuing a **second** `path.stat()` per file (was
-  `reindex.py:299`) — one stat/file instead of two on the no-op delta path; iteration order +
-  match set unchanged (byte-identity). The same `DiscoveredPage.mtime` also feeds the P-3
-  `--mtime-skip` drift fast-path (no extra stat in `check_drift`). The full single-pass
-  `os.walk` rewrite stays YAGNI-deferred (Walk-cost note above).
+- **Single-pass alive-set walk (TASK 030 / R-030-3+R-030-6 — the former YAGNI gate
+  was OPERATOR-OVERRIDDEN on record and the rewrite is BUILT; closes
+  R-X1-OBS-WALK).** One **iterative explicit-stack** `os.scandir` traversal (a
+  Python-recursive walk would add a `RecursionError` DoS class — pinned). Per
+  directory, each `paths[]` glob carries an NFA **`_PatternState` alive-set**
+  (positions over glob segments; `**` consumes ≥0 segments but NEVER a
+  **symlinked** dir segment — exact per-entry `Path.glob` union parity, F-10/H-1);
+  **descend iff the alive-set is non-empty** (PROPER-prefix rule: a dir fully
+  exhausting a file-glob does not descend) AND the dir is not covered by a
+  `_prunable_ignore` (`<prefix>/**`-shaped) glob — REAL pruning, not
+  post-filtering. **Attribution = first match in declared order among the patterns
+  ALIVE at the containing dir.** Karpathy-shaped layouts keep "root subtrees never
+  walked" **by construction** (instrumented, AC-3.3ii; one new root scandir —
+  footnoted, covered by the measured lean improvement); obsidian-personal's former
+  ~N× re-walk is gone: **measured 140 → 61 scandirs at 2k files (every dir exactly
+  once), wall 94.1 → 77.0 ms** (§8.5). Enumerated matcher deltas vs `Path.glob`:
+  Q-030-2 v4 — (i) case-sensitive literals (resolves the Q-024-residual-2 parity
+  gap), (ii) pruning (match-set preserved), (iii) `..`/absolute/`.` globs
+  effectively dead (containment-positive, pinned), (iv) trailing-slash dirs-only
+  parity.
+- **Single-stat walk (TASK 017 / P-2; mechanism updated by TASK 030).** ONE
+  `DirEntry.stat()` per surviving candidate — regular-file gate AND `st_mtime` from
+  the same call, carried as `DiscoveredPage.mtime`; `reindex_delta` reads
+  `disc.mtime` (no second stat). The TASK-017 detector was RE-ARMED at 030-05
+  (`DirEntry.stat` is invisible to a `Path.stat` spy): it now pins ZERO `Path.stat`
+  calls on discovered files, and a DirEntry-proxy test pins exactly-once at the
+  walk (both mutation-proven). The same mtime feeds the P-3 `--mtime-skip` drift
+  fast-path (no extra stat in `check_drift`).
 - **PW-K `ignore[]`** evaluated before `paths[]`; **PW-M `file_extensions`** allow-list
   (default `[.md]`) skips `.base`/`.canvas`/etc. The engine **also treats
   `layout.py::SYSTEM_FILES` and every `auto_indexes[].output` as an implicit ignore

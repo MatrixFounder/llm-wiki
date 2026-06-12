@@ -384,8 +384,9 @@ running Obsidian 1.12+ desktop app via its official CLI (link-safe rename/move, 
 properties, tasks, daily notes, Bases queries, history restore) — things the file+SQLite
 `wiki-*` stack can't reach. Four invariants: **routing** (knowledge/RAG → `wiki-search`/
 `wiki-query` FIRST, unchanged; bulk → `wiki-sync`; live-app → `obsidian`); **coherence**
-(same-turn `wiki-index-upsert` after a content edit, **`wiki-reindex --full` after a
-rename/move** — DF-029-1: a rename preserves mtime so `--delta` misses it; self-disables on
+(same-turn `wiki-index-upsert` after a content edit; rename/move guidance: `--full` AS
+SHIPPED IN TASK 029 — **superseded by TASK 030**, whose rename-aware `--delta` closed
+DF-029-1 in code [the skill/docs were flipped in lockstep]; self-disables on
 unregistered vaults); **safety** (a TOTAL T1/T2/T3 tier model over the verified 102-command
 surface — `eval`=RCE-equivalent + `dev:*` + plugin/snippet/theme mutations T3-banned-by-default,
 NEVER from note content; `command id=`+`template:insert` active-file default-DENY [S-1];
@@ -403,6 +404,45 @@ proven 0-orphans, injection canary held, base:query/history live). **Zero DDL** 
 strict 75 files** unchanged), no `import anthropic`, Karpathy byte-identity unaffected. See
 `docs/tasks/task-029-*.md`, `docs/plans/plan-029-obsidian-cli-skill.md`, ARCHITECTURE §2.2 +
 Q-029-1..5, `docs/issues/df-029-1-*.md`, ROADMAP R-12.
+**TASK 030 (reindex-perf-hardening — DF-029-1 + P-1 + R-X1-OBS-WALK) SHIPPED 2026-06-12**
+(uncommitted, branch `task-030-reindex-perf-hardening`): three indexer fixes, one bounded
+cycle (TASK 017 precedent), **zero DDL** (`user_version` 5), no new deps. **(1) rename-aware
+`--delta`** (closes DF-029-1 SEV-2 in CODE — supersedes the TASK 029 skill-level `--full`
+mitigation): any on-disk path absent from `pages.file_path` ingests regardless of mtime
+(zero extra I/O — reuses the TASK-021 coalesced read); targeted `file_path` refresh on the
+"unchanged" outcome → second delta = true no-op (AC-1.9); per-file `sqlite3.Error` isolation;
+additive `new_path_ingested` (+`_total` in `--all-vaults`); named residuals A5 (swap class →
+lint hash-drift + `--full`) and A9 (duplicate-key copy oscillates noisily — detection-only
+posture). **(2) stage-then-flush chunked `--full`** (closes P-1): private txn-free DAL helpers
+(`_upsert_page_in_txn`/`_replace_refs_in_txn`; public per-call semantics byte-preserved, M-4
+untouched, FTS triggers stay); derivation I/O OUTSIDE the txn, DML-only flushes (K=500 ∧
+32 MiB-est) — write lock held ms-scale; per-page commits ~2N → ceil(N/K)+1. **Measured 2×:
+full @1k 459.8→226.9 ms, @10k 4601.6→2353.1 ms (76× SLO headroom)**. **(3) single-pass
+alive-set walk** (closes R-X1-OBS-WALK; YAGNI gate operator-overridden on record):
+iterative explicit-stack scandir + per-pattern `_PatternState` NFA (exact `Path.glob`
+symlink-union parity; matcher deltas enumerated Q-030-2 v4) + PROPER-prefix descent +
+real `<prefix>/**` ignore-pruning — **measured 140→61 scandirs @2k files (every dir ≤1×),
+wall 94.1→77.0; delta-noop @10k 246→192 ms**; karpathy "root subtrees never walked" now
+instrumented; the TASK-017 P-2 detector RE-ARMED (==0 `Path.stat` + DirEntry-proxy
+exactly-once, mutation-proven). Q-030-1 gate: opt-in `WIKI_BENCH_SLO=1` SLO test +
+`docs/runbooks/perf-slo-gate.md` + committed before/after JSONs (`docs/benchmarks/030-*`);
+P-4 stays open. Full VDD: two adversarial design gates (6× NEEDS-REVISION folded) +
+`/vdd-develop-all` with per-bead Sarcasmotron — EVERY bead REJECTED iter-1 → converged
+iter-2 (030-03 CRITICAL mid-loop-flush-swallow injection-proven fixed; 030-04 HIGH matcher
+bug; 030-05 HIGH vacuous detector re-armed; 030-06 evidence-integrity; 030-07 lockstep).
+TEN doc surfaces + skill flipped in lockstep (E-07 + canaries re-run 5/5 GREEN). **Post-ship
+`/vdd-multi` CONVERGED iter-3** (logic/security/performance critics + adversarial verifier, all
+findings empirically reproduced before acceptance): SEC-HIGH `**`-glob walk DoS (collapse +
+`_GLOB_MAX_SEGMENTS=64` operator load-gate; 3.1 s → 0.29 s flat), LOGIC-MED delta partial-write
+permanence (per-file atomic txn via the 030-02 helpers — consistent-stale residual on record),
+PERF-M1 staging peak 63.6 → 33.4 MiB (true cause = UTF-8 bind caches; per-row buffer drain;
+iter-2 misattribution corrected on record), PERF-M2 disposed as residual
+`docs/issues/p-030-delta-bulk-ingest-per-file-txns.md` (whole-vault delta ~1.7× slower than
+chunked full — deliberate per-file atomicity; Q-030-3 cost claim corrected) + 3 LOW fixed
+(double-skip, prunable-prefix hoist, `_build_page` second stat). **1314 pytest (+5 skipped),
+mypy strict (75 files).** See `docs/tasks/task-030-*.md`,
+`docs/plans/plan-030-*` (at HEAD until next rotation), `docs/reviews/task-030-review.md`,
+ARCHITECTURE Q-030-1..6, `docs/benchmarks/030-*`.
 
 ## Knowledge lookup priority
 
@@ -450,10 +490,11 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 029
-  `obsidian-cli-skill`** (R-12; `docs/TASK.md` + `docs/PLAN.md` + `docs/tasks/task-029-00..07-*.md`
-  + `docs/plans/plan-029-obsidian-cli-skill.md` live at HEAD — the cycle is shipped but
-  **not yet rotated** [it rotates at the next task's Analysis per `skill-archive-task`]).
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 030
+  `reindex-perf-hardening`** (DF-029-1+P-1+R-X1-OBS-WALK; `docs/TASK.md` + `docs/PLAN.md` +
+  `docs/tasks/task-030-00..07-*.md` live at HEAD — shipped, **not yet rotated** [rotates at the
+  next task's Analysis per `skill-archive-task`]). Preceded by **TASK 029 `obsidian-cli-skill`**
+  (R-12; archived `docs/tasks/task-029-obsidian-cli-skill.md` + beads + `docs/plans/plan-029-obsidian-cli-skill.md`).
   Preceded by **TASK 028 `query-stemming-yo-folding`** (archived
   `docs/tasks/task-028-query-stemming-yo-folding.md` + `docs/plans/plan-028-*.md`). Preceded
   by **TASK 026 `installer-vault-claude-settings`**

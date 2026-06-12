@@ -311,7 +311,8 @@ one found-in-dev serious-deviation fixed — verdict↔query `pages` PK collisio
 a **total** T1/T2/T3 command-safety model over the **verified 102-command** live surface
 (`eval`/`dev:*`/plugin-snippet-theme mutations T3-banned; `command id=`+`template:insert`
 active-file default-DENY S-1), the mutation→index coherence protocol (`wiki-index-upsert`
-for content; **`wiki-reindex --full` for rename/move** — DF-029-1), the full live-verified
+for content; rename/move: `--full` per the ORIGINAL TASK-029 mitigation of DF-029-1 —
+SUPERSEDED 2026-06-12 by TASK 030's rename-aware `--delta`, skill updated in lockstep), the full live-verified
 catalog + a diff-driven version-update Maintenance procedure, ≥8 recipes, and **14/14 GREEN**
 behaviour evals (Fable+Sonnet injection canaries). Full VDD + per-bead Sarcasmotron +
 **live dogfood** that found+fixed **DF-029-1** (SEV-2: `--delta` misses an mtime-preserved
@@ -406,8 +407,11 @@ ranking/stemming/citations — never the default for knowledge lookup.
 **Mutation→index coherence protocol**: any obsidian-CLI mutation on a
 wiki-registered vault MUST be followed in the same turn by
 `wiki-index-upsert <file>` (single file) or `wiki-reindex --delta`
-(rename/move — app-side link updates fan out to many files; delta catches
-all). The SQLite mirror never stays stale past the turn. ADR-002 §D8 holds:
+(rename/move/delete — since TASK 030 the delta is RENAME-AWARE: the moved
+file's new path is ingested regardless of its preserved mtime, and the
+link-rewritten neighbours ride the normal mtime path; `--full` remains the
+fallback + the swap-class A5 remedy). The SQLite mirror never stays stale
+past the turn. ADR-002 §D8 holds:
 Class-A files are mutated app-side, the DB stays a rebuildable projection.
 
 **Safety tiers** (vault bodies are untrusted input — same egress posture as
@@ -605,13 +609,22 @@ at N=100 (current default benchmark) but flag risk at 10k pages.
 
 | ID | Issue | Mitigation |
 |---|---|---|
-| **P-1** | `reindex_full`: N transactions, no batching | Bulk-tx + temporary FTS5 trigger drop |
+| **P-1** | ~~`reindex_full`: N transactions, no batching~~ ✅ DONE 2026-06-12 (TASK 030) | Stage-then-flush chunked tx (K=500 ∧ 32 MiB; lock = DML-only). **Measured 2.0×** (full @10k 4601→2353 ms). NOTE: the old "temporary FTS5 trigger drop" idea was REJECTED on record — runtime DDL + crash-window FTS desync + cross-vault `pages_fts` impact (see the P-1 issue file). |
 | **P-2** | ~~`reindex_delta`: full filesystem walk on no-op~~ ✅ DONE 2026-06-02 (TASK 017) | Single-stat walk — `DiscoveredPage.mtime` reused (no 2nd stat). |
 | **P-3** | ~~`check_drift`: re-hashes every file~~ ✅ DONE 2026-06-02 (TASK 017) | regex `type:` fast-path (**4.6×** `wiki-lint` @1k, default mode) + opt-in `--mtime-skip`. |
-| **P-4** | Benchmark default `n=100` only | CI mode with `--scale all --enforce-slos` |
+| **P-4** | Benchmark default `n=100` only | CI mode with `--scale all --enforce-slos`. Interim (TASK 030 / Q-030-1): the opt-in LOCAL gate exists — `WIKI_BENCH_SLO=1 pytest tests/test_benchmark_slo_gate.py` + the manual 10k run (`docs/runbooks/perf-slo-gate.md`); P-4 proper (CI) stays open. |
 | **P-5** | ~~Dead `idx_pages_vault_tags` JSON-expr index~~ ✅ DONE 2026-05-29 (TASK 006, schema v4) | Dropped. |
 
 Trigger: real vault crosses 1k pages and operations slow down.
+
+Closure note (TASK 030, 2026-06-12): **R-X1-OBS-WALK** (obsidian-personal multi-glob
+re-walk, KNOWN_ISSUES) is CLOSED by the single-pass alive-set walk — scandirs 140→61
+at 2k files, every dir exactly once; see the issue file + ARCHITECTURE §3.5/§8.5.
+New residual filed by the TASK 030 post-ship `/vdd-multi` (SEV-3, scale-gated):
+**P-030-DELTA-BULK** — whole-vault `--delta` ingest keeps per-file atomic txns
+(~1.7× vs chunked `--full` @2k; deliberate — per-file atomicity closed the
+partial-write hole); fix shape = stage-then-flush for the delta cohort
+(`docs/issues/p-030-delta-bulk-ingest-per-file-txns.md`).
 
 **Newer documented residuals** (recorded, not silent; none with an active trigger):
 - **wiki-query V×T alias fan-out** (ARCHITECTURE Q-028-3) — `_build_match_query` does one

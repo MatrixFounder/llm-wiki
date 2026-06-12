@@ -1,0 +1,77 @@
+{
+  "n_pages": 1000,
+  "results": [
+    {
+      "op": "wiki-reindex-full",
+      "runs": 1,
+      "min_ms": 459.788,
+      "p50_ms": 459.788,
+      "p95_ms": 459.788,
+      "max_ms": 459.788,
+      "slo_target_ms": 20000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-search",
+      "runs": 5,
+      "min_ms": 0.719,
+      "p50_ms": 0.758,
+      "p95_ms": 1.043,
+      "max_ms": 1.043,
+      "slo_target_ms": 50.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-index-upsert",
+      "runs": 5,
+      "min_ms": 0.261,
+      "p50_ms": 0.433,
+      "p95_ms": 0.553,
+      "max_ms": 0.553,
+      "slo_target_ms": 100.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-index-render",
+      "runs": 3,
+      "min_ms": 1.253,
+      "p50_ms": 1.4,
+      "p95_ms": 1.623,
+      "max_ms": 1.623,
+      "slo_target_ms": 1000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-lint",
+      "runs": 3,
+      "min_ms": 41.359,
+      "p50_ms": 43.042,
+      "p95_ms": 43.388,
+      "max_ms": 43.388,
+      "slo_target_ms": 2000.0,
+      "slo_ok": true
+    },
+    {
+      "op": "wiki-reindex-delta",
+      "runs": 3,
+      "min_ms": 25.803,
+      "p50_ms": 27.536,
+      "p95_ms": 28.385,
+      "max_ms": 28.385,
+      "slo_target_ms": 500.0,
+      "slo_ok": true
+    }
+  ],
+  "all_pass": true,
+  "enforce_slos": false,
+  "_provenance": {
+    "protocol": "3 harness invocations; kept the run whose wiki-reindex-full p95 is the median",
+    "wiki_reindex_full_p95_all_runs_ms": [
+      459.788,
+      478.135,
+      435.96
+    ],
+    "kept_run_index": 0,
+    "captured": "2026-06-12, bead 030-00 (Sarcasmotron MED-2 re-capture)"
+  }
+}

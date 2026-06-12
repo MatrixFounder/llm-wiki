@@ -7,11 +7,11 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 022**
-> (vault-local DB resolution — a vault can keep a portable index that travels with
-> it, or share the one global DB; shipped 2026-06-08). Schema **v5**
-> (`user_version = 5`). **1083 pytest passed (+4 skipped),
-> `mypy --strict` clean on 73 source files.** The repo's own `docs/` is
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 030**
+> (indexer hardening: rename-aware `--delta`, 2× faster chunked `--full`,
+> single-pass pruned walk; shipped 2026-06-12). Schema **v5**
+> (`user_version = 5`). **1310+ pytest passed,
+> `mypy --strict` clean on 75 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -252,8 +252,8 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # 1083 passed, 4 skipped (~24s)
-mypy --strict scripts/  # clean on 73 source files (vendored package excluded
+pytest tests/           # full suite green (~28s; see the status block for the current count)
+mypy --strict scripts/  # clean on 75 source files (vendored package excluded
                         # via mypy.ini override per Decision-14)
 ```
 
@@ -418,7 +418,7 @@ files+SQLite can't reach — and keep the index coherent after.*
 
 | Skill | What it does |
 |---|---|
-| [`obsidian-cli`](skills/obsidian-cli/SKILL.md) | A **prompt-layer, vendor-agnostic** skill teaching any LLM agent to route between the `wiki-*` toolchain (knowledge/RAG/bulk — still first for lookups) and the native `obsidian` CLI (link-safe rename/move, typed properties, tasks, daily notes, Bases queries, history restore, open-in-app). Carries a **total 3-tier safety model** (T1 read / T2 mutate / T3 banned-by-default incl. `eval`), a **mutation→index coherence protocol** (`wiki-index-upsert` after a content edit; **`wiki-reindex --full` after a rename/move** — a rename preserves mtime so `--delta` would miss it, DF-029-1), and graceful degradation when the CLI is absent/headless. Full 102-command reference + recipes + behaviour evals under [`skills/obsidian-cli/`](skills/obsidian-cli/). **No Python, no DDL** — it orchestrates existing CLIs. |
+| [`obsidian-cli`](skills/obsidian-cli/SKILL.md) | A **prompt-layer, vendor-agnostic** skill teaching any LLM agent to route between the `wiki-*` toolchain (knowledge/RAG/bulk — still first for lookups) and the native `obsidian` CLI (link-safe rename/move, typed properties, tasks, daily notes, Bases queries, history restore, open-in-app). Carries a **total 3-tier safety model** (T1 read / T2 mutate / T3 banned-by-default incl. `eval`), a **mutation→index coherence protocol** (`wiki-index-upsert` after a content edit; **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030: the moved file's new path is ingested despite the preserved mtime, closing DF-029-1; `--full` = universal fallback + swap-class remedy), and graceful degradation when the CLI is absent/headless. Full 102-command reference + recipes + behaviour evals under [`skills/obsidian-cli/`](skills/obsidian-cli/). **No Python, no DDL** — it orchestrates existing CLIs. |
 
 ### Entity resolution (Epic 7)
 
@@ -495,7 +495,7 @@ workflows/wiki-*.md         multi-step orchestration recipes (incl. wiki-sync ex
 bin/wiki-*                  15 shell wrappers (cd + venv + exec)
 bin/install-globally.sh     global install (path A)
 bin/install-project-symlinks.sh   repo-local symlinks (dev path B)
-tests/                      pytest suite (1083 passed, 4 skipped) + fixtures
+tests/                      pytest suite (full suite green; count in the status block) + fixtures
 samples/                    gitignored scratch tree for dogfooding vaults
 ```
 
@@ -505,8 +505,13 @@ samples/                    gitignored scratch tree for dogfooding vaults
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 1083 passed, 4 skipped
-mypy --strict scripts/  # clean on 73 source files (the contract for scripts/)
+pytest tests/           # 1310+ passed (see git log for the current count)
+mypy --strict scripts/  # clean on 75 source files (the contract for scripts/)
+
+# Performance SLO gate (TASK 030 / Q-030-1) — run before shipping indexer hot-path changes:
+WIKI_BENCH_SLO=1 pytest tests/test_benchmark_slo_gate.py   # n=1000, enforced
+python -m scripts.benchmark --n 10000 --enforce-slos       # manual 10k gate
+# Protocol + evidence conventions: docs/runbooks/perf-slo-gate.md
 ```
 
 Conventions:

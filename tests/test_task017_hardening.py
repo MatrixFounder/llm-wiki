@@ -227,7 +227,18 @@ def test_reindex_delta_reuses_walk_mtime_no_double_stat(
 ) -> None:
     """AC-017-4 (P-2): a no-op delta stats each discovered file at most ONCE (the
     discovery walk) — the per-file loop reuses DiscoveredPage.mtime instead of a
-    second `path.stat()`. Per-path counting → overhead-independent (works at N=3)."""
+    second `path.stat()`. Per-path counting → overhead-independent (works at N=3).
+
+    RE-ARMED for TASK 030 (Sarcasmotron 030-05 HIGH — sanctioned edit): the
+    single-pass walk stats via `os.DirEntry.stat()`, INVISIBLE to this
+    `pathlib.Path.stat` spy, so the old `<= 1` bound became vacuous (a
+    reintroduced `path.stat()` in the delta loop would count 1 and PASS).
+    The honest post-030 pin is `== 0` detector-visible `Path.stat` calls on
+    discovered files (the walk contributes zero; ANY per-file `path.stat()`
+    regression now counts ≥1 and FAILS — strictly stronger than before).
+    The walk-side exactly-once guarantee is pinned separately by
+    `tests/test_task030_single_pass_walk.py::test_walk_stats_each_file_exactly_once`
+    via a DirEntry proxy."""
     import pathlib
     from collections import Counter
     from datetime import datetime
@@ -258,8 +269,11 @@ def test_reindex_delta_reuses_walk_mtime_no_double_stat(
     r.close()
 
     assert result["touched"] == 0, "expected a genuine no-op delta"
-    doubled = {p: c for p, c in counts.items() if p in discovered and c > 1}
-    assert not doubled, f"discovered files stat'd more than once (double-stat): {doubled}"
+    statted = {p: c for p, c in counts.items() if p in discovered and c > 0}
+    assert not statted, (
+        f"discovered files hit Path.stat during delta — the walk uses "
+        f"DirEntry.stat, so ANY visible call is a reintroduced per-file "
+        f"double-stat (P-2 regression): {statted}")
 
 
 # --------------------------------------------------------------------------- #

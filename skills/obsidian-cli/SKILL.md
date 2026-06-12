@@ -76,11 +76,15 @@ in the **same turn** — the mirror must never end the turn stale:
   `wiki-index-upsert --vault <vid> --source <ABS path inside the vault root>` (NOT a
   positional arg — `--source` is required and must be absolute; derive the root with
   `obsidian vault=<v> vault info=path`);
-- `rename`/`move` → **`wiki-reindex --full`** — a rename/move **preserves the file's
-  mtime**, so a plain `wiki-reindex --delta` MISSES the moved file (its mtime predates the
-  delta cutoff) and orphans its inbound links (dogfood DF-029-1). `--full` is the safe
-  default; the cheap alternative on a large vault is `touch "<new path>"` (bump the mtime)
-  **then** `wiki-reindex --delta`. The link-rewritten neighbours are caught either way.
+- `rename`/`move` → **`wiki-reindex --delta`** — since framework TASK 030 the delta is
+  **rename-aware**: the moved file's NEW path is ingested even though a rename preserves
+  the mtime (the original DF-029-1 trap), and the link-rewritten neighbours ride the
+  normal mtime path; the envelope's `new_path_ingested` field names the absorbed path.
+  `wiki-reindex --full` remains the **universal fallback** AND the required remedy for
+  the swap-class residual (two notes exchanging paths — every path stays "known" to the
+  index, so the delta predicate cannot see it; `wiki-lint` hash-drift flags it). On a
+  PRE-TASK-030 framework (no `new_path_ingested` in the delta envelope) keep the old
+  rule: `--full`, or `touch "<new path>"` then `--delta`.
 - `delete` → `wiki-reindex --delta` (the removed path is detected; any now-broken inbound
   link correctly becomes an orphan).
 

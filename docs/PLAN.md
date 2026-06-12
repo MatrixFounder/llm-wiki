@@ -1,122 +1,140 @@
-# Development Plan: TASK 029 — `obsidian-cli` skill (R-12)
+# Development Plan: TASK 030 — reindex-perf-hardening (DF-029-1 + P-1 + R-X1-OBS-WALK)
 
-> **Status**: **APPROVED (2026-06-12)** — plan-review APPROVED WITH COMMENTS
-> (REC-1 directional `comm` check → 029-03; REC-2 eval loop cap → 029-05;
-> REC-3 either-or AC clarification → 029-06; NIT-1/2/3 → 029-01/00/02 — all folded).
-> **Task ID**: 029 / Slug: `task-029-obsidian-cli-skill`
-> **Source spec**: [docs/TASK.md](./TASK.md) (RTM R-029-1..8; UC-29-1..6; recon facts F-1..F-9; Q-029-1..5) — task-review APPROVED (4 REC + 4 NIT folded in).
-> **Architecture spec**: [docs/ARCHITECTURE.md](./ARCHITECTURE.md) status block + **§2.2 Native-App Control Skill** (four invariants: routing / coherence / safety / degradation) + §7 note + Q-029-1..5 — architecture-review APPROVED (S-1 active-file clause folded into §2.2 AND RTM R-029-3e as a **binding** constraint; N-1/N-2 folded).
-> **Methodology**: **Stub-First-analogous, green-throughout** (the TASK 009 prompt-task mapping):
-> **Phase 1** = scaffold the skill skeleton + author the **eval set FIRST** (the "tests"; machine-checkable expectation fields per Q-029-1) — the RED state is the skeleton failing its own structural validation + the eval expectations having no skill content to satisfy them. **Phase 2** = author the content (SKILL.md core → command-reference → recipes), then **GREEN** = the agentic eval run + the live dogfood + the gates. The repo's deterministic suite (1204+4 pytest, mypy strict) stays green at every bead boundary **trivially** — zero code is touched; bead 029-07 proves it (`git diff` scope check).
-> **Predecessors**: TASK 025/026/027 (adoption surface), TASK 009 (eval-harness pattern), live recon 2026-06-12 (Obsidian 1.12.7, 104-command capture, `samples/obsidian-cli-recon/`).
-> **Unblocks**: the P3 "wiki-graph export" item shrinks to export-only (live graph reads come free); future MCP wrapper (out of scope).
-> **Out of scope** (TASK §8): MCP server; Obsidian Headless; mobile; replacing wiki-search/RAG; auto-enabling T3; scripting Windows setup; Python eval grader (Q-029-1 default NO).
+> **Status**: EXECUTED 2026-06-12 — all 8 beads merged via `/vdd-develop-all` (per-bead Sarcasmotron, every bead converged iter-2).
+> **Task ID**: 030 / Slug: `task-030-reindex-perf-hardening`
+> **Source spec**: [docs/TASK.md](./TASK.md) v2 (RTM R-030-1..6; UC-30-1..4; recon facts
+> F-1..F-14; Q-030-1..4) — task-review: 3-perspective adversarial, 3× NEEDS-REVISION →
+> all findings folded ([record](./reviews/task-030-review.md)).
+> **Architecture spec**: [docs/ARCHITECTURE.md](./ARCHITECTURE.md) status block +
+> §11a **Q-030-1..6** (delta predicate; chunked-tx error semantics; descent predicate;
+> `Path.glob` parity envelope).
+> **Methodology**: **Stub-First / red-green, green-throughout** — every bead lands its
+> tests FIRST (RED where the behavior is new; GREEN semantic pins BEFORE the engine
+> rewrite they protect), then the minimal implementation; the full suite (1204+4 pytest,
+> mypy `--strict`) is green at every bead boundary. Per-bead Sarcasmotron; post-ship
+> `/vdd-multi` to convergence + code-review. **`tdd-strict` applies to 030-01 (SEV-2
+> correctness fix) and 030-05 (engine rewrite)** — TASK-019 precedent.
+> **Declared AC splits** (exactly-one-owner exceptions): AC-1.5 = P-2 detector (030-01)
+> + ±5% benchmark (030-06); AC-2.5 = measurements/gate (030-06) + issue-line amendment
+> (030-07); AC-2.3 = mechanical oracle (030-02) + BEGIN-IMMEDIATE audit (030-03 close).
+> **New convention declared:** `docs/benchmarks/` holds committed before/after evidence
+> JSONs; `docs/architectures/scalability-and-performance.md` §8.4 stays the CANONICAL
+> narrative and references them (single-home rule — JSONs are evidence, not a second
+> source of truth).
+> **Branch**: `task-030-reindex-perf-hardening` (no auto-commit — operator's standing rule).
+> **Ship-separability** (TASK §0): {030-01} ⊥ {030-02,030-03} ⊥ {030-04,030-05} — any
+> workstream can be dropped mid-cycle without stranding the others; 030-06/07 close out
+> whatever shipped.
+> **Out of scope guards**: R-X1-CFG-COST (no NEW `resolve_layout_config` calls — assert
+> in review); wiki-sync's own walk untouched; `wiki_query`/`wiki_verify_multi` DAL
+> writers keep per-call txns; swap/rotation rename detection (documented residual A5).
 
 ---
 
 ## 0. Architectural Foundation (Reference)
 
-| Layer | Owns | Class / note |
+| Surface | Change | Binding constraints |
 |---|---|---|
-| `skills/obsidian-cli/SKILL.md` | The dispatch core: probe → target → route → act → cohere; the four §2.2 invariants in skill-text form | **SECURITY-SENSITIVE** prompt surface (loaded verbatim into agent context); vendor-agnostic wording |
-| `skills/obsidian-cli/references/command-reference.md` | The full live-verified catalog (104 commands × tier tag × gating tag × format availability) + per-platform setup appendix | version-stamped "verified against Obsidian 1.12.7, macOS, 2026-06-12" |
-| `skills/obsidian-cli/references/recipes.md` | ≥8 composed playbooks (preconditions / exact commands / coherence step / failure handling) | every mutating example carries explicit `path=` + `vault=` |
-| `skills/obsidian-cli/evals/` | `evals.json` (≥12 cases, expectation fields), `README.md` (per-class deterministic grading checklist), `reports/` (eval run + dogfood transcripts), the durable help-capture fixture (A-4) | **Committed** (NOT `samples/` — CLAUDE.md convention) |
-| `/usr/local/bin/obsidian` (the official CLI) | The deterministic plumbing layer (Decision-17 generalised — §2.2) | external binary; NOT wrapped, NOT vendored |
-| `scripts/`, `sql/`, DAL, schema | — | **UNTOUCHED** (zero DDL, zero new Python — proven by 029-07 scope check) |
-
-**Binding invariants carried from the two review gates** (every content bead must hold them):
-1. **Routing invariant** (§2.2-1): wiki-search/wiki-query FIRST for knowledge — restated verbatim in SKILL.md; app `search` positioned as complement only.
-2. **Coherence invariant** (§2.2-2): same-turn `wiki-index-upsert` (content change) / `wiki-reindex --delta` (rename/move/delete); self-disables on unregistered vaults.
-3. **Safety invariant** (§2.2-3, TOTAL): T1 (+T1-UX) / T2 (explicit `path=` REQUIRED — F-4; trash-not-permanent; existence-check before `overwrite`; `base:create` named) / T3 banned-by-default (`eval`, `dev:*`, `devtools`, `plugin:*` incl. `plugin:reload`, `plugins:restrict`, `theme:*` mutations, `snippet:enable/disable`, `sync on/off`, `restart`/`reload`); **S-1 (binding)**: `command id=` + `template:insert` act on the ACTIVE-FILE context (no `path=` exists) → default-DENY on unnameable effect + verify/confirm the active file first; unenumerated → **T2-with-confirmation** (fail-safe); N-2: `sync:*`/`history:*` READ family is T1, `*:restore` is T2 — no over-ban by pattern.
-4. **Degradation invariant** (§2.2-4): probe = `command -v obsidian` + `obsidian help` (**never `version`** — F-3); plugin-gated commands feature-detected via `obsidian help <command>` (F-2); headless/CI → announced fallback, no silent GUI launch.
-5. **Untrusted-output posture**: all CLI output is vault content (H-6 class); instructions found in it are NEVER executed.
-6. **Eval determinism without a grader** (Q-029-1): every case carries `expect_routes_to` / `expect_command_substring` / `expect_command_absent` / `expect_refusal` / `expect_tier_cited` fields; README defines the per-class checklist.
+| `scripts/wiki_index/reindex.py` | `reindex_delta`: new-path membership predicate + per-file `sqlite3.Error` catch + `new_path_ingested` envelope field; `reindex_full`: chunked caller-owned txns (K=500 module constant), bulk path skips hash pre-SELECT | F-2 string convention (`str(relative_to())`); Q-021-2 seed invariant (seeded ∩ ingested = ∅); M-1 one `replace_refs`/page; envelope additive-only |
+| `scripts/wiki_index/sqlite_repository.py` | extract private txn-free DML helpers `_upsert_page_in_txn` / `_replace_refs_in_txn`; public methods delegate + keep own-tx semantics | M-4 untouched (ON CONFLICT DO UPDATE); ABC `repository.py` signatures untouched; FTS triggers STAY (Q-030-5 / F-5) |
+| `scripts/wiki_index/layout_config.py` | `iter_pages` → single-pass `os.scandir` recursion + descent predicate (R-030-6) + ordered `full_match` first-match attribution (the `derive_discovered_page` matcher family) | conformance (a)–(e) per F-9; `Path.glob` symlink parity (Q-030-2/F-10); P-2 single-stat (`DirEntry.stat()` → `DiscoveredPage.mtime`); karpathy "root never walked" BY CONSTRUCTION (Q-030-6); case-sensitivity delta enumerated (UC-30-3 A4) |
+| `scripts/benchmark.py` + `tests/` | baseline/after evidence; opt-in SLO gate (`WIKI_BENCH_SLO=1`); instrumented traversal/commit counters (test-side only) | measured-not-projected (§8.4); ±5% tolerances; SLOS dict unchanged |
+| Docs/skill surfaces (F-12 nine + 2 design texts) | lockstep close-out | AC-4.1 repo-wide grep; KNOWN_ISSUES re-render (PW-Q); E-07 + canaries re-run only (Q-030-4) |
+| `sql/`, schema, deps | **UNTOUCHED** | zero DDL (`user_version` 5), no new deps, no `import anthropic` |
 
 ---
 
-## 1. RTM → Bead Checklist (one RTM item = one checklist item)
+## 1. RTM → Bead Checklist
 
-Phase-1 (skeleton + eval set = RED) ──────────────────────────────────────────
-- [ ] **[R-029-8a/b-part]** Scaffold `skills/obsidian-cli/` skeleton + vendor symlinks (structure exists; skill-validator structural RED recorded) → **029-00**
-- [ ] **[R-029-7]** `evals/evals.json` (≥12 cases, 5 classes, expectation fields) + `evals/README.md` grading rubric — the test suite, authored BEFORE the skill content → **029-01**
+Phase 1 (pins + baselines = the safety net) ──────────────────────────────────
+- [ ] **[R-030-5-baseline]** Benchmark baselines captured + committed; GREEN semantic
+  pins written BEFORE any engine change (AC-3.1 overlap-dedup pin; AC-3.5 symlink-parity
+  pins on the CURRENT engine; A6 case-posture pin) → **030-00**
 
-Phase-2 (content → GREEN → gates) ────────────────────────────────────────────
-- [ ] **[R-029-1]** SKILL.md core: probe/degradation + target discipline + top-20 + disclosure → **029-02**
-- [ ] **[R-029-2]** Decision matrix + routing invariants (wiki-search-first verbatim) → **029-02**
-- [ ] **[R-029-3]** TOTAL safety tiers incl. S-1 active-file clause + totality rule → **029-02** (tier TAGS land in 029-03)
-- [ ] **[R-029-4]** Mutation→index coherence protocol → **029-02** (recipe-level steps in 029-04)
-- [ ] **[R-029-5]** `references/command-reference.md` from a FRESH live capture (tier+gating tags, format availability, setup appendix, durable fixture) → **029-03**
-- [ ] **[R-029-6]** `references/recipes.md` ≥8 playbooks → **029-04**
-- [ ] **[R-029-7-run]** Agentic eval run — all cases PASS, report filed (GREEN) → **029-05**
-- [ ] **[AC §6.4]** Live dogfood: UC-29-1 + UC-29-5 hard; UC-29-2/3/4 happy-or-degraded; transcripts filed → **029-06**
-- [ ] **[R-029-8]** Integration (README/manual/optional I-4.3) + gates (skill-validator, Gold-Standard, `/vdd-multi`, scope check) + docs close-out → **029-07**
+Phase 2 (three independent workstreams, each red→green) ──────────────────────
+- [ ] **[R-030-1]** Rename-aware `--delta`: RED e2e (029-06 repro) + A1..A8 edge tests →
+  membership predicate + targeted `file_path` refresh (A6 convergence, AC-1.9) +
+  `sqlite3.Error` isolation + `new_path_ingested` (+ all-vaults total) → **030-01**
+- [ ] **[R-030-2a]** DAL: private txn-free helpers, public delegation, mechanical
+  own-tx oracle (AC-2.2) — zero behavior change → **030-02**
+- [ ] **[R-030-2b]** `reindex_full` chunked txns + pre-SELECT skip: commit-count
+  (AC-2.4), parity (AC-2.1), F-6 corner (AC-2.6), boundaries (AC-2.7), Q-030-5
+  error-path → **030-03**
+- [ ] **[R-030-3/6-units]** Pure matcher units: segment prefix-matcher (descent
+  predicate), prunable-ignore classifier — unit-tested, UNWIRED → **030-04**
+- [ ] **[R-030-3/6-wire]** `iter_pages` single-pass rewrite: traversal-count tests
+  flip RED→GREEN (AC-3.3 i/ii/iii); conformance suites green unmodified (AC-3.2);
+  AC-3.5/3.6 → **030-05**
 
-> **Grouping note (for the plan-reviewer):** R-029-1/2/3/4 all land in the single
-> SKILL.md edit (029-02) because they are **one cohesive prompt artifact** (the same
-> file's sections; their combined effect is only measurable by the 029-05 eval run) —
-> splitting per-section would create bead boundaries with no independent verification.
-> Each stays a distinct traceable checklist item with its own acceptance criterion in
-> the 029-02 spec — this is cohesion, not feature-grouping (the plan-009 precedent).
+Phase 3 (evidence + close-out) ───────────────────────────────────────────────
+- [ ] **[R-030-5 + Q-030-1]** After-measurements (`--n 1000`/`--n 10000`, ≥2k PARA
+  fixture, fat-karpathy fixture); ±5% checks; `WIKI_BENCH_SLO` opt-in gate; §8.4
+  table; runbook line → **030-06**
+- [ ] **[R-030-4]** Nine doc surfaces + issue files (corrected rationales) +
+  KNOWN_ISSUES re-render + ROADMAP + Q-024-residual-2 + functional-architecture
+  fix + obsidian-cli rule flip + E-07/canaries re-run + AC-4.1 repo-wide grep +
+  final gates → **030-07**
+
+> **Grouping note:** R-030-3 and R-030-6 share beads 030-04/05 because the descent
+> predicate is meaningless unwired and the wiring is unsafe without it — one cohesive
+> engine change, two traceable checklist items with separate ACs (plan-009 precedent).
 
 ---
 
 ## 2. Bead Sequence & Dependency Graph
 
 ```
-029-00  scaffold + symlinks (skeleton; structural RED)   (R-029-8a/b) ──┐
-029-01  evals.json + grading README (the tests, first)   (R-029-7)    ──┴─ Phase 1
-          │
-029-02  SKILL.md core (4 invariants in skill text)  (R-029-1/2/3/4)  ──┐
-029-03  command-reference (fresh capture → catalog)  (R-029-5)         │
-029-04  recipes (≥8 playbooks)                       (R-029-6)         ├─ Phase 2
-029-05  agentic eval run → GREEN (loops to 02..04)   (R-029-7-run)     │
-029-06  live dogfood (UC-29-1/5 hard; 2/3/4 either)  (AC §6.4)         │
-029-07  integration + gates + docs close-out         (R-029-8)        ──┘
+030-00  baselines + semantic pins (GREEN pins, committed baselines)        ──┐ Phase 1
+           │
+030-01  delta rename-aware (R-030-1)            [independent]             ──┐
+030-02  DAL txn-free helpers (R-030-2a)         [independent]               │
+030-03  chunked-tx full (R-030-2b)              [needs 030-02]              ├─ Phase 2
+030-04  matcher units (R-030-3/6, unwired)      [independent]               │
+030-05  iter_pages rewrite (R-030-3/6, wired)   [needs 030-00 pins+030-04] ──┘
+           │
+030-06  perf evidence + SLO gate (R-030-5, Q-030-1)  [needs all shipped]  ──┐ Phase 3
+030-07  docs/skill close-out + gates (R-030-4)       [needs 030-06]       ──┘
 ```
 
 | Bead | Depends on | Verification kind |
 |---|---|---|
-| 029-00 | — | deterministic (paths/symlinks exist; skill-validator structural run recorded as RED) |
-| 029-01 | 029-00 (dir exists) | deterministic (JSON parses; every case carries class + ≥1 expectation field; 5 classes covered; canary present) |
-| 029-02 | 029-01 (expectations pin the content claims) | checklist vs RTM claim-sites + skill-validator structural PASS |
-| 029-03 | 029-00; fresh capture at authoring time | **deterministic diff**: every command in the captured list appears exactly once in the reference with a tier tag (grep/comm check) |
-| 029-04 | 029-02 (protocol wording), 029-03 (command facts) | checklist per recipe + grep guard (no mutating example without `path=`) |
-| 029-05 | 029-02 + 029-03 + 029-04 | **orchestrator-graded, recorded** (per-case PASS/FAIL vs expectation fields; loops to 029-02..04 on FAIL) |
-| 029-06 | 029-05 (eval-green skill) | **live, recorded** (transcripts + `wiki-lint` orphan-count parity for UC-29-1) |
-| 029-07 | 029-06 | subagent gates (`skill-validator`, `/vdd-multi` logic+security) + deterministic scope check (`git diff --stat` touches no `scripts/`/`sql/`; full pytest+mypy untouched-green) |
+| 030-00 | — | deterministic: pins GREEN on current engine; baseline JSONs exist + referenced |
+| 030-01 | 030-00 (baseline for AC-1.5) | red→green: e2e repro RED → GREEN; TASK-021 suite green unmodified |
+| 030-02 | — | zero-delta: full suite green; new oracle test green; mypy strict |
+| 030-03 | 030-02 | red→green: commit-count + parity + corner tests |
+| 030-04 | — | red→green unit tests on pure functions |
+| 030-05 | 030-00, 030-04 | red→green: AC-3.3 counters flip; AC-3.2 conformance green UNMODIFIED |
+| 030-06 | 030-01..05 | measured evidence; ±5% assertions; opt-in gate runs locally |
+| 030-07 | 030-06 | grep/render/eval checks; per-phase gates + post-ship `/vdd-multi` |
 
 ---
 
-## 3. Per-Bead Detail Files
+## 3. Verification protocol (per bead + final)
 
-- [029-00 — Scaffold skeleton + vendor symlinks](./tasks/task-029-00-scaffold-skeleton.md)
-- [029-01 — Eval set + grading rubric (the tests, first)](./tasks/task-029-01-eval-set.md)
-- [029-02 — SKILL.md core (the four invariants)](./tasks/task-029-02-skill-core.md)
-- [029-03 — Command reference from fresh live capture](./tasks/task-029-03-command-reference.md)
-- [029-04 — Recipes (composed playbooks)](./tasks/task-029-04-recipes.md)
-- [029-05 — Agentic eval run (GREEN gate)](./tasks/task-029-05-eval-run.md)
-- [029-06 — Live dogfood (UC acceptance)](./tasks/task-029-06-live-dogfood.md)
-- [029-07 — Integration, gates & docs close-out](./tasks/task-029-07-integration-gates-docs.md)
+1. **Per bead:** pytest (full suite) + mypy `--strict scripts/` + the bead's own AC
+   list + Sarcasmotron pass on the bead diff.
+2. **Engine-rewrite extra (030-05):** karpathy golden anchor
+   (`test_karpathy_byte_identity.py`) + §D8 rebuildability + upsert↔reindex parity +
+   security suite — all green UNMODIFIED (any needed test edit = a finding, stop and
+   re-review).
+3. **AC-2.3 audit step (plan-level, per task-review):** grep-enumerate every
+   `BEGIN IMMEDIATE` site in `scripts/` at 030-03 close; assert the only NEW
+   caller-owned txn is the chunk loop; helpers absent from `repository.py` ABC.
+4. **Final:** benchmark evidence in §8.4; AC-4.1 repo-wide grep; KNOWN_ISSUES PW-Q
+   clean; E-07 + canaries green; post-ship `/vdd-multi` (logic/security/performance)
+   to convergence; code-review gate; NO auto-commit.
 
----
+## 4. Risks & mitigations
 
-## 4. Stub-First Phasing (mapped to a prompt task)
-
-| Stub-First concept | TASK 029 realisation |
+| Risk | Mitigation |
 |---|---|
-| **Phase 1 — Interfaces/Stubs + RED tests** | 029-00 (skeleton = the "stubs": frontmatter + section headers + empty contracts; skill-validator structural run = recorded RED) + 029-01 (evals.json = the "tests", authored before any skill content exists; expectation fields are the assert surface) |
-| **Phase 2 — Implementation → GREEN** | 029-02/03/04 (the content = the "implementation") + 029-05 (agentic eval run = GREEN) + 029-06 (live dogfood = the E2E acceptance) |
-| **Green-throughout** | The repo's deterministic suite is untouched at every boundary (zero code); 029-07's scope check is the proof; skill-validator re-run per content bead |
-| **No mocking LLMs** | 029-05 runs real fresh-context sub-agents loading the skill (no recorded outputs); grading is deterministic against the per-case expectation fields (Q-029-1) |
-
----
-
-## 5. Open Questions carried into Development
-
-- **Q-029-1 (resolved):** no Python grader in v1; expectation-field grading per `evals/README.md`.
-- **Q-029-2 (resolved):** Universal-skills cross-publication deferred; 029-02 keeps the skill standalone-capable.
-- **Q-029-3 (029-07 decides):** the optional `wiki-init` template mention (I-4.3) — include if the bead is cheap at close-out; drop without ceremony otherwise (non-MVP).
-- **Q-029-4 (029-03 investigates):** the `version` listed-but-unrunnable anomaly — re-test during the fresh capture; outcome feeds the `[doc-only]`/anomaly note in the reference. The probe avoids `version` regardless.
-- **Q-029-5 (resolved):** `tier: 2` frontmatter.
-- **Regression policy (029-05/06):** an eval FAIL or dogfood failure loops back to the owning content bead (029-02 routing/safety wording; 029-03 command facts; 029-04 recipe steps) — never weaken an expectation to pass; the injection canary and the wiki-search-first case may NEVER be relaxed.
+| Engine rewrite breaks an unpinned semantic | 030-00 writes the missing pins FIRST (overlap-dedup, symlink parity) — the review-found F-8 gap closes before any engine edit |
+| Chunked tx hides a per-file isolation regression | Q-030-5 stage-then-flush semantics stated; error-path tests (mid-flush DML; fatal = COMMIT injection) in 030-03 |
+| Chunk txn starves concurrent writers (shared global.db / iCloud) | stage-then-flush: lock held for DML only; lock-hold guard test (no file I/O inside the txn) |
+| Delta predicate double-ingests a seeded row | AC-1.3 composite test asserts seeded ∩ ingested = ∅ directly |
+| Delta re-detects a moved-but-unchanged file forever | targeted `file_path` refresh on "unchanged" + AC-1.9 convergence test (second delta = true no-op) |
+| Walk perf "win" is fixture-flattering | AC-3.4 measures BOTH lean (±5%) and fat fixtures; obsidian-personal ≥2k synthetic vault |
+| Recursive walk = `RecursionError` DoS on deep trees | explicit-stack iterative walk REQUIRED + AC-3.8 ≥1500-deep fixture |
+| `full_match` vs `Path.glob` divergence (char classes, case, symlinks) | 030-04 property test = full DiscoveredPage-tuple equality vs the old engine on adversarial fixtures incl. symlink topologies; alive-set rule pins the union semantics |
+| `set_trace_callback` brittleness | AC-2.4 counts both BEGIN forms on a constrained fixture; C composition documented in-test |
+| Doc drift (ten surfaces incl. CLAUDE.md) | UC-30-4 enumeration + AC-4.1 multiline `rg -iU` with a defined adjudication allowlist |

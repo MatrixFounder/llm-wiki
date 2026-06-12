@@ -287,7 +287,8 @@
 > + agentic eval **14/14 GREEN** [Sonnet routing, Fable+Sonnet injection canaries;
 > integrity-audit APPROVED — no gaming] + **live dogfood on the real CLI** that found +
 > fixed **DF-029-1 SEV-2** [a rename preserves mtime → `wiki-reindex --delta` misses it
-> → orphans; coherence now prescribes `--full` for rename/move, proven 0-orphans live].
+> → orphans; coherence THEN prescribed `--full` for rename/move, proven 0-orphans live —
+> superseded by TASK 030's rename-aware `--delta`].
 > **Zero DDL** (`user_version` 5), **zero new Python** (1204 pytest + mypy strict 75
 > files unchanged), no `import anthropic`. A **prompt-layer-only** deliverable:
 > `skills/obsidian-cli/` (SKILL.md +
@@ -302,6 +303,33 @@
 > untrusted-CLI-output posture (H-6 class). **Zero DDL** (`user_version` 5), **zero
 > new Python** (mypy surface untouched), no new deps, no `import anthropic`. Spec:
 > docs/TASK.md (TASK 029); design inline at §2.2 + §11a Q-029-1..5. ROADMAP R-12.
+>
+> **TASK 030 (reindex-perf-hardening — DF-029-1 + P-1 + R-X1-OBS-WALK) — ✅ SHIPPED
+> 2026-06-12** (uncommitted, branch `task-030-reindex-perf-hardening`; full VDD chain:
+> task/arch/plan gates [2 adversarial review workflows, 6× NEEDS-REVISION folded] + 8
+> beads via `/vdd-develop-all` with per-bead Sarcasmotron — EVERY bead REJECTED iter-1
+> and converged iter-2 [030-03 had a CRITICAL: mid-loop flush swallow, empirically
+> reproduced then injection-proven fixed; 030-05 HIGH: the P-2 detector had gone vacuous
+> — re-armed, mutation-proven]). Three indexer fixes, zero DDL (`user_version` 5), no new
+> deps: **(1) rename-aware `--delta`** (R-030-1) — any on-disk path absent from
+> `pages.file_path` ingests regardless of mtime (zero extra I/O); targeted `file_path`
+> refresh on the "unchanged" outcome → AC-1.9 convergence (second delta = true no-op);
+> per-file `sqlite3.Error` isolation; additive `new_path_ingested` (+`_total` in
+> `--all-vaults`); residuals named A5 (swap class — lint hash-drift catches, `--full`
+> remedies) + A9 (duplicate-key copy oscillates noisily, TASK-020 posture). **(2)
+> stage-then-flush chunked `--full`** (R-030-2) — derivation I/O OUTSIDE the txn,
+> DML-only flushes (K=500 ∧ 32 MiB-est), lock held ms-scale; private txn-free DAL
+> helpers, public semantics byte-preserved (M-4 untouched; FTS triggers stay).
+> **Measured: full @1k 459.8→226.9 ms (2.03×), @10k 4601.6→2353.1 ms (1.96×, 76×
+> headroom)**. **(3) single-pass alive-set walk** (R-030-3/6) — iterative explicit-stack
+> scandir + per-pattern NFA alive-sets (symlink = exact per-entry `Path.glob` union
+> parity) + descent predicate (karpathy "root subtrees never walked" BY CONSTRUCTION,
+> instrumented) + real `<prefix>/**` ignore-pruning. **Measured: PARA 2k-file scandirs
+> 140→61 (every dir ×1), wall 94.1→77.0 ms; delta-noop @10k 246.3→191.8 ms**. Q-030-1
+> gate: opt-in `WIKI_BENCH_SLO=1` SLO test + runbook (`docs/runbooks/perf-slo-gate.md`)
+> + committed before/after JSONs (`docs/benchmarks/030-*`); P-4 stays open. **1310+
+> pytest, mypy strict (75 files).** Spec: docs/TASK.md v3 (two adversarial gates;
+> [record](./reviews/task-030-review.md)); design Q-030-1..6 (Q-030-2 at v4).
 >
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
@@ -407,14 +435,22 @@ component contract:
    history restore, UX) → `obsidian` CLI; plain content edits → file tools (+ upsert
    if indexed). App `search`/`search:context` is a complement (no
    BM25/stemming/citations), never the knowledge default.
-2. **Coherence invariant** — any app-side mutation of a wiki-registered vault is
-   followed **same-turn** by: `wiki-index-upsert <file>` (single-file content change);
-   **`wiki-reindex --full` for rename/move** (DF-029-1: a rename PRESERVES the file's
-   mtime, so `--delta` misses the moved file and orphans its inbound links — `--full`,
-   or `touch`+`--delta`, is correct; proven live in 029-06); `wiki-reindex --delta` for
-   `delete` (the removed path is detected). ADR-002 §D8 unaffected: Class-A files are
-   mutated app-side, the DB stays a rebuildable projection. Unregistered vault → the
-   protocol self-disables (the skill stays standalone-capable, Q-029-2).
+2. **Coherence invariant (amended TASK 030 / R-030-1)** — any app-side mutation of a
+   wiki-registered vault is followed **same-turn** by: `wiki-index-upsert <file>`
+   (single-file content change); **`wiki-reindex --delta` for rename/move AND delete**
+   (since TASK 030 the delta is rename-aware: an on-disk path absent from
+   `pages.file_path` is ingested regardless of mtime — the DF-029-1 class incl.
+   `cp -p`/archive/sync imports is closed; visible via the additive
+   `new_path_ingested` envelope field; a fresh vault's FIRST `--delta` now ingests
+   everything on disk, Q-030-3). `wiki-reindex --full` remains the universal fallback
+   and the REQUIRED remedy for the A5 residual class (swap/rotation/overwrite renames
+   — destination path already indexed; detectable via `wiki-lint` hash-drift) and for
+   entity-page `entities.file_path` refresh. Historical note: TASK 029 (bead 029-06)
+   prescribed `--full` for every rename — correct THEN (pre-030 `--delta` missed
+   mtime-preserved renames, proven live), superseded by the TASK 030 code fix.
+   ADR-002 §D8 unaffected: Class-A files are mutated app-side, the DB stays a
+   rebuildable projection. Unregistered vault → the protocol self-disables (the skill
+   stays standalone-capable, Q-029-2).
 3. **Safety invariant** — a **TOTAL tier function** over the captured 102-command
    surface: **T1** read-only (+ a T1-UX open/GUI sub-class: `open`, `daily`,
    `*:open`, `random`, `tab:open` — on-disk-side-effect-free); **T2** mutating
@@ -458,7 +494,7 @@ TASK 009 pattern — Q-029-1). Verified-surface snapshot:
 
 ## 3. System Architecture
 
-Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **§3.5 (TASK 012 / R-X1)** adds the **config-driven Layout Engine**: two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`), the `iter_pages` walk that converges the four hardcoded two-tier walks, the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct), the ReDoS guard (TASK 012 stdlib-`re` load-gate **+** the TASK 017 runtime per-file `regex` `timeout=` deadline for operator-custom patterns, R-X1-REDOS-RT), the PW-H `auto_indexes[]` renderer + PW-Q lint guard, and the TASK 017 single-stat walk + drift fast-path (P-2/P-3 — Class-B "rebuildable markdown", zero DDL).
+Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **§3.5 (TASK 012 / R-X1)** adds the **config-driven Layout Engine**: two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`), the `iter_pages` walk that converges the four hardcoded two-tier walks, the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct), the ReDoS guard (TASK 012 stdlib-`re` load-gate **+** the TASK 017 runtime per-file `regex` `timeout=` deadline for operator-custom patterns, R-X1-REDOS-RT), the PW-H `auto_indexes[]` renderer + PW-Q lint guard, and the TASK 017 single-stat walk + drift fast-path (P-2/P-3 — Class-B "rebuildable markdown", zero DDL). **TASK 030 (R-030-3/6)** replaced the per-glob walk with the **single-pass iterative alive-set engine** (`_PatternState` NFA per `paths[]` glob; exact `Path.glob` symlink-union parity; PROPER-prefix descent + real `<prefix>/**` ignore-pruning; every dir scandir'd ≤1× — measured 140→61 at 2k files; karpathy "root subtrees never walked" instrumented; matcher deltas enumerated Q-030-2 v4; the DirEntry-stat single-stat mechanism re-pinned).
 
 → [details](./architectures/system-architecture.md)
 
@@ -498,7 +534,7 @@ Threat model (single-user trust scope), authN (N/A) + authZ (file-permission-onl
 
 ## 8. Scalability and Performance
 
-Scaling strategy (vertical only — single-user), caching (SQLite FTS5 cache is the only cache), DB optimisation (WAL mode, narrow indexes, no JSON-expr indexes). Open performance items live in [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) (P-1..P-9, H-PERF-3).
+Scaling strategy (vertical only — single-user), caching (SQLite FTS5 cache is the only cache), DB optimisation (WAL mode, narrow indexes, no JSON-expr indexes). Open performance items live in [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) (P-4, P-9, P-11, R-X1-CFG-COST, R-X3-MF-SCAN; P-1 closed by TASK 030 — see §8.5).
 
 → [details](./architectures/scalability-and-performance.md)
 
@@ -998,13 +1034,14 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   `upsert_one`) by `wiki-query`/`wiki-verify-multi`/`benchmark` to file host-only compounding
   pages (`_queries/`, `_verifications/`); R-1 does NOT touch those call sites — their
   page-filing layout-awareness is an out-of-scope residual (**Q-024-residual-1**, flagged not
-  silently changed). **Q-024-residual-2** (post-ship `/vdd-multi` logic critic, accepted):
-  `derive_discovered_page` uses case-SENSITIVE `full_match` (the established single-path
-  convention, shared with `derive_project_for_path`) while `iter_pages` uses concrete-FS
-  `vault_root.glob` (case-insensitive on macOS/Windows) — so upsert↔reindex parity is exact for
-  case-matching paths; all three built-in layouts use wildcarded/lower-case globs (unaffected),
-  and a custom layout with an upper-case LITERAL glob on a case-insensitive FS is the only
-  diverging edge. The `disc=None` fallback uses the resolved layout's `type_mapping` (an off-glob
+  silently changed). **Q-024-residual-2 — RESOLVED by TASK 030 (UC-30-3 A4)**: the original
+  residual was `derive_discovered_page`'s case-SENSITIVE `full_match` vs `iter_pages`' concrete-FS
+  `vault_root.glob` (case-insensitive on macOS/Windows). The 030-05 single-pass walk made
+  `iter_pages` case-sensitive too (the `_PatternState` matcher uses `fnmatch.fnmatchcase`) — the
+  walk↔single-file parity gap is CLOSED; both sides now share one matcher semantics. A custom
+  layout relying on a case-mismatched literal glob now misses CONSISTENTLY on every platform
+  (the enumerated Q-030-2 v4 delta-i, pinned by descent-table + engine-level tests) instead of
+  platform-dependently. The `disc=None` fallback uses the resolved layout's `type_mapping` (an off-glob
   file reindex never indexes can be upserted → self-heals on the next `reindex --full`). A
   malformed/empty operator glob is `full_match`-`ValueError`-guarded (fail-soft, never escapes the
   exit-6 envelope). **Zero DDL** (`user_version` 5).
@@ -1240,6 +1277,103 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   command-reference's `[core]`/`[plugin-gated]`/`[doc-only]` tagging.
 - **Q-029-5 (TASK 029 — skill tier).** **RESOLVED: `tier: 2`** (load-when-needed), matching the
   `wiki-search` frontmatter convention.
+- **Q-030-1 (TASK 030 — P-1 acceptance gate vs the no-CI reality).** The P-1 issue file gates the
+  bulk-tx fix on "`enforce_slos` testing at N=10k wired into CI" — but the repo has NO CI at all
+  (no `.github/`; task-001-33 scoped the workflow file out). **RESOLVED (default):** the gate is
+  reinterpreted as (i) an opt-in `@pytest.mark.slow` + env-gated (`WIKI_BENCH_SLO=1`) SLO-enforcement
+  test at `--n 1000`, (ii) a documented runbook line for the manual `--n 10000 --enforce-slos` run,
+  (iii) a one-time committed 10k before/after measurement in §8.4. P-4 (the CI scale gate proper)
+  stays OPEN — its scope is unchanged by this task.
+- **Q-030-2 (TASK 030 — single-pass walk semantics envelope).** **RESOLVED (v2, reversed by the
+  arch-consistency review):** the rewrite reproduces `Path.glob` discovery semantics EXACTLY —
+  incl. the empirically-confirmed 3.14 symlink asymmetry (`**` never descends symlinked dirs; an
+  explicit non-`**` segment can; leaf file symlinks discoverable). The v1 idea (blanket
+  symlink-dir refusal as a "security-positive tightening") was REJECTED: it would silently
+  orphan-delete previously-indexed rows under a symlinked area dir, and in-vault symlinks are
+  deliberately tolerated (TC-UNIT-02). The enumerated behavior deltas (**v4** — extended by the
+  030-04 Sarcasmotron empirical probes): (i) literal glob components match case-SENSITIVELY
+  everywhere (today: FS-dependent), which RESOLVES the Q-024-residual-2 walk↔single-file parity
+  gap — both sides now share one matcher; (ii) traversal cost (pruning) — the match SET is
+  preserved; **(iii) `..` segments in operator globs go EFFECTIVELY dead** (today
+  `Path.glob('v/../*.md')` happily traverses parent dirs, escaping pattern anchoring; under the
+  walk, `os.scandir` never yields a child named `..`, so the position can never advance past it —
+  vault-containment-positive, TASK-022 posture; pinned by descent + file-match unit rows; same
+  family: an ABSOLUTE glob — out-of-contract per the schema's "vault-root-relative" — today
+  CRASHES `Path.glob` with `NotImplementedError`, under the walk it goes silently dead (the `'/'`
+  segment never matches a scandir name) — 030-05 pins this with a conformance case so an
+  operator typo empties the entry loudly in tests, not silently in production; `glob: '.'` is
+  the same family — old engine `ValueError`, walk silently-dead — pinned 030-05); **(iv) trailing-slash
+  globs keep their 3.13+ dirs-only semantics explicitly** (`_PatternState.dirs_only` — zero file
+  matches, exactly like today's enumerate-dirs-then-die-on-`S_ISREG`; `PurePosixPath.parts`
+  would otherwise silently eat the slash). A fifth probe (zero-segment trailing `**` after a
+  final explicit segment, `a.md/**` vs FILE `a.md`) was a genuine matcher BUG — fixed
+  (`matches_file` requires the explicit final segment to BE final), not enumerated. **v3 (arch+plan gate):** parity is achieved via
+  **per-pattern alive-sets** threaded down the walk — a pattern stays alive across a SYMLINKED dir
+  component only if it consumes it with an explicit (non-`**`) segment; descent = alive-set ≠ ∅;
+  **attribution = first match among patterns alive at the containing dir** (a boolean any-pattern
+  descent + symlink-blind global matching would inflate the match set AND flip attribution on
+  overlap+symlink operator layouts — the spec-validator H-1 counterexample `Areas/**/*.md` +
+  `Areas/*/notes/*.md` with `Areas/link` symlinked is the pinning fixture). The walk is ITERATIVE
+  (explicit stack) — a Python-recursive scandir would add a `RecursionError` DoS class (TASK 018
+  deep-nesting precedent); pathological-depth test pinned. The single-file twin
+  `derive_discovered_page` stays symlink-blind (sees one rel path) — pre-existing upsert-path
+  asymmetry recorded, not widened.
+- **Q-030-3 (TASK 030 — fresh-vault `--delta` widening).** With the new-path predicate, the first
+  `--delta` after registration ingests the whole vault (cutoff = `registered_at`; previously only
+  files newer than registration). **RESOLVED: accept + document** — the correct reading of "index
+  reflects disk"; visible via the additive `new_path_ingested` envelope field. **Cost claim
+  corrected post-`/vdd-multi` (PERF-030-M2, verifier-confirmed):** a whole-vault delta is ~1.7×
+  SLOWER than the chunked `--full` at 2k (763.6 vs 446.6 ms — per-file atomic txns vs K=500
+  flushes; the per-file cadence is deliberate, it is what fixed the LOGIC-MED partial-write hole).
+  Routine renames/small deltas: `--delta`-first stands. KNOWN bulk ingest: prefer `--full`.
+  Residual filed: `docs/issues/p-030-delta-bulk-ingest-per-file-txns.md` (SEV-3, scale-gated).
+- **Q-030-4 (TASK 030 — obsidian-cli skill update depth after the DF-029-1 code fix).**
+  **RESOLVED (default):** the skill's coherence rule flips to `--delta`-first for rename/move
+  (+ `--full` universal fallback + the swap-class caveat); re-run eval **E-07 + the routing
+  canaries only** — the text delta is confined to the coherence rule, so the full 14-eval suite
+  is not re-billed. All TEN live doc surfaces carrying the `--full`-for-rename rule (TASK 030
+  F-12: issue file, ARCHITECTURE §2.2, ROADMAP ×2, skill ×3 files + E-07, README, 2 templates,
+  2 manuals) update in lockstep at close.
+- **Q-030-5 (TASK 030 — chunked-tx shape + error semantics; v3 stage-then-flush).** **Lock-hold
+  (arch-review HIGH-2):** a chunk txn must NEVER span file I/O — at the SLO bound, K=500 pages of
+  in-txn derivation would hold the WAL write lock ~10 s while `_connect` has only the default 5 s
+  busy timeout → "database is locked" for any concurrent writer on a shared `global.db`
+  (multi-vault) and unbounded holds on cold iCloud reads (TASK 022 OQ-5). **Resolved:** the loop
+  STAGES a chunk outside any txn (all `derive_indexed_page` I/O → a buffer bounded by K=500 pages
+  ∧ `REINDEX_TX_CHUNK_BYTES` 32 MiB, full-body pages since TASK 024), then FLUSHES DML-only under
+  one `BEGIN IMMEDIATE` (ms-scale lock). Error semantics: derivation errors are caught at staging,
+  OUTSIDE the txn → `skipped`, zero DML (STRICTLY better isolation than today); mid-flush DML
+  errors are statement-atomic — the file's partial DML commits with the chunk while the file lands
+  in `skipped` (equivalent end-state to today's committed-partial), pinned by an error-path test
+  (injection: helper raises for one slug); fatal mid-flush (injection: monkeypatched COMMIT —
+  the per-file catch never sees it) → chunk ROLLBACK + `finish_batch_run("failed")`, FTS row count
+  stays equal to `pages`. Commit accounting: only **per-page** commits collapse (~2N → ceil(N/K));
+  per-log-event and step-2.5 autocommits are fixture-dependent and stay — the AC-2.4 exact count
+  runs on a constrained fixture (zero log events, fixed entity/alias counts). The within-batch
+  equal-hash collision corner is a deliberate delta: the bulk path's ON CONFLICT (no pre-SELECT)
+  makes the LAST file's `file_path` win, ALIGNING the DB with the TASK-021 `slug_collisions.kept`
+  record (today's pre-SELECT "unchanged" short-circuit misreports). The pre-SELECT skip was chosen
+  for this alignment, NOT for perf (an in-txn PK SELECT is µs — recorded so the next reviewer
+  doesn't reopen it). **Delta-side sibling (arch-review HIGH-1):** the `upsert_page` "unchanged"
+  short-circuit returns BEFORE any UPDATE, so a new-path re-ingest of unchanged content would
+  never refresh `pages.file_path` → perpetual re-detection. R-030-1 therefore issues a targeted
+  `UPDATE pages SET file_path=?, last_modified=? WHERE …` on the `is_new_path ∧ "unchanged"`
+  outcome (zero-DDL, one statement) — convergence pinned by AC-1.9 (second delta = true no-op).
+- **Q-030-6 (TASK 030 — descent predicate as a first-class requirement).** The naive single-pass
+  walk would traverse `.obsidian/`/`.git/`/attachment trees on Karpathy vaults (whose per-glob walk
+  today never touches the root tree — a §3.5-documented property; `karpathy.yaml` has `ignore: []`).
+  **RESOLVED:** R-030-6 — descend a directory iff its alive-set is non-empty under the **PROPER
+  prefix** rule (the pattern can still consume ≥1 further segment — a dir fully matching a
+  file-glob like `*.md` does NOT descend) AND it is not covered by a prunable `<prefix>/**`-shaped
+  ignore glob. Karpathy keeps "root **subtrees** never walked" BY CONSTRUCTION (instrumented
+  fat-fixture test; footnote: the rewrite adds exactly ONE root scandir that today's
+  literal-anchored pathlib joins avoid — covered by the lean ±5% check); obsidian-personal gains
+  real ignore-pruning (`**/_raw/**`, `.obsidian/**` subtrees never scandir'd — previously only
+  post-walk string-filtered). Verified per-layout by the arch-review: karpathy/dev-project/
+  obsidian-personal have NO under-descent case (the ANY-alive descent is a traversal superset of
+  today's per-glob walks); the 030-04 property test asserts full **DiscoveredPage-tuple** equality
+  (not just reachability) against the old engine on diverse fixtures incl. trailing-`**`,
+  mid-`**`-then-literal, a directory literally named `foo.md`, dot-files, and symlink topologies.
 
 ---
 
@@ -1260,6 +1394,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Stub-First**: TASK 005 Entity Resolver is designed Stub-First (DAL signatures + RED tests before logic); `resolve_entity` is promoted from deferred stub → implemented (R-4.5).
 - [x] **RAG Query Layer (TASK 007)**: `wiki-query` designed as a deterministic `prepare`/`apply` skill (Decision-17, no LLM in Python); query page is a first-class compounding `type=query` artifact; durability secured by the R-6.5e `cites:`→`'cited'` reindex read-side (the §D8 gate, mirroring R-5.3); zero schema DDL; grounding enforced in Python (`CITATION_NOT_RETRIEVED` / `NO_CONTEXT`).
 - [x] **Native-App Control Skill (TASK 029)**: prompt-layer only — routing/coherence/safety/degradation invariants designed (§2.2); zero DDL, zero new Python, no interface change; safety model TOTAL over the verified 102-command surface with fail-safe default (incl. the 029-07 `command id=`→T3 + Templater-template→T3 refinements); eval harness machine-checkable without a grader (Q-029-1).
+- [x] **Indexer hardening (TASK 030, SHIPPED)**: rename-aware `--delta` (new-path membership predicate, zero extra I/O, swap-class residual documented), chunked-tx `--full` (private txn-free DML helpers; M-4/FTS-trigger posture untouched), single-pass pruned walk (descent predicate preserves karpathy "root never walked"; `Path.glob` symlink parity); zero DDL; design at Q-030-1..6; spec docs/TASK.md + reviews/task-030-review.md.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).
