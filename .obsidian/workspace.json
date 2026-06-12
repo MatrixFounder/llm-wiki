@@ -202,6 +202,7 @@
   },
   "active": "c001e100f31ab5ad",
   "lastOpenFiles": [
+    "skills/obsidian-cli/evals/reports/full-dogfood-ObsidianNotes-Test-2026-06-12.md",
     "docs/reviews/task-029-final-gates-review.md",
     "docs/issues/df-029-1-reindex-delta-misses-mtime-preserved-rename.md",
     "skills/obsidian-cli/evals/reports/dogfood-2026-06-12.md",
@@ -236,7 +237,6 @@
     "samples/task-016-smoke/_sources/topic.md",
     "samples/task-016-smoke/00-Vault-Index/index.md",
     "samples/task-016-smoke/WIKI_SCHEMA.md",
-    "samples/task-016-smoke/CLAUDE.md",
-    "docs/tasks/task-016-08-final-gate.md"
+    "samples/task-016-smoke/CLAUDE.md"
   ]
 }
