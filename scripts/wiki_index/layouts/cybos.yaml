@@ -1,0 +1,86 @@
+# Built-in CYBOS layout — an "operational memory" / event-graph vault (TASK 031 /
+# R-031-1/2). A typed-knowledge vault: Decisions, Requirements, Risks, Incidents,
+# Hypotheses, Facts, Events + the engineering spine (Tasks, ADRs, Plans). Every raw
+# type tag-routes onto the existing pages.type CHECK enum — ZERO DDL (user_version
+# stays 5). Phase 1 ships CLASSIFICATION only; the event-graph RELATION layer (typed
+# edges implements/supersedes/caused-by/relates-to) is deferred Phase-2 (ADR-003 D4 /
+# ROADMAP R-13). The reserved edge keys live INERT in templates/page-types/* until then.
+#
+# vault_root = the vault directory holding the typed folders (decisions/, incidents/, …).
+# Opt-in: `wiki-init --scaffold-new --layout cybos` (init_scaffold: none → no Karpathy
+# two-tier tree). Per-project tweaks via <vault>/.wiki/layout.yaml (type_mapping UNIONs).
+schema_version: '2.0'
+layout: cybos
+
+# Existing-tree layout — index a real vault; do NOT scaffold a Karpathy two-tier tree.
+init_scaffold: none
+
+ignore:
+  - ".git/**"
+  - ".obsidian/**"                  # Obsidian app state — not knowledge
+  - ".wiki/**"                      # operational state (db / render-state) — Class C
+  - "**/.DS_Store"
+  - "**/__pycache__/**"
+  - "_raw/**"                       # un-summarised raw captures stay out of the index
+  - ".staging/**"
+file_extensions: ['.md']
+slug_strategy: transliterate        # cross-platform-safe ASCII slugs
+
+# Globs evaluated in order, first-match-wins (relative to vault_root). Flat vault →
+# project '_vault_'. One folder per knowledge class + the engineering spine.
+paths:
+  - {glob: "decisions/**/*.md",    type: decision,    project: "_vault_"}
+  - {glob: "requirements/**/*.md", type: requirement, project: "_vault_"}
+  - {glob: "risks/**/*.md",        type: risk,        project: "_vault_"}
+  - {glob: "incidents/**/*.md",    type: incident,    project: "_vault_"}
+  - {glob: "hypotheses/**/*.md",   type: hypothesis,  project: "_vault_"}
+  - {glob: "facts/**/*.md",        type: fact,        project: "_vault_"}
+  - {glob: "events/**/*.md",       type: event,       project: "_vault_"}
+  - {glob: "tasks/**/*.md",        type: task,        project: "_vault_"}
+  - {glob: "adr/**/*.md",          type: adr,         project: "_vault_"}
+  - {glob: "plans/**/*.md",        type: plan,        project: "_vault_"}
+
+# Tag-route: each raw knowledge-class type → an existing db_type CHECK enum value + a
+# filterable tag (db_type rationale: research = analysis/finding; brief = concise spec;
+# concept = atomic definitional unit; summary = timestamped narrative record — ADR-003
+# D1 / Q-031-2). Precise per-class CLI filtering = `wiki-search --types <db_type>`
+# (bucket) + FTS on the tag word — NOT `--where tag=` (the tag lives in the tags LIST;
+# TASK F10). A list-membership filter is a documented Phase-2 follow-on (ROADMAP).
+type_mapping:
+  # --- the 7 typed knowledge classes ---
+  decision:    {db_type: research, tag: decision}     # a choice made, with rationale
+  requirement: {db_type: brief,    tag: requirement}  # a spec/BRD requirement
+  risk:        {db_type: research, tag: risk}          # an identified risk
+  incident:    {db_type: research, tag: incident}      # an operational incident / postmortem
+  hypothesis:  {db_type: research, tag: hypothesis}    # an unverified assumption to test
+  fact:        {db_type: concept,  tag: fact}          # an atomic verifiable statement
+  event:       {db_type: summary,  tag: event}         # a timestamped occurrence (meeting/release/milestone)
+  # --- engineering spine (shared vocabulary with the dev-project layout) ---
+  task:        {db_type: brief,    tag: task}
+  adr:         {db_type: research, tag: adr}
+  plan:        {db_type: brief,    tag: plan}
+
+path_type_fallback: {}              # cybos types come from paths[].type
+
+ref_extraction:
+  - kind: wiki-link
+    regex: '\[\[([^\]|]+)(?:\|[^\]]+)?\]\]'
+    target_group: 1
+  - kind: markdown-link
+    regex: '\[([^\]]+)\]\(([^)]+\.md(?:#[^)]+)?)\)'
+    target_group: 2
+    transform: stem
+  # id-ref: dev-project's IDs + the cybos typed-knowledge IDs (DEC/INC/RISK/REQ/HYP).
+  - kind: id-ref
+    regex: '\b(ADR-\d+|R-\d+(?:\.\d+)*|task-\d+(?:-\d+)*|DEC-\d+|INC-\d+|RISK-\d+|REQ-\d+|HYP-\d+)\b'
+    target_group: 1
+
+# Typed-knowledge notes often lack frontmatter (a quick capture) — title from first H1 ∥ stem.
+frontmatter_synthesis:
+  enabled: true
+  title_source: first_h1
+  fallback_title: filename_stem
+
+# A rebuildable DECISIONS / INCIDENTS ledger (PW-H, like dev-project's KNOWN_ISSUES) is a
+# candidate follow-on — omitted in Phase 1 to keep the bead tight (ADR-003 / plan 🟢-2).
+auto_indexes: []

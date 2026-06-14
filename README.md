@@ -169,16 +169,19 @@ spans only the connected DB.
 Different vaults have different shapes. TASK 012 (R-X1) replaced ~15 hardcoded
 "where do pages live / what type are they" surfaces with a **YAML-config-driven
 engine** (`scripts/wiki_index/layout_config.py`, schema
-`config/layout-config.schema.yaml`). Three layouts ship built-in
+`config/layout-config.schema.yaml`). Four layout grammars ship built-in
 (`scripts/wiki_index/layouts/`):
 
 | Layout | For |
 |---|---|
-| `karpathy` | The original llm-wiki shape. **Byte-identical** to the legacy hardcoded behaviour — a validated projection of `layout.py`, golden-anchor-guarded. |
+| `karpathy` | The original llm-wiki shape. **Byte-identical** to the legacy hardcoded behaviour — a validated projection of `layout.py`, golden-anchor-guarded. (`flat`/`per-project` are aliases.) |
 | `dev-project` | A software repo's `docs/` tree — TASKs, ADRs, issues. (This is what the repo's own docs use.) |
 | `obsidian-personal` | Numbered folders + Unicode titles. |
+| `cybos` | An **operational-memory / event-graph** vault — typed knowledge classes (Decision, Requirement, Risk, Incident, Hypothesis, Fact, Event) + the task/adr/plan spine. TASK 031; see [docs/layouts/cybos.md](docs/layouts/cybos.md). |
 
-New vault shapes become **config, not code**. Pick one with
+New vault shapes — and new *typed article classes* — become **config, not code**
+(TASK 031 / R-031-3 made even the `--layout` registry config-driven: a new layout
+is a drop-in `layouts/*.yaml`, zero Python edits). Pick one with
 `wiki-init --layout <name>`. The `auto_indexes[]` feature renders a Class-B
 "rebuildable markdown" ledger from per-item Class-A sources (e.g. this repo's
 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) is auto-rendered from

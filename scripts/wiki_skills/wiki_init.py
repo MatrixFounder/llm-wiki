@@ -39,16 +39,17 @@ from scripts.wiki_index.layout import (
     SCHEMA_FILE,
     VAULT_INDEX_DIR,
 )
+from scripts.wiki_index.layout_config import is_two_tier_scaffold, layout_choices
 from scripts.wiki_index.models import LogEvent, Vault
 
 _VAULT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
-# TASK 012 / R-X2.1: layout names accepted by --layout. `flat`/`per-project` are
-# legacy aliases for the Karpathy grammar (they + `karpathy` get the two-tier
-# page-subdir scaffold); `dev-project`/`obsidian-personal` index an existing tree.
-_LAYOUT_CHOICES = ["flat", "per-project", "karpathy", "dev-project", "obsidian-personal"]
-_KARPATHY_LAYOUTS = {"flat", "per-project", "karpathy"}
+# TASK 031 / R-031-3: the `--layout` choice-set, the legacy aliases
+# (`flat`/`per-project`→karpathy), and the two-tier-scaffold family are SOURCED
+# from the built-in `layouts/*.yaml` registry (layout_config.layout_choices() /
+# is_two_tier_scaffold()) — no hardcoded list lives here anymore. A new layout is
+# a pure drop-in YAML (declaring optional `aliases`/`init_scaffold`) with zero edits.
 
 
 def _validate_vault_id(vault_id: str) -> bool:
@@ -170,7 +171,7 @@ def _write_agent_files(
         # (e.g. GEMINI.md.tmpl per templates/agent-files.yaml), make this layout-suffix
         # aware (derive "<base>.layout.md.tmpl") so a non-Karpathy vendor keeps its own
         # template rather than silently reverting to the Claude layout file.
-        if placeholders.get("layout") not in _KARPATHY_LAYOUTS:
+        if not is_two_tier_scaffold(placeholders.get("layout") or ""):
             template_name = "CLAUDE.layout.md.tmpl"
         target = vault_root / filename
         if target.exists() and not force:
@@ -296,7 +297,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
     # EXISTING tree (docs/, numbered folders), so scaffolding Karpathy dirs into
     # a real repo would be wrong — write WIKI_SCHEMA.md + register only.
     _layout = args.layout or "per-project"
-    _karpathy = _layout in _KARPATHY_LAYOUTS
+    _karpathy = is_two_tier_scaffold(_layout)
     if _karpathy:
         for sub in SCAFFOLD_DIRS:
             (vault_root / sub).mkdir(parents=True, exist_ok=True)
@@ -578,7 +579,7 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="TASK 022: explicit vault-relative (or absolute) index DB path "
                           "to declare in WIKI_SCHEMA.md.")
     p.add_argument("--language", default=None)
-    p.add_argument("--layout", default=None, choices=_LAYOUT_CHOICES)
+    p.add_argument("--layout", default=None, choices=layout_choices())
     p.add_argument("--description", default=None)
     p.add_argument(
         "--vendor", default=None,

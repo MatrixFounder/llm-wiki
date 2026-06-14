@@ -189,11 +189,133 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LAYOUTS_DIR = _REPO_ROOT / "scripts" / "wiki_index" / "layouts"
 _SCHEMA_PATH = _REPO_ROOT / "config" / "layout-config.schema.yaml"
 
-# Legacy WIKI_SCHEMA `layout:` values map onto the Karpathy grammar (the field
-# never gated the two-tier walk — see ADR-002 §D8 TASK-012 amendment).
-_ALIAS: dict[str, str] = {"flat": "karpathy", "per-project": "karpathy"}
-
 _OVERRIDE_CONVENTIONAL = ".wiki/layout.yaml"
+
+# --------------------------------------------------------------------------- #
+# Config-driven layout registry (TASK 031 / R-031-3 — de-hardcode)
+# --------------------------------------------------------------------------- #
+# The SINGLE source of truth for "which layouts exist", their legacy `--layout`
+# aliases (`flat`/`per-project` → karpathy — the field never gated the two-tier
+# walk, ADR-002 §D8 TASK-012 amendment), and which layout gets the two-tier
+# `wiki-init` scaffold is the set of built-in `layouts/*.yaml` files themselves
+# (each declares the optional init-only `aliases` + `init_scaffold` keys). This
+# replaces three former hardcoded Python literals (`wiki_init._LAYOUT_CHOICES` /
+# `_KARPATHY_LAYOUTS` + this module's old `_ALIAS` dict), so a NEW built-in
+# layout is a pure drop-in YAML with ZERO Python edits.
+
+# Parse-once cache: file path → (st_mtime_ns, {aliases, init_scaffold}). Re-globbed
+# each call (so a drop-in / removed *.yaml is seen) but each file is parsed at most
+# once per mtime — same perf posture as the `_VALIDATOR` singleton (does not worsen
+# R-X1-CFG-COST). Built-in-only: NEVER reads an operator override.
+_REGISTRY_CACHE: dict[Path, tuple[int, dict[str, Any]]] = {}
+
+
+def _reset_registry_cache() -> None:
+    """Test hook — drop the cached built-in registry (e.g. after writing or
+    removing a probe `*.yaml` in LAYOUTS_DIR). Production never needs this."""
+    _REGISTRY_CACHE.clear()
+
+
+def _builtin_registry() -> dict[str, dict[str, Any]]:
+    """`{stem: {"aliases": [...], "init_scaffold": "two-tier"|"none"}}` for every
+    built-in `layouts/*.yaml`, keyed by FILE STEM — the canonical `--layout` name
+    `load_layout_config` turns into `<stem>.yaml`. Globs in SORTED order so the
+    result is host-independent (vdd-multi LOW-1).
+
+    The two registry-only keys are TYPE-VALIDATED here (vdd-multi LOW-2): a built-in
+    authoring slip (`aliases` not a list — e.g. a bare string would otherwise iterate
+    into per-character aliases — or an unknown `init_scaffold`) raises loudly rather
+    than silently corrupting the `--layout` choice set. A duplicate alias, or an alias
+    that shadows a built-in stem, also raises (vdd-multi LOW-1) — otherwise resolution
+    would be glob-order/host-dependent. Built-ins are repo-shipped, so either is a
+    maintainer bug caught here, not at runtime. A file that fails to PARSE is skipped
+    (it surfaces loudly at real load via `_load_yaml`). Built-in-only: NEVER reads an
+    operator override."""
+    out: dict[str, dict[str, Any]] = {}
+    for path in sorted(LAYOUTS_DIR.glob("*.yaml")):
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        cached = _REGISTRY_CACHE.get(path)
+        if cached is None or cached[0] != mtime:
+            try:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            d = raw if isinstance(raw, dict) else {}
+            raw_aliases = d.get("aliases") or []
+            if not isinstance(raw_aliases, list):
+                raise LayoutConfigError(
+                    f"{path.name}: `aliases` must be a list of strings, got "
+                    f"{type(raw_aliases).__name__}")
+            scaffold = d.get("init_scaffold") or "none"
+            if scaffold not in ("two-tier", "none"):
+                raise LayoutConfigError(
+                    f"{path.name}: `init_scaffold` must be 'two-tier' or 'none', "
+                    f"got {scaffold!r}")
+            meta: dict[str, Any] = {
+                "aliases": [str(a) for a in raw_aliases],
+                "init_scaffold": str(scaffold),
+            }
+            cached = (mtime, meta)
+            _REGISTRY_CACHE[path] = cached
+        out[path.stem] = cached[1]
+    # Collision guard (vdd-multi LOW-1): an alias must be unique and must not shadow a
+    # built-in stem (cheap — runs over the handful of built-ins each call).
+    alias_owner: dict[str, str] = {}
+    for stem in sorted(out):
+        for alias in out[stem]["aliases"]:
+            if alias in out:
+                raise LayoutConfigError(
+                    f"layout {stem!r} declares alias {alias!r} that shadows built-in "
+                    f"layout stem {alias!r}")
+            prior = alias_owner.get(alias)
+            if prior is not None and prior != stem:
+                raise LayoutConfigError(
+                    f"alias {alias!r} declared by both {prior!r} and {stem!r}")
+            alias_owner[alias] = stem
+    return out
+
+
+def layout_choices() -> list[str]:
+    """Sorted set of every valid `--layout` value — built-in `*.yaml` stems ∪
+    their declared `aliases` (TASK 031 / R-031-3). Pure config: dropping a new
+    `layouts/<name>.yaml` adds `<name>` here with no Python edit."""
+    reg = _builtin_registry()
+    names: set[str] = set(reg)
+    for meta in reg.values():
+        names.update(meta["aliases"])
+    return sorted(names)
+
+
+def _resolve_alias_in(reg: dict[str, dict[str, Any]], name: str) -> str:
+    """Alias resolution against an ALREADY-built registry (lets a caller build the
+    registry once — vdd-multi LOW-5). A direct stem returns itself; a declared alias
+    maps to its layout; an unknown name returns itself."""
+    if name in reg:
+        return name
+    for stem, meta in reg.items():
+        if name in meta["aliases"]:
+            return stem
+    return name
+
+
+def resolve_alias(name: str) -> str:
+    """Map a `--layout` / WIKI_SCHEMA `layout:` value to its built-in file stem.
+    Unknown names pass through (`load_layout_config` then raises the not-found
+    error)."""
+    return _resolve_alias_in(_builtin_registry(), name)
+
+
+def is_two_tier_scaffold(name: str) -> bool:
+    """True iff the (alias-resolved) layout declares `init_scaffold: two-tier` —
+    i.e. `wiki-init --scaffold-new` should create the Karpathy page-subdir tree and
+    select the Karpathy agent template (TASK 031 / R-031-3). Replaces the hardcoded
+    `wiki_init._KARPATHY_LAYOUTS` set. Builds the registry ONCE (vdd-multi LOW-5)."""
+    reg = _builtin_registry()
+    meta = reg.get(_resolve_alias_in(reg, name))
+    return meta is not None and meta["init_scaffold"] == "two-tier"
 
 
 class LayoutConfigError(ValueError):
@@ -413,7 +535,7 @@ def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutC
     raw_name = root_config.get("layout")
     if not raw_name:
         raise LayoutConfigError("root config missing required `layout` field")
-    name = _ALIAS.get(str(raw_name), str(raw_name))
+    name = resolve_alias(str(raw_name))
     builtin = LAYOUTS_DIR / f"{name}.yaml"
     if not builtin.is_file():
         raise LayoutConfigError(

@@ -10,6 +10,13 @@
 schema_version: '2.0'
 layout: karpathy
 
+# TASK 031 / R-031-3 — config-driven layout registry (init-only metadata; the
+# indexer ignores these, so Karpathy byte-identity is unaffected). The legacy
+# WIKI_SCHEMA `layout:` values `flat`/`per-project` resolve to this grammar, and
+# this is the one built-in that gets the two-tier page-subdir scaffold.
+aliases: [flat, per-project]
+init_scaffold: two-tier
+
 # Karpathy walks only the named subdirs — root SUBTREES outside them are never
 # entered (TASK 030: the alive-set descent predicate guarantees this BY
 # CONSTRUCTION, instrumented; the walk lists the root dir itself once) — so no

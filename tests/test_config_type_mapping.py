@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.wiki_index.layout_config import load_layout_config
 from scripts.wiki_index.normalization import (
     TYPE_MAPPING,
     UnmappedTypeError,
@@ -76,3 +77,38 @@ def test_supplied_fallback_does_not_leak_karpathy() -> None:
             type_mapping=_DEV_TM_FULL,
             path_type_fallback=_DEV_FALLBACK,
         )
+
+
+# --------------------------------------------------------------------------- #
+# TASK 031 / R-031-1 — the 7 typed knowledge classes route in BOTH layouts
+# --------------------------------------------------------------------------- #
+
+_SEVEN_CLASSES: dict[str, tuple[str, str]] = {
+    "decision": ("research", "decision"),
+    "requirement": ("brief", "requirement"),
+    "risk": ("research", "risk"),
+    "incident": ("research", "incident"),
+    "hypothesis": ("research", "hypothesis"),
+    "fact": ("concept", "fact"),
+    "event": ("summary", "event"),
+}
+
+
+@pytest.mark.parametrize("layout", ["cybos", "dev-project"])
+def test_seven_knowledge_classes_route(tmp_path: Path, layout: str) -> None:
+    """All 7 classes resolve to the mapped (db_type, tag) via the REAL built-in
+    layout config — zero DDL (every db_type is an existing CHECK-enum value)."""
+    cfg = load_layout_config(tmp_path, {"layout": layout})
+    for raw, (db_type, tag) in _SEVEN_CLASSES.items():
+        assert cfg.type_mapping[raw] == (db_type, tag), f"{layout}:{raw}"
+        fm, db = normalize_frontmatter(
+            {"type": raw, "title": "x"}, type_mapping=cfg.type_mapping)
+        assert db == db_type
+        assert tag in fm["tags"]
+
+
+def test_seven_classes_only_use_existing_db_types() -> None:
+    """AC-1.3 guard: the routing targets stay within the live pages.type enum
+    (no new db_type → zero DDL)."""
+    enum = {"summary", "concept", "query", "brief", "research", "index", "verification"}
+    assert {db for db, _tag in _SEVEN_CLASSES.values()} <= enum

@@ -87,3 +87,17 @@ def test_gemini_vendor_also_gets_layout_template(tmp_path: Path) -> None:
     assert gemini.is_file(), "GEMINI.md not written (KeyError→silent error?)"
     text = gemini.read_text(encoding="utf-8")
     assert "existing-tree" in text and "The three layers" not in text
+
+
+# --------------------------------------------------------------------------- #
+# TASK 031 / R-031-3 — --layout choices sourced from the built-in registry
+# --------------------------------------------------------------------------- #
+
+
+def test_wiki_init_rejects_unknown_layout(tmp_path: Path) -> None:
+    """`--layout` choices come from the config-driven registry (layout_choices());
+    an unknown value is rejected by argparse (SystemExit 2), not silently accepted."""
+    with pytest.raises(SystemExit):
+        init_main(["--scaffold-new", "--vault", str(tmp_path / "v"),
+                   "--vault-id", "x-vault", "--layout", "nonesuch",
+                   "--db-path", str(tmp_path / "g.db")])

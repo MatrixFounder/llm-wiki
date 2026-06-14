@@ -443,6 +443,37 @@ chunked full — deliberate per-file atomicity; Q-030-3 cost claim corrected) + 
 mypy strict (75 files).** See `docs/tasks/task-030-*.md`,
 `docs/plans/plan-030-*` (at HEAD until next rotation), `docs/reviews/task-030-review.md`,
 ARCHITECTURE Q-030-1..6, `docs/benchmarks/030-*`.
+**TASK 031 (typed-knowledge-classes — extended article-type taxonomy + config-driven
+layout registry) COMPLETE / merge-ready 2026-06-14** (branch `task-031-typed-knowledge-classes`,
+**uncommitted — operator's standing no-commit rule**):
+grows the supported "article types" with 7 **typed knowledge classes** (decision,
+requirement, risk, incident, hypothesis, fact, event) per the "CybOS 2.0" vision,
+**zero DDL** (`user_version` 5). **Phase 1 (classification):** tag-route the 7 classes
+onto the existing `pages.type` enum via layout `type_mapping` — added to **dev-project**
+(opt-in `type:`) **and** a NEW built-in **`cybos`** layout (operational-memory
+event-graph vault: `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/
+events/` + the task/adr/plan spine; `init_scaffold: none`). **R-031-3 de-hardcodes the
+layout registry:** the three former sources of truth (`wiki_init._LAYOUT_CHOICES` /
+`_KARPATHY_LAYOUTS` + `layout_config._ALIAS`) collapse into ONE cached YAML-derived
+registry (`layout_config.layout_choices/resolve_alias/is_two_tier_scaffold`) via two
+optional additive `LayoutConfig` schema keys `aliases` + `init_scaffold` (karpathy
+declares `[flat, per-project]` / `two-tier`) → a new layout is a drop-in `*.yaml` with
+**zero Python edits**. Now **6 built-in layouts** (`wiki-init --layout`). Per-type
+templates at `templates/page-types/*`; reference at `docs/layouts/cybos.md`. **Phase 2
+(DEFERRED, ROADMAP R-13):** the *event graph* — typed page-to-page edges
+(`implements`/`supersedes`/`caused-by`/`relates-to`), `ref_type` extension, reindex
+frontmatter-edge extraction, schema v5→v6 (TASK 008 precedent); the edge keys are
+**reserved (authored-but-inert)** in the Phase-1 templates. Karpathy byte-identity
+preserved (init-only metadata keys). **Gates:** task/arch/plan reviews + `/vdd-multi`
+**converged** (5 LOW — 3 fixed [alias-determinism collision guard, registry key
+type-validation, single registry build], 2 accepted-residual) + code-review **MERGE**;
+**1339 pytest +5 skip, mypy strict (75 files)**. **Real-vault dogfood GREEN**
+(`obsidian-personal` PARA vault, 2669 md): live index `user_version=5` (031-compatible),
+regression reindex reproduced it EXACTLY (2485 pages, 0 skips, 2.1 s), FTS/stemming OK,
+the 7 classes adoptable via a `.wiki/layout.yaml` `type_mapping` UNION (0 skips); 2
+PRE-EXISTING slug collisions surfaced (near-duplicate filenames — not a 031 issue,
+TASK 020/021 detector). See ADR-003, `docs/tasks/task-031-*`, `docs/plans/plan-031-*`,
+ARCHITECTURE §3.5 + Q-031-1..5.
 
 ## Knowledge lookup priority
 
@@ -490,10 +521,13 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 030
-  `reindex-perf-hardening`** (DF-029-1+P-1+R-X1-OBS-WALK; `docs/TASK.md` + `docs/PLAN.md` +
-  `docs/tasks/task-030-00..07-*.md` live at HEAD — shipped, **not yet rotated** [rotates at the
-  next task's Analysis per `skill-archive-task`]). Preceded by **TASK 029 `obsidian-cli-skill`**
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 031
+  `typed-knowledge-classes`** (R-13 Phase-1; extended article-type taxonomy + the
+  config-driven layout registry de-hardcode; `docs/TASK.md` + `docs/PLAN.md` +
+  `docs/tasks/task-031-00..04-*.md` live at HEAD). Preceded by **TASK 030
+  `reindex-perf-hardening`** (DF-029-1+P-1+R-X1-OBS-WALK; archived
+  `docs/tasks/task-030-reindex-perf-hardening.md` + beads `task-030-00..07-*` +
+  `docs/plans/plan-030-reindex-perf-hardening.md`). Preceded by **TASK 029 `obsidian-cli-skill`**
   (R-12; archived `docs/tasks/task-029-obsidian-cli-skill.md` + beads + `docs/plans/plan-029-obsidian-cli-skill.md`).
   Preceded by **TASK 028 `query-stemming-yo-folding`** (archived
   `docs/tasks/task-028-query-stemming-yo-folding.md` + `docs/plans/plan-028-*.md`). Preceded
@@ -532,6 +566,10 @@ state and user preferences, not domain knowledge.
   of truth (byte-identity anchor); they are NOT superseded by the engine below.
 - `scripts/wiki_index/layout_config.py` — **TASK 012 / R-X1 config-driven layout
   engine** (`LayoutConfig`, `iter_pages`, `resolve_layout_config`, ReDoS load-gate);
-  built-in layouts at `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal}.yaml`;
-  schema `config/layout-config.schema.yaml`. The per-layout *grammar* layer,
-  separate from the per-vault identity `config_loader.py` (two-systems split).
+  **TASK 031 / R-031-3** adds the config-driven layout REGISTRY
+  (`layout_choices`/`resolve_alias`/`is_two_tier_scaffold` over `aliases`/`init_scaffold`).
+  Built-in layouts (now **6** via `--layout`, 4 distinct grammars) at
+  `scripts/wiki_index/layouts/{karpathy,dev-project,obsidian-personal,cybos}.yaml`
+  (`flat`/`per-project` = karpathy aliases); schema `config/layout-config.schema.yaml`.
+  The per-layout *grammar* layer, separate from the per-vault identity
+  `config_loader.py` (two-systems split).

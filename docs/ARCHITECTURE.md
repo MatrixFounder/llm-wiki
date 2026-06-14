@@ -331,6 +331,31 @@
 > pytest, mypy strict (75 files).** Spec: docs/TASK.md v3 (two adversarial gates;
 > [record](./reviews/task-030-review.md)); design Q-030-1..6 (Q-030-2 at v4).
 >
+> **TASK 031 (typed knowledge classes — extended article-type taxonomy + config-driven
+> layout registry) — ✅ COMPLETE / merge-ready 2026-06-14** (branch
+> `task-031-typed-knowledge-classes`; **uncommitted — operator's standing no-commit rule**;
+> all 5 VDD gates green [task/arch/plan reviews + `/vdd-multi` converged, 5 LOW → 3 fixed
+> + 2 accepted-residual + code-review MERGE]; **1339 pytest +5 skip, mypy strict (75
+> files)**; real-vault dogfood GREEN — see the status-block tail + Q-031-4): extend the
+> supported "article types" with 7 typed knowledge classes (decision, requirement, risk,
+> incident, hypothesis, fact, event) per the "CybOS 2.0" vision, **zero DDL** (`user_version` 5).
+> **Phase 1 (this task):** *classification* via tag-route onto the existing db_type enum
+> (ADR-003 D1; decision/risk/incident/hypothesis→research, requirement→brief, fact→concept,
+> event→summary) added to **dev-project** (`type_mapping` only) **and** a NEW built-in
+> **`cybos`** layout (operational-memory event-graph vault — `decisions/ requirements/
+> risks/ incidents/ hypotheses/ facts/ events/` + engineering spine). **R-031-3 de-hardcodes
+> the layout registry:** the three sources of truth (`wiki_init._LAYOUT_CHOICES` /
+> `_KARPATHY_LAYOUTS` / `layout_config._ALIAS`) collapse into ONE YAML-derived cached
+> registry via two optional additive `LayoutConfig` schema keys `aliases` + `init_scaffold`
+> (karpathy declares `[flat, per-project]` / `two-tier`) → a new layout is a drop-in
+> `*.yaml` with **zero Python edits**. Per-type templates (`templates/page-types/*`) +
+> reference (`docs/layouts/cybos.md`) + ADR-003 + ROADMAP R-13. **Phase 2 (deferred,
+> ROADMAP R-13):** the *event graph* — typed page-to-page edges (`implements`/`supersedes`/
+> `caused-by`/`relates-to`), `ref_type` extension, reindex frontmatter-edge extraction,
+> schema v5→v6 (TASK 008 precedent); the edge keys are reserved (authored-but-inert) in
+> the Phase-1 templates. Design: ADR-003 + §3.5 + Q-031-1..5. Spec: docs/TASK.md (RTM
+> R-031-1..7).
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -494,7 +519,7 @@ TASK 009 pattern — Q-029-1). Verified-surface snapshot:
 
 ## 3. System Architecture
 
-Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **§3.5 (TASK 012 / R-X1)** adds the **config-driven Layout Engine**: two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`), the `iter_pages` walk that converges the four hardcoded two-tier walks, the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct), the ReDoS guard (TASK 012 stdlib-`re` load-gate **+** the TASK 017 runtime per-file `regex` `timeout=` deadline for operator-custom patterns, R-X1-REDOS-RT), the PW-H `auto_indexes[]` renderer + PW-Q lint guard, and the TASK 017 single-stat walk + drift fast-path (P-2/P-3 — Class-B "rebuildable markdown", zero DDL). **TASK 030 (R-030-3/6)** replaced the per-glob walk with the **single-pass iterative alive-set engine** (`_PatternState` NFA per `paths[]` glob; exact `Path.glob` symlink-union parity; PROPER-prefix descent + real `<prefix>/**` ignore-pruning; every dir scandir'd ≤1× — measured 140→61 at 2k files; karpathy "root subtrees never walked" instrumented; matcher deltas enumerated Q-030-2 v4; the DirEntry-stat single-stat mechanism re-pinned).
+Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **§3.5 (TASK 012 / R-X1)** adds the **config-driven Layout Engine**: two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`), the `iter_pages` walk that converges the four hardcoded two-tier walks, the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct), the ReDoS guard (TASK 012 stdlib-`re` load-gate **+** the TASK 017 runtime per-file `regex` `timeout=` deadline for operator-custom patterns, R-X1-REDOS-RT), the PW-H `auto_indexes[]` renderer + PW-Q lint guard, and the TASK 017 single-stat walk + drift fast-path (P-2/P-3 — Class-B "rebuildable markdown", zero DDL). **TASK 030 (R-030-3/6)** replaced the per-glob walk with the **single-pass iterative alive-set engine** (`_PatternState` NFA per `paths[]` glob; exact `Path.glob` symlink-union parity; PROPER-prefix descent + real `<prefix>/**` ignore-pruning; every dir scandir'd ≤1× — measured 140→61 at 2k files; karpathy "root subtrees never walked" instrumented; matcher deltas enumerated Q-030-2 v4; the DirEntry-stat single-stat mechanism re-pinned). **TASK 031 (R-031-3)** de-hardcodes the layout REGISTRY on top of this engine: the `--layout` choice-set + the two-tier-scaffold family + the legacy alias map (previously three sources of truth — `wiki_init._LAYOUT_CHOICES`/`_KARPATHY_LAYOUTS` + `layout_config._ALIAS`) collapse into ONE cached YAML-derived registry, via two optional additive `LayoutConfig` keys `aliases`/`init_scaffold` (init-only metadata — they do NOT touch the indexer, so Karpathy byte-identity holds); a new built-in layout becomes a valid `--layout` value as a pure drop-in `*.yaml`. The same task adds the **typed-knowledge taxonomy** (decision/requirement/risk/incident/hypothesis/fact/event) as zero-DDL `type_mapping` tag-routes in `dev-project.yaml` + the new `cybos.yaml` (ADR-003; classification only — the event-graph relation layer is deferred Phase-2 per ROADMAP R-13).
 
 → [details](./architectures/system-architecture.md)
 
@@ -1374,6 +1399,53 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   today's per-glob walks); the 030-04 property test asserts full **DiscoveredPage-tuple** equality
   (not just reachability) against the old engine on diverse fixtures incl. trailing-`**`,
   mid-`**`-then-literal, a directory literally named `foo.md`, dot-files, and symlink topologies.
+- **Q-031-1 (TASK 031 — classification vs the event graph).** The "CybOS 2.0" vision wants typed
+  classes AND typed edges; these are independent engine concerns. **RESOLVED:** Phase 1 ships
+  *classification* only — tag-route the 7 classes onto the existing db_type enum (zero DDL). The
+  *event graph* (typed page-to-page edges) is deferred Phase-2 (Q-031-5 / ROADMAP R-13). Promoting
+  every class to a first-class db_type was REJECTED (worst cost/value: max schema churn, still no
+  graph). See ADR-003 D1/D4.
+- **Q-031-2 (TASK 031 — db_type routing of the 7 classes; is zero-DDL achievable?).** **RESOLVED:
+  yes** — every class routes onto an existing enum value + a filterable tag: decision/risk/incident/
+  hypothesis→`research`, requirement→`brief`, fact→`concept`, event→`summary` (closest "timestamped
+  narrative record" bucket). No class forces a new db_type; `pages.type` CHECK + `TypeMappingEntry.db_type`
+  enum untouched (`user_version` 5). **Trade-off recorded:** the tag lands in the `tags:` LIST, and
+  `wiki-search --where` is scalar-equality (`sqlite_repository.py:547-562`), so precise per-class CLI
+  filtering is `--types <db_type>` (bucket) + FTS on the tag word, NOT `--where tag=decision`. A
+  list-membership `--where` is a candidate follow-on (ROADMAP), not in Phase-1 scope.
+- **Q-031-3 (TASK 031 — both homes vs one; where do the classes live?).** **RESOLVED: both** —
+  `dev-project.yaml` gains the 7 `type_mapping` entries only (opt-in via explicit `type:`; its
+  `paths[]` untouched), AND a new built-in `cybos` layout ships the full folder structure. Per-project
+  bespoke types use the existing `<vault>/.wiki/layout.yaml` `type_mapping` **UNION** override (Q-012-f /
+  TASK 025 R-7) — no fork, no Python. See ADR-003 D2.
+- **Q-031-4 (TASK 031 — de-hardcode the layout registry without breaking strict-schema load).** The
+  operator flagged `wiki_init.py:50-51` (`_LAYOUT_CHOICES`/`_KARPATHY_LAYOUTS`; IDE-selected 50-53) as hardcoded. **RESOLVED:** add two OPTIONAL additive
+  `LayoutConfig` keys `aliases: [string]` + `init_scaffold: {two-tier, none}` (default `none`); the
+  registry helpers (`layout_choices`/`is_two_tier_scaffold`/`resolve_alias`) read the **raw built-in
+  YAML** (the 3 top-level keys), NOT the frozen `LayoutConfig` dataclass (`_build` carries no arbitrary
+  keys), and are **cached** (parse built-ins once — does not worsen R-X1-CFG-COST). **Ordering (sharp
+  edge):** because `LayoutConfig` is `additionalProperties:false` (`schema:148`), the schema amendment
+  MUST land before/with the karpathy.yaml key additions, else `_validate` rejects every layout at load.
+  The keys are init-only — they do not touch discovery/pages/refs, so the Karpathy golden anchor +
+  `test_karpathy_config_matches_layout_constants` stay green. See ADR-003 D3.
+  **Post-ship `/vdd-multi` (3 critics + adversarial verify, all findings empirically reproduced):
+  converged with 5 LOW findings — 3 FIXED, 2 accepted-residual, no MED/HIGH.** Fixed: the registry
+  now (a) globs in SORTED order + raises on a duplicate alias / an alias shadowing a stem (was
+  glob-order/host-dependent — the de-hardcode's own "drop-in a new layout" path was the trigger),
+  (b) TYPE-validates the two registry-only keys at build (`aliases` must be a list — a bare string
+  would otherwise iterate into per-char aliases; `init_scaffold` ∈ {two-tier, none}), raising loudly
+  on a built-in authoring slip, and (c) builds the registry ONCE in `is_two_tier_scaffold` (was 2×).
+  **Accepted residuals (LOW, documented):** an absent `LAYOUTS_DIR` makes `layout_choices()` empty
+  (a broken-install precondition — the engine fails at real load regardless; re-hardcoding a fallback
+  would defeat R-031-3); and `resolve_alias` adds one `scandir` + per-built-in `stat` per
+  `load_layout_config` (the deliberate drop-in-correctness cost — bounded by the ~handful of
+  built-ins, microseconds; the per-file regex recompile dominates R-X1-CFG-COST). Guards pinned by
+  `tests/test_layout_config.py::test_registry_rejects_{duplicate_alias,alias_shadowing_stem,non_list_aliases,bad_init_scaffold}`.
+- **Q-031-5 (TASK 031 — the event graph: build now or defer?).** **RESOLVED: defer to a separate task**
+  (ROADMAP R-13). Typed edges (`implements`/`supersedes`/`caused-by`/`relates-to`), a `page_entity_refs.ref_type`
+  extension, reindex frontmatter-edge extraction, and schema v5→v6 follow the TASK 008 precedent. The
+  edge keys are **reserved (authored-but-inert)** in the Phase-1 templates so the canonical Markdown
+  already carries the data — Markdown canonical, DB rebuildable (ADR-002 §D8). See ADR-003 D4.
 
 ---
 
@@ -1395,6 +1467,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **RAG Query Layer (TASK 007)**: `wiki-query` designed as a deterministic `prepare`/`apply` skill (Decision-17, no LLM in Python); query page is a first-class compounding `type=query` artifact; durability secured by the R-6.5e `cites:`→`'cited'` reindex read-side (the §D8 gate, mirroring R-5.3); zero schema DDL; grounding enforced in Python (`CITATION_NOT_RETRIEVED` / `NO_CONTEXT`).
 - [x] **Native-App Control Skill (TASK 029)**: prompt-layer only — routing/coherence/safety/degradation invariants designed (§2.2); zero DDL, zero new Python, no interface change; safety model TOTAL over the verified 102-command surface with fail-safe default (incl. the 029-07 `command id=`→T3 + Templater-template→T3 refinements); eval harness machine-checkable without a grader (Q-029-1).
 - [x] **Indexer hardening (TASK 030, SHIPPED)**: rename-aware `--delta` (new-path membership predicate, zero extra I/O, swap-class residual documented), chunked-tx `--full` (private txn-free DML helpers; M-4/FTS-trigger posture untouched), single-pass pruned walk (descent predicate preserves karpathy "root never walked"; `Path.glob` symlink parity); zero DDL; design at Q-030-1..6; spec docs/TASK.md + reviews/task-030-review.md.
+- [x] **Typed knowledge classes (TASK 031)**: classification-only Phase 1 — 7 classes tag-routed zero-DDL onto the existing db_type enum (Q-031-1/2) in `dev-project` + new `cybos` layout (Q-031-3); layout registry de-hardcoded to one cached YAML-derived source via additive `aliases`/`init_scaffold` keys (Q-031-4); event graph deferred Phase-2 (Q-031-5 / ROADMAP R-13). ADR-003; Karpathy byte-identity preserved; 1339 pytest, mypy strict; `/vdd-multi` converged (5 LOW: 3 fixed + 2 accepted-residual). DF-031-1 dogfood doc-fix folded.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

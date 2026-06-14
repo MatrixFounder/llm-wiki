@@ -180,6 +180,27 @@ $defs:
         type: array
         items: {$ref: '#/$defs/AutoIndex'}
         default: []
+      # TASK 031 / R-031-3 — INIT-ONLY registry metadata (the layout registry
+      # reads these RAW; the indexer ignores them, so they do NOT affect
+      # discovery/pages/refs → Karpathy byte-identity holds). Both OPTIONAL with
+      # safe defaults so every pre-031 layout YAML keeps validating.
+      aliases:
+        type: array
+        items: {type: string}
+        default: []
+        description: >
+          Alternative `--layout` / WIKI_SCHEMA `layout:` names that resolve to
+          this built-in grammar (e.g. karpathy declares [flat, per-project]).
+          Consumed by layout_choices() / resolve_alias(); ignored by the indexer.
+      init_scaffold:
+        type: string
+        enum: [two-tier, none]
+        default: none
+        description: >
+          Whether `wiki-init --scaffold-new` creates the two-tier Karpathy
+          page-subdir tree (_sources/_concepts/…) and selects the Karpathy agent
+          template. `none` (default) = index an existing tree. Drives
+          is_two_tier_scaffold(); ignored by the indexer.
 
 # Top-level: library of $defs (mirrors wiki-config.schema.yaml). The loader
 # validates a merged config against #/$defs/LayoutConfig explicitly.

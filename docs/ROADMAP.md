@@ -467,6 +467,43 @@ that item likely shrinks to export-only.
 
 ---
 
+## P2 — Typed knowledge classes / event graph
+
+### R-13. Typed knowledge classes — Phase 1 ✅ SHIPPED (TASK 031, 2026-06-13) · Phase 2 event graph DEFERRED (P2)
+
+The "CybOS 2.0" vision: grow the wiki from a flat *Page* store into one carrying
+**typed knowledge classes** (Decision, Requirement, Risk, Incident, Hypothesis,
+Fact, Event), keeping Markdown canonical (ADR-002 §D8). Design: **ADR-003**.
+
+**Phase 1 — classification (SHIPPED, TASK 031):** the 7 classes tag-route, **zero
+DDL**, onto the existing `pages.type` enum via layout `type_mapping`, added to the
+`dev-project` layout (opt-in `type:`) and a new built-in **`cybos`** layout
+(operational-memory vault — `decisions/ requirements/ risks/ incidents/ hypotheses/
+facts/ events/` + the engineering spine). Bundled with **R-031-3**, the
+config-driven layout registry de-hardcode (`--layout` choices + alias map +
+two-tier-scaffold family collapsed into one YAML-derived cached registry via
+additive `aliases`/`init_scaffold` keys → a new layout is a drop-in `*.yaml`, zero
+Python edits). Per-type templates at `templates/page-types/*`; reference at
+[`docs/layouts/cybos.md`](layouts/cybos.md). See `docs/tasks/task-031-*`.
+
+**Phase 2 — the event graph (DEFERRED, P2 — no urgent driver):** typed
+page-to-page edges (`implements` / `supersedes` / `superseded_by` / `caused_by` /
+`relates_to`) so the classes link into a graph of system evolution (decision →
+task → commit → release → incident). Mechanics (TASK 008 precedent): extend
+`page_entity_refs.ref_type` (schema v5→v6), add reindex frontmatter-edge
+extraction, bump `user_version`. **The edge keys are already authored-but-inert**
+in the Phase-1 templates, so the canonical Markdown carries the data now and the
+graph lights up on reindex when Phase 2 ships — no re-authoring (Markdown
+canonical, DB rebuildable). A candidate companion: a list-membership `--where`
+filter (TASK 013 surface) so a tag-routed class is filterable by one predicate
+(Phase 1 uses `--types <db_type>` + FTS on the tag word).
+
+**Trigger to start Phase 2**: a real cybos vault accumulates enough cross-linked
+decisions/incidents that "what did this decision cause / what implements it?"
+becomes a routine query. Relates to [R-X5](#r-x5-entity-graph-cross-project-phase-f).
+
+---
+
 ## P2 — Cross-project indexing
 
 Design doc: [`docs/proposals/indexing-agentic-dev-artifacts.md`](proposals/indexing-agentic-dev-artifacts.md)

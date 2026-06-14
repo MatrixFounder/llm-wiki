@@ -51,6 +51,17 @@ type_mapping:
   known-issue:  {db_type: research, tag: known-issue}
   product-doc:  {db_type: research, tag: product}
   proposal:     {db_type: research, tag: proposal}
+  # TASK 031 / R-031-1 — the typed knowledge classes (opt-in via explicit `type:`
+  # frontmatter; dev-project's paths[] routing is unchanged). Same zero-DDL
+  # tag-route as the cybos layout; see ADR-003 D1/D2. `adr` above stays distinct
+  # from the more general `decision`.
+  decision:     {db_type: research, tag: decision}
+  requirement:  {db_type: brief,    tag: requirement}
+  risk:         {db_type: research, tag: risk}
+  incident:     {db_type: research, tag: incident}
+  hypothesis:   {db_type: research, tag: hypothesis}
+  fact:         {db_type: concept,  tag: fact}
+  event:        {db_type: summary,  tag: event}
 
 path_type_fallback: {}              # dev types come from paths[].type
 
