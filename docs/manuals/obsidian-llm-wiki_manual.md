@@ -486,13 +486,15 @@ Obsidian vault with numbered folders and Unicode titles — these need a differe
 **YAML config, not code** (`scripts/wiki_index/layout_config.py`, schema
 `config/layout-config.schema.yaml`).
 
-Three layouts ship built-in (`scripts/wiki_index/layouts/`):
+Four layout *grammars* ship built-in (`scripts/wiki_index/layouts/`), exposed as six
+`--layout` values (`flat`/`per-project` are aliases of `karpathy`):
 
 | Layout | Shape | Slug strategy |
 |---|---|---|
-| `karpathy` | The standard layout above. **Byte-identical** to the legacy hardcoded behaviour (golden-anchor-guarded). | `identity` (verbatim stem) |
+| `karpathy` | The standard layout above. **Byte-identical** to the legacy hardcoded behaviour (golden-anchor-guarded). Aliases: `flat`, `per-project`. | `identity` (verbatim stem) |
 | `dev-project` | A repo's `docs/` — `tasks/*.md`, `adr/*.md`, `issues/*.md`, etc. | `transliterate` (ASCII-safe) |
 | `obsidian-personal` | Numbered folders + Unicode | `preserve-unicode` |
+| `cybos` | **Typed knowledge / "operational-memory" vault** (TASK 031): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + the `tasks/ adr/ plans/` engineering spine. The home for the 7 typed knowledge classes. | `transliterate` |
 
 Pick one at init: `wiki-init --scaffold-new --vault <path> --layout dev-project`.
 
@@ -559,12 +561,32 @@ frontmatter `layout_config:` pointer.
 > (`summary`/`lesson-`/`meeting-`/`webinar-`/`tutorial-`/`article-`/`book-`/`video-`/
 > `podcast-`/`course-summary` + `moc`); anything else is yours to map.
 
-Two design facts worth internalising:
+> **Typed knowledge classes (TASK 031).** Seven *event-graph* knowledge classes —
+> `decision`, `requirement`, `risk`, `incident`, `hypothesis`, `fact`, `event` —
+> ship as zero-DDL `type_mapping` tag-routes (onto the existing `pages.type` enum:
+> decision/risk/incident/hypothesis→`research`, requirement→`brief`, fact→`concept`,
+> event→`summary`). They are first-class in the **`cybos`** layout (folder-driven) and
+> available opt-in in **`dev-project`** (via explicit frontmatter `type:`). To adopt
+> them in any other vault (e.g. `obsidian-personal`), add the block to
+> `.wiki/layout.yaml` — it UNIONs in (proven on a real PARA vault). Per-class retrieval
+> is FTS on the tag word (`wiki-search "decision"`) optionally narrowed by
+> `--types <db_type>`. The note **templates** live at `templates/page-types/*.md`; full
+> reference at [`docs/layouts/cybos.md`](../layouts/cybos.md). Typed page-to-page
+> *edges* (the event graph proper) are a documented Phase 2 (ROADMAP R-13).
+
+Three design facts worth internalising:
 
 - **Two separate config systems.** Per-vault *identity* (`config_loader.py` /
   `wiki-config.schema.yaml` — who this vault is, its `vault_id`) is deliberately
   distinct from per-layout-class *grammar* (the engine above — how this *kind* of
   vault is shaped). Don't conflate them.
+- **Layouts are self-describing — a new built-in is a pure drop-in YAML (TASK 031).**
+  The `--layout` choice set, the legacy alias map, and the two-tier-scaffold family are
+  not hardcoded anywhere: each `layouts/*.yaml` declares its own optional `aliases:` and
+  `init_scaffold:` (`two-tier` | `none`) keys, and the registry
+  (`layout_config.layout_choices` / `resolve_alias` / `is_two_tier_scaffold`) derives
+  everything by globbing that directory. Dropping a new `layouts/<name>.yaml` makes
+  `--layout <name>` valid with **zero Python edits**.
 - **Operator regexes are guarded against ReDoS.** Custom `ref_extraction[].regex`
   and `paths[].project_pattern` are checked at *load time* (a stdlib-`re` budget
   gate; a misspelled grammar key is a hard load error, exit 6, not a silent

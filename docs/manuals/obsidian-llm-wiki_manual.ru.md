@@ -491,13 +491,15 @@ wiki-extract-concepts apply   --vault my-vault --vault-root /abs/path/to/MyVault
 грамматика — **YAML-конфиг, а не код** (`scripts/wiki_index/layout_config.py`,
 схема `config/layout-config.schema.yaml`).
 
-Три layout'а поставляются встроенными (`scripts/wiki_index/layouts/`):
+Четыре layout-*грамматики* поставляются встроенными (`scripts/wiki_index/layouts/`),
+доступные как шесть значений `--layout` (`flat`/`per-project` — алиасы `karpathy`):
 
 | Layout | Форма | Стратегия slug |
 |---|---|---|
-| `karpathy` | Стандартный layout выше. **Байт-в-байт идентичен** легаси-захардкоженному поведению (защищён golden-anchor). | `identity` (дословный stem) |
+| `karpathy` | Стандартный layout выше. **Байт-в-байт идентичен** легаси-захардкоженному поведению (защищён golden-anchor). Алиасы: `flat`, `per-project`. | `identity` (дословный stem) |
 | `dev-project` | `docs/` репозитория — `tasks/*.md`, `adr/*.md`, `issues/*.md` и т. д. | `transliterate` (ASCII-безопасный) |
 | `obsidian-personal` | Нумерованные папки + Unicode | `preserve-unicode` |
+| `cybos` | **Vault типизированных знаний / «операционной памяти»** (TASK 031): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + инженерный костяк `tasks/ adr/ plans/`. Дом для 7 типизированных классов знаний. | `transliterate` |
 
 Выберите один при init: `wiki-init --scaffold-new --vault <path> --layout dev-project`.
 
@@ -566,12 +568,31 @@ auto_indexes:
 > (`summary`/`lesson-`/`meeting-`/`webinar-`/`tutorial-`/`article-`/`book-`/`video-`/
 > `podcast-`/`course-summary` + `moc`); всё остальное вы отображаете сами.
 
-Два факта дизайна, которые стоит усвоить:
+> **Типизированные классы знаний (TASK 031).** Семь *event-graph* классов знаний —
+> `decision`, `requirement`, `risk`, `incident`, `hypothesis`, `fact`, `event` —
+> поставляются как zero-DDL `type_mapping` tag-route (на существующий enum `pages.type`:
+> decision/risk/incident/hypothesis→`research`, requirement→`brief`, fact→`concept`,
+> event→`summary`). Они первоклассны в layout **`cybos`** (по папкам) и доступны опционально
+> в **`dev-project`** (через явный frontmatter `type:`). Чтобы внедрить их в любой другой
+> vault (например `obsidian-personal`), добавьте блок в `.wiki/layout.yaml` — он
+> ОБЪЕДИНЯЕТСЯ (UNION; проверено на реальном PARA-vault). Поиск по классу — FTS по
+> тег-слову (`wiki-search "decision"`), при желании сужается через `--types <db_type>`.
+> **Шаблоны** заметок — в `templates/page-types/*.md`; полная справка —
+> [`docs/layouts/cybos.md`](../layouts/cybos.md). Типизированные *рёбра* между страницами
+> (собственно граф событий) — задокументированная Фаза 2 (ROADMAP R-13).
+
+Три факта дизайна, которые стоит усвоить:
 
 - **Две отдельные системы конфигурации.** *Identity* на уровне vault
   (`config_loader.py` / `wiki-config.schema.yaml` — кто этот vault, его `vault_id`)
   намеренно отделена от *грамматики* на уровне класса layout (движок выше — как
   устроен этот *вид* vault). Не смешивайте их.
+- **Layout'ы самоописательны — новый встроенный layout это чистый drop-in YAML (TASK 031).**
+  Набор значений `--layout`, карта легаси-алиасов и семейство two-tier-scaffold нигде не
+  захардкожены: каждый `layouts/*.yaml` объявляет свои опциональные ключи `aliases:` и
+  `init_scaffold:` (`two-tier` | `none`), а реестр (`layout_config.layout_choices` /
+  `resolve_alias` / `is_two_tier_scaffold`) выводит всё, глоббя эту папку. Положили новый
+  `layouts/<name>.yaml` → `--layout <name>` сразу валиден, **ноль правок Python**.
 - **Операторские regex защищены от ReDoS.** Кастомные `ref_extraction[].regex` и
   `paths[].project_pattern` проверяются *во время загрузки* (бюджетный гейт на
   stdlib-`re`; ошибочно написанный ключ грамматики — это жёсткая ошибка загрузки,

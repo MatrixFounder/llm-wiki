@@ -127,5 +127,9 @@ the loop on anything that writes (summaries, new notes) and is safe to re-run
 | **Index looks wrong / after a big move** | `wiki-reindex --full --vault personal` (safe — rebuilds from markdown) |
 
 **Tuning** lives in two per-vault files (see the runbook): `<vault>/.wiki/layout.yaml`
-(what to index — `ignore`, `type_mapping`) and `<vault>/.wiki/sync.yaml` (how
-`wiki-sync` routes a zone — `zones`, `transcript_dedup`, `resummarize`).
+(what to index — `ignore`, `type_mapping`; e.g. adopt the TASK 031 typed knowledge
+classes — `decision`/`requirement`/`risk`/`incident`/`hypothesis`/`fact`/`event` — by
+adding them under `type_mapping` here, which UNIONs into the built-in layout) and
+`<vault>/.wiki/sync.yaml` (how `wiki-sync` routes a zone — `zones`, `transcript_dedup`,
+`resummarize`). New whole-vault shapes are config too: drop a `layouts/<name>.yaml`
+(e.g. the built-in `cybos`) — `wiki-init --layout <name>` picks it up, zero code.

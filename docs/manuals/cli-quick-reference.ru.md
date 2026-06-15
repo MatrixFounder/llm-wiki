@@ -128,5 +128,10 @@ claude        # or your Claude Code launcher
 | **Индекс выглядит неверно / после большого перемещения** | `wiki-reindex --full --vault personal` (безопасно — пересборка из markdown) |
 
 **Тюнинг** живёт в двух per-vault файлах (см. runbook): `<vault>/.wiki/layout.yaml`
-(что индексировать — `ignore`, `type_mapping`) и `<vault>/.wiki/sync.yaml` (как
-`wiki-sync` маршрутизирует зону — `zones`, `transcript_dedup`, `resummarize`).
+(что индексировать — `ignore`, `type_mapping`; например, внедрите типизированные классы
+знаний из TASK 031 — `decision`/`requirement`/`risk`/`incident`/`hypothesis`/`fact`/`event` —
+добавив их под `type_mapping` здесь, они ОБЪЕДИНЯТСЯ (UNION) со встроенным layout) и
+`<vault>/.wiki/sync.yaml` (как `wiki-sync` маршрутизирует зону — `zones`,
+`transcript_dedup`, `resummarize`). Новые формы целого vault — тоже конфиг: положите
+`layouts/<name>.yaml` (например встроенный `cybos`) → `wiki-init --layout <name>`
+подхватит его, ноль кода.
