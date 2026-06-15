@@ -469,7 +469,7 @@ that item likely shrinks to export-only.
 
 ## P2 — Typed knowledge classes / event graph
 
-### R-13. Typed knowledge classes — Phase 1 ✅ SHIPPED (TASK 031, 2026-06-13) · Phase 2 event graph DEFERRED (P2)
+### R-13. Typed knowledge classes — Phase 1 ✅ SHIPPED (TASK 031, 2026-06-13) · Phase 2 event graph ✅ SHIPPED (TASK 032, 2026-06-15)
 
 The "CybOS 2.0" vision: grow the wiki from a flat *Page* store into one carrying
 **typed knowledge classes** (Decision, Requirement, Risk, Incident, Hypothesis,
@@ -486,19 +486,23 @@ additive `aliases`/`init_scaffold` keys → a new layout is a drop-in `*.yaml`, 
 Python edits). Per-type templates at `templates/page-types/*`; reference at
 [`docs/layouts/cybos.md`](layouts/cybos.md). See `docs/tasks/task-031-*`.
 
-**Phase 2 — the event graph (DEFERRED, P2 — no urgent driver):** typed
-page-to-page edges (`implements` / `supersedes` / `superseded_by` / `caused_by` /
-`relates_to`) so the classes link into a graph of system evolution (decision →
-task → commit → release → incident). Mechanics (TASK 008 precedent): extend
-`page_entity_refs.ref_type` (schema v5→v6), add reindex frontmatter-edge
-extraction, bump `user_version`. **The edge keys are already authored-but-inert**
-in the Phase-1 templates, so the canonical Markdown carries the data now and the
-graph lights up on reindex when Phase 2 ships — no re-authoring (Markdown
-canonical, DB rebuildable). A candidate companion: a list-membership `--where`
-filter (TASK 013 surface) so a tag-routed class is filterable by one predicate
-(Phase 1 uses `--types <db_type>` + FTS on the tag word).
+**Phase 2 — the event graph ✅ SHIPPED (TASK 032, ADR-004):** typed page-to-page
+edges (`implements`/`implemented-by`, `supersedes`/`superseded-by`, `causes`/
+`caused-by`; `relates_to` reuses the symmetric `related`) link the classes into a
+graph of system evolution (decision → task → incident → release). **Schema v5→v6**
+(first DDL since TASK 008; Class-B rebuild) extends `page_entity_refs.ref_type`;
+`reindex._edge_refs` extracts the frontmatter edges (forward, M-1 intact) and a global
+post-pass **auto-derives the inverses** (orphan-skip; idempotent; AFTER AM-3 / BEFORE
+mentions-recompute). The reserved-but-inert edge keys from Phase 1 became live with no
+re-authoring. New **`wiki-graph`** CLI (16th: `neighbors`/`chain`/`backlinks`) + typed-edge
+DAL reads (`get_backlinks(kind=)`/`refs_from`/`neighbors`/`edge_chain`); **graph-aware
+RAG** via `wiki-query prepare --follow-edges` (default OFF, deterministic `question_hash`).
+Delta: scoped inverse-additions + removal-deferred-to-`--full` (provenance-safe). See
+ADR-004, `docs/tasks/task-032-*`, ARCHITECTURE Q-032-1..6. **Residual candidate** (still
+open): a list-membership `--where` filter (TASK 013 surface) for one-predicate per-class
+filtering (Phase-1 classes use `--types <db_type>` + FTS on the tag word).
 
-**Trigger to start Phase 2**: a real cybos vault accumulates enough cross-linked
+**Phase-2 trigger (historical)**: a real cybos vault accumulates enough cross-linked
 decisions/incidents that "what did this decision cause / what implements it?"
 becomes a routine query. Relates to [R-X5](#r-x5-entity-graph-cross-project-phase-f).
 
@@ -715,10 +719,15 @@ the misleading docstring.
 - ~~**wiki-ingest vendoring**~~ — **promoted to P0 as R-V1** on 2026-05-27.
 - **Postgres backend** — `IndexRepository` ABC was designed for this.
   Trigger: corpus > 100k pages, or multi-writer concurrency.
-- **wiki-graph** export — emit graphviz / mermaid of entity links for
-  Obsidian Graph View parity.
+- **wiki-graph** export — the read/traversal CLI **shipped** (TASK 032: backlinks/
+  neighbors/chain over typed edges). Remaining: a graphviz / mermaid **export** of the
+  edge graph for Obsidian Graph-View parity.
 - **CI workflow** for benchmarks — wire `bench --enforce-slos` into a
   GitHub Action (currently runs locally only).
+- **`docs/ARCHITECTURE.md` Index-Mode split** (doc-hygiene) — the file crossed the
+  1500-line soft threshold (1528 after TASK 032); two arch-reviews deferred the §11
+  (Q-NNN decision-log) split to a dedicated task to avoid `#q-0NN-N` anchor churn
+  mid-feature. Extract §11 → `architectures/open-questions.md` + a short index.
 
 ---
 

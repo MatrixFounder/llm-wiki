@@ -1,7 +1,7 @@
 # ADR-003: Typed Knowledge Classes — extended article-type taxonomy + the classification-vs-graph split
 
 - **Status**: Accepted (2026-06-13)
-- **Decider**: innokentiy.georgievskiy@mdcloud.tech
+- **Decider**: kuptsov.sergey@gmail.com
 - **Supersedes**: nothing (extends [ADR-002](./ADR-002-multi-vault-bottleneck-corrections.md) §D8 Class-A/B layering and the TASK 012 config-driven layout engine)
 - **Empirical basis**: operator request to grow the wiki from a flat *Page* store into one carrying typed knowledge classes (a "CybOS 2.0" vision — Decision, Requirement, Risk, Incident, Hypothesis, Fact, Event), keeping Markdown canonical. The `dev-project` layout already proves the mechanism: `task`→`brief`+tag, `adr`→`research`+tag (`scripts/wiki_index/layouts/dev-project.yaml:43-53`).
 - **Related**: [docs/TASK.md](../TASK.md) (TASK 031, RTM R-031-1..7), [docs/ROADMAP.md](../ROADMAP.md) R-13 (Phase-2 event graph), [docs/layouts/cybos.md](../layouts/cybos.md) (cybos reference), ADR-002 §D8 (Class A canonical / Class B rebuildable).

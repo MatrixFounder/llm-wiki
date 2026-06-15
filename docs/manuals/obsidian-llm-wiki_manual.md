@@ -235,6 +235,7 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 |---|---|
 | **`wiki-query`** | Retrieval-augmented answering. `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex. This is "good answers can be filed back into the wiki" made durable. |
 | **`wiki-verify-multi`** | An **off-by-default** four-critic prose audit (factual-grounding / logic-coherence / security-injection / completeness-faithfulness) of a filed answer *against the sources it cited*. It files a `_verifications/verify-<slug>.md` verdict page. A FAIL **records the verdict and exits non-zero — it never edits the answer**. Reach for it on high-stakes answers where a silent hallucination would be costly. |
+| **`wiki-graph`** | Read-only **event-graph** traversal (TASK 032 / ADR-004): the typed page-to-page edges (`implements`/`supersedes`/`causes`/`relates-to` + auto-derived inverses) authored in frontmatter and indexed on reindex. `backlinks` (inbound) / `neighbors` (one-hop, in/out/both, by `--kind`) / `chain` (bounded supersession/causation lineage). Pairs with `wiki-query prepare --follow-edges`, which weaves typed-edge neighbors into a cited answer (default OFF; deterministic). "What did this decision cause / what supersedes X / the lineage." |
 
 ### 5. Maintain health
 

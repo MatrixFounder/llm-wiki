@@ -81,11 +81,11 @@ def test_cybos_e2e_seven_classes_route(tmp_path: Path) -> None:
         repo.close()
 
 
-def test_cybos_reserved_edge_keys_inert(tmp_path: Path) -> None:
-    """AC-2.3: the reserved Phase-2 edge keys (implements/supersedes/caused_by/…)
-    are INERT in Phase 1 — they are frontmatter keys reindex does NOT parse, so
-    they produce NO page_entity_refs (only wiki-link/md-link/id-ref body refs +
-    cites:/verifies: are extracted)."""
+def test_cybos_edges_extracted(tmp_path: Path) -> None:
+    """TASK 032 (R-032-2): the event-graph edge keys are now EXTRACTED as typed
+    FORWARD refs (was inert in TASK 031). A decision page's implements/supersedes/
+    caused_by frontmatter → ref_type implements/supersedes/caused-by rows (targets
+    slugified via the cybos transliterate strategy). Inverse derivation = 032-02."""
     root = tmp_path / "vault"
     root.mkdir()
     (root / "WIKI_SCHEMA.md").write_text(
@@ -104,10 +104,12 @@ def test_cybos_reserved_edge_keys_inert(tmp_path: Path) -> None:
             "SELECT ref_type FROM page_entity_refs WHERE vault_id=? AND page_slug=?",
             ("cybos-vault", "d1"),
         ).fetchall()
-        kinds = {r["ref_type"] for r in refs}
-        # no relation ref-kinds materialised from the frontmatter edge keys
-        assert kinds <= {"mentioned"}, f"unexpected ref kinds (Phase-2 leak?): {kinds}"
-        assert "implements" not in kinds and "supersedes" not in kinds
+        pairs = {(r["entity_slug"], r["ref_type"]) for r in repo._connect().execute(
+            "SELECT entity_slug, ref_type FROM page_entity_refs WHERE vault_id=? "
+            "AND page_slug=?", ("cybos-vault", "d1")).fetchall()}
+        assert ("req-1", "implements") in pairs
+        assert ("dec-0", "supersedes") in pairs
+        assert ("inc-9", "caused-by") in pairs
     finally:
         repo.close()
 

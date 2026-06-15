@@ -175,6 +175,11 @@ class PageHit:
     snippet: str
     """HTML-highlighted excerpt from snippet() FTS function."""
 
+    via_edge: dict[str, str] | None = None
+    """TASK 032 / R-032-6 (ADR-004 D5): set on a hit pulled into the retrieval set by
+    `wiki-query --follow-edges` graph expansion (NOT a direct FTS match) —
+    ``{"from": <source-slug>, "ref_type": <edge>}``. ``None`` for FTS hits."""
+
 
 # -----------------------------------------------------------------------------
 # PageRef — provenance v1.1 row in page_entity_refs.
@@ -190,9 +195,12 @@ class PageRef:
     page_project: str
     entity_slug: str
     ref_type: str
-    """One of 'mentioned', 'defined-here', 'related', 'cited', 'verifies'
-    (sql/wiki-index-v2.sql §5 CHECK enum; 'verifies' added TASK 008 / R-8.9 —
-    the verdict-page → audited-query-page edge)."""
+    """One of 'mentioned', 'defined-here', 'related', 'cited', 'verifies', plus the
+    TASK 032 / R-032-1 (schema v6) event-graph typed edges 'implements',
+    'implemented-by', 'supersedes', 'superseded-by', 'causes', 'caused-by'
+    (sql/wiki-index-v2.sql §5 CHECK enum; 'verifies' added TASK 008 / R-8.9 — the
+    verdict→query edge; the v6 edges are inverse-closed [ADR-004 D1] — `relates_to`
+    reuses the symmetric 'related'; forward authored, inverse auto-derived)."""
 
     trust_level: TrustLevel = "medium"
     line_start: int | None = None

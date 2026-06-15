@@ -95,12 +95,15 @@ def _question_hash(question: str, hits: list[PageHit]) -> str:
 
 
 def _hit_dict(h: PageHit) -> dict[str, object]:
-    return {
+    d: dict[str, object] = {
         "vault_id": h.page.vault_id, "slug": h.page.slug,
         "project": h.page.project, "type": h.page.type,
         "title": h.page.title, "bm25_score": h.bm25_score,
         "snippet": h.snippet,
     }
+    if h.via_edge is not None:  # TASK 032: graph-RAG edge provenance
+        d["via_edge"] = h.via_edge
+    return d
 
 
 def _scope(args: argparse.Namespace) -> tuple[list[str] | None, list[str] | None]:
@@ -164,11 +167,84 @@ def _build_match_query(
     return " OR ".join(sorted(surfaces))
 
 
+# TASK 032 / R-032-6 (ADR-004 D5) — graph-aware RAG. The typed edge kinds whose
+# neighbors `--follow-edges` pulls into retrieval (query/verification neighbors are
+# excluded — ground on primary sources, mirroring the FTS exclude-prior-answers).
+_EDGE_KINDS_RAG = (
+    "implements", "implemented-by", "supersedes", "superseded-by",
+    "causes", "caused-by", "related",
+)
+_MAX_EDGE_DEPTH = 3
+# vdd-multi PERF-032-1: hard ceiling on the number of edge-pulled pages. `--edge-depth`
+# alone bounds expansion only by CORPUS size (frontier fan-out is multiplicative across
+# levels — a hub `decision`/`incident` page on a dense `cybos` vault can pull a large
+# fraction of the vault into one answer + N+1 `get_page`). The cap is applied to the
+# already-canonically-sorted candidate stream, so the truncation point is identical on
+# prepare and apply → `question_hash` still round-trips (C1).
+_MAX_EDGE_PULLED = 50
+
+
+def _follow_edges(repo: IndexRepository, hits: list[PageHit], depth: int) -> list[PageHit]:
+    """Expand the FTS hit set along typed edges (ADR-004 D5 / Q-032-4). For each hit,
+    take its one-hop typed-edge neighbors (both directions), resolve each to a real
+    page, exclude `query`/`verification`, dedup against the running set, and append in
+    a CANONICAL order — sorted `(ref_type, project, slug)` per depth level — so the
+    expansion is STABLE and `question_hash` round-trips across prepare/apply (C1).
+    Depth-capped (≤ `_MAX_EDGE_DEPTH`) + dedup = cycle-safe; the total pulled set is
+    bounded by `_MAX_EDGE_PULLED` (deterministic sorted truncation — PERF-032-1) so a
+    dense hub can't pull the whole corpus or fan out an unbounded `get_page` N+1.
+    Edge-pulled hits carry `via_edge` provenance + `bm25_score` 0.0 (no FTS rank).
+    Outbound neighbors resolve in the source page's project (the common flat-vault
+    case; cross-project outbound targets are skipped — ADR-004 D5 / Q-032-4)."""
+    depth = max(1, min(depth, _MAX_EDGE_DEPTH))
+    seen = {(h.page.vault_id, h.page.project, h.page.slug) for h in hits}
+    pulled: list[PageHit] = []
+    frontier = list(hits)
+    for _ in range(depth):
+        if len(pulled) >= _MAX_EDGE_PULLED:
+            break
+        # (inbound, vid, proj, slug, from, ref_type). `inbound=0` (the hit's OWN
+        # outbound edge) sorts first, so when both a forward edge and its auto-derived
+        # inverse connect the hit to a neighbor, the natural outbound provenance wins
+        # (e.g. "rabbitmq —causes→ outage", not the mirror "outage caused-by rabbitmq").
+        cand: list[tuple[int, str, str, str, str, str]] = []
+        for h in frontier:
+            vid = h.page.vault_id
+            for r in repo.neighbors(vid, h.page.slug, h.page.project, "both"):
+                if r.ref_type not in _EDGE_KINDS_RAG:
+                    continue
+                if r.page_slug == h.page.slug and r.page_project == h.page.project:
+                    nslug, nproj, inbound = r.entity_slug, h.page.project, 0  # outbound
+                else:
+                    nslug, nproj, inbound = r.page_slug, r.page_project, 1    # inbound
+                cand.append((inbound, vid, nproj, nslug, h.page.slug, r.ref_type))
+        nxt: list[PageHit] = []
+        for inbound, vid, nproj, nslug, frm, rt in sorted(
+                cand, key=lambda c: (c[2], c[3], c[0], c[5])):
+            if len(pulled) >= _MAX_EDGE_PULLED:  # deterministic sorted truncation
+                break
+            key = (vid, nproj, nslug)
+            if key in seen:
+                continue
+            page = repo.get_page(vid, nslug, nproj)
+            if page is None or page.type in ("query", "verification"):
+                continue
+            seen.add(key)
+            hit = PageHit(page=page, bm25_score=0.0, snippet="",
+                          via_edge={"from": frm, "ref_type": rt})
+            pulled.append(hit)
+            nxt.append(hit)
+        frontier = nxt
+    return pulled
+
+
 def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) -> list[PageHit]:
     """Alias-expanded keyword FTS retrieval shared by `prepare` AND `apply` — so
     `apply` reproduces `prepare`'s exact retrieval to recompute `question_hash`
     (the QUESTION_CHANGED TOCTOU check). Raises `_InvalidQuery` on an
-    un-parseable expression after the DF-1 quoted-phrase fallback."""
+    un-parseable expression after the DF-1 quoted-phrase fallback. TASK 032 (R-032-6):
+    with `--follow-edges`, the FTS hits are deterministically expanded along typed
+    edges (`_follow_edges`) — folded into `question_hash`, so prepare/apply agree."""
     vaults_list, types_list = _scope(args)
     match_query = _build_match_query(
         repo, question, vaults_list, not args.no_expand_aliases,
@@ -195,14 +271,17 @@ def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) ->
         )
 
     try:
-        return _search(match_query)
+        hits = _search(match_query)
     except sqlite3.OperationalError:
         try:
             # DF-1 fallback: literal quoted phrase, ё-folded to stay consistent
             # with the folded corpus (TASK 028).
-            return _search(fts_quote(fold_yo(question)))
+            hits = _search(fts_quote(fold_yo(question)))
         except sqlite3.OperationalError as exc:
             raise _InvalidQuery() from exc
+    if getattr(args, "follow_edges", False):
+        hits = hits + _follow_edges(repo, hits, getattr(args, "edge_depth", 1))
+    return hits
 
 
 def _read_payload(
@@ -550,6 +629,13 @@ def _build_parser() -> argparse.ArgumentParser:
                          "broadening (ё/е fold still applies). MUST match the "
                          "value passed to `apply` or the question_hash diverges "
                          "→ QUESTION_CHANGED.")
+    pp.add_argument("--follow-edges", action="store_true", default=False,
+                    help="TASK 032: graph-aware RAG — expand the retrieval set along "
+                         "typed edges (implements/supersedes/causes/relates-to + "
+                         "inverses). MUST match `apply` or the question_hash diverges "
+                         "→ QUESTION_CHANGED.")
+    pp.add_argument("--edge-depth", type=int, default=1,
+                    help="TASK 032: edge-follow hop depth (default 1, capped at 3).")
     pp.add_argument("--slug", default=None,
                     help="Override the derived query slug (kebab-case).")
     pp.add_argument("--min-hits", type=int, default=1)
@@ -577,6 +663,11 @@ def _build_parser() -> argparse.ArgumentParser:
                     default=False,
                     help="TASK 028: MUST match the value passed to `prepare` "
                          "(retrieval must reproduce → same question_hash).")
+    ap.add_argument("--follow-edges", action="store_true", default=False,
+                    help="TASK 032: MUST match `prepare` (retrieval must reproduce "
+                         "→ same question_hash).")
+    ap.add_argument("--edge-depth", type=int, default=1,
+                    help="TASK 032: MUST match `prepare` (default 1, capped at 3).")
     g_ans = ap.add_mutually_exclusive_group(required=True)
     g_ans.add_argument("--answer-stdin", action="store_true")
     g_ans.add_argument("--answer-file", default=None)

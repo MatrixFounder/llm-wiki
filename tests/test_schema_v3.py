@@ -29,7 +29,7 @@ def test_user_version_is_current(tmp_path: Path) -> None:
     # TASK 006, then to 5 in TASK 008 (R-8.9). Authoritative version assertion
     # lives in test_schema_v5.
     conn = _fresh_db(tmp_path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_alias_pk_rejects_same_alias_two_slugs(tmp_path: Path) -> None:

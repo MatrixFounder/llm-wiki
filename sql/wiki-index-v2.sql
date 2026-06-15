@@ -194,7 +194,13 @@ CREATE TABLE IF NOT EXISTS page_entity_refs (
     entity_slug       TEXT NOT NULL,
     ref_type          TEXT NOT NULL CHECK (ref_type IN (
                           'mentioned', 'defined-here', 'related', 'cited',
-                          'verifies'   -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
+                          'verifies',  -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
+                          -- TASK 032 / R-032-1 (schema v6): event-graph typed edges (ADR-004 D1),
+                          -- inverse-closed. `relates_to` reuses the symmetric `related` above (no
+                          -- parallel 'relates-to'). Forward authored; inverse auto-derived (global pass).
+                          'implements', 'implemented-by',
+                          'supersedes', 'superseded-by',
+                          'causes', 'caused-by'
                       )),
     line_start        INTEGER,
     line_end          INTEGER,
@@ -451,6 +457,9 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- STORED (L-2).
 -- v5 (TASK 008 / R-8.9): admit pages.type='verification', ref_type='verifies',
 -- event_type='verify' (wiki-verify-multi verdict page) + index_meta view parity.
+-- v6 (TASK 032 / R-032-1, ADR-004): admit the event-graph typed edges in
+-- page_entity_refs.ref_type — implements/implemented-by, supersedes/superseded-by,
+-- causes/caused-by (inverse-closed; relates_to reuses the existing 'related').
 -- The DB is a Class B rebuildable cache, so every vN→vN+1 migration is NOT an
 -- in-place ALTER (apply_schema's CREATE TABLE IF NOT EXISTS cannot mutate a live
 -- PK/CHECK, and SQLite cannot ALTER-relax a CHECK on a populated table). The
@@ -458,7 +467,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- (forcing a fresh schema apply), then `wiki-init --register-existing` +
 -- `wiki-reindex --full` (bare `wiki-reindex --full` only re-INSERTs rows and
 -- cannot relax the old CHECK). See ADR-002 §D8 amendment.
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 
 -- 13.3 '_global_' sentinel vault — M-7 fix
 -- Pre-create so batch_runs.vault_id can be NOT NULL while still supporting

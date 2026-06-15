@@ -194,7 +194,7 @@ def test_query_less_ordering_tiebreak_by_vault_id(repo) -> None:
 def test_user_version_unchanged(repo) -> None:
     # Zero DDL: schema version must be untouched by this feature.
     ver = repo._connect().execute("PRAGMA user_version").fetchone()[0]
-    assert ver == 5
+    assert ver == 6
 
 
 # =============================================================================

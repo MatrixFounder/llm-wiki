@@ -5,7 +5,7 @@ tags: []
 status: resolved           # open | mitigated | resolved
 severity: 2                # 1 (critical) .. 4
 date: 2026-01-01           # detection date
-# --- Phase-2 (ROADMAP R-13) event-graph edges — RESERVED, currently INERT ----
+# --- Phase-2 (ROADMAP R-13) event-graph edges — LIVE — extracted as typed edges (TASK 032) ----
 # `caused_by` is the high-value edge for the event graph (decision → incident).
 implements: []
 supersedes: []

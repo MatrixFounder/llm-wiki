@@ -106,12 +106,38 @@ ignore:
   - "drafts/**"                                             # extends the base ignores
 ```
 
-## Phase 2 — the event graph (deferred, ROADMAP R-13)
+## The event graph — typed edges (TASK 032 / ADR-004, ✅ LIVE)
 
-The templates reserve five **edge keys** — `implements`, `supersedes`, `superseded_by`,
-`caused_by`, `relates_to` — as authored-but-**inert** frontmatter. Phase 1 ignores them
-(classification only). When Phase 2 ships (typed `page_entity_refs.ref_type` edges +
-reindex frontmatter-edge extraction, TASK 008 precedent), these become the typed
-page-to-page edges of the event graph (decision → task → commit → release → incident) —
-**with no re-authoring**, because the canonical Markdown already carries them
-(Markdown canonical, DB rebuildable — ADR-002 §D8). See ADR-003 D4.
+The edge keys — `implements`, `supersedes`, `superseded_by`, `caused_by`, `relates_to`
+(+ the directly-authorable `implemented_by`/`causes`) — are now **extracted as typed
+page-to-page edges** on `wiki-reindex` (schema v6). Author ONE direction; the **inverse
+is auto-derived** (`implements`↔`implemented-by`, `supersedes`↔`superseded-by`,
+`causes`↔`caused-by`; `relates_to` is symmetric `related`). Values are `[[wikilinks]]`
+or bare slugs, scalar or a list. Orphan targets keep a forward link but derive no inverse.
+
+```yaml
+# decisions/use-rabbitmq.md
+type: decision
+implements: [[req-throughput]]      # → req-throughput is implemented-by this decision
+caused_by: [[inc-queue-overflow]]   # → that incident causes this decision (inverse derived)
+supersedes: [[decision-v1]]         # → decision-v1 superseded-by this one
+```
+
+Query the graph (read-only):
+
+```bash
+wiki-graph backlinks req-throughput --vault <id> --kind implements   # who implements it
+wiki-graph neighbors use-rabbitmq  --vault <id> --direction both      # one-hop edges
+wiki-graph chain     decision-v3   --vault <id> --kind supersedes     # supersession lineage
+```
+
+…or weave the graph into a cited RAG answer:
+
+```bash
+wiki-query prepare "what did the RabbitMQ decision cause?" --vault <id> --follow-edges
+```
+
+`--follow-edges` (default OFF) expands the FTS hits along typed edges (depth 1, capped 3),
+deterministically (folded into `question_hash`). Markdown stays canonical; the graph is a
+rebuildable Class-B projection (ADR-002 §D8 / ADR-004). Delta refreshes edge *additions*;
+edge/source *removals* are repaired by `wiki-reindex --full` (provenance-safe — ADR-004 D4).

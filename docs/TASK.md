@@ -1,110 +1,98 @@
-# TASK 031 — Typed Knowledge Classes (extended article-type taxonomy) + config-driven layout registry
+# TASK 032 — Event Graph (typed page-to-page edges + graph-aware RAG) — R-13 Phase 2
 
 ## 0. Meta
-- **Task ID:** 031 · **Slug:** `task-031-typed-knowledge-classes`
-- **Mode:** VDD (full pipeline). Mixed config/code/docs task (`scripts/`,
-  `config/`, `templates/`, `docs/`), Stub-First, green-throughout, mypy `--strict`.
-- **Source:** operator request 2026-06-13 — extend the supported "article types" with
-  the best of a "CybOS 2.0" vision (typed knowledge classes: Decision, Requirement,
-  Risk, Incident, Hypothesis, Fact, Event), keeping Markdown canonical (ADR-002 §D8).
-  Operator clarifications: **Both** (extend `dev-project` + ship a new `cybos` layout);
-  **Full set** of 7 classes; **config-driven, nothing hardcoded, per-project
-  overridable**; formalize via **ROADMAP + ADR**; **phased** (classification now, the
-  event-graph relations as a separate later task). Plan file:
-  `~/.claude/plans/virtual-watching-hedgehog.md` (approved).
-- **Status:** ✅ **COMPLETE / merge-ready** 2026-06-14 (branch `task-031-typed-knowledge-classes`,
-  **uncommitted** per operator rule). All 5 VDD gates green: task/arch/plan reviews APPROVED →
-  `/vdd-multi` **converged** (5 LOW: 3 fixed [alias-determinism collision guard, registry key
-  type-validation, single registry build] + 2 accepted-residual [absent LAYOUTS_DIR, once-per-resolve
-  glob — ARCHITECTURE Q-031-4]) → **code-review MERGE**. **1339 pytest (+5 skipped), mypy strict (75
-  files)**; Karpathy byte-identity preserved; zero DDL (`user_version` 5). **Real-vault dogfood GREEN**
-  (`obsidian-personal` PARA vault, 2669 md): regression reindex reproduced the live index EXACTLY
-  (2485 pages, 0 skips, 2.1 s), FTS/stemming OK, 7 classes adoptable via `.wiki/layout.yaml`
-  type_mapping UNION (0 skips); 2 PRE-EXISTING slug collisions surfaced (near-duplicate filenames —
-  not a 031 issue). Dogfood doc-fix **DF-031-1** (`--types` is a query filter, not a standalone
-  lister) folded. The spec below is the design intent (ACs as planned).
-- **Precedent:** `dev-project` already tag-routes new doc types (`task`→`brief`,
-  `adr`→`research`) — this is the same zero-DDL move (TASK 012 layout engine). TASK 008
-  is the precedent for the **deferred Phase-2** (new `ref_type` + reindex extraction +
-  schema bump) — explicitly OUT of scope here.
+- **Task ID:** 032 · **Slug:** `task-032-event-graph-relations`
+- **Mode:** VDD (full pipeline). Code + **schema-migration** task (`sql/`, `scripts/`,
+  `templates/`, `docs/`), Stub-First, green-throughout, mypy `--strict`. `tdd-strict`
+  on the DDL/migration + inverse-derivation + question_hash beads.
+- **Source:** operator request 2026-06-15 — "теперь у нас осталась 2я часть, отложенная
+  по первоначальному плану" → ROADMAP **R-13 Phase 2** / ADR-003 D4 (deferred event graph).
+  Operator scope decisions (this task): **graph-aware RAG** (the largest tier — edges +
+  traversal reader + `wiki-query` follows edges at retrieval); the **full ADR-003 edge
+  set**; **auto-derived inverse edges**.
+- **Status:** ✅ **COMPLETE / merge-ready** 2026-06-15 (branch `task-032-event-graph-relations`,
+  **uncommitted** per operator rule). All gates green: task/arch/plan reviews APPROVED (task-review
+  C-1 + arch-review M1/M2 folded + re-confirmed) → `/vdd-multi` **converged** (5 findings: MED-1
+  ambiguous-cross-project guard + LOW-1 post-AM-3 self-loop + LOW-2 deque FIXED; 2 perf
+  accepted-residual [graph-RAG N+1, edge_chain load-all — ADR-004 §Post-ship]) → **code-review MERGE**
+  (1 blocking `bin/wiki-graph` wrapper fixed). **1381 pytest (+5 skipped), mypy strict (76 files)**;
+  Karpathy byte-identity green; schema v5→v6 (Class-B rebuild). **Dogfood GREEN** (cybos graph vault:
+  4 forward + 4 auto-derived inverse edges, `wiki-graph` chain/neighbors/backlinks, injection-safe,
+  graph-RAG `via_edge`). 2 dev-caught bugs fixed (YAML `[[wikilink]]` nested-list flatten; inverse
+  resurrection on delta). The spec below is the design intent (ACs as planned).
+- **Precedent:** **TASK 008** (schema v4→v5) is the exact recipe — it added a new
+  `pages.type`, a new `page_entity_refs.ref_type` (`verifies`), and a new
+  `log_events.event_type`, with reindex frontmatter-ref extraction (`_verifies_ref`).
+  **TASK 028** is the precedent for keeping `wiki-query`'s `question_hash` deterministic
+  when retrieval gains a new expansion mechanism (C1).
+- **Builds on:** TASK 031 (the 7 typed classes + `cybos` layout + the reserved-but-inert
+  edge keys already authored in `templates/page-types/*`).
 
-## 1. Verified recon facts (2026-06-13; line numbers at HEAD)
+## 1. Verified recon facts (2026-06-15; line numbers at HEAD)
 
 | # | Fact | Consequence |
 |---|------|-------------|
-| F1 | `db_type` is a hard-constrained 7-value enum, enforced **twice**: `sql/wiki-index-v2.sql:162` (CHECK) **and** `config/layout-config.schema.yaml:112` (`TypeMappingEntry.db_type` enum) | New classes must route onto an EXISTING db_type (no new enum value) to stay **zero-DDL** |
-| F2 | `dev-project.yaml:43-53` tag-routes raw types → `{db_type, tag}` on the existing enum | The taxonomy extension is additive `type_mapping` entries — proven pattern |
-| F3 | `normalization.py:89` `TYPE_MAPPING` is the **Karpathy default** only; layouts pass their own `type_mapping` (PW-C) | New types live in **YAML**, never in the Python constant → Karpathy byte-identity preserved |
-| F4 | Built-in layouts auto-discovered via `LAYOUTS_DIR.glob('*.yaml')` (`layout_config.py:421`); aliases hardcoded at `:194` `_ALIAS = {"flat":"karpathy","per-project":"karpathy"}`; resolver at `:949` | Dropping `cybos.yaml` already makes the GRAMMAR resolvable; the registry/alias/`--layout` plumbing is the hardcoded gap |
-| F5 | `wiki_init.py:50-51` hardcodes `_LAYOUT_CHOICES` (the `--layout choices=`) + `_KARPATHY_LAYOUTS`; used at `:173` (agent-template select) + `:299` (two-tier scaffold dirs) | **Three** sources of truth (F4 `_ALIAS` + these two) → collapse to ONE config-driven registry (R-031-3) |
-| F6 | `TypeMappingEntry` / `PathEntry` / `RefRule` are STRICT (`additionalProperties:false`); `LayoutConfig` is too | Adding new `type_mapping` entries is fine; adding new **top-level** layout fields (`aliases`, `init_scaffold`) REQUIRES an additive schema change first |
-| F7 | Per-vault override merge (`layout_config.py:425-445`; schema `:18-24`): `type_mapping` **deep-MERGES (UNION)**, `ignore` UNIONs, `paths`/`ref_extraction` **REPLACE** | "Change requirements per project" = `<vault>/.wiki/layout.yaml` type_mapping UNION — already supported, document it |
-| F8 | Next free ids: **TASK 031**, **ADR-003**, **ROADMAP R-13**, **Q-031-N**; `user_version` = 5 | Naming locked |
-| F9 | Open `R-X1-CFG-COST` (SEV-3): layout-config resolve has no cache / per-file regex recompile | R-031-3 registry helpers MUST cache (parse built-ins once) — do not worsen it |
-| F10 | `wiki-search --where` builds a **scalar** predicate `json_extract($.field) = value` (`sqlite_repository.py:547-562`); the routed `type_mapping` tag is appended to the **`tags:` list** (`normalization.py:204`). `--where tag=decision` / `--where tags=decision` therefore **cannot match** a list element (the `json_each` membership form at `:1292` is NOT wired into `--where`). `wiki-search` DOES have `--types <db_type>` (filters `pages.type`) and `tags` is an FTS column | Per-class CLI filtering in Phase 1 = `--types <db_type>` (bucket) + FTS on the tag word; rigorous proof = DB-level `pages.type` + tag-in-`tags`. A list-membership `--where` is a candidate follow-on (R-031-residual, §6) |
+| F1 | `page_entity_refs.ref_type` CHECK enum = **5 values** (`mentioned`, `defined-here`, `related`, `cited`, `verifies`); PK `(vault_id, page_slug, page_project, entity_slug, ref_type)` → multiple ref_types to the SAME target are distinct rows; indexes `idx_refs_entity/page/type` (`sql/wiki-index-v2.sql` §5) | Adding typed edges = additive CHECK enum values; forward+inverse to the same target coexist (distinct `ref_type`). `idx_refs_type` already supports kind-filtered reads |
+| F2 | **Migration model = Class-B drop+recreate.** `apply_schema` runs the whole `sql/wiki-index-v2.sql` via `executescript` (`CREATE … IF NOT EXISTS`); **no migration runner**, no runtime `user_version` gate (only tests read it). SQLite cannot ALTER-relax a CHECK on a populated table (`sql/wiki-index-v2.sql:454-460`) | A new `ref_type` value ⇒ bump `PRAGMA user_version` **5→6** + on an existing DB: delete `.db/-wal/-shm` → `wiki-init --register-existing` + `wiki-reindex --full`. ADR-002 §D8 (markdown canonical) makes this safe |
+| F3 | reindex extraction: `reindex._frontmatter_refs(db_type, fm, …)` (`:197`) dispatches `if db_type in ("query","verification")`→`_cited_refs` (`cites:`→`cited`); `verification`→`_verifies_ref` (`verifies:`→`verifies`). Targets resolved via the same slug/alias path as body `mentioned` refs | New `_edge_refs` mirrors `_cited_refs`; edges are **NOT db_type-gated** (any typed page may carry edges) — extend the dispatcher to always attempt edge extraction |
+| F4 | `wiki-query` retrieval: `_retrieve()` (`wiki_query.py:167-205`) = FTS (`_build_match_query` + `repo.search_pages`) + token alias-expansion; **no page-to-page graph follow today**. Envelope at `:282-290` (`hits[]`). `apply` re-runs `_retrieve` to recompute `question_hash` (TOCTOU, `:405-412`) | Graph-RAG seam = after the FTS hits in `_retrieve`, follow typed edges → neighbor pages → expanded retrieval set + a new envelope field. **The expansion MUST be deterministic** (it feeds `question_hash`) — C1 |
+| F5 | `repo.get_backlinks(vault_id, entity_slug)` exists (`repository.py:221`, `sqlite_repository.py:451`) — inbound refs to a slug; used by `wiki-merge`/lint, NOT retrieval | Reuse as the inbound primitive; add a `ref_type` filter + an outbound counterpart (`refs_from`) + a bounded traversal |
+| F6 | `templates/page-types/*` already author the reserved edge keys (`implements`/`supersedes`/`superseded_by`/`caused_by`/`relates_to`), proven INERT by `tests/test_cybos_e2e.py::test_cybos_reserved_edge_keys_inert` (asserts `kinds ⊆ {mentioned}`) | Phase 2 activates extraction → that test FLIPS (now asserts the edges ARE materialized). Canonical markdown already carries the data (ADR-002 §D8) — no re-authoring |
+| F7 | Next ids: **TASK 032**, **ADR-004** (or an ADR-003 amendment), **Q-032-N**, schema **v6**. Karpathy `karpathy.yaml` has no edge frontmatter | Naming locked. Karpathy byte-identity holds: no edge keys → `_edge_refs` yields nothing → discovery/pages/refs unchanged |
+| F8 | Auto-inverse needs the inverse enum members: author writes a frontmatter KEY (`implements`/`supersedes`/`caused_by`/`relates_to`, underscore) → resolved to a `ref_type` ENUM VALUE (hyphen); the index also materializes the inverse on the target. **Each member is BOTH authorable AND derivable** — the templates already author `superseded_by:` directly (`decision.md:15`), so `_edge_refs` must extract directly-authored inverse keys too, and derivation must DEDUP (not double-write) when the author wrote both directions | The v6 enum is **inverse-closed**: +`implements`/`implemented-by`, `supersedes`/`superseded_by`, `causes`/`caused-by`; **`relates_to` reuses the existing (unused) symmetric `related` ref_type** (recommended — avoids a near-duplicate; Architecture confirms). The **key→ref_type mapping is explicit** (R-032-2). `reindex_delta` has **no** global ref pass (F9) → delta-inverse-closure is an Architecture open question |
+| F9 | `reindex_full` has a global Step-2.5 / **AM-3 alias-canonicalization pass** over ALL `page_entity_refs` for the vault (`reindex_full:842-879`); `reindex_delta` has **no** equivalent global pass. `_replace_refs_in_txn` is per-page **delete-all-then-insert** scoped to `page_slug` (`sqlite_repository.py:386-429`) | Inverse edges (row on the TARGET page, not the source) **cannot** ride the source page's single `replace_refs` — they are derived in a **global post-pass** (AM-3 sibling), ordered vs AM-3 so targets are canonical. Delta needs a scoped reconciliation OR a documented full-only residual |
 
 ## 2. Requirements Traceability Matrix (RTM)
 
 | Req | Description | Acceptance | Verify |
 |-----|-------------|------------|--------|
-| **R-031-1** | Extend the type taxonomy with 7 typed knowledge classes (decision, requirement, risk, incident, hypothesis, fact, event), tag-routed onto existing db_types. Added to **dev-project** (`type_mapping` only) **and** the new **cybos** layout. | Each of the 7 raw types resolves to the mapped `(db_type, tag)` in both layouts; reindex of a note of each type produces the right `pages.type` + tag with **no `UnmappedTypeError`**. Zero DDL (`user_version` 5). | AC-1.* |
-| **R-031-2** | New built-in `cybos` layout — an "operational memory" event-graph vault: `paths[]` for `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/ tasks/ adr/ plans/`, `type_mapping`, `ref_extraction`, `frontmatter_synthesis`, optional `auto_indexes` ledger, inline usage-example comments. | `cybos.yaml` schema-validates against `#/$defs/LayoutConfig`, loads via `resolve_layout_config`, and indexes a fixture vault correctly. | AC-2.* |
-| **R-031-3** | **De-hardcode the layout registry** — collapse `_LAYOUT_CHOICES`, `_KARPATHY_LAYOUTS` (`wiki_init.py:50-51`) and `_ALIAS` (`layout_config.py:194`) into ONE YAML-derived, cached registry. Add optional `aliases`/`init_scaffold` schema fields; karpathy.yaml declares them. **The registry reads the RAW built-in YAML mapping (a dedicated light read of the 3 top-level keys), NOT the frozen `LayoutConfig` dataclass** (`_build` does not carry arbitrary keys onto it). **Ship-separable: R-031-3 has no dependency on R-031-1/2 and can land first as a clean low-risk bead.** | A new built-in `*.yaml` becomes a valid `--layout` value with **zero Python edits**; `flat`/`per-project` still resolve to karpathy; two-tier scaffold + agent-template selection still correct. | AC-3.* |
-| **R-031-4** | Per-type templates (`templates/page-types/{decision,requirement,risk,incident,hypothesis,fact,event}.md`) with canonical frontmatter incl. **reserved Phase-2 edge keys** (`implements`, `supersedes`, `superseded_by`, `caused_by`, `relates_to`) + example body. | Each template parses as valid frontmatter; `type:` value is in cybos `type_mapping`; a note authored from it reindexes cleanly. | AC-4.* |
-| **R-031-5** | Usage/reference docs — `docs/layouts/cybos.md` (type list, per-type frontmatter contract, authoring example, **per-project override recipe**). | Doc enumerates all cybos types with the correct db_type/tag routing and a working `.wiki/layout.yaml` override example. | AC-5.* |
-| **R-031-6** | Formalization — **ADR-003** (classification-vs-graph split, config-driven principle, phased hybrid, Phase-2 forward-look); **ROADMAP R-13** (event-graph typed relations, deferred); **ARCHITECTURE §3.5** + **Q-031-N**; **CLAUDE.md/README** narrative (layouts 5→6, supported types). | ADR-003 follows the ADR-002 skeleton; ROADMAP R-13 present + Phase-1 marked shipped under TASK 031; ARCHITECTURE/CLAUDE/README updated. | AC-6.* |
-| **R-031-7** | Quality gates — full test suite green, mypy strict, **Karpathy byte-identity preserved**, no new deps, no `import anthropic`, live dogfood. | `pytest` + `mypy --strict scripts/` green; `tests/test_karpathy_byte_identity.py` green; dogfood `samples/cybos-demo` round-trips. | AC-7.* |
+| **R-032-1** | **Schema v5→v6**: extend `page_entity_refs.ref_type` CHECK with the inverse-closed typed-edge set — `implements`/`implemented-by`, `supersedes`/`superseded_by`, `causes`/`caused-by` (6 new) — and **reuse the existing symmetric `related`** for `relates_to` (pin exactly ONE; do NOT add a parallel `relates-to`). Bump `PRAGMA user_version` 6; sync `models.py` (`PageRef.ref_type` doc) + the v3/v4/v5 version-pin tests. Migration = Class-B rebuild (documented + TESTED per F2/F9). | `user_version==6`; the 6 new ref_types INSERT OK + a bogus one rejected; **a v5-POPULATED DB rejects a v6-only ref_type (IntegrityError) — proving the rebuild is mandatory** (TASK 008 migration-test shape); version pins bumped to 6; `apply_schema` on a fresh DB → v6. | AC-1.* |
+| **R-032-2** | **Frontmatter-edge extraction**: a new `reindex._edge_refs` extracts the authored edge KEYS (underscore) into `page_entity_refs` via an explicit **key→ref_type map** — `implements`→`implements`, `implemented_by`→`implemented-by`, `supersedes`→`supersedes`, `superseded_by`→`superseded-by`, `causes`→`causes`, `caused_by`→`caused-by`, `relates_to`→`related` — list- or scalar-valued, target-resolved via the layout `slug_strategy` + alias map (parity with `_cited_refs`). The call is added **always-on inside `_frontmatter_refs`** (the existing dispatcher, not a new sibling), for ALL pages (not db_type-gated). | A `decision` page with `implements: [[req-x]]` yields `(page→req-x, implements)`; a directly-authored `superseded_by:` yields `(page→…, superseded-by)`; karpathy pages with no edge keys yield none (anchor green). | AC-2.* |
+| **R-032-3** | **Auto-inverse derivation** (the inverse row lives on the *target* page, so it **cannot** ride the source page's per-page `replace_refs` — F9). Forward edges ride the existing per-page write unchanged (M-1 intact). Inverse edges (`supersedes`→`superseded-by`, `implements`→`implemented-by`, `caused_by`→`causes`; `relates_to`/`related` symmetric) are materialized in a **GLOBAL post-pass** (a sibling of the Step-2.5 / AM-3 alias pass, `reindex_full:842-879`), ordered vs AM-3 so targets are canonical. **DEDUP** when the author wrote both directions (PK convergence — no conflict). No self-loops. **Delta: an Architecture open question** (Q-032-N) — a delta where only the source changed leaves the un-walked target's inverse stale; resolve via a scoped inverse-reconciliation OR a documented full-only residual (TASK 030 A5 precedent). | After `reindex --full`: one authored direction ⇒ BOTH rows; 2nd full = no-op; author-wrote-both converges to one row each; delta behaviour per the chosen Q-032-N resolution (tested to that contract, not a blanket "delta==full"). | AC-3.* |
+| **R-032-4** | **DAL typed-edge reads**: `get_backlinks(…, ref_type=…)` kind-filter (additive, default = today's all-kinds; **update the `repository.py` ABC + impl in lockstep** — mypy strict) + an outbound `refs_from(vault_id, page_slug, project, ref_type=…)` + a bounded `neighbors`/`chain` traversal (depth-capped, cycle-safe). | Unit tests over a fixture graph: inbound/outbound by kind; a decision→task→incident chain resolves; a cycle terminates; the ABC + impl signatures agree. | AC-4.* |
+| **R-032-5** | **Traversal reader surface**: a CLI to query the graph — `wiki-graph` (`neighbors`/`chain`/`backlinks` by `--kind`, inbound+outbound, `--depth`) OR `wiki-search --edges` (Architecture picks one). JSON envelope, injection-safe, read-only. | `wiki-graph neighbors <slug> --kind caused-by` returns the typed neighbors; depth/cycle bounds enforced; bad input → clean error envelope. | AC-5.* |
+| **R-032-6** | **Graph-aware RAG** (depends ONLY on R-032-4 reads → **explicitly separable as the final bead(s)**; if the `question_hash` integration converges slowly under `/vdd-multi`, it splits to a [LIGHT] follow-up without blocking the graph foundation R-032-1..5): `wiki-query prepare` follows typed edges from the FTS hits to pull neighbors into the retrieval set (behind a flag, default decided in Arch), with the expansion **deterministic + canonically ORDERED** (neighbors appended after FTS hits, sorted by `(ref_type, project, slug)`, deduped against the hit set) and folded into `question_hash`; the envelope gains an edge-provenance field; `apply` re-derivation stays consistent (C1). | "what did decision X cause?" pulls the `causes` neighbors into the cited context in a STABLE order; `apply` does not raise QUESTION_CHANGED for the same inputs; grounding gate still holds. | AC-6.* |
+| **R-032-7** | **Activate templates + docs**: the reserved edge keys become live (flip `test_cybos_reserved_edge_keys_inert`); ADR-004 (or ADR-003 amendment) records the as-built; ROADMAP **R-13 Phase 2 → SHIPPED**; ARCHITECTURE §3.5/§4 + **Q-032-N**; manuals (EN/RU) + `docs/layouts/cybos.md` document authoring + querying edges. | Docs consistent with as-built; the inert-keys test replaced by an active-extraction test; ROADMAP R-13 Phase-2 marked done. | AC-7.* |
+| **R-032-8** | **Quality gates**: full `pytest` green, `mypy --strict`, **Karpathy byte-identity preserved**, no new deps, no `import anthropic`, `reindex --full` Class-B rebuild verified, real-vault dogfood. | All gates green; `tests/test_karpathy_byte_identity.py` green; `grep -r "import anthropic" scripts/` empty. | AC-8.* |
 
-## 3. Acceptance criteria
+## 3. Acceptance criteria (selected)
 
-- **AC-1.1** All 7 raw types appear in `dev-project.yaml` and `cybos.yaml` `type_mapping`, each `{db_type ∈ enum, tag}`: decision→research/decision, requirement→brief/requirement, risk→research/risk, incident→research/incident, hypothesis→research/hypothesis, fact→concept/fact, event→summary/event. *(db_type rationale: research = analysis culminating in a finding [adr precedent]; brief = concise spec statement [task/plan precedent]; concept = atomic definitional unit; **event→summary** = the closest "timestamped narrative record" bucket — all zero-DDL-valid, none forces a new enum value.)*
-- **AC-1.2** `normalize_frontmatter` with the cybos/dev-project `type_mapping` returns the mapped `db_type` and appends the tag (unit test over `tests/test_config_type_mapping.py`).
-- **AC-1.3** Zero DDL — `PRAGMA user_version` stays 5; no change to `sql/` nor to `config/layout-config.schema.yaml:112` db_type enum.
-- **AC-2.1** `cybos.yaml` validates against `#/$defs/LayoutConfig` (strict) and `resolve_layout_config` returns a `LayoutConfig` with the 7 path globs.
-- **AC-2.2** E2E: a `samples/cybos-demo` fixture with one note per type indexes via `wiki-reindex --full` with correct `pages.type` + tags and `skipped == []`.
-- **AC-2.3** cybos `ref_extraction` extracts wiki-link / markdown-link / id-ref refs (mirror dev-project) — reserved edge keys are NOT extracted (Phase-2; inert markdown).
-- **AC-3.1** `layout_choices()` (new, in `layout_config.py`) returns built-in `*.yaml` stems ∪ declared `aliases`, including `cybos`, `flat`, `per-project` — driven purely by YAML, **no Python list literal**. (Reads the raw YAML `layout`/`aliases`/`init_scaffold` keys, not the built `LayoutConfig`.)
-- **AC-3.2** `is_two_tier_scaffold(name)` is True for `karpathy`/`flat`/`per-project` (alias-resolved, `init_scaffold: two-tier`) and False for `dev-project`/`obsidian-personal`/`cybos`.
-- **AC-3.3** `wiki-init --layout cybos --scaffold-new` succeeds (registers, writes `WIKI_SCHEMA.md` + `CLAUDE.layout.md.tmpl`, NO two-tier dirs); `--layout` rejects an unknown value with the discovered-choices error.
-- **AC-3.4** Registry helpers are **cached** (parse built-in YAMLs once) — no per-call re-glob/re-parse (does not worsen R-X1-CFG-COST); built-in-only (no operator-file parsing at choice-build time).
-- **AC-4.1** Each `templates/page-types/*.md` carries valid frontmatter with a cybos-mapped `type:` and the reserved edge keys (commented/empty), and reindexes cleanly when copied into a vault.
-- **AC-5.1** `docs/layouts/cybos.md` documents every cybos type → (db_type, tag) and a copy-pasteable `.wiki/layout.yaml` per-project override (type_mapping UNION).
-- **AC-6.1** `docs/adr/ADR-003-typed-knowledge-classes.md` present (ADR-002 skeleton); `docs/ROADMAP.md` R-13 present; `docs/ARCHITECTURE.md` §3.5 + Q-031-N updated; `CLAUDE.md`/`README.md` reflect 6 layouts + the new types.
-- **AC-7.1** Full `pytest` green (new + existing); `mypy --strict scripts/` clean; `tests/test_karpathy_byte_identity.py` green (Karpathy indexing + the new init-metadata keys do NOT alter discovery/pages/refs) **and** `tests/test_layout_config.py::test_karpathy_config_matches_layout_constants` green. **Ordering:** the `config/layout-config.schema.yaml` amendment (`aliases`/`init_scaffold`) MUST land **before/with** the karpathy.yaml key additions — because `LayoutConfig` is `additionalProperties:false`, an un-amended schema rejects EVERY layout at load (`_validate`, `layout_config.py:305`).
-- **AC-7.2** No new runtime deps; `grep -r "import anthropic" scripts/` empty.
-- **AC-7.3** Dogfood: scaffold `samples/cybos-demo`, author one note per type, `wiki-reindex --full` (`skipped`/`slug_collisions` empty); then **(a)** rigorous DB-level proof — the decision note's row has `pages.type='research'` and `'decision' ∈ tags`; **(b)** human queries — per-class retrieval is **FTS on the tag word** (`wiki-search samples/cybos-demo "decision"` → the decision note; each class's tag word returns its notes), optionally narrowed by `--types <db_type>` (a FILTER on a query — `wiki-search "RabbitMQ" --types concept` → the fact; `--types` ALONE is not a lister, DF-031-1); **and the harder `summary`-bucket overlap (arch-review 🟡-2):** with a `.wiki/layout.yaml` override adding `meeting-summary→summary`, the `event` note and a meeting-summary note both land in `pages.type=summary` yet are retrieved DISTINCTLY via FTS on their tag word (`"event"`→event note, `"standup"`→meeting note), proving the tag separates same-db_type classes. *(No `--where tag=…` — see F10; per-class precise filtering is FTS-on-tag-word in Phase 1.)*
+- **AC-1.1** `sql/wiki-index-v2.sql` `ref_type` CHECK gains exactly the 6 new values (`implements`,`implemented-by`,`supersedes`,`superseded-by`,`causes`,`caused-by`) and **reuses `related` for relates_to** (NO parallel `relates-to` value added); `PRAGMA user_version = 6`; `tests/test_schema_v6.py` asserts the 6 INSERT + a bogus one raises `IntegrityError`; the v3/v4/v5 version-pin assertions are bumped to 6.
+- **AC-1.3** **Migration is mandatory + tested (M-5):** a v5-populated DB (rows present) attempting to INSERT a v6-only `ref_type` raises `IntegrityError` (the old CHECK still in force — proves a bare reindex can't pick it up); the documented flow (delete `.db/-wal/-shm` → `wiki-init --register-existing` → `wiki-reindex --full`) yields a v6 DB with edges materialized from the canonical markdown (TASK 008 migration-test shape).
+- **AC-1.2** `models.py` `PageRef.ref_type` docstring enumerates the v6 set; mypy strict clean.
+- **AC-2.1** `_edge_refs` maps each authored edge KEY → its `ref_type` per the explicit table (`implements`→`implements`, `implemented_by`→`implemented-by`, `supersedes`→`supersedes`, `superseded_by`→`superseded-by`, `causes`→`causes`, `caused_by`→`caused-by`, `relates_to`→`related`), list **and** scalar form, target slug resolved through `slug_strategy` + aliases (a `[[Req X]]` target slugifies identically to a body mention). A unit test pins the full key→ref_type table.
+- **AC-2.2** **Karpathy anchor green** — a karpathy/`_sources` page with no edge frontmatter produces zero edge refs; `test_karpathy_byte_identity.py` unchanged. (The always-on `_edge_refs` call in `_frontmatter_refs` yields `[]` when no edge keys are present.)
+- **AC-3.1** After `reindex --full`, `supersedes: B` on page A yields BOTH `(A→B, supersedes)` and `(B→A, superseded-by)` — the inverse row produced by the **global post-pass** (AM-3 sibling), NOT by A's per-page `replace_refs`; `relates_to`→symmetric `related` pair; `implements`→`implemented-by`; `caused_by`→`causes`. The pass runs **after AM-3 alias canonicalization and before Step 3 `_recompute_mentions`** (arch-review M2 — counts see the full closure; edge rows count toward `mentions_count`, documented) and creates no self-loops.
+- **AC-3.3** **Orphan-target safety (arch-review M1):** an edge to a NON-existent page (`caused_by: [[not-yet-written]]`) keeps its forward row (orphan, like `mentioned`) but the inverse is **NOT** derived — the global pass joins `entity_slug` against `pages.slug`, skips non-page targets, and uses the **target page's `page_project`** for the inverse PK/FK (the enforced FK `(vault_id,page_slug,page_project)→pages` would otherwise raise `IntegrityError`). A reindex of a vault with orphan edges does not crash (`skipped`/`slug_collisions` empty).
+- **AC-3.2** **Idempotent + bidirectional-author convergence:** a 2nd `reindex --full` is a no-op; if the author wrote BOTH `supersedes: B` on A AND `superseded_by: A` on B, the result is exactly one `(A→B, supersedes)` + one `(B→A, superseded-by)` (PK dedup, no conflict). Forward edges keep M-1 (exactly one `replace_refs` per page); the global pass is the ONLY writer of derived inverse rows.
+- **AC-3.4** **Delta contract (Q-032-3, provenance-safe):** (a) an edge added on a re-walked source materializes its inverse on the (un-walked) TARGET via the scoped additions pass (`source_slugs=touched`); (b) REMOVING an edge on `--delta` leaves a STALE inverse (delta never deletes an inverse — a stored inverse is indistinguishable from an authored edge; deleting would risk clobbering / resurrecting), and `--full` repairs it. Tested both legs. NOT a blanket `delta==full`.
+- **AC-4.1** `get_backlinks(ref_type='caused-by')` returns only that kind; `refs_from(...)` lists outbound; `chain(..., depth=N)` terminates on a cycle.
+- **AC-5.1** the traversal CLI returns a deterministic JSON envelope; `--depth` capped; field/slug inputs validated (injection-safe, no value echo on error).
+- **AC-6.1** `wiki-query prepare --follow-edges` (default OFF) expands the hit set along typed edges with a **canonical, stable order**: edge-neighbors are appended AFTER the FTS hits, sorted by `(project, slug)` with the hit's own OUTBOUND edge preferred over its auto-inverse for `via_edge` provenance (as-built — deterministic), and deduped against the existing hit set; `question_hash` includes the expansion (so `apply`'s re-derivation round-trips without QUESTION_CHANGED for identical inputs); the answer cites edge-pulled neighbors only if grounded. **Arch decides** whether edge-following excludes `type=query`/`type=verification` neighbors (mirroring `_retrieve`'s existing exclude-prior-answers logic, `wiki_query.py:189`) and the depth bound.
+- **AC-7.1** `test_cybos_reserved_edge_keys_inert` is replaced by `test_cybos_edges_extracted` (the edges ARE now materialized); ROADMAP R-13 Phase 2 marked SHIPPED; ADR + ARCHITECTURE + manuals current.
+- **AC-8.1** full `pytest` + `mypy --strict scripts/` green; Karpathy anchor green; no new deps; dogfood on a real cybos/dev-project vault shows a decision→task→incident chain traversable + graph-RAG answering "what did X cause?".
 
 ## 4. Use cases
 
-- **UC-31-1** Author `type: decision` (a `decisions/ADR-like.md`) in a dev-project or cybos vault → indexed as `pages.type=research` + tag `decision` (in the `tags` list); discoverable via FTS on the tag word (`wiki-search "decision"` → the decision notes), optionally narrowed by `--types research` (a query filter, not a standalone lister — DF-031-1). Precise per-class scalar filtering (`--where tag=decision`) is NOT available in Phase 1 (F10).
-- **UC-31-2** `wiki-init --scaffold-new --layout cybos --vault <path>` → vault registered, `WIKI_SCHEMA.md` + agent file written, **no** `_sources/_concepts/…` dirs (init_scaffold=none).
-- **UC-31-3** A maintainer drops `scripts/wiki_index/layouts/ops-journal.yaml` → `--layout ops-journal` is immediately valid with **zero Python edits** (R-031-3 payoff).
-- **UC-31-4** `wiki-reindex --full` over a cybos vault holding one note per knowledge class → all route correctly; `slug_collisions`/`skipped` empty.
-- **UC-31-5** A project needs a bespoke type → adds `type_mapping: {risk-register: {db_type: research, tag: risk-register}}` to `<vault>/.wiki/layout.yaml`; built-in cybos types AND the custom one both index (UNION merge).
-- **UC-31-6** A Karpathy vault is reindexed → byte-identical output (golden anchor), proving the change is fully isolated to the new/extended layouts.
+- **UC-32-1** Author `decisions/use-rabbitmq.md` with `caused_by: [[inc-queue-overflow]]` → reindex → `wiki-graph neighbors use-rabbitmq --kind causes` lists the incident; the incident's `caused-by` backlink resolves (auto-inverse).
+- **UC-32-2** `supersedes: [[decision-v1]]` on `decision-v2` → both `supersedes` and `superseded_by` queryable; "show the decision lineage" = a `chain` over supersedes/superseded_by.
+- **UC-32-3** `wiki-query prepare "what did the RabbitMQ decision cause?"` → FTS finds the decision; edge-follow pulls its `causes` incidents into context; the cited answer references them.
+- **UC-32-4** A karpathy vault (no edge frontmatter) reindexes byte-identically — the feature is dormant until edges are authored.
+- **UC-32-5** Existing v5 DB: operator deletes `.db`, `wiki-init --register-existing` + `wiki-reindex --full` → v6 schema, edges materialized from the canonical markdown (no re-authoring).
 
 ## 5. Constraints (binding)
 
-- **Zero DDL** — `user_version` stays 5; no `sql/` change; no new db_type (the `config/layout-config.schema.yaml:112` enum is untouched). New types route onto existing db_types only.
-- **No new deps**; **no `import anthropic`** (grep-guarded).
-- **Karpathy byte-identity** — `tests/test_karpathy_byte_identity.py` green; the new `aliases`/`init_scaffold` keys on `karpathy.yaml` are **init-only metadata** and MUST NOT affect indexing (discovery/pages/refs).
-- **Config-driven / no-hardcode** — the 7 classes + the layout registry live in YAML/config, never in Python literals; per-project overridable via `.wiki/layout.yaml`.
-- **Do not worsen R-X1-CFG-COST** — registry helpers cached; no new `resolve_layout_config` calls on hot paths.
-- **Schema additive only** — `aliases`/`init_scaffold` are OPTIONAL with safe defaults (`[]` / `none`); existing layout YAMLs without them keep working.
+- **DDL this task (bounded)** — additive `ref_type` CHECK values + `user_version` 5→6 only; no table/PK changes; migration = Class-B rebuild (ADR-002 §D8). Mirror TASK 008's shape + its test pattern.
+- **Karpathy byte-identity** — `_edge_refs` yields nothing without edge frontmatter; the golden anchor + `test_karpathy_config_matches_layout_constants` stay green.
+- **M-1 (forward edges)** — exactly ONE `replace_refs` per page per run for forward / body / cite refs (unchanged); `derive_indexed_page` builds only the SOURCE page's ref-set.
+- **Inverse-edge derivation** — inverse rows live on the *target* page and are written by the GLOBAL post-pass (AM-3 sibling, `reindex_full:842-879`), ordered after alias canonicalization; never a second per-page `replace_refs`. Full materializes the complete closure; **delta-inverse-closure per the Q-032-N resolution (NOT a blanket full == delta)**.
+- **`question_hash` determinism (C1)** — the graph expansion in `wiki-query` is order-stable and folded into the hash, so `apply` re-derivation never spuriously raises QUESTION_CHANGED (TASK 028 precedent).
+- **No new deps**; **no `import anthropic`** (grep-guarded). Injection-safe CLI (field allowlist, bound params, no value echo on error — TASK 013 posture).
+- **Bounded traversal** — depth-capped + cycle-safe (no unbounded recursion; TASK 018/030 DoS posture).
 
-## 6. Out of scope (Phase 2 — documented, not built)
+## 6. Out of scope
 
-The **event graph**: typed page-to-page edges (`implements` / `supersedes` / `caused-by`
-/ `relates-to`), `page_entity_refs.ref_type` extension, reindex frontmatter-edge
-extraction, schema v5→v6. Recorded in **ADR-003** + **ROADMAP R-13**; the edge keys are
-**reserved (authored-but-inert)** in the Phase-1 templates so the canonical Markdown
-already carries the data when Phase 2 lights it up. TASK 008 is the implementation
-precedent.
-
-**Also deferred (R-031-residual, candidate follow-on, NOT built here):** a
-**list-membership `--where` operator** (or a `--tag <value>` sugar) so a tag-routed
-class is filterable by a single exact predicate (`tags` contains `decision`), using the
-existing `json_each` EXISTS form (`sqlite_repository.py:1292`). Phase 1 ships the
-classification + documents that precise per-class CLI filtering is `--types <db_type>` +
-FTS; the membership filter is a TASK 013-surface enhancement recorded in ROADMAP, not in
-scope now.
+- A graphical/visual graph export or a `wiki-graph export` to GraphViz/Mermaid (a possible later item).
+- **Cross-vault** edges (edges resolve within a vault, like all refs today).
+- Edge *weights*/confidence beyond the existing `trust_level`.
+- Migrating the existing live indexes for the operator (they run the documented Class-B rebuild when they choose).

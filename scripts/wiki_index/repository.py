@@ -218,9 +218,39 @@ class IndexRepository(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def get_backlinks(self, vault_id: str, entity_slug: str) -> list[PageRef]:
-        """All refs where `entity_slug=?` — i.e. pages that mention this
-        entity. Karpathy 'cross-references as documents'."""
+    def get_backlinks(
+        self, vault_id: str, entity_slug: str, ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """INBOUND refs where `entity_slug=?` — pages pointing AT this slug
+        (Karpathy 'cross-references as documents'). TASK 032 / R-032-4: optional
+        `ref_type` kind-filter (default None = all kinds; back-compatible)."""
+        ...
+
+    @abc.abstractmethod
+    def refs_from(
+        self, vault_id: str, page_slug: str, page_project: str,
+        ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """OUTBOUND refs FROM a page (the source); optional kind-filter
+        (TASK 032 / R-032-4)."""
+        ...
+
+    @abc.abstractmethod
+    def neighbors(
+        self, vault_id: str, slug: str, project: str,
+        direction: str = "both", ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """One-hop typed-edge refs touching a page — `direction` in/out/both
+        (TASK 032 / R-032-4)."""
+        ...
+
+    @abc.abstractmethod
+    def edge_chain(
+        self, vault_id: str, start_slug: str, ref_type: str,
+        direction: str = "out", max_depth: int = 8,
+    ) -> list[tuple[str, int]]:
+        """Bounded, cycle-safe BFS over a single `ref_type` from `start_slug`;
+        returns `(slug, depth)` in BFS order (TASK 032 / R-032-4)."""
         ...
 
     # =========================================================================

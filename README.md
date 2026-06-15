@@ -402,6 +402,7 @@ binaries.
 | `wiki-search [--status <v>] [--severity <v>] [--where 'field=value'] --vaults <vid>` | Filter by frontmatter metadata (query optional → pure listing). |
 | `wiki-query prepare/apply --vault-root <path>` | RAG: retrieve → orchestrator-cited synthesis → file a compounding `_queries/<slug>.md` page (`prepare`/`apply`). |
 | `wiki-verify-multi prepare/apply` | Off-by-default 4-critic audit of a filed answer vs its cited sources → `_verifications/verify-<slug>.md` verdict page; FAIL records + exits non-zero, never mutates the answer. |
+| `wiki-graph neighbors/chain/backlinks <slug> --vault <vid> [--kind K] [--direction D] [--depth N]` | Read-only **event-graph** traversal over the typed page-to-page edges (implements/supersedes/causes/relates-to + auto-derived inverses). TASK 032 / ADR-004; pairs with `wiki-query --follow-edges`. |
 
 ### Knowledge construction
 
@@ -485,8 +486,8 @@ templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE
 scripts/
   wiki_index/               DAL: repository, sqlite_repository, lint, reindex, rendering,
                             normalization, security, layout, layout_config, sync_config
-  wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml
-  wiki_skills/              15 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
+  wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml, cybos.yaml
+  wiki_skills/              16 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
   wiki_source/              source adapters (base, manual, parsing)
   wiki_ingest/              vendored file layer (snapshot of external wiki-ingest)
   benchmark.py              synthetic-vault SLO harness

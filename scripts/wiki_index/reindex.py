@@ -194,9 +194,167 @@ def _verifies_ref(
     return []
 
 
+# TASK 032 / R-032-1/2 (ADR-004 D2) — event-graph forward edge keys → ref_type.
+# Each frontmatter KEY (underscore) maps to its ref_type ENUM value (hyphen). Each
+# member is both authorable AND derivable (the inverse rows are auto-derived by the
+# global pass in reindex_full — 032-02). `relates_to` reuses the symmetric `related`
+# (NO parallel 'relates-to'). Keep in sync with the v6 CHECK enum (sql §5).
+_EDGE_KEY_TO_REF_TYPE: dict[str, str] = {
+    "implements": "implements",
+    "implemented_by": "implemented-by",
+    "supersedes": "supersedes",
+    "superseded_by": "superseded-by",
+    "causes": "causes",
+    "caused_by": "caused-by",
+    "relates_to": "related",
+}
+
+
+def _strip_wikilink(v: str) -> str:
+    """`[[Target]]` / `[[Target|alias]]` → `Target`; a bare slug passes through."""
+    s = v.strip()
+    if s.startswith("[[") and s.endswith("]]"):
+        return s[2:-2].split("|", 1)[0].strip()
+    return s
+
+
+def _edge_refs(
+    updated_fm: dict[str, Any], vault_id: str, page_slug: str,
+    page_project: str, slug_strategy: str, skipped: list[dict[str, Any]],
+) -> list[PageRef]:
+    """Parse the TASK 032 event-graph edge keys (`implements`/`supersedes`/`caused_by`/
+    `relates_to` + the directly-authorable inverses) into **FORWARD** ``PageRef``s
+    (ADR-004 D2/D3). Each key → its ref_type via ``_EDGE_KEY_TO_REF_TYPE``; the value is
+    a ``[[wikilink]]`` / bare slug or a LIST of them; the target is slugified via the
+    layout ``slug_strategy`` (same as body ``'mentioned'`` refs — AM-3 later
+    canonicalizes through the alias map, ``ref_type`` preserved). De-dups on
+    ``(entity_slug, ref_type)``; skips self-loops; report-and-skip malformed (no value
+    echo, CWE-117). FORWARD only — these ride the SOURCE page's single ``replace_refs``
+    (M-1 intact); the inverse rows are derived by the global pass in ``reindex_full``."""
+    refs: list[PageRef] = []
+    seen: set[tuple[str, str]] = set()
+    for key, ref_type in _EDGE_KEY_TO_REF_TYPE.items():
+        raw = updated_fm.get(key)
+        if raw is None:
+            continue
+        # YAML quirk: an unquoted Obsidian `[[wikilink]]` parses as a NESTED list
+        # `[["x"]]` (not a string), while a list of bare slugs parses as `["x","y"]`.
+        # Flatten ONE level so both the natural `[[x]]` form and the `[x, y]` form
+        # (and a plain scalar) resolve identically.
+        candidates: list[Any] = raw if isinstance(raw, list) else [raw]
+        values: list[Any] = []
+        for c in candidates:
+            values.extend(c if isinstance(c, list) else [c])
+        for v in values:
+            if not isinstance(v, str):
+                skipped.append({"page_slug": page_slug,
+                                "reason": f"malformed {key} edge (expected string / [[wikilink]])"})
+                continue
+            target = _strip_wikilink(v)
+            if not target:
+                skipped.append({"page_slug": page_slug,
+                                "reason": f"empty {key} edge target"})
+                continue
+            eslug = _apply_slug_strategy(target, slug_strategy)
+            if not eslug:  # slugified to empty (e.g. all-punctuation target)
+                skipped.append({"page_slug": page_slug,
+                                "reason": f"{key} edge target slugified to empty"})
+                continue
+            if eslug == page_slug:  # vdd-multi LOW: surface the self-loop drop
+                skipped.append({"page_slug": page_slug,
+                                "reason": f"self-referential {key} edge target ignored"})
+                continue
+            dedup = (eslug, ref_type)
+            if dedup in seen:
+                continue
+            seen.add(dedup)
+            refs.append(PageRef(
+                vault_id=vault_id, page_slug=page_slug, page_project=page_project,
+                entity_slug=eslug, ref_type=ref_type, trust_level="medium",
+            ))
+    return refs
+
+
+# TASK 032 (ADR-004 D3) — forward ref_type → its inverse. The symmetric `related`
+# maps to itself. ONLY these typed edges get auto-inverse derivation;
+# mentioned/cited/verifies/defined-here do NOT. Keep in sync with the v6 CHECK enum.
+_INVERSE_REF_TYPE: dict[str, str] = {
+    "implements": "implemented-by",
+    "implemented-by": "implements",
+    "supersedes": "superseded-by",
+    "superseded-by": "supersedes",
+    "causes": "caused-by",
+    "caused-by": "causes",
+    "related": "related",
+}
+
+
+def _derive_inverse_edges(
+    conn: "sqlite3.Connection", vault_id: str,
+    source_slugs: set[str] | None = None,
+) -> None:
+    """TASK 032 / R-032-3 (ADR-004 D3) — the inverse-edge derivation pass. For every
+    edge row ``(A→B, fwd)`` whose target B resolves to a real ``pages`` row, ensure the
+    inverse ``(B→A, inv)`` exists ON THE TARGET page B. One ``INSERT … SELECT`` with
+    ``INSERT OR IGNORE`` → idempotent + bidirectional-author convergent (PK collision is
+    a no-op). The ``JOIN pages`` **skips ORPHAN targets** (arch-review M1 — the enforced
+    FK on ``page_slug`` would else raise ``IntegrityError``) and supplies the target's
+    ``page_project``; the ``NOT(…)`` skips self-page loops. The forward/inverse names are
+    internal constants (no injection); the ``ref_type`` filter is bound.
+
+    ``reindex_full``: ``source_slugs=None`` → GLOBAL pass over all edge rows, AFTER AM-3
+    (canonical endpoints) and BEFORE ``_recompute_mentions`` (derived rows count, M2). On
+    a freshly-wiped full this only ever inserts forward→inverse (the inverse-of-an-inverse
+    would re-insert the original forward, already present → IGNORE).
+
+    ``reindex_delta``: ``source_slugs`` = the TOUCHED source slugs → the pass derives only
+    from THOSE pages' current edge rows (``f.page_slug IN source_slugs``). This is
+    load-bearing: a delta must NOT reprocess a STALE inverse on an un-walked page, else it
+    would derive the inverse-of-the-inverse and **resurrect** a forward the touched source
+    just removed. Scoping to touched sources confines derivation to current rows."""
+    kinds = tuple(_INVERSE_REF_TYPE)
+    placeholders = ", ".join(["?"] * len(kinds))
+    case = " ".join(f"WHEN '{fwd}' THEN '{inv}'"
+                    for fwd, inv in _INVERSE_REF_TYPE.items())
+    sql = (
+        "INSERT OR IGNORE INTO page_entity_refs "
+        "(vault_id, page_slug, page_project, entity_slug, ref_type, trust_level) "
+        "SELECT f.vault_id, t.slug, t.project, f.page_slug, "
+        f"       CASE f.ref_type {case} END, 'medium' "
+        "FROM page_entity_refs f "
+        "JOIN pages t ON t.vault_id = f.vault_id AND t.slug = f.entity_slug "
+        "WHERE f.vault_id = ? "
+        f"  AND f.ref_type IN ({placeholders}) "
+        "  AND NOT (t.slug = f.page_slug AND t.project = f.page_project) "
+        # vdd-multi MED: `entity_slug` is project-less, so a target slug shared across
+        # projects (karpathy course tier / any project_pattern layout) would JOIN >1
+        # page and fan the inverse onto pages the source never referenced. The forward
+        # edge cannot disambiguate which project was meant, so derive the inverse ONLY
+        # when the target slug resolves to EXACTLY ONE page (else skip — no phantom).
+        "  AND (SELECT COUNT(*) FROM pages tc "
+        "       WHERE tc.vault_id = f.vault_id AND tc.slug = f.entity_slug) = 1"
+    )
+    params: list[Any] = [vault_id, *kinds]
+    if source_slugs is not None:
+        if not source_slugs:
+            return
+        src_ph = ", ".join(["?"] * len(source_slugs))
+        sql += f" AND f.page_slug IN ({src_ph})"
+        params.extend(sorted(source_slugs))
+    conn.execute(sql, params)
+    # vdd-multi LOW: AM-3 alias canonicalization (Step 2.5, runs BEFORE this pass)
+    # can rewrite a forward edge target to the SOURCE's own slug → a meaningless
+    # (A,A) self-loop that the extraction-time guard (`_edge_refs`, pre-canonical)
+    # never saw. Drop post-canonicalization self-loops for the typed edge kinds.
+    conn.execute(
+        "DELETE FROM page_entity_refs WHERE vault_id = ? AND page_slug = entity_slug "
+        f"AND ref_type IN ({placeholders})", [vault_id, *kinds])
+
+
 def _frontmatter_refs(
     db_type: str, updated_fm: dict[str, Any], vault_id: str, page_slug: str,
     page_project: str, skipped: list[dict[str, Any]],
+    slug_strategy: str = "identity",
 ) -> list[PageRef]:
     """§D8 durability read-side dispatcher (TASK 007 R-6.5e + TASK 008 R-8.5e).
 
@@ -223,6 +381,12 @@ def _frontmatter_refs(
         refs.extend(_cited_refs(updated_fm, vault_id, page_slug, page_project, skipped))
     if db_type == "verification":
         refs.extend(_verifies_ref(updated_fm, vault_id, page_slug, page_project, skipped))
+    # TASK 032 (ADR-004 D3): FORWARD event-graph edges — always-on, ANY page type
+    # (Karpathy/_sources pages carry no edge keys → `_edge_refs` returns [] → byte-
+    # identity preserved). Unioned into the page's single `replace_refs` (M-1); the
+    # inverse rows are derived by the global post-pass in `reindex_full`.
+    refs.extend(_edge_refs(
+        updated_fm, vault_id, page_slug, page_project, slug_strategy, skipped))
     return refs
 
 
@@ -371,7 +535,8 @@ def derive_indexed_page(
         out, config.ref_extraction, vault_id, config.slug_strategy,
         ref_extraction_operator_supplied=config.ref_extraction_operator_supplied)
     refs.extend(_frontmatter_refs(
-        db_type, updated_fm, vault_id, out.page_slug, out.project, cite_skipped))
+        db_type, updated_fm, vault_id, out.page_slug, out.project, cite_skipped,
+        slug_strategy=config.slug_strategy))
     return out, page, updated_fm, refs
 
 
@@ -446,6 +611,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
             if pre["file_path"] in untouched_rels:
                 seen_keys[(pre["slug"], pre["project"])] = pre["file_path"]
         touched = 0
+        touched_slugs: set[str] = set()   # TASK 032: scope the inverse pass (no resurrect)
         new_path_ingested: list[str] = []
         adapter = ManualSourceAdapter()
         for disc, rel in zip(paths_on_disk, disk_rels, strict=True):
@@ -512,6 +678,7 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                         conn_d.execute("ROLLBACK")
                     raise
                 touched += 1
+                touched_slugs.add(out.page_slug)
                 if is_new_path:
                     new_path_ingested.append(rel)
                 _detect_slug_collision(
@@ -546,6 +713,43 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         except Exception:
             conn.execute("ROLLBACK")
             raise
+        # Step 4.5 (TASK 032 / R-032-3, ADR-004 D4): refresh inverse edges. Delta runs
+        # the inverse-derivation pass SCOPED to the touched sources (`touched_slugs`) so
+        # an edge added/changed on a re-walked source materializes its inverse on the
+        # (possibly un-walked) target. Gated on `touched or deleted` to preserve the
+        # AC-1.9 true-no-op delta. Runs once per delta run (the inverse pass is a single
+        # set-based statement) on the cached singleton connection — `repo._connect()`
+        # returns the same `conn`, NOT a new connection.
+        #
+        # TWO documented delta↔full divergence classes, both repaired by `--full`
+        # (ADR-002 §D8 / TASK 030 A5 posture — delta is best-effort, `--full` is
+        # authoritative); neither is safely closable in delta without a provenance column
+        # (out of scope), because a stored `(B→A, inv)` row is INDISTINGUISHABLE from an
+        # edge B AUTHORED directly (same ref_type):
+        #   (1) Stale-inverse-after-removal: source A removes `implements: [[B]]`; the
+        #       inverse `(B→A, implemented-by)` on the un-walked B persists until --full.
+        #       Delta must NOT delete it (could clobber an edge B authored), AND the pass
+        #       is scoped to A — NOT B — so it cannot re-derive `(A→B, implements)` back
+        #       from that stale inverse (the resurrection bug; scoping is load-bearing).
+        #   (2) Missing-derivation-from-untouched-source: under BIDIRECTIONAL authoring
+        #       (A `superseded_by:[[B]]`, B `supersedes:[[A]]`), removing B's `supersedes`
+        #       re-walks only B → B's forward goes, but A's still-authored `superseded_by`
+        #       would re-derive `(B→A, supersedes)` on a --full. Delta's source-scoping to
+        #       {B} does NOT process A's forward, so that inverse is temporarily MISSING
+        #       (graph asymmetric) until --full. Broadening the scope to `entity_slug IN
+        #       touched` would close this BUT reintroduce divergence (1)'s resurrection
+        #       (it cannot tell A's authored forward from a stale inverse), so the scope
+        #       stays source-only by design.
+        if touched or deleted:
+            conn_inv = repo._connect()  # cached singleton (same conn) — not a new handle
+            conn_inv.execute("BEGIN IMMEDIATE")
+            try:
+                _derive_inverse_edges(conn_inv, vault_id, touched_slugs)
+                conn_inv.execute("COMMIT")
+            except Exception:
+                conn_inv.execute("ROLLBACK")
+                raise
+
         # Step 5 (PW-H, critic-logic HIGH-1): re-render auto_indexes so an
         # incremental edit/delete of a known-issue keeps the Class-B ledger
         # consistent — otherwise the supported `--delta` workflow leaves a stale
@@ -877,6 +1081,11 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                         "DELETE FROM page_entity_refs WHERE rowid = ?",
                         (ref["rid"],),
                     )
+
+        # Step 2.6 (TASK 032 / R-032-3, ADR-004 D3): derive inverse edges globally,
+        # AFTER AM-3 (canonical endpoints) and BEFORE _recompute_mentions (so the
+        # derived rows are counted — arch-review M2). Skips orphan targets (M1).
+        _derive_inverse_edges(conn, vault_id)
 
         # Step 3: recompute entities.mentions_count (I-5 invariant).
         # F12c (TASK 006): one shared helper (repo is a SQLiteRepository — checked

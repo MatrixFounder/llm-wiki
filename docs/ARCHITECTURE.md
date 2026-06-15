@@ -356,6 +356,27 @@
 > the Phase-1 templates. Design: ADR-003 + §3.5 + Q-031-1..5. Spec: docs/TASK.md (RTM
 > R-031-1..7).
 >
+> **TASK 032 (event graph — typed page-to-page edges + graph-aware RAG; R-13 Phase 2) — ✅
+> COMPLETE / merge-ready 2026-06-15** (branch `task-032-event-graph-relations`, uncommitted
+> per operator rule; 1381 pytest +5 skip, mypy strict 76 files; Karpathy anchor green):
+> realizes ADR-003 D4 →
+> **ADR-004**. **Schema v5→v6** (the first DDL since TASK 008): `page_entity_refs.ref_type`
+> gains an **inverse-closed** set — `implements`/`implemented-by`, `supersedes`/`superseded-by`,
+> `causes`/`caused-by` (6 new) — and **reuses the dormant symmetric `related`** for `relates_to`;
+> migration = Class-B rebuild (`user_version` 6; delete `.db` → `wiki-reindex --full`). A new
+> `reindex._edge_refs` extracts the authored edge keys (key→ref_type map; resolved like body
+> mentions, D2) **always-on in `_frontmatter_refs`** (forward edges ride the per-page
+> `replace_refs`, M-1 intact). **Auto-inverse derivation** is a GLOBAL post-pass (sibling of the
+> Step-2.5/AM-3 alias pass, `reindex_full:842-879`, ordered after canonicalization) — the inverse
+> row lives on the *target* page, so it cannot ride the source's per-page write (C-1); **delta**
+> does a scoped reconciliation for changed sources with a rename/swap residual repaired by `--full`
+> (Q-032-3). New **`wiki-graph`** CLI (16th: `neighbors`/`chain`/`backlinks`, `--kind`/`--direction`/
+> `--depth`, cycle-safe) + typed-edge DAL reads (`get_backlinks(kind=)` + `refs_from`). **Graph-aware
+> RAG**: `wiki-query prepare --follow-edges` (default OFF) deterministically expands the hit set
+> along edges (canonical order, folded into `question_hash`, C1). Karpathy byte-identity preserved
+> (`_edge_refs`→`[]` without edge keys). Design: ADR-004 + Q-032-1..6. Spec: docs/TASK.md (RTM
+> R-032-1..8).
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -527,7 +548,7 @@ Architectural style (layered + plugin), system-component breakdown (Skill Layer 
 
 ## 4. Data Model (Conceptual)
 
-Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table), and the TASK 007 RAG additions (query page as a first-class compounding `type=query` artifact; `ref_type='cited'` query→source backlinks with the R-6.5e reindex read-side; `source_state` reuse for query idempotency — all **zero-DDL**, `user_version` stays 4). **TASK 019** (re-summarization policy) is likewise **zero-DDL**: D1 reuses `SourceState` (`source_kind='sync'`), D2a reads `Page.frontmatter_json` (`json_extract`/`json_each`, TASK 013 mechanism) through **two new read-only DAL methods** — `find_pages_citing_source` (single-source check) + `all_cited_sources` (the bulk citation set, hoisted once per scan, Q-019-10) — D2b is filesystem-only — **no new entity/column**, `user_version` stays **5**.
+Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceState, LogEvent) with key attributes, relationships, business rules, and ADR-002 Class A/B/C layering for each. Includes the entity write-path + downgrade-guard semantics, the TASK 005 two-tier confirm/candidate resolution (`is_candidate` as Class A frontmatter), the EntityAlias activation (PK `(vault_id, alias)`, L-4 closed; schema v2→v3 migration), the duplicate-merge path (R-4.7: pure-DML re-pointing, alias-as-redirect, no merge-ledger table), and the TASK 007 RAG additions (query page as a first-class compounding `type=query` artifact; `ref_type='cited'` query→source backlinks with the R-6.5e reindex read-side; `source_state` reuse for query idempotency — all **zero-DDL**, `user_version` stays 4). **TASK 019** (re-summarization policy) is likewise **zero-DDL**: D1 reuses `SourceState` (`source_kind='sync'`), D2a reads `Page.frontmatter_json` (`json_extract`/`json_each`, TASK 013 mechanism) through **two new read-only DAL methods** — `find_pages_citing_source` (single-source check) + `all_cited_sources` (the bulk citation set, hoisted once per scan, Q-019-10) — D2b is filesystem-only — **no new entity/column**, `user_version` stays **5**. **TASK 032 (event graph, ADR-004)** is the **first schema bump since TASK 008**: `PageEntityRef.ref_type` gains an inverse-closed typed-edge set (`implements`/`implemented-by`, `supersedes`/`superseded-by`, `causes`/`caused-by`; `relates_to` reuses the dormant symmetric `related`) — additive CHECK values only, `user_version` **5→6**, migration = Class-B rebuild. No table/PK change. Forward edges are extracted into the source page's single `replace_refs` (M-1); inverse rows (on the *target* page) are materialized by a global post-pass (AM-3 sibling) — see Q-032-1/2/3.
 
 → [details](./architectures/data-model.md)
 
@@ -1446,6 +1467,39 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   extension, reindex frontmatter-edge extraction, and schema v5→v6 follow the TASK 008 precedent. The
   edge keys are **reserved (authored-but-inert)** in the Phase-1 templates so the canonical Markdown
   already carries the data — Markdown canonical, DB rebuildable (ADR-002 §D8). See ADR-003 D4.
+- **Q-032-1 (TASK 032 — the v6 `ref_type` set; inverse-closed; relates_to home).** **RESOLVED:** add 6
+  inverse-pair values (`implements`/`implemented-by`, `supersedes`/`superseded-by`, `causes`/`caused-by`)
+  and **reuse the dormant symmetric `related`** for `relates_to` (NO parallel `relates-to`). Explicit
+  key→ref_type map (underscore key → hyphen enum); each member is both authorable + derivable. ADR-004 D1/D2.
+- **Q-032-2 (TASK 032 — where inverse edges are written, given M-1).** The inverse row lives on the
+  *target* page; `_replace_refs_in_txn` is per-page delete-all (`sqlite_repository.py:386-429`) so it
+  **cannot** ride the source's single `replace_refs` (task-review C-1). **RESOLVED:** forward edges ride
+  the per-page write (M-1 intact, `_edge_refs` unioned into `_frontmatter_refs`); inverses are a **GLOBAL
+  post-pass** — a sibling of the Step-2.5/AM-3 alias pass (`reindex_full:842-879`), ordered AFTER
+  canonicalization so both endpoints are canonical; idempotent (PK dedup), no self-loops,
+  bidirectional-author convergence. ADR-004 D3.
+- **Q-032-3 (TASK 032 — delta-inverse-closure; `reindex_delta` has no global ref pass).** **RESOLVED
+  (refined in dev for provenance-safety):** delta runs inverse **ADDITIONS only, SCOPED to the TOUCHED
+  source pages** (`_derive_inverse_edges(..., source_slugs=touched)`, gated on `touched or deleted`) — an
+  added/changed edge's inverse appears on the (un-walked) target. Inverse **REMOVAL is deferred to `--full`**:
+  a stored `(B→A, inv)` row is indistinguishable from an edge B AUTHORED directly (same `ref_type`, no
+  provenance column), so deleting "stale" inverses could clobber an authored edge — and the symmetric
+  derivation would RESURRECT a removed forward (inverse-of-the-inverse) if the pass touched un-walked pages,
+  which is exactly why additions are scoped to touched sources. Delta never deletes an inverse; `--full`
+  (wipe+rebuild) is authoritative — documented A5-class residual, NOT `delta==full`. ADR-004 D4.
+- **Q-032-4 (TASK 032 — graph-aware RAG default + determinism).** **RESOLVED:** `wiki-query prepare
+  --follow-edges` **default OFF** (preserves today's retrieval + `question_hash` for non-opt-in use);
+  depth 1 default (`--edge-depth` capped 3); neighbors appended AFTER FTS hits, sorted `(project, slug)`
+  (outbound edge preferred over auto-inverse for `via_edge` provenance — as-built), deduped, **excluding
+  `type=query`/`type=verification`** (mirrors `_retrieve` exclude-prior-answers);
+  the expansion is folded into `question_hash` (C1 / TASK 028). ADR-004 D5.
+- **Q-032-5 (TASK 032 — traversal reader surface).** **RESOLVED: a new read-only `wiki-graph` CLI** (16th)
+  — `neighbors`/`chain`/`backlinks` × `--kind`/`--direction`/`--depth` (capped, cycle-safe), JSON envelope,
+  injection-safe (TASK 013 posture). `wiki-search --edges` REJECTED (overloads FTS). ADR-004 D6.
+- **Q-032-6 (TASK 032 — DAL read API shape).** **RESOLVED:** additive `get_backlinks(…, ref_type=None)`
+  kind-filter (ABC `repository.py:221` + impl in lockstep, mypy strict) + outbound `refs_from(...)` +
+  bounded `neighbors`/`chain` (depth-capped, visited-set cycle-safe); existing `idx_refs_type/entity/page`
+  support them. ADR-004 D-DAL.
 
 ---
 
@@ -1468,6 +1522,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Native-App Control Skill (TASK 029)**: prompt-layer only — routing/coherence/safety/degradation invariants designed (§2.2); zero DDL, zero new Python, no interface change; safety model TOTAL over the verified 102-command surface with fail-safe default (incl. the 029-07 `command id=`→T3 + Templater-template→T3 refinements); eval harness machine-checkable without a grader (Q-029-1).
 - [x] **Indexer hardening (TASK 030, SHIPPED)**: rename-aware `--delta` (new-path membership predicate, zero extra I/O, swap-class residual documented), chunked-tx `--full` (private txn-free DML helpers; M-4/FTS-trigger posture untouched), single-pass pruned walk (descent predicate preserves karpathy "root never walked"; `Path.glob` symlink parity); zero DDL; design at Q-030-1..6; spec docs/TASK.md + reviews/task-030-review.md.
 - [x] **Typed knowledge classes (TASK 031)**: classification-only Phase 1 — 7 classes tag-routed zero-DDL onto the existing db_type enum (Q-031-1/2) in `dev-project` + new `cybos` layout (Q-031-3); layout registry de-hardcoded to one cached YAML-derived source via additive `aliases`/`init_scaffold` keys (Q-031-4); event graph deferred Phase-2 (Q-031-5 / ROADMAP R-13). ADR-003; Karpathy byte-identity preserved; 1339 pytest, mypy strict; `/vdd-multi` converged (5 LOW: 3 fixed + 2 accepted-residual). DF-031-1 dogfood doc-fix folded.
+- [x] **Event graph (TASK 032)**: R-13 Phase 2 — typed page-to-page edges + graph-aware RAG (ADR-004). Schema v5→v6 inverse-closed `ref_type` (first DDL since TASK 008; Class-B rebuild). Forward edges via per-page `replace_refs` (M-1 intact); auto-inverse via a global AM-3-sibling post-pass (Q-032-2); delta scoped-additions + removal-deferred-to-`--full` (provenance-safe, Q-032-3). New `wiki-graph` CLI (Q-032-5) + typed-edge DAL reads (Q-032-6); `wiki-query --follow-edges` graph-RAG, default OFF, deterministic hash (Q-032-4). Karpathy byte-identity preserved. 1381 pytest, mypy strict.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

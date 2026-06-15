@@ -1,7 +1,7 @@
 # ADR-002: Multi-Vault Single-DB + Log/Index Bottleneck Corrections
 
 - **Status**: Accepted (2026-05-26)
-- **Decider**: innokentiy.georgievskiy@mdcloud.tech
+- **Decider**: kuptsov.sergey@gmail.com
 - **Supersedes**: nothing (extends [ADR-001](./ADR-001-wiki-ingest-integration.md))
 - **Empirical basis**: `trade-agents/Lessons/ZeroOne Systems/` — real-world ingest of 13 lessons producing 35 concepts + 58 entities + 13 sources; 22,743 lines / ~1.2 MB markdown; log.md = 23 events / 195 lines.
 - **Related**: [trade-agents/docs/wiki-ingest-promotion-spec.md](../../trade-agents/docs/wiki-ingest-promotion-spec.md) — two-tier vault model (course-local + vault-root).

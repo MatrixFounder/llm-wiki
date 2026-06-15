@@ -110,12 +110,12 @@ def test_source_state_missing_returns_none(tmp_path: Path) -> None:
 
 
 def test_source_state_zero_ddl(tmp_path: Path) -> None:
-    """The `sync` partition is data, not schema: `user_version` stays 5 and the
+    """The `sync` partition is data, not schema: `user_version` stays 6 (TASK 032 v6) and the
     write is accepted (no `source_kind` CHECK to reject it). Closes Q-018-8."""
     repo = _repo(tmp_path)
     repo.set_source_state("vault-one", "sync", "courses/x.vtt", "source_hash", "h1")
     uv = repo._connect().execute("PRAGMA user_version").fetchone()[0]
-    assert uv == 5
+    assert uv == 6
     assert repo.get_source_state("vault-one", "sync", "courses/x.vtt", "source_hash") == "h1"
     repo.close()
 

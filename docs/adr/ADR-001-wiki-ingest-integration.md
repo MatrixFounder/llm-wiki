@@ -1,7 +1,7 @@
 # ADR-001: Wiki-Ingest Integration (Wrap + Index)
 
 - **Status**: Accepted (2026-05-25)
-- **Decider**: innokentiy.georgievskiy@mdcloud.tech
+- **Decider**: kuptsov.sergey@gmail.com
 - **Consulted**: VDD adversarial review (`docs/reviews/TASK-vdd-adversarial-2026-05-25*.md`)
 - **Supersedes**: §6.1 "Karpathy-deviation (MVP intentional gap)" in [TASK 002 wiki-mvp](../tasks/task-002-wiki-mvp.md) — obsolete since Phase 3a archived.
 

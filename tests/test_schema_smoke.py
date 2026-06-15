@@ -65,7 +65,7 @@ def test_e2e_01_schema_applies_and_pragmas(db):
     # v3 (TASK 005 / R-5.4): entity_aliases PK swap → 3.
     # v4 (TASK 006): drop idx_pages_vault_tags + event_date GENERATED → 4.
     # v5 (TASK 008 / R-8.9): verification type + verifies ref + verify event → 5.
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 # =============================================================================

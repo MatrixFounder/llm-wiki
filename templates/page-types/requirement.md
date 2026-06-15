@@ -5,8 +5,8 @@ tags: []
 status: draft               # draft | approved | implemented | dropped
 priority: 2                 # 1 (highest) .. 4
 date: 2026-01-01
-# --- Phase-2 (ROADMAP R-13) event-graph edges — RESERVED, currently INERT ----
-# Indexed as typed edges in Phase 2 only (ADR-003 D4); ignored in Phase 1.
+# --- Phase-2 (ROADMAP R-13) event-graph edges — LIVE — extracted as typed edges (TASK 032) ----
+# Extracted as typed page-to-page edges on reindex (ADR-004); inverses auto-derived.
 implements: []
 supersedes: []
 superseded_by: []

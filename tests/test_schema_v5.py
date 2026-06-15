@@ -2,7 +2,7 @@
 the `verifies` ref-type, and the `verify` log event for `wiki-verify-multi`.
 
 Validates the runtime DDL (`sql/wiki-index-v2.sql`) directly:
-- PRAGMA user_version == 5
+- PRAGMA user_version == 6 (TASK 032: v5→v6)
 - pages.type CHECK admits 'verification' (rejects bogus)
 - page_entity_refs.ref_type CHECK admits 'verifies' (rejects bogus)
 - log_events.event_type CHECK admits 'verify'
@@ -36,7 +36,7 @@ def _insert_page(conn: sqlite3.Connection, slug: str, ptype: str) -> None:
 
 
 def test_user_version_is_5(tmp_path: Path) -> None:
-    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 5
+    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_pages_type_accepts_verification(tmp_path: Path) -> None:

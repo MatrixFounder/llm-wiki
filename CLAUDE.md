@@ -11,7 +11,8 @@ pattern. Provides CLIs (`wiki-init`, `wiki-search`, `wiki-lint`,
 `wiki-reindex`, `wiki-index-upsert`, `wiki-index-render`, `wiki-append-log`,
 `wiki-enrich`, `wiki-extract-concepts`, the Epic 7 entity resolver
 `wiki-confirm` / `wiki-alias` / `wiki-merge`, the Epic 7 RAG layer
-`wiki-query`, and the Epic 7 RAG verification layer `wiki-verify-multi`)
+`wiki-query`, the Epic 7 RAG verification layer `wiki-verify-multi`, and the
+TASK 032 event-graph reader `wiki-graph`)
 over an `IndexRepository` DAL (SQLite + FTS5 + WAL).
 
 Phase 3a complete (2026-05-26). Phase 3b: TASK 003 v2 shipped 2026-05-28;
@@ -474,6 +475,27 @@ the 7 classes adoptable via a `.wiki/layout.yaml` `type_mapping` UNION (0 skips)
 PRE-EXISTING slug collisions surfaced (near-duplicate filenames — not a 031 issue,
 TASK 020/021 detector). See ADR-003, `docs/tasks/task-031-*`, `docs/plans/plan-031-*`,
 ARCHITECTURE §3.5 + Q-031-1..5.
+**TASK 032 (event graph — typed page-to-page edges + graph-aware RAG; R-13 Phase 2)
+COMPLETE / merge-ready 2026-06-15** (branch `task-032-event-graph-relations`, uncommitted):
+realizes ADR-003 D4 → **ADR-004**. **First schema bump since TASK 008** — `page_entity_refs.ref_type`
+v5→v6 gains the **inverse-closed** typed-edge set (`implements`/`implemented-by`,
+`supersedes`/`superseded-by`, `causes`/`caused-by`; `relates_to` reuses the symmetric
+`related`); migration = Class-B rebuild (`user_version` 6). `reindex._edge_refs` extracts the
+authored frontmatter edges (`[[wikilink]]`/slug, list|scalar; key→ref_type map) **always-on in
+`_frontmatter_refs`** — forward edges ride the per-page `replace_refs` (M-1 intact); a **global
+post-pass auto-derives the inverses** (sibling of the AM-3 alias pass, AFTER it / BEFORE
+`_recompute_mentions`; **orphan-target skip** via JOIN — arch-review M1; idempotent +
+bidirectional-author convergent). **Delta** = scoped inverse-additions (touched sources only —
+avoids resurrecting removed forwards) + removal-deferred-to-`--full` (provenance-safe: a stored
+inverse is indistinguishable from an authored edge). New **`wiki-graph`** CLI (16th:
+`neighbors`/`chain`/`backlinks` × `--kind`/`--direction`/`--depth`, injection-safe, cycle-safe) +
+typed-edge DAL reads (`get_backlinks(kind=)`/`refs_from`/`neighbors`/`edge_chain`, ABC lockstep).
+**Graph-aware RAG**: `wiki-query prepare --follow-edges` (default OFF) deterministically expands
+the FTS hits along edges (depth 1, cap 3; folded into `question_hash`; excludes query/verification;
+`via_edge` provenance). Karpathy byte-identity preserved (`_edge_refs`→`[]` without edge keys).
+**1381 pytest (+5 skipped), mypy strict (76 files).** Dev caught+fixed 2 real bugs (YAML
+`[[wikilink]]` nested-list flatten; inverse-of-inverse resurrection on delta). See ADR-004,
+`docs/tasks/task-032-*`, `docs/plans/plan-032-*`, ARCHITECTURE §4 + Q-032-1..6.
 
 ## Knowledge lookup priority
 
@@ -521,10 +543,14 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 031
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 032
+  `event-graph-relations`** (R-13 Phase-2; typed page-to-page edges + auto-inverse +
+  `wiki-graph` CLI + graph-aware RAG; schema v5→v6; `docs/TASK.md` + `docs/PLAN.md` +
+  `docs/tasks/task-032-00..06-*.md` live at HEAD; ADR-004). Preceded by **TASK 031
   `typed-knowledge-classes`** (R-13 Phase-1; extended article-type taxonomy + the
-  config-driven layout registry de-hardcode; `docs/TASK.md` + `docs/PLAN.md` +
-  `docs/tasks/task-031-00..04-*.md` live at HEAD). Preceded by **TASK 030
+  config-driven layout registry de-hardcode; archived
+  `docs/tasks/task-031-typed-knowledge-classes.md` + beads `task-031-00..04-*` +
+  `docs/plans/plan-031-typed-knowledge-classes.md`). Preceded by **TASK 030
   `reindex-perf-hardening`** (DF-029-1+P-1+R-X1-OBS-WALK; archived
   `docs/tasks/task-030-reindex-perf-hardening.md` + beads `task-030-00..07-*` +
   `docs/plans/plan-030-reindex-perf-hardening.md`). Preceded by **TASK 029 `obsidian-cli-skill`**

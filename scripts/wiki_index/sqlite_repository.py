@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
@@ -448,29 +449,97 @@ class SQLiteRepository(IndexRepository):
             conn.execute("ROLLBACK")
             raise
 
-    def get_backlinks(self, vault_id: str, entity_slug: str) -> list[PageRef]:
+    @staticmethod
+    def _ref_from_row(r: Any) -> PageRef:
+        return PageRef(
+            vault_id=r["vault_id"], page_slug=r["page_slug"],
+            page_project=r["page_project"], entity_slug=r["entity_slug"],
+            ref_type=r["ref_type"], line_start=r["line_start"],
+            line_end=r["line_end"], source_quote=r["source_quote"],
+            trust_level=r["trust_level"],
+        )
+
+    _REF_COLS = ("vault_id, page_slug, page_project, entity_slug, ref_type, "
+                 "line_start, line_end, source_quote, trust_level")
+
+    def get_backlinks(
+        self, vault_id: str, entity_slug: str, ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """INBOUND refs (pages pointing AT `entity_slug`). TASK 032 / R-032-4:
+        optional `ref_type` kind-filter (default None = all kinds — existing
+        merge/lint callers unaffected)."""
+        conn = self._connect()
+        sql = (f"SELECT {self._REF_COLS} FROM page_entity_refs "
+               "WHERE vault_id=? AND entity_slug=?")
+        params: list[Any] = [vault_id, entity_slug]
+        if ref_type is not None:
+            sql += " AND ref_type=?"
+            params.append(ref_type)
+        sql += " ORDER BY page_slug, ref_type, COALESCE(line_start, 0)"
+        return [self._ref_from_row(r) for r in conn.execute(sql, params).fetchall()]
+
+    def refs_from(
+        self, vault_id: str, page_slug: str, page_project: str,
+        ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """OUTBOUND refs FROM a page (the source). TASK 032 / R-032-4."""
+        conn = self._connect()
+        sql = (f"SELECT {self._REF_COLS} FROM page_entity_refs "
+               "WHERE vault_id=? AND page_slug=? AND page_project=?")
+        params: list[Any] = [vault_id, page_slug, page_project]
+        if ref_type is not None:
+            sql += " AND ref_type=?"
+            params.append(ref_type)
+        sql += " ORDER BY entity_slug, ref_type"
+        return [self._ref_from_row(r) for r in conn.execute(sql, params).fetchall()]
+
+    def neighbors(
+        self, vault_id: str, slug: str, project: str,
+        direction: str = "both", ref_type: str | None = None,
+    ) -> list[PageRef]:
+        """One-hop typed-edge refs touching a page. `direction`: 'out' (refs_from),
+        'in' (get_backlinks), 'both' (TASK 032 / R-032-4)."""
+        refs: list[PageRef] = []
+        if direction in ("out", "both"):
+            refs.extend(self.refs_from(vault_id, slug, project, ref_type))
+        if direction in ("in", "both"):
+            refs.extend(self.get_backlinks(vault_id, slug, ref_type))
+        return refs
+
+    def edge_chain(
+        self, vault_id: str, start_slug: str, ref_type: str,
+        direction: str = "out", max_depth: int = 8,
+    ) -> list[tuple[str, int]]:
+        """Bounded BFS over a SINGLE `ref_type` from `start_slug` (slug-based, like
+        the edge model). `direction` 'out' follows page→entity; 'in' follows
+        entity→page. Returns `(slug, depth)` reachable within `max_depth` in BFS
+        order — **cycle-safe** (visited set) + **depth-capped** (TASK 032 / R-032-4;
+        no unbounded recursion — TASK 018/030 DoS posture). One query (no N+1):
+        loads the ref_type's edges into an in-memory adjacency, then BFS."""
         conn = self._connect()
         rows = conn.execute(
-            "SELECT vault_id, page_slug, page_project, entity_slug, ref_type, "
-            "line_start, line_end, source_quote, trust_level "
-            "FROM page_entity_refs WHERE vault_id=? AND entity_slug=? "
-            "ORDER BY page_slug, COALESCE(line_start, 0)",
-            (vault_id, entity_slug),
+            "SELECT page_slug, entity_slug FROM page_entity_refs "
+            "WHERE vault_id=? AND ref_type=?", (vault_id, ref_type),
         ).fetchall()
-        return [
-            PageRef(
-                vault_id=r["vault_id"],
-                page_slug=r["page_slug"],
-                page_project=r["page_project"],
-                entity_slug=r["entity_slug"],
-                ref_type=r["ref_type"],
-                line_start=r["line_start"],
-                line_end=r["line_end"],
-                source_quote=r["source_quote"],
-                trust_level=r["trust_level"],
-            )
-            for r in rows
-        ]
+        adj: dict[str, set[str]] = {}
+        for r in rows:
+            src, dst = ((r["page_slug"], r["entity_slug"]) if direction == "out"
+                        else (r["entity_slug"], r["page_slug"]))
+            adj.setdefault(src, set()).add(dst)
+        out: list[tuple[str, int]] = []
+        visited = {start_slug}
+        frontier: deque[tuple[str, int]] = deque([(start_slug, 0)])  # popleft O(1)
+        while frontier:
+            node, depth = frontier.popleft()
+            if depth >= max_depth:
+                continue
+            for nxt in sorted(adj.get(node, set())):
+                if nxt in visited:
+                    continue
+                visited.add(nxt)
+                out.append((nxt, depth + 1))
+                frontier.append((nxt, depth + 1))
+        return out
 
     # =========================================================================
     # Search (task-001-17) — FTS5 + BM25 + multi-vault filter (R-29)
