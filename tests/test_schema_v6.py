@@ -1,7 +1,7 @@
 """TASK 032-00 — schema v5→v6 (R-032-1): admit the inverse-closed typed-edge
 ref_types for the event graph (ADR-004 D1).
 
-- PRAGMA user_version == 6
+- PRAGMA user_version == 7 (TASK 034: v6→v7)
 - page_entity_refs.ref_type CHECK admits the 6 new edge values (rejects bogus)
 - relates_to reuses the existing `related` (NO parallel `relates-to`)
 - a POPULATED table carrying the OLD v5 CHECK rejects a v6-only ref_type
@@ -26,7 +26,7 @@ def _fresh(tmp_path: Path) -> sqlite3.Connection:
 
 
 def test_user_version_is_6(tmp_path: Path) -> None:
-    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 6
+    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 @pytest.mark.parametrize("rt", _NEW)

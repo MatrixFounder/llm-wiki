@@ -157,6 +157,7 @@ class IndexRepository(abc.ABC):
         exclude_types: list[str] | None = None,
         project: str | None = None,
         where_fields: list[tuple[str, str]] | None = None,
+        as_of: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
         """FTS5 + BM25 search, optionally filtered by frontmatter metadata.
@@ -164,9 +165,10 @@ class IndexRepository(abc.ABC):
         Args:
             query: FTS5 MATCH expression (caller is responsible for escaping
                 special FTS operators). May be ``None``/empty **iff**
-                ``where_fields`` is non-empty — then a non-FTS metadata-only
-                listing is returned (TASK 013). Empty query AND empty
-                ``where_fields`` → ``ValueError`` (nothing to search).
+                ``where_fields`` OR ``as_of`` is given — then a non-FTS
+                metadata/temporal listing is returned (TASK 013/034). Empty query
+                AND empty ``where_fields`` AND no ``as_of`` → ``ValueError``
+                (nothing to search).
             vaults: limit to these vault_ids; None = all registered vaults.
             types: limit to these `pages.type` values; None = all types.
             exclude_types: drop these `pages.type` values **before** the LIMIT
@@ -200,6 +202,20 @@ class IndexRepository(abc.ABC):
                 takes a non-FTS path ordered by ``(project, slug, vault_id)`` —
                 the full page identity, so ties are deterministic — with no BM25
                 score. None/empty = no metadata filter (today's behaviour).
+            as_of: TASK 034 (R-1) — a temporal "active as of DATE" filter
+                (``YYYY-MM-DD``). A page is active iff ``effective_from <= DATE <
+                effective_to`` where ``effective_from = COALESCE(authored
+                valid_from, pages.date)`` and ``effective_to`` is the authored
+                ``valid_to`` (explicit override, half-open) ELSE the date of the
+                earliest page that SUPERSEDES or INVALIDATES it (the TASK 032/034
+                event graph, ``ref_type IN ('superseded-by','invalidated-by')``)
+                ELSE ``+inf``. So ``valid_from``/``valid_to`` need NOT be authored —
+                they are derived from the indexed ``pages.date`` + the graph, and
+                survive only as OPTIONAL overrides (future-effective / known-sunset).
+                A page with neither ``valid_from`` nor a ``date`` is excluded. Both
+                dates compare lexicographically (ISO strings = chronological).
+                Composes (AND) with ``query``/``where_fields``/``types``; valid on
+                its own. None = no temporal filter (today's behaviour).
             limit: max hits to return.
         """
         ...

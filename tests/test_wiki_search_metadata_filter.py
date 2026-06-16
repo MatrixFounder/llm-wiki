@@ -192,9 +192,10 @@ def test_query_less_ordering_tiebreak_by_vault_id(repo) -> None:
 
 
 def test_user_version_unchanged(repo) -> None:
-    # Zero DDL: schema version must be untouched by this feature.
+    # The metadata filter (TASK 013/033) is itself zero-DDL; the live schema pin
+    # advanced to 7 in TASK 034 (an unrelated edge-set bump in the same DDL file).
     ver = repo._connect().execute("PRAGMA user_version").fetchone()[0]
-    assert ver == 6
+    assert ver == 7
 
 
 # =============================================================================

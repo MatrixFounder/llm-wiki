@@ -197,10 +197,14 @@ class PageRef:
     ref_type: str
     """One of 'mentioned', 'defined-here', 'related', 'cited', 'verifies', plus the
     TASK 032 / R-032-1 (schema v6) event-graph typed edges 'implements',
-    'implemented-by', 'supersedes', 'superseded-by', 'causes', 'caused-by'
+    'implemented-by', 'supersedes', 'superseded-by', 'causes', 'caused-by', plus the
+    TASK 034 / R-2 (schema v7) edges 'invalidated-by', 'invalidates', 'activated-by',
+    'activates', 'uses', 'used-by', 'owns', 'owned-by'
     (sql/wiki-index-v2.sql §5 CHECK enum; 'verifies' added TASK 008 / R-8.9 — the
-    verdict→query edge; the v6 edges are inverse-closed [ADR-004 D1] — `relates_to`
-    reuses the symmetric 'related'; forward authored, inverse auto-derived)."""
+    verdict→query edge; the v6/v7 edges are inverse-closed [ADR-004 D1] — `relates_to`
+    reuses the symmetric 'related'; forward authored, inverse auto-derived. The v7
+    'invalidated-by'/'superseded-by' edges are read by the `wiki-search --as-of`
+    temporal valid_to walk)."""
 
     trust_level: TrustLevel = "medium"
     line_start: int | None = None

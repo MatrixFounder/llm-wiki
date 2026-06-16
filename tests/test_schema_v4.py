@@ -3,7 +3,7 @@
 Validates the runtime DDL (`sql/wiki-index-v2.sql`) directly. NOTE: the live
 `user_version` advanced to 5 in TASK 008 (R-8.9); the authoritative version pin
 lives in `test_schema_v5.py`. The v4-era invariants below persist unchanged:
-- PRAGMA user_version == 6 (bumped: TASK 008 v5, TASK 032 v6)
+- PRAGMA user_version == 7 (bumped: TASK 008 v5, TASK 032 v6, TASK 034 v7)
 - idx_pages_vault_tags dropped (P-5)
 - log_events.event_date is a STORED generated column == substr(event_ts,1,10) (L-2)
 - pages.type CHECK has no 'log' value (L-5 — already absent; guard)
@@ -28,7 +28,7 @@ def _fresh(tmp_path: Path) -> sqlite3.Connection:
 def test_user_version_is_4(tmp_path: Path) -> None:
     # TASK 008 / R-8.9 bumped the live schema to v5; the v4-era hygiene
     # invariants below (idx drop, generated event_date, no 'log' type) still hold.
-    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 6
+    assert _fresh(tmp_path).execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 def test_idx_pages_vault_tags_dropped(tmp_path: Path) -> None:

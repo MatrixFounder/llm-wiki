@@ -31,6 +31,7 @@ wiki-search "lasso regularization"          --vaults personal --limit 5
 wiki-search "переговоры" --vaults personal --project "Learning/Переговоры"
 wiki-search --vaults personal --where "type=lesson-summary" --limit 10   # list by frontmatter field (no FTS query)
 wiki-search --vaults personal --tag decision                              # list by a tags[] MEMBER (TASK 033; == --where 'tags=decision')
+wiki-search --vaults cybos --tag decision --as-of 2026-04-20               # TEMPORAL: decisions ACTIVE on a date (TASK 034; superseded/invalidated by then are excluded — no LLM, no valid_to authoring)
 wiki-search "smart money" --vaults personal --types summary               # restrict to a db type
 wiki-search "агент" --vaults personal --exact                            # literal: no stemming (ё/е still folded)
 ```

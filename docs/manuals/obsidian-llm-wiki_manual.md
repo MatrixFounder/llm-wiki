@@ -31,6 +31,7 @@
   - [The author's contract: markdown is canonical](#the-authors-contract-markdown-is-canonical)
   - [Registering a pre-made summary (not raw)](#registering-a-pre-made-summary-not-raw)
   - [Custom layouts: the layout engine](#custom-layouts-the-layout-engine)
+  - [Reference: page types & relation types (the knowledge model)](#reference-page-types--relation-types-the-knowledge-model)
   - [Mixed vault: search-only areas + enrich-able course zones](#mixed-vault-search-only-areas--enrich-able-course-zones)
   - [Automating the mix: `wiki-sync` (per-note routing, conversion, OCR)](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr)
 - [Using the wiki as an external resource for other agents](#using-the-wiki-as-an-external-resource-for-other-agents)
@@ -62,7 +63,7 @@ layer.
 | **Surface** | 16 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
 | **I/O contract** | stdin/args in → one-line JSON envelope on stdout + exit code |
 | **Core invariant** | The DB is 100% rebuildable from markdown (`wiki-reindex --full`) |
-| **Schema** | `user_version = 6` (`sql/wiki-index-v2.sql`) |
+| **Schema** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
 | **Runtime** | Python 3.14+; deps in `requirements.txt` |
 
 ---
@@ -213,7 +214,7 @@ The everyday read path — **search before you grep**.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing*. The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
+| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing*. It *also* does **temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15". The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
 | **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files). Use it to refresh the human-browsable catalog after ingests. |
 
 ### 3. Resolve entities
@@ -235,7 +236,7 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 |---|---|
 | **`wiki-query`** | Retrieval-augmented answering. `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex. This is "good answers can be filed back into the wiki" made durable. |
 | **`wiki-verify-multi`** | An **off-by-default** four-critic prose audit (factual-grounding / logic-coherence / security-injection / completeness-faithfulness) of a filed answer *against the sources it cited*. It files a `_verifications/verify-<slug>.md` verdict page. A FAIL **records the verdict and exits non-zero — it never edits the answer**. Reach for it on high-stakes answers where a silent hallucination would be costly. |
-| **`wiki-graph`** | Read-only **event-graph** traversal (TASK 032 / ADR-004): the typed page-to-page edges (`implements`/`supersedes`/`causes`/`relates-to` + auto-derived inverses) authored in frontmatter and indexed on reindex. `backlinks` (inbound) / `neighbors` (one-hop, in/out/both, by `--kind`) / `chain` (bounded supersession/causation lineage). Pairs with `wiki-query prepare --follow-edges`, which weaves typed-edge neighbors into a cited answer (default OFF; deterministic). "What did this decision cause / what supersedes X / the lineage." |
+| **`wiki-graph`** | Read-only **event-graph** traversal (TASK 032/034 / ADR-004): the typed page-to-page edges (`implements`/`supersedes`/`causes`/`relates-to`, plus the TASK-034 `invalidated-by`/`activated-by`/`uses`/`owns`, + auto-derived inverses) authored in frontmatter and indexed on reindex. `backlinks` (inbound) / `neighbors` (one-hop, in/out/both, by `--kind`) / `chain` (bounded supersession/causation lineage). Pairs with `wiki-query prepare --follow-edges`, which weaves typed-edge neighbors into a cited answer (default OFF; deterministic). "What did this decision cause / what supersedes X / the lineage." |
 
 ### 5. Maintain health
 
@@ -495,7 +496,7 @@ Four layout *grammars* ship built-in (`scripts/wiki_index/layouts/`), exposed as
 | `karpathy` | The standard layout above. **Byte-identical** to the legacy hardcoded behaviour (golden-anchor-guarded). Aliases: `flat`, `per-project`. | `identity` (verbatim stem) |
 | `dev-project` | A repo's `docs/` — `tasks/*.md`, `adr/*.md`, `issues/*.md`, etc. | `transliterate` (ASCII-safe) |
 | `obsidian-personal` | Numbered folders + Unicode | `preserve-unicode` |
-| `cybos` | **Typed knowledge / "operational-memory" vault** (TASK 031): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + the `tasks/ adr/ plans/` engineering spine. The home for the 7 typed knowledge classes. | `transliterate` |
+| `cybos` | **Typed knowledge / "operational-memory" vault** (TASK 031/034): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + the `tasks/ adr/ plans/` engineering spine + the TASK-034 agent-memory classes `agents/ tools/ workflows/ capabilities/ executions/ patterns/`. The home for the typed knowledge classes AND the agent-memory model. | `transliterate` |
 
 Pick one at init: `wiki-init --scaffold-new --vault <path> --layout dev-project`.
 
@@ -562,18 +563,22 @@ frontmatter `layout_config:` pointer.
 > (`summary`/`lesson-`/`meeting-`/`webinar-`/`tutorial-`/`article-`/`book-`/`video-`/
 > `podcast-`/`course-summary` + `moc`); anything else is yours to map.
 
-> **Typed knowledge classes (TASK 031).** Seven *event-graph* knowledge classes —
-> `decision`, `requirement`, `risk`, `incident`, `hypothesis`, `fact`, `event` —
-> ship as zero-DDL `type_mapping` tag-routes (onto the existing `pages.type` enum:
-> decision/risk/incident/hypothesis→`research`, requirement→`brief`, fact→`concept`,
-> event→`summary`). They are first-class in the **`cybos`** layout (folder-driven) and
-> available opt-in in **`dev-project`** (via explicit frontmatter `type:`). To adopt
-> them in any other vault (e.g. `obsidian-personal`), add the block to
-> `.wiki/layout.yaml` — it UNIONs in (proven on a real PARA vault). Per-class retrieval
-> is FTS on the tag word (`wiki-search "decision"`) optionally narrowed by
-> `--types <db_type>`. The note **templates** live at `templates/page-types/*.md`; full
-> reference at [`docs/layouts/cybos.md`](../layouts/cybos.md). Typed page-to-page
-> *edges* (the event graph proper) are a documented Phase 2 (ROADMAP R-13).
+> **Typed knowledge classes (TASK 031) + agent-memory classes (TASK 034).** Seven
+> knowledge classes — `decision`, `requirement`, `risk`, `incident`, `hypothesis`,
+> `fact`, `event` — plus the six TASK-034 agent-memory classes — `agent`, `tool`,
+> `workflow`, `capability`, `execution`, `pattern` — ship as zero-DDL `type_mapping`
+> tag-routes (onto the existing `pages.type` enum). They are first-class in the
+> **`cybos`** layout (folder-driven) and the knowledge classes are available opt-in in
+> **`dev-project`** (via explicit frontmatter `type:`). To adopt them in any other vault
+> (e.g. `obsidian-personal`), add the block to `.wiki/layout.yaml` — it UNIONs in
+> (proven on a real PARA vault). Per-class retrieval is the list-membership filter
+> (`wiki-search --tag decision`, TASK 033). The note **templates** live at
+> `templates/page-types/*.md`; full reference at
+> [`docs/layouts/cybos.md`](../layouts/cybos.md). Typed page-to-page *edges* — the event
+> graph proper (`wiki-graph`) — **shipped** in TASK 032/034 (ADR-004, schema v7): author
+> `implements`/`supersedes`/`caused_by`/`invalidated_by`/`uses`/`owns`/… in frontmatter,
+> one direction, inverse auto-derived. Point-in-time "what was active on date X" is then
+> a no-LLM `wiki-search --as-of` query (TASK 034).
 
 Three design facts worth internalising:
 
@@ -595,6 +600,189 @@ Three design facts worth internalising:
   `timeout=`, env-overridable via `WIKI_REDOS_BUDGET_S`, default 2.0s — on
   timeout the file is skipped with a WARN, never hangs). Built-in layouts use
   stdlib `re` and pay zero overhead (TASK 012 + 017).
+
+### Reference: page types & relation types (the knowledge model)
+
+The wiki's value comes from *typing* what a note IS and how notes RELATE. A note's **type**
+routes it to a `pages.type` bucket + a filterable `tag` (so `wiki-search --tag <type>` lists
+every note of that kind); its **relations** are typed page-to-page edges in the event graph
+that `wiki-graph` traverses and `wiki-search --as-of` reads. You author the type + the edges
+in frontmatter — everything below is the menu and what each entry is *for*.
+
+#### Page types — what each one is for
+
+**Knowledge classes (TASK 031 — the "what happened / what we know" layer):**
+
+| `type:` | Purpose — when to use it | `pages.type` bucket |
+|---|---|---|
+| `decision` | A choice that was made, with its rationale ("we chose X because Y"). | research |
+| `requirement` | Something the system MUST do — a spec / acceptance criterion. | brief |
+| `risk` | Something that *might* go wrong (a pre-mortem / open threat). | research |
+| `incident` | Something that *did* go wrong — an outage / postmortem. | research |
+| `hypothesis` | An unverified assumption you intend to test. | research |
+| `fact` | An atomic, verifiable statement of truth. | concept |
+| `event` | A timestamped occurrence — a meeting, release, milestone. | summary |
+
+**Engineering spine (shared with the `dev-project` layout):**
+
+| `type:` | Purpose | `pages.type` |
+|---|---|---|
+| `task` | A unit of work and its spec. | brief |
+| `adr` | An Architecture Decision Record. | research |
+| `plan` | An implementation plan. | brief |
+
+**Agent-memory classes (TASK 034 — the "who acts / what runs" layer; model the agentic system itself):**
+
+| `type:` | Purpose | `pages.type` |
+|---|---|---|
+| `agent` | An autonomous actor — an LLM agent or a human role. | concept |
+| `tool` | A callable capability surface — a CLI / API an agent invokes. | concept |
+| `workflow` | A procedure / state machine (`draft`→`active`→`deprecated`→`superseded`). | brief |
+| `capability` | An atomic skill an agent can perform (e.g. OCR, summarisation). | concept |
+| `execution` | A timestamped record of a single run (`status: success/failed/partial`) — operational memory. | summary |
+| `pattern` | A consolidated *second-order* finding ("most incidents trace to missing requirements"). | research |
+
+**Base content types (always available):** `note` (a generic note), `summary` (a timestamped
+narrative record — e.g. a meeting/lesson summary), `concept` (an atomic definitional unit),
+plus layout specifics such as `daily-note`, `clipping`, `moc` (map-of-content). Two
+system-authored types you never hand-write: `query` (a compounding cited RAG answer filed by
+`wiki-query`) and `verification` (a `wiki-verify-multi` verdict page).
+
+> Types are routed by the layout's `type_mapping`, so the *same* raw `type:` lands in the
+> right `pages.type` CHECK-enum bucket with **zero schema change**. `--types <bucket>` is the
+> coarse filter; `--tag <class>` (the precise per-class list-membership match) is what you
+> usually want. The note **templates** for every class live at `templates/page-types/*.md`
+> in the repo; `wiki-init` **copies all 13 into `<vault>/.wiki/page-types/`** for existing-tree
+> layouts (`cybos`/`dev-project`/`obsidian-personal`) so an agent or human working IN the vault
+> has them locally (under `.wiki/`, so they are never indexed).
+
+#### Relation types — what each edge is for
+
+Edges are **typed page-to-page links** authored in frontmatter on the SOURCE page (value =
+`[[wikilink]]` / slug, scalar or list). You author **one** direction; the **inverse is
+auto-derived** on the target at reindex, so the graph is navigable both ways without
+double-bookkeeping. Traverse with `wiki-graph backlinks/neighbors/chain --kind <edge>`.
+
+| Authored key | Meaning (source → target) | Auto-inverse | Example |
+|---|---|---|---|
+| `implements` | source fulfils / satisfies the target | `implemented-by` | a `decision` *implements* a `requirement` |
+| `supersedes` | source replaces the target | `superseded-by` | `decision v2` *supersedes* `v1` |
+| `superseded_by` | source is replaced by the target (the other end) | `supersedes` | `v1` is *superseded_by* `v2` |
+| `causes` | source brings about the target | `caused-by` | a `decision` *causes* an `incident` |
+| `caused_by` | source is brought about by the target | `causes` | an `incident` is *caused_by* a `decision` |
+| `invalidated_by` | the target nullifies / voids the source (TASK 034) | `invalidates` | a `decision` *invalidated_by* an `incident` |
+| `activated_by` | the target switches the source on / into effect (TASK 034) | `activates` | a `decision` *activated_by* a rollout `event` |
+| `uses` | source (an `agent`/`workflow`) calls the target tool/capability (TASK 034) | `used-by` | an `agent` *uses* a `tool` |
+| `owns` | source (an `agent`) owns / operates the target workflow (TASK 034) | `owned-by` | an `agent` *owns* a `workflow` |
+| `relates_to` | a symmetric, undirected association | `related` (symmetric) | a `fact` *relates_to* a `decision` |
+
+> **Two edges drive the temporal query.** `wiki-search --as-of <date>` treats a page as
+> having stopped being active once the earliest **`superseded-by`** *or* **`invalidated-by`**
+> successor's `date` has passed — so those two edges (plus the page's own `date`, or an
+> optional `valid_to` override) answer "what was active on date X" with no LLM. `activated_by`
+> does **not** retire a page (it only records what switched it on); a page's *start* is gated
+> by its creation `date` / `valid_from`.
+>
+> **System ref-types you don't author** (derived automatically, listed for completeness):
+> `mentioned` (a plain `[[wikilink]]` in the body), `cited` (a `query` page → a source it
+> cited), `verifies` (a `verification` page → the query it audited), `defined-here`. Only the
+> typed edges in the table above are authored in frontmatter.
+
+#### Examples — authoring pages (and what they unlock)
+
+A page is just a markdown file: the `type:` + the edge keys go in the frontmatter, the
+content goes in the body. In a **`cybos`** vault each type lives in its own folder
+(`decisions/`, `requirements/`, …) so you can even omit `type:`; in **`obsidian-personal`** /
+**`dev-project`** add the `type_mapping` block (above) and the explicit `type:` works
+anywhere. Edge values are `[[wikilinks]]` (or bare slugs), scalar or a list — **author one
+direction, the inverse is auto-derived.**
+
+A small connected scenario (mirrors the shipped `08 - CybOS Demo`):
+
+```markdown
+# requirements/throughput.md
+---
+type: requirement
+title: Message throughput ≥ 10k/s
+date: 2026-01-10
+---
+The broker must sustain 10 000 messages/second at peak.
+```
+```markdown
+# decisions/use-rabbitmq.md
+---
+type: decision
+title: Use RabbitMQ for async messaging
+status: superseded            # proposed | accepted | superseded | rejected
+date: 2026-02-01              # ← drives --as-of (when this decision took effect)
+implements: [[throughput]]    # → satisfies the requirement   (inverse: implemented-by)
+causes: [[queue-overflow]]    # → led to an incident          (inverse: caused-by)
+superseded_by: [[switch-to-kafka]]  # → replaced later        (inverse: supersedes)
+---
+Chosen for operational simplicity.
+```
+```markdown
+# decisions/switch-to-kafka.md
+---
+type: decision
+title: Switch the broker to Kafka
+status: accepted
+date: 2026-05-01
+implements: [[throughput]]
+supersedes: [[use-rabbitmq]]  # the supersession lineage
+---
+A partitioned log scales past RabbitMQ's single-broker ceiling.
+```
+```markdown
+# incidents/queue-overflow.md
+---
+type: incident
+title: Queue overflow outage
+status: resolved
+date: 2026-03-15
+caused_by: [[use-rabbitmq]]
+---
+Unbounded queue growth under burst load.
+```
+
+The supporting classes are just as short — `risk` (`relates_to: [[use-rabbitmq]]`),
+`hypothesis` (`relates_to: [[queue-overflow]]`), `fact` (a standalone truth),
+`event` (`type: event`, `date: 2026-05-01`, `relates_to: [[switch-to-kafka]]`).
+
+And the agent-memory side — model the system itself:
+
+```markdown
+# agents/claude-code.md
+---
+type: agent
+title: Claude Code
+status: active
+uses: [[wiki-query]]          # → a tool it calls          (inverse: used-by)
+owns: [[ingest-pipeline]]     # → a workflow it operates   (inverse: owned-by)
+implements: [[ocr]]           # → a capability it provides (inverse: implemented-by)
+---
+The orchestrator agent.
+```
+
+with `tool` (`# tools/wiki-query.md`), `workflow` (`# workflows/ingest-pipeline.md`,
+`status: active`, optionally `supersedes:` a prior version), `capability`
+(`# capabilities/ocr.md`), `execution` (`# executions/run-2026-06-16.md`, `type: execution`,
+`status: failed`, `date: 2026-06-16`, `relates_to: [[ingest-pipeline]]`), and `pattern`
+(`# patterns/missing-reqs.md`, `relates_to: [[queue-overflow]]`).
+
+**What those pages now unlock — no LLM needed:**
+
+```bash
+wiki-search --tag decision --vaults V                # every decision (tags[] member match)
+wiki-search --tag decision --as-of 2026-04-01 --vaults V   # → use-rabbitmq (active then; kafka is 05-01)
+wiki-search --tag decision --as-of 2026-06-01 --vaults V   # → switch-to-kafka (rabbitmq superseded 05-01)
+wiki-graph chain switch-to-kafka --kind supersedes --vault V   # lineage → use-rabbitmq
+wiki-graph backlinks throughput --kind implements --vault V    # what implements the requirement → both decisions
+wiki-graph backlinks ocr        --kind implements --vault V    # which agents can do OCR → claude-code
+wiki-graph neighbors use-rabbitmq --direction out --vault V    # all its outgoing edges
+wiki-search --tag execution --status failed --vaults V         # failed runs (operational memory)
+wiki-query prepare "why did we leave RabbitMQ?" --vault-root V --follow-edges  # cited RAG, graph-expanded
+```
 
 ### Mixed vault: search-only areas + enrich-able course zones
 

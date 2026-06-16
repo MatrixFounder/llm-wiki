@@ -56,3 +56,14 @@ slug: r-x3-metadata-filter-unindexed-scan
   only the scalar `=` branch. The natural remedy for `tags`-membership is the FTS-tags
   projection (`pages_fts` already indexes `json_extract(…,'$.tags')`) or a normalized
   tag table — fold that in when this residual is addressed.
+- **TASK 034 note (`--as-of` temporal branch)**: `wiki-search --as-of` adds
+  `COALESCE(substr(json_extract(frontmatter_json,'$.valid_from'),1,10), p.date)` +
+  `substr(json_extract(…,'$.valid_to'),1,10)` predicates (scalar `json_extract`, plus a
+  correlated `NOT EXISTS` successor-walk that IS index-backed via `idx_refs_page` + the
+  `pages` PK). The two `valid_from`/`valid_to` reads are the **same unindexed scalar-
+  `json_extract` scan class** as the original `--where =` branch — and, unlike the TASK
+  033 `json_each` membership branch, they **ARE** a co-beneficiary of fix-option 1/2: a
+  generated `valid_from`/`valid_to` STORED column + index would accelerate the temporal
+  filter in the same stroke as the hot `--where` field. Bounded by `--limit` + the
+  vault/type/project partition prune; imperceptible at present scale (perf-critic
+  `/vdd-multi` pass: LOW, no new regression). Fold into the same consolidation.

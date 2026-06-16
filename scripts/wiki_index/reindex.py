@@ -207,6 +207,19 @@ _EDGE_KEY_TO_REF_TYPE: dict[str, str] = {
     "causes": "causes",
     "caused_by": "caused-by",
     "relates_to": "related",
+    # TASK 034 / R-2 (ADR-004 ext, schema v7) — temporal + agent-memory edges.
+    # Both authorable directions (TASK 032 parity); the inverse is auto-derived.
+    # `invalidated-by`/`activated-by` carry RFC-001 temporal causality — the
+    # `wiki-search --as-of` valid_to walk reads `invalidated-by` ∥ `superseded-by`;
+    # `uses`/`owns` carry RFC-002 agent↔tool/workflow relations.
+    "invalidated_by": "invalidated-by",
+    "invalidates": "invalidates",
+    "activated_by": "activated-by",
+    "activates": "activates",
+    "uses": "uses",
+    "used_by": "used-by",
+    "owns": "owns",
+    "owned_by": "owned-by",
 }
 
 
@@ -286,6 +299,15 @@ _INVERSE_REF_TYPE: dict[str, str] = {
     "causes": "caused-by",
     "caused-by": "causes",
     "related": "related",
+    # TASK 034 / R-2 (schema v7) — four new inverse-closed pairs.
+    "invalidated-by": "invalidates",
+    "invalidates": "invalidated-by",
+    "activated-by": "activates",
+    "activates": "activated-by",
+    "uses": "used-by",
+    "used-by": "uses",
+    "owns": "owned-by",
+    "owned-by": "owns",
 }
 
 

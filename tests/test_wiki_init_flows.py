@@ -332,3 +332,70 @@ def test_reconcile_rename_requires_confirm(minimal_vault: Path, tmp_path):
     assert out["action"] == "renamed"
     assert out["old_vault_id"] == "minimal-test"
     assert out["new_vault_id"] == "renamed-vault"
+
+
+# =============================================================================
+# Page-type templates copied into the vault (existing-tree layouts)
+# =============================================================================
+
+
+def test_register_existing_copies_page_types_non_two_tier(tmp_path):
+    """An existing-tree layout (obsidian-personal) gets the 13 page-type scaffolds
+    copied into <vault>/.wiki/page-types/ so a vault-launched agent has them locally;
+    re-run is non-destructive (→ 'exists')."""
+    vault = _schema(tmp_path / "pt-x", "pt-x")  # obsidian-personal
+    code, out = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    ptt = out["page_type_templates"]
+    assert len(ptt) == 13 and all(v == "written" for v in ptt.values())
+    assert {".wiki/page-types/decision.md", ".wiki/page-types/agent.md"} <= set(ptt)
+    assert (vault / ".wiki" / "page-types" / "decision.md").exists()
+    # idempotent / non-destructive on re-run
+    code2, out2 = _run([
+        "--register-existing", "--vault", str(vault), "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert all(v == "exists" for v in out2["page_type_templates"].values())
+
+
+def test_page_types_not_copied_for_karpathy(tmp_path):
+    """The Karpathy family (two-tier scaffold) uses the concept/entity model, not
+    typed classes → no page-type copy."""
+    vault = tmp_path / "kv"
+    code, out = _run([
+        "--scaffold-new", "--vault", str(vault), "--vault-id", "karp-x",
+        "--layout", "karpathy", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["page_type_templates"] == {}
+    assert not (vault / ".wiki" / "page-types").exists()
+
+
+def test_copied_page_types_are_never_indexed(tmp_path):
+    """SAFETY INVARIANT: the copied .wiki/page-types/*.md carry `type: decision` with
+    placeholder titles — they must NEVER be indexed as junk pages. The walk prunes
+    dot-directories, so .wiki/ is never descended (obsidian-personal does not even
+    list `.wiki/**` in `ignore`, yet the dot-prune keeps it out)."""
+    from scripts.wiki_index.reindex import reindex_full
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+
+    vault = _schema(tmp_path / "pt-idx", "pt-idx")  # obsidian-personal
+    (vault / "05 - Notes").mkdir(parents=True)
+    (vault / "05 - Notes" / "real.md").write_text(
+        "---\ntype: note\ntitle: Real\n---\nbody\n", encoding="utf-8")
+    db = tmp_path / "g.db"
+    code, out = _run(["--register-existing", "--vault", str(vault), "--db-path", str(db)])
+    assert code == 0
+    assert (vault / ".wiki" / "page-types" / "decision.md").exists()  # copied
+
+    repo = SQLiteRepository(db)
+    try:
+        reindex_full(repo, "pt-idx")
+        rows = repo._connect().execute(
+            "SELECT slug, type, file_path FROM pages WHERE vault_id='pt-idx'").fetchall()
+    finally:
+        repo.close()
+    assert all(".wiki" not in (r[2] or "") for r in rows)   # no scaffold indexed
+    assert not any(r[1] == "decision" for r in rows)         # no junk decision page
+    assert any(r[0] == "real" for r in rows)                 # the real note IS indexed

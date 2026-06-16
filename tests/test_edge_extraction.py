@@ -28,6 +28,11 @@ def test_key_to_ref_type_map_complete() -> None:
         "supersedes": "supersedes", "superseded_by": "superseded-by",
         "causes": "causes", "caused_by": "caused-by",
         "relates_to": "related",
+        # TASK 034 / R-2 — temporal + agent-memory edges (both authorable directions).
+        "invalidated_by": "invalidated-by", "invalidates": "invalidates",
+        "activated_by": "activated-by", "activates": "activates",
+        "uses": "uses", "used_by": "used-by",
+        "owns": "owns", "owned_by": "owned-by",
     }
 
 

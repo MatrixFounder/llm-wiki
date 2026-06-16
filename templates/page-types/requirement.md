@@ -5,13 +5,11 @@ tags: []
 status: draft               # draft | approved | implemented | dropped
 priority: 2                 # 1 (highest) .. 4
 date: 2026-01-01
-# --- Phase-2 (ROADMAP R-13) event-graph edges — LIVE — extracted as typed edges (TASK 032) ----
-# Extracted as typed page-to-page edges on reindex (ADR-004); inverses auto-derived.
-implements: []
-supersedes: []
-superseded_by: []
-caused_by: []
-relates_to: []             # decisions / tasks that realise this requirement
+# --- event-graph edges (TASK 032/034) — authored ONE direction, inverse AUTO-DERIVED on reindex ---
+implemented_by: []         # decisions / tasks that realise this requirement (→ implements)
+supersedes: []             # a prior requirement this replaces               (→ superseded-by)
+superseded_by: []          # a later requirement that replaces this one      (→ supersedes)
+relates_to: []
 ---
 
 # <Requirement title>

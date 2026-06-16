@@ -35,6 +35,16 @@ type comes from its folder (no frontmatter `type:` required), or from an explici
 | `tasks/` | task | brief | `task` |
 | `adr/` | adr | research | `adr` |
 | `plans/` | plan | brief | `plan` |
+| `agents/` | agent | concept | `agent` |
+| `tools/` | tool | concept | `tool` |
+| `workflows/` | workflow | brief | `workflow` |
+| `capabilities/` | capability | concept | `capability` |
+| `executions/` | execution | summary | `execution` |
+| `patterns/` | pattern | research | `pattern` |
+
+The last six (**TASK 034**) are the *agent-memory* classes — Agents, Tools, Workflows,
+Capabilities, Executions, Patterns — so a cybos vault can model the agentic system
+itself, not just its domain knowledge (RFC-002/003/005/006).
 
 **Zero DDL.** Every class tag-routes onto the existing 7-value `pages.type` enum
 (`summary`, `concept`, `query`, `brief`, `research`, `index`, `verification`) — no
@@ -110,11 +120,14 @@ ignore:
 ## The event graph — typed edges (TASK 032 / ADR-004, ✅ LIVE)
 
 The edge keys — `implements`, `supersedes`, `superseded_by`, `caused_by`, `relates_to`
-(+ the directly-authorable `implemented_by`/`causes`) — are now **extracted as typed
-page-to-page edges** on `wiki-reindex` (schema v6). Author ONE direction; the **inverse
+(+ the directly-authorable `implemented_by`/`causes`), plus the **TASK 034** agent-memory/
+temporal edges `invalidated_by`/`activated_by`/`uses`/`owns` — are now **extracted as typed
+page-to-page edges** on `wiki-reindex` (schema v7). Author ONE direction; the **inverse
 is auto-derived** (`implements`↔`implemented-by`, `supersedes`↔`superseded-by`,
-`causes`↔`caused-by`; `relates_to` is symmetric `related`). Values are `[[wikilinks]]`
-or bare slugs, scalar or a list. Orphan targets keep a forward link but derive no inverse.
+`causes`↔`caused-by`, `invalidated-by`↔`invalidates`, `activated-by`↔`activates`,
+`uses`↔`used-by`, `owns`↔`owned-by`; `relates_to` is symmetric `related`). Values are
+`[[wikilinks]]` or bare slugs, scalar or a list. Orphan targets keep a forward link but
+derive no inverse.
 
 ```yaml
 # decisions/use-rabbitmq.md
@@ -142,3 +155,23 @@ wiki-query prepare "what did the RabbitMQ decision cause?" --vault <id> --follow
 deterministically (folded into `question_hash`). Markdown stays canonical; the graph is a
 rebuildable Class-B projection (ADR-002 §D8 / ADR-004). Delta refreshes edge *additions*;
 edge/source *removals* are repaired by `wiki-reindex --full` (provenance-safe — ADR-004 D4).
+
+## Point-in-time queries — `wiki-search --as-of` (TASK 034)
+
+"Which decisions were active on date X?" is answered **without an LLM** and **without
+authoring any `valid_to`**:
+
+```bash
+wiki-search --tag decision --as-of 2026-04-20 --vault <id>   # decisions live on that date
+```
+
+A note is **active as of DATE** iff it was created on-or-before DATE (its `date:`, or an
+optional `valid_from:` override) **and** had not yet been **superseded or invalidated** by
+then — derived from the event graph (`superseded-by` / `invalidated-by` edges), or an
+optional `valid_to:` override. So validity is *computed* from the `date` + the supersede/
+invalidate graph; `valid_from`/`valid_to` are only for the rare future-effective /
+known-sunset case. A note with no `date`/`valid_from` is excluded. Example: decision A
+(`date 2026-03-01`) `superseded_by` decision B (`date 2026-05-12`) → A is the active
+decision for any `--as-of` between those dates, B afterwards — the answer flips on B's date,
+no hand-maintained `valid_to`. Combine with the supersession lineage (`wiki-graph chain
+--kind supersedes`) for the full decision history.

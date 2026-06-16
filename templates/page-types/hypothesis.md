@@ -4,12 +4,8 @@ title: "<the proposition — e.g. Polling is the throughput bottleneck>"
 tags: []
 status: proposed           # proposed | testing | confirmed | refuted
 date: 2026-01-01
-# --- Phase-2 (ROADMAP R-13) event-graph edges — LIVE — extracted as typed edges (TASK 032) ----
-implements: []
-supersedes: []
-superseded_by: []
-caused_by: []
-relates_to: []             # the decision / experiment this informs
+# --- event-graph edges (TASK 032/034) — authored ONE direction, inverse AUTO-DERIVED on reindex ---
+relates_to: []             # the [[decision]] / [[incident]] / experiment this informs
 ---
 
 # <Hypothesis title>

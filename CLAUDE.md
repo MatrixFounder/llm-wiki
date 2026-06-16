@@ -346,6 +346,22 @@ ARCHITECTURE Q-025-1/2/3/4.
 non-destructive, `--force` to overwrite) where the agent file is written, via a config-driven
 `settings_file`/`settings_template` on `templates/agent-files.yaml`. See ARCHITECTURE Q-026-1,
 `docs/tasks/task-026-installer-vault-claude-settings.md`.
+**Page-type scaffolds shipped into the vault (installer follow-on, uncommitted 2026-06-16):**
+`wiki-init` now also **copies the 13 `templates/page-types/*.md`** (7 knowledge + 6 agent-memory
+classes) into **`<vault>/.wiki/page-types/`** for existing-tree layouts (`cybos`/`dev-project`/
+`obsidian-personal`; Karpathy family skipped) via `wiki_init._write_page_type_templates` —
+VERBATIM, per-file non-destructive, envelope key `page_type_templates`. This closes the gap that
+a vault-launched agent couldn't see the typed-class authoring templates (they lived only in the
+repo). Target is under `.wiki/`, kept out of the index by the **walker's dot-dir prune** (NOT an
+`ignore` glob — `obsidian-personal` doesn't list `.wiki/**`; pinned by
+`test_copied_page_types_are_never_indexed`). The `CLAUDE.layout.md.tmpl` + vault `CLAUDE.md` gained
+an inline authoring reference (compact example + pointer to `.wiki/page-types/`). The 7
+knowledge-class templates were also refreshed to **type-appropriate** live edges (dropped the stale
+"Phase-2 reserved-but-inert" block; `decision` gained `invalidated_by`/`activated_by`, `incident`
+`invalidates`, `event` `activates`, `requirement` fixed `implements`→`implemented_by`);
+`tests/test_page_type_templates.py` rewritten to validate all 13 + that every edge key is a real
+authorable key. **1452 pytest, mypy strict.** Real-vault dogfood GREEN (TestVault: 13 copied,
+reindex still 2493 pages / 0 junk under `.wiki/page-types`).
 **TASK 028 (R-Y1 — query-side stemming + ё/е folding) SHIPPED 2026-06-09** (uncommitted, branch
 `task-028-query-stemming-yo-folding`): closes the two real-vault recall misses (literal multi-term
 AND missed inflected `Сценарии продаж`; `продуктовое осведомление` ranked a tangential page and
@@ -519,6 +535,42 @@ no reindex): 7 typed classes → exact pages; 5 real tags incl. Cyrillic match t
 count EXACTLY; `--where`≡`--tag`; FTS+tag AND; scalar back-compat; genuine member-match; dup-guard +
 no-echo. See `docs/tasks/task-033-list-membership-metadata-filter.md`,
 `docs/plans/plan-033-*`, ARCHITECTURE Q-033-1/2.
+**TASK 034 (temporal core + agent-memory edges & classes — RFC-001/002 slice; ROADMAP R-14)
+COMPLETE / merge-ready 2026-06-16** (branch `task-034-temporal-agent-memory`, uncommitted):
+worked through a 6-RFC "agent memory system" proposal from a second agent — an audit found
+~60-70% already expressible (TASK 031/032/033), so this builds only the one genuinely-new
+high-leverage slice. **(1) `wiki-search --as-of DATE`** — a point-in-time "active as of"
+filter that is **graph-derived, ZERO required new fields** (operator rejected the RFC's literal
+`valid_from`/`valid_to` — `valid_to` is unfillable at authoring time): a page is active iff
+`COALESCE(substr(json_extract(fm,'$.valid_from'),1,10), pages.date) <= DATE` AND `DATE <
+effective_to`, where `effective_to` = an authored `valid_to` override ELSE the `date` of the
+earliest page that **supersedes/invalidates** it (the TASK 032/034 graph) ELSE +inf — half-open
+`[from,to)`. `valid_from`/`valid_to` survive only as optional overrides. Answers "which decisions
+were active on the incident date" with **no LLM**. CLI validates+normalizes ISO (`INVALID_FILTER`,
+no value echo), composes with FTS/`--where`/`--tag`/`--types`, valid alone (relaxed guard); DAL
+`search_pages(as_of=)` appends the predicate (`None`→zero SQL delta, back-compat). **(2) Schema
+v6→v7** (4th DDL since v2) — `page_entity_refs.ref_type` gains four inverse-closed pairs
+(`invalidated_by`↔`invalidates`, `activated_by`↔`activates`, `uses`↔`used-by`, `owns`↔`owned-by`;
+`invalidated-by` is what the `--as-of` walk reads), same mechanical pattern + Class-B rebuild as
+TASK 032; both authorable directions (TASK 032 parity). **(3) cybos layout** gains six
+**agent-memory** page types (`agent`/`tool`/`workflow`/`capability`/`execution`/`pattern`) via
+`type_mapping` + `paths` + `templates/page-types/*` — config-only, zero Python (TASK 031 pattern).
+Karpathy byte-identity preserved. Full VDD pipeline + **`/vdd-multi` converged** (Security ✓
+clean-pass; Performance ✓ — 2 LOW pre-existing R-X3-MF-SCAN class, the `--as-of` SCALAR branch is a
+co-beneficiary of a future generated-column index [noted in the issue]; Logic ✓ — iter-1 2 MED on
+untested inputs, **reproduced+fixed+re-verified clean-pass**: MED-1 cross-project successor
+ambiguity → `COUNT=1` guard mirroring `_derive_inverse_edges` [conservative "stay active when
+ambiguous"], MED-2 datetime-valued override → `substr(…,1,10)` date-part compare). **Live CLI
+dogfood GREEN** (`samples/cybos-dogfood`, vault-local `index_db`): `--as-of 2026-04-20` → the lone
+active decision (RFC acceptance test), flips at `2026-06-01`; `wiki-graph chain --kind supersedes` /
+`backlinks ocr --kind implements` / `neighbors inc-42 --kind invalidates` all correct. Dogfood
+found+fixed **DF-034-1** (SEV-2): `wiki-graph`'s `--kind` allow-list was a hardcoded TASK-032 list
+that silently dropped the v7 kinds → now **derived from `reindex._INVERSE_REF_TYPE`** (single source
+of truth, drift-proof) + regression test. **Deferred (ROADMAP R-14):** RFC-004 `wiki-extract-decisions`,
+RFC-006 `wiki-consolidate`, RFC-003 aggregation; the redundant `wiki-agent`/`wiki-workflow` CLIs NOT
+built (compose `wiki-graph`/`wiki-search`). **Zero new deps, no `import anthropic`. 1443 pytest
+(+50), mypy strict (76 files).** See `docs/tasks/task-034-temporal-agent-memory.md`,
+`docs/plans/plan-034-*`, ARCHITECTURE §4 + Q-034-1..4, ADR-004.
 
 ## Knowledge lookup priority
 
@@ -566,10 +618,16 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 033
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 034
+  `temporal-agent-memory`** (ROADMAP R-14; `wiki-search --as-of DATE` point-in-time querying
+  [graph-derived from `pages.date` + the supersede/invalidate graph — zero required new fields],
+  four new inverse-closed edge pairs `invalidated_by`/`activated_by`/`uses`/`owns`, six cybos
+  agent-memory page types; schema v6→v7; `docs/TASK.md` + `docs/PLAN.md` live at HEAD; ADR-004;
+  ARCHITECTURE §4 + Q-034-1..4; DF-034-1 wiki-graph `--kind` drift fixed). Preceded by **TASK 033
   `list-membership-metadata-filter`** (ROADMAP R-13 residual; `wiki-search --where`/`--tag`
   matches a list member of `tags[]` via a scalar-OR-`json_each` predicate; zero DDL,
-  `user_version` 6; `docs/TASK.md` + `docs/PLAN.md` live at HEAD; ARCHITECTURE Q-033-1/2).
+  `user_version` 6; archived `docs/tasks/task-033-list-membership-metadata-filter.md` +
+  `docs/plans/plan-033-list-membership-metadata-filter.md`; ARCHITECTURE Q-033-1/2).
   Preceded by **TASK 032 `event-graph-relations`** (R-13 Phase-2; typed page-to-page edges +
   auto-inverse + `wiki-graph` CLI + graph-aware RAG; schema v5→v6; archived
   `docs/tasks/task-032-event-graph-relations.md` + beads `task-032-00..06-*.md` +

@@ -218,6 +218,51 @@ def _write_agent_files(
     return out
 
 
+def _write_page_type_templates(
+    vault_root: Path, layout: str, *, force: bool,
+) -> dict[str, str]:
+    """Copy the per-class page-type scaffolds (`templates/page-types/*.md`) into
+    ``<vault>/.wiki/page-types/`` for **existing-tree (non-two-tier) layouts**
+    (`cybos` / `dev-project` / `obsidian-personal`), so an agent launched IN the vault
+    — and the human in Obsidian — has the typed-knowledge authoring templates LOCALLY;
+    they otherwise live only in the obsidian-llm-wiki repo, invisible to a vault-only
+    agent. The Karpathy family (`karpathy`/`flat`/`per-project`) uses the
+    concept/entity model, not typed classes → no copy.
+
+    VERBATIM copy — the page-type templates use ``<placeholder>`` literals, NOT
+    ``string.Template`` (so a stray ``$`` would not raise; copying byte-for-byte also
+    preserves the literal ``${...}``-free frontmatter). Per-file **non-destructive**
+    (an edited scaffold is never clobbered without ``--force``). The target lives under
+    ``.wiki/``, which the index walk prunes (dot-directory — verified) and which
+    `file_extensions: ['.md']` would NOT otherwise exclude, so this is the safe home:
+    the copies are **never indexed as junk pages**. Returns ``{relpath: "written" |
+    "exists" | "error"}`` (empty for the Karpathy family)."""
+    out: dict[str, str] = {}
+    if is_two_tier_scaffold(layout):
+        return out  # Karpathy family — typed knowledge classes are N/A
+    src_dir = _TEMPLATES_DIR / "page-types"
+    dest_dir = vault_root / ".wiki" / "page-types"
+    try:
+        srcs = sorted(src_dir.glob("*.md"))
+    except OSError:
+        return out
+    for src in srcs:
+        rel = f".wiki/page-types/{src.name}"
+        target = dest_dir / src.name
+        if target.exists() and not force:
+            out[rel] = "exists"
+            continue
+        try:
+            content = src.read_text(encoding="utf-8")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(target, content)
+        except OSError:  # unreadable source OR write fault — non-fatal (vault is registered)
+            out[rel] = "error"
+        else:
+            out[rel] = "written"
+    return out
+
+
 def _index_db_value(args: argparse.Namespace) -> str | None:
     """TASK 022 — the index_db to declare: ``--index-db`` wins; ``--local`` ⇒
     ``.wiki/index.db``; else ``None`` (global DB, unchanged)."""
@@ -346,6 +391,8 @@ def scaffold_new(args: argparse.Namespace) -> int:
     agent_files = _write_agent_files(
         vault_root, placeholders, _vendors, _selection, _vendor_settings,
         force=bool(args.force))
+    page_type_templates = _write_page_type_templates(
+        vault_root, placeholders["layout"], force=bool(args.force))
     if _karpathy:
         idx = vault_root / VAULT_INDEX_DIR / "index.md"
         if not idx.exists():
@@ -380,6 +427,7 @@ def scaffold_new(args: argparse.Namespace) -> int:
         "vault_root": str(vault_root),
         "db_path": str(db_path),
         "agent_files": agent_files,
+        "page_type_templates": page_type_templates,
     })
 
 
@@ -494,6 +542,8 @@ def register_existing(args: argparse.Namespace) -> int:
         vendors, selection, vendor_settings,
         force=bool(args.force),
     )
+    page_type_templates = _write_page_type_templates(
+        vault_root, str(fm.get("layout") or "per-project"), force=bool(args.force))
     return _emit({
         "action": action,
         "vault_id": vault_id,
@@ -501,6 +551,7 @@ def register_existing(args: argparse.Namespace) -> int:
         "is_two_tier": is_two_tier,
         "db_path": str(db_path),
         "agent_files": agent_files,
+        "page_type_templates": page_type_templates,
     })
 
 

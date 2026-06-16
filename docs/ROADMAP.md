@@ -510,6 +510,33 @@ becomes a routine query. Relates to [R-X5](#r-x5-entity-graph-cross-project-phas
 
 ---
 
+### R-14. Temporal core + agent-memory classes — Phase 3 ✅ SHIPPED (TASK 034, 2026-06-16)
+
+A 6-RFC "agent memory system" proposal arrived from a second agent; an audit found
+~60-70% already expressible via R-13 (TASK 031/032/033). TASK 034 built the one
+genuinely-new high-leverage slice (RFC-001 temporal core + the cheap RFC-001/002 edge &
+classification wins). **(1) `wiki-search --as-of DATE`** — point-in-time "active as of"
+querying that is **graph-derived, zero required new fields**: validity is computed from the
+indexed `pages.date` + the supersede/invalidate graph (the operator rejected the RFC's
+literal `valid_to` field as unfillable; `valid_from`/`valid_to` survive only as optional
+overrides). Answers "which decisions were active on the incident date" with no LLM. **(2)
+Schema v6→v7** — four new inverse-closed edge pairs (`invalidated_by`↔`invalidates`,
+`activated_by`↔`activates`, `uses`↔`used-by`, `owns`↔`owned-by`). **(3)** the `cybos` layout
+gains six **agent-memory** page types (`agent`/`tool`/`workflow`/`capability`/`execution`/
+`pattern`, config-only). `/vdd-multi` converged (2 MED logic fixed: cross-project successor
+COUNT=1 guard + datetime-override `substr` boundary); dogfood found+fixed DF-034-1 (wiki-graph
+`--kind` allow-list now derived from `_INVERSE_REF_TYPE`, drift-proof). 1443 pytest, mypy
+strict. See `docs/tasks/task-034-temporal-agent-memory.md`, ARCHITECTURE Q-034-1..4.
+
+**Deferred (the rest of the RFCs)** — RFC-004 `wiki-extract-decisions` (clone the
+`wiki-extract-concepts` prepare→apply→confirm rail); RFC-006 `wiki-consolidate` (cross-corpus
+second-order pattern mining, the greenfield one); RFC-003 aggregation reporting ("which
+workflow fails most often" — needs a GROUP-BY read surface over `log_events` / `execution`
+pages). The redundant `wiki-agent graph` / `wiki-workflow status` CLIs are intentionally NOT
+built (compose `wiki-graph`/`wiki-search`, Decision-17).
+
+---
+
 ## P2 — Cross-project indexing
 
 Design doc: [`docs/proposals/indexing-agentic-dev-artifacts.md`](proposals/indexing-agentic-dev-artifacts.md)

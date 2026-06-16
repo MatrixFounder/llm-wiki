@@ -7,10 +7,11 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 033**
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 034**
 > (typed knowledge classes + event graph [typed page-to-page edges, `wiki-graph`,
-> graph-aware RAG] + the list-membership `--where`/`--tag` metadata filter). Schema
-> **v6** (`user_version = 6`). **1393 pytest passed,
+> graph-aware RAG] + the list-membership `--where`/`--tag` metadata filter + the
+> **temporal `wiki-search --as-of`** point-in-time query and six agent-memory page
+> classes). Schema **v7** (`user_version = 7`). **1443 pytest passed,
 > `mypy --strict` clean on 76 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
@@ -104,7 +105,7 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 15 thin entry points (14 `wiki_*.py` modules + the `wiki_extract_concepts/` package) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
+| **CLIs** | `scripts/wiki_skills/` | 16 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py` + the `wiki_extract_concepts/` package) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
 | **Vendored file layer** | `scripts/wiki_ingest/` | In-process snapshot of the external `wiki-ingest` skill (TASK 004). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
@@ -123,7 +124,7 @@ itself stays vault-free.)
 
 ![data-model-infopraphic](Images/data-model-infopraphic.png)
 
-One global DB (`sql/wiki-index-v2.sql`, `user_version = 6`), every table
+One global DB (`sql/wiki-index-v2.sql`, `user_version = 7`), every table
 partitioned by `vault_id`. The three-class contract (ADR-002 §D8):
 
 - **Class A** — vault markdown. Semantic, canonical, human-/LLM-authored.
@@ -291,6 +292,7 @@ wiki-search "concept name" --vaults my-vault
 wiki-search --status open --severity SEV-2 --vaults my-vault
 wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
 wiki-search --tag decision --vaults my-vault   # list every page tagged 'decision' (tags[] member)
+wiki-search --tag decision --as-of 2026-04-15 --vaults my-vault   # TEMPORAL (TASK 034): decisions ACTIVE on that date — derived from date + the supersede/invalidate graph, no LLM
 ```
 
 For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
@@ -402,9 +404,10 @@ binaries.
 |---|---|
 | `wiki-search "<query>" --vaults <vid>[,<vid>…]` | FTS5 BM25 search across one/many vaults; ranked hits + snippets; expands aliases. |
 | `wiki-search [--status <v>] [--severity <v>] [--tag <v>] [--where 'field=value'] --vaults <vid>` | Filter by frontmatter metadata — scalar OR list member (`--tag`/`--where 'tags=…'`, TASK 033); query optional → pure listing. |
+| `wiki-search [--as-of YYYY-MM-DD] --vaults <vid>` | **Temporal** (TASK 034): pages **active on a date** — created by then & not yet superseded/invalidated (derived from `date` + the event graph; no LLM, no `valid_to` authoring). E.g. `--tag decision --as-of 2026-04-15`. |
 | `wiki-query prepare/apply --vault-root <path>` | RAG: retrieve → orchestrator-cited synthesis → file a compounding `_queries/<slug>.md` page (`prepare`/`apply`). |
 | `wiki-verify-multi prepare/apply` | Off-by-default 4-critic audit of a filed answer vs its cited sources → `_verifications/verify-<slug>.md` verdict page; FAIL records + exits non-zero, never mutates the answer. |
-| `wiki-graph neighbors/chain/backlinks <slug> --vault <vid> [--kind K] [--direction D] [--depth N]` | Read-only **event-graph** traversal over the typed page-to-page edges (implements/supersedes/causes/relates-to + auto-derived inverses). TASK 032 / ADR-004; pairs with `wiki-query --follow-edges`. |
+| `wiki-graph neighbors/chain/backlinks <slug> --vault <vid> [--kind K] [--direction D] [--depth N]` | Read-only **event-graph** traversal over the typed page-to-page edges (implements/supersedes/causes/relates-to + the TASK-034 invalidated-by/activated-by/uses/owns + auto-derived inverses). TASK 032/034 / ADR-004; pairs with `wiki-query --follow-edges`. |
 
 ### Knowledge construction
 
@@ -481,7 +484,7 @@ docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, pla
   adr/                      ADR-001 (wrap+index), ADR-002 (multi-vault + Class A/B/C)
   KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
 config/                     layout-config / wiki-config / sync-config schema.yaml (the 3 config systems)
-sql/wiki-index-v2.sql       the SQLite DDL (user_version = 6)
+sql/wiki-index-v2.sql       the SQLite DDL (user_version = 7)
 templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md)
                             mapped in agent-files.yaml — for new/registered vaults
 

@@ -8,7 +8,7 @@ description: >-
   Triggers: "search wiki", "find in vault", "wiki-search", "what is", "how do I",
   any vault-domain question.
 tier: 2
-version: 1.5
+version: 1.6
 ---
 
 # wiki-search
@@ -37,13 +37,15 @@ wiki-search "<query>" \
     [--types summary,concept,entity] \
     [--project _vault_] [--limit 20] \
     [--where 'field=value' ...] [--status <v>] [--severity <v>] [--tag <v>] \
+    [--as-of YYYY-MM-DD] \
     [--exact | --no-stem] \
     [--format json|markdown] \
     [--db-path <override>]
 ```
 
 Or `/wiki-search "<query>" [...]`. The `<query>` is OPTIONAL when a metadata filter
-(`--where`/`--status`/`--severity`/`--tag`) is given — then a non-FTS listing is returned.
+(`--where`/`--status`/`--severity`/`--tag`) **or `--as-of`** is given — then a non-FTS
+listing is returned.
 
 ## Contract
 
@@ -66,6 +68,21 @@ Or `/wiki-search "<query>" [...]`. The `<query>` is OPTIONAL when a metadata fil
   every typed-class decision page (one clean command). Hyphenated (`SEV-2`) / numeric
   (`priority=1`) scalar values match by string-rep. Omit the query for a pure listing.
   At most one predicate per field (a dup → `INVALID_FILTER`, exit 2, value never echoed).
+- **Temporal filter (TASK 034)** — `--as-of YYYY-MM-DD` returns only pages **active
+  on that date**: created on-or-before it (`pages.date`, or an authored `valid_from`
+  override) AND **not yet superseded/invalidated by then** — derived from the event
+  graph (the `superseded-by`/`invalidated-by` edges) or an authored `valid_to`
+  override. Answers *"which decisions were active on the incident date"* with **no LLM**
+  and **no per-note `valid_to` authoring** (it's derived; `valid_from`/`valid_to` are
+  optional overrides only). A page with no `date`/`valid_from` is excluded. Composes
+  (AND) with the query + `--where`/`--tag`/`--types`; valid on its own. A non-ISO date
+  → `INVALID_FILTER` (exit 2, value never echoed). E.g.
+  `wiki-search --tag decision --as-of 2026-04-15` = "decisions live on 2026-04-15".
+  Caveats (conservative-by-design): an authored `valid_from`/`valid_to` that is not a
+  valid ISO date is compared as-is (garbage in → garbage out); and if a page's successor
+  slug is **ambiguous** (the same slug exists in >1 project — the TASK 020/021
+  `slug_collisions` hygiene case), the page is left **active** rather than risk retiring
+  it by an unrelated namesake (over-report, not silent data loss).
 - Default output: JSON envelope with `hits[]` (each hit has `vault_id`,
   `slug`, `project`, `type`, `title`, `bm25_score`, `snippet`).
 

@@ -1,78 +1,53 @@
-# PLAN 033 — list-membership metadata filter
+# PLAN 034 — Temporal core + agent-memory edges & classes
 
-Plan for `docs/TASK.md` (TASK 033). Stub-First (RED→GREEN), green-throughout, mypy
-`--strict`. **Zero DDL** (`user_version` 6), additive, backward-compatible. Three beads,
-strictly ordered (DAL → CLI → docs). Binding constraint **B-1** (arch-review) threaded into
-033-00.
+Stub-First, green-throughout. Each bead: RED (failing test) → GREEN (minimal code) → mypy
+`--strict`. Order chosen so Delta 2's `invalidated-by` edge exists before Delta 1's `valid_to`
+walk reads it. Maps to `docs/TASK.md` RTM.
 
-## Binding constraints (from the gates)
-- **B-1 (arch-review):** the per-`--where`-field predicate binds **four** params in
-  `(path, value, path, value)` order, mirroring `find_pages_citing_source`
-  (sqlite_repository.py:1364). A swapped order is the only realistic silent bug → an
-  explicit param-order / paired positive+back-compat test is mandatory.
-- **M-1 (arch-review, minor):** the membership branch compares `value = ?` with **no CAST**
-  (faithful to the reference). Do NOT promise numeric-*list*-member matching; the `tags[]`-of-
-  strings use case is text-only. Tests/docstrings must not over-claim CAST symmetry.
-- **M-3 (arch-review, minor):** update BOTH DAL docstrings (`repository.py` `search_pages`
-  ~180-192 + `sqlite_repository.py` ~616-625) — they currently describe scalar-only.
-- **A2/A5 (task-review):** bind-twice is expected; add a `--tag`/`--where tags=` eval case to
-  the wiki-search SKILL eval set.
+## Bead 034-00 — Delta 2: typed edges + schema v6→v7  (R-2, R-2a)
+- **RED:** `tests/test_event_graph_new_edges.py` — author `invalidated_by`/`activated_by`/
+  `uses`/`owns` (and the reverse-direction keys) on fixture pages → assert forward rows +
+  auto-derived inverses (`invalidates`/`activates`/`used-by`/`owned-by`), idempotency,
+  orphan-target skip; assert the 3 code maps ⊇ the SQL CHECK enum (drift guard).
+- **GREEN:**
+  - [reindex.py:202](../scripts/wiki_index/reindex.py#L202) `_EDGE_KEY_TO_REF_TYPE` += 8 keys.
+  - [reindex.py:281](../scripts/wiki_index/reindex.py#L281) `_INVERSE_REF_TYPE` += 8 directions.
+  - [wiki-index-v2.sql:195](../sql/wiki-index-v2.sql#L195) CHECK enum += 8 values;
+    `PRAGMA user_version = 7` ([:470](../sql/wiki-index-v2.sql#L470)) + `-- v7 (TASK 034)` note.
+  - [models.py:199](../scripts/wiki_index/models.py#L199) `PageRef.ref_type` docstring.
+- **Verify:** new + existing `test_event_graph*` green; `wiki-graph --kind invalidates` traverses.
 
-## Bead order
+## Bead 034-01 — Delta 1 DAL: `search_pages(as_of=…)`  (R-1, R-1b, R-1c)
+- **RED:** `tests/test_wiki_search_as_of.py` — build a fixture vault with decision-16
+  (`date 2026-03-01`) ⟵ decision-17 (`date 2026-05-01`, `supersedes`); assert `as_of`
+  2026-04-15 → 16 active not 17; 2026-06-01 → 17; multi-step chain; `invalidated_by` an
+  incident; no-date page excluded; override `valid_from`/`valid_to`; equality back-compat
+  unchanged (no `as_of` → identical rows).
+- **GREEN:** add `as_of: str | None = None` to the ABC
+  ([repository.py:151](../scripts/wiki_index/repository.py#L151)) + impl
+  ([sqlite_repository.py:548](../scripts/wiki_index/sqlite_repository.py#L548)); append the
+  §4 predicate when set (3 binds). No `as_of` → zero SQL delta (R-1c/R-4).
 
-### 033-00 — DAL: list-membership predicate in `search_pages` (R-1, R-3a/b)
-**Files:** `scripts/wiki_index/sqlite_repository.py` (`search_pages` predicate ~628),
-`scripts/wiki_index/repository.py` (ABC `search_pages` docstring), `tests/test_wiki_search_metadata_filter.py`.
-- **RED:** add tests — (1) `--where tags=decision` matches a page whose `tags:[a,decision]`
-  and excludes a `tags:[risk]` page (list membership); (2) scalar `--where status=open`
-  unchanged (back-compat) in the SAME assertion block (B-1 paired test); (3) a page where the
-  field is ABSENT matches neither branch; (4) the `=`-branch CAST still matches a numeric
-  scalar (`priority=1`) — guards M-1 (scalar CAST retained, membership branch additive).
-- **GREEN:** change the predicate from
-  `AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?`
-  to
-  `AND (CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ? OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json, ?) WHERE value = ?))`,
-  appending params `(path, value, path, value)` per field (B-1). Re-validate field (allowlist,
-  unchanged). Update the ABC + impl docstrings (M-3).
-- **Done:** new tests green; ALL existing `test_wiki_search_metadata_filter.py` green; mypy strict.
+## Bead 034-02 — Delta 1 CLI: `wiki-search --as-of`  (R-1, R-1a)
+- **RED:** CLI tests in `test_wiki_search_as_of.py` — `--as-of 2026-04-15` end-to-end;
+  `--as-of bad` → `INVALID_FILTER` exit 2 no echo; `--as-of` alone (no query/where) valid.
+- **GREEN:** [wiki_search.py](../scripts/wiki_skills/wiki_search.py) — add `--as-of`, ISO
+  validate (`datetime.date.fromisoformat`, reject → emit no-echo), relax the empty-search
+  guard ([:132](../scripts/wiki_skills/wiki_search.py#L132)), thread to both `search_pages`
+  call sites.
 
-### 033-01 — CLI: `--tag <value>` sugar (R-2, R-3c)
-**Files:** `scripts/wiki_skills/wiki_search.py` (parser + where-assembly), `tests/test_wiki_search_metadata_filter.py`.
-- **RED:** tests — (1) `--tag decision` ≡ `--where tags=decision` (same hits, via the CLI
-  `main`); (2) `--tag x --where tags=y` → `INVALID_FILTER` exit 2 (one-predicate-per-field dup
-  guard fires), value NOT echoed; (3) `--tag` combines with a FTS `query` + `--types` (AND-ed);
-  (4) `--tag` with no query → pure-listing path.
-- **GREEN:** add `--tag` argparse flag (mirror `--status`/`--severity` help/shape); in the
-  where-assembly append `("tags", args.tag)` when set (after the `--where` list, before the dup
-  check so the guard covers it). No other logic.
-- **Done:** tests green; mypy strict; injection/echo posture unchanged.
+## Bead 034-03 — Delta 3: agent-memory classes (config only)  (R-3, R-4)
+- **RED:** `tests/test_layout_agent_memory.py` — a `cybos` fixture vault with
+  `agents/x.md` (`type: agent`) etc. → `iter_pages`/derive classifies to the mapped
+  `db_type` + tag; no `UnmappedTypeError`; Karpathy unaffected.
+- **GREEN:** [cybos.yaml](../scripts/wiki_index/layouts/cybos.yaml) `type_mapping` += 6 types,
+  `paths` += globs; `templates/page-types/{agent,tool,workflow,capability,execution,pattern}.md`;
+  fix the stale "deferred Phase-2" header comment.
 
-### 033-02 — Docs + ROADMAP currency (R-4)
-**Files:** `skills/wiki-search/SKILL.md` (+ version bump + `evals.json` `--tag` case),
-`docs/manuals/obsidian-llm-wiki_manual.md` + `.ru.md` (wiki-search section),
-`docs/layouts/cybos.md` + `scripts/wiki_index/layouts/cybos.yaml` (flip the "NOT `--where tag=`"
-note → "now `--where tags=` / `--tag`"), `docs/ROADMAP.md` (R-13 residual → closed/shipped).
-- **Done:** docs describe the membership filter + `--tag`; the cybos gap-note is flipped; ROADMAP
-  R-13 residual marked shipped; eval case added; no stale "only via --types" claim remains.
-  (Opportunistic: correct the manuals' stale "15 CLIs"/"user_version = 5" overview lines to
-  16 / 6 while in-file — TASK 032 currency, trivially in-scope here.)
-
-## Verification (end-to-end)
-```bash
-source .venv/bin/activate
-pytest tests/test_wiki_search_metadata_filter.py -q   # bead-local
-pytest tests/                                          # full green
-mypy --strict scripts/                                 # clean
-# manual smoke on the real dogfood vault (already has eg- typed pages + tags):
-python -m scripts.wiki_skills.wiki_search --tag decision --vaults personal \
-    --vault-root /Users/sergey/Downloads/TestVault/ObsidianNotes-Test --format json
-#  → expect eg-decision-rabbitmq + eg-decision-kafka
-```
-
-## Review (post-development)
-`/vdd-multi` (logic/security/performance) + `code-review`. Adversarial focus: B-1 param-order
-correctness, the scalar back-compat superset claim, injection/echo non-regression, the
-`json_each`-over-scalar/absent semantics.
-
-## Out of scope
-`IN`/`~=` operator syntax; indexing `tags[]` (R-X3-MF-SCAN stays); `--types` semantics.
+## Bead 034-04 — Docs lockstep + dogfood + gates  (R-5)
+- `skills/wiki-search/SKILL.md` (+`--as-of` eval), manuals EN/RU, `cli-quick-ref`,
+  `docs/layouts/cybos.md`, `docs/ARCHITECTURE.md` §4, CLAUDE.md narrative, ROADMAP.
+- **Dogfood:** `samples/` cybos vault — as-of flip, `wiki-graph chain --kind supersedes`,
+  `wiki-graph backlinks <capability> --kind implements`, `--kind invalidates`.
+- **Gates:** full `pytest` + `mypy --strict` green; `/vdd-multi` (logic/security/performance)
+  converge.

@@ -20,18 +20,18 @@ import argparse
 import sys
 
 from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.reindex import _INVERSE_REF_TYPE
 from scripts.wiki_skills._common import (
     build_repo_config,
     emit,
     resolve_vault_root_for_cli,
 )
 
-# The v6 typed-edge ref_types wiki-graph traverses (allow-list for --kind). Mirrors
-# reindex._INVERSE_REF_TYPE's keys (the inverse-closed set + symmetric `related`).
-_EDGE_KINDS = (
-    "implements", "implemented-by", "supersedes", "superseded-by",
-    "causes", "caused-by", "related",
-)
+# The typed-edge ref_types wiki-graph traverses (allow-list for --kind). DERIVED
+# from reindex._INVERSE_REF_TYPE (the single source of truth — the inverse-closed
+# set + symmetric `related`) so new edge kinds (TASK 034: invalidated-by/activated-by/
+# uses/owns + inverses) are admitted automatically and the two can never drift.
+_EDGE_KINDS = tuple(sorted(_INVERSE_REF_TYPE))
 _MAX_DEPTH = 16
 
 

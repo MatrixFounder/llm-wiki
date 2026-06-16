@@ -114,6 +114,49 @@ wiki-query prepare "compare X and Y" --vault ${vault_id} --vault-root .
 # Optional audit: wiki-verify-multi prepare/apply (off-by-default 4-critic check)
 ```
 
+### Typed knowledge & the event graph (optional)
+
+If notes carry a typed `type:` — the knowledge classes `decision` / `requirement` / `risk` /
+`incident` / `hypothesis` / `fact` / `event`, or the agent-memory classes `agent` / `tool` /
+`workflow` / `capability` / `execution` / `pattern` — they route to a filterable tag (ensure
+the classes are in `.wiki/layout.yaml` `type_mapping`). Edges between pages
+(`implements` / `supersedes` / `causes` / `invalidated_by` / `activated_by` / `uses` / `owns` /
+`relates_to`) are authored **one** direction in frontmatter; the inverse is auto-derived on
+reindex. Then, with **no LLM**:
+
+```bash
+wiki-search --tag decision --vaults ${vault_id}                    # every decision (tags[] member match)
+wiki-search --tag decision --as-of 2026-04-15 --vaults ${vault_id} # decisions ACTIVE on a date (temporal)
+wiki-graph chain     <slug> --kind supersedes --vault ${vault_id}  # supersession lineage
+wiki-graph backlinks <slug> --kind implements --vault ${vault_id}  # what implements a requirement
+wiki-graph neighbors <slug> --direction out   --vault ${vault_id}  # one-hop typed edges
+```
+
+`--as-of` reads each page's `date` plus its `superseded-by` / `invalidated-by` edges to
+compute "what was active on date X".
+
+**Authoring scaffolds — `.wiki/page-types/*.md`.** `wiki-init` copies one template per class
+into **`.wiki/page-types/`** of THIS vault (13 files: the 7 knowledge + 6 agent-memory
+classes; under `.wiki/` so they're never indexed). To author a typed page, `Read` the
+matching scaffold, copy its frontmatter, fill it in. Minimal shape (a decision):
+
+```markdown
+---
+type: decision
+title: Switch the broker to Kafka
+status: accepted            # proposed | accepted | superseded | rejected
+date: 2026-05-01            # ← drives --as-of
+implements: [[req-throughput]]   # one direction; inverse (implemented-by) auto-derived
+supersedes: [[use-rabbitmq]]     # supersession lineage (→ superseded-by)
+invalidated_by: []               # an incident that voids it (→ invalidates) — read by --as-of
+---
+A partitioned log scales past the single-broker ceiling.
+```
+
+Each scaffold's comments name the edges natural for that class (e.g. `requirement` →
+`implemented_by`, `incident` → `caused_by`/`invalidates`, `agent` → `uses`/`owns`/`implements`).
+Full prose reference: the obsidian-llm-wiki manual's *"Page types & relation types"* section.
+
 ### Rebuild — when in doubt
 
 ```bash
@@ -139,11 +182,12 @@ wiki-reindex --full --vault ${vault_id}
 
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, optional `index_db`.
 - **`.wiki/layout.yaml`** / **`.wiki/sync.yaml`** — per-vault index + sync tuning.
-- **obsidian-llm-wiki** — the index layer (15 CLIs). Search/RAG: `wiki-search`,
-  `wiki-query`, `wiki-verify-multi`. Construction: `wiki-sync` (mixed-zone auto-router),
-  `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`. Lifecycle/health:
-  `wiki-init`, `wiki-reindex`, `wiki-lint`, `wiki-index-render`. Install per its
-  `README.md`; ensure its `bin/` is on `PATH`.
+- **obsidian-llm-wiki** — the index layer (16 CLIs). Search/RAG: `wiki-search`
+  (incl. `--tag <class>` + temporal `--as-of <date>`), `wiki-query`, `wiki-verify-multi`.
+  Event graph: `wiki-graph` (typed page-to-page edges). Construction: `wiki-sync`
+  (mixed-zone auto-router), `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`.
+  Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint`, `wiki-index-render`. Install
+  per its `README.md`; ensure its `bin/` is on `PATH`.
 - **obsidian-cli** — drives the *running* Obsidian app via its official CLI (Obsidian
   1.12+): link-safe `rename`/`move` (the app rewrites backlinks; a plain `mv` orphans
   them), typed properties, tasks, daily notes, Bases queries, history restore. Routes

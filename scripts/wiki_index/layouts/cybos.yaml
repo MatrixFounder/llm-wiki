@@ -1,10 +1,14 @@
 # Built-in CYBOS layout — an "operational memory" / event-graph vault (TASK 031 /
 # R-031-1/2). A typed-knowledge vault: Decisions, Requirements, Risks, Incidents,
-# Hypotheses, Facts, Events + the engineering spine (Tasks, ADRs, Plans). Every raw
-# type tag-routes onto the existing pages.type CHECK enum — ZERO DDL (user_version
-# stays 5). Phase 1 ships CLASSIFICATION only; the event-graph RELATION layer (typed
-# edges implements/supersedes/caused-by/relates-to) is deferred Phase-2 (ADR-003 D4 /
-# ROADMAP R-13). The reserved edge keys live INERT in templates/page-types/* until then.
+# Hypotheses, Facts, Events + the engineering spine (Tasks, ADRs, Plans) + the
+# TASK-034 agent-memory classes (Agents, Tools, Workflows, Capabilities, Executions,
+# Patterns). Every raw type tag-routes onto the existing pages.type CHECK enum — its
+# CLASSIFICATION is ZERO-DDL. The event-graph RELATION layer (typed edges
+# implements/supersedes/caused-by/relates-to + the TASK-034 invalidated-by/activated-by/
+# uses/owns) SHIPPED in TASK 032/034 (ADR-004; schema v7) — the edge keys in
+# templates/page-types/* are LIVE (authored forward, inverse auto-derived). Temporal
+# queries ("what was active on date X") use `wiki-search --as-of` (TASK 034) over the
+# `date` + supersede/invalidate graph — no per-note `valid_to` authoring required.
 #
 # vault_root = the vault directory holding the typed folders (decisions/, incidents/, …).
 # Opt-in: `wiki-init --scaffold-new --layout cybos` (init_scaffold: none → no Karpathy
@@ -39,6 +43,13 @@ paths:
   - {glob: "tasks/**/*.md",        type: task,        project: "_vault_"}
   - {glob: "adr/**/*.md",          type: adr,         project: "_vault_"}
   - {glob: "plans/**/*.md",        type: plan,        project: "_vault_"}
+  # --- TASK 034: agent-memory classes (RFC-002/003/005/006 classification) ---
+  - {glob: "agents/**/*.md",       type: agent,       project: "_vault_"}
+  - {glob: "tools/**/*.md",        type: tool,        project: "_vault_"}
+  - {glob: "workflows/**/*.md",    type: workflow,    project: "_vault_"}
+  - {glob: "capabilities/**/*.md", type: capability,  project: "_vault_"}
+  - {glob: "executions/**/*.md",   type: execution,   project: "_vault_"}
+  - {glob: "patterns/**/*.md",     type: pattern,     project: "_vault_"}
 
 # Tag-route: each raw knowledge-class type → an existing db_type CHECK enum value + a
 # filterable tag (db_type rationale: research = analysis/finding; brief = concise spec;
@@ -59,6 +70,13 @@ type_mapping:
   task:        {db_type: brief,    tag: task}
   adr:         {db_type: research, tag: adr}
   plan:        {db_type: brief,    tag: plan}
+  # --- TASK 034 agent-memory classes (RFC-002/003/005/006) ---
+  agent:       {db_type: concept,  tag: agent}        # an autonomous actor (LLM agent / human role)
+  tool:        {db_type: concept,  tag: tool}         # a callable capability surface (CLI / API)
+  workflow:    {db_type: brief,    tag: workflow}     # a procedure / state machine (RFC-005)
+  capability:  {db_type: concept,  tag: capability}   # an atomic skill an agent can perform (e.g. ocr)
+  execution:   {db_type: summary,  tag: execution}    # a timestamped run record (RFC-003 operational memory)
+  pattern:     {db_type: research, tag: pattern}      # a consolidated second-order finding (RFC-006)
 
 path_type_fallback: {}              # cybos types come from paths[].type
 

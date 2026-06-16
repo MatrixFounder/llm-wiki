@@ -554,17 +554,18 @@ class SQLiteRepository(IndexRepository):
         exclude_types: list[str] | None = None,
         project: str | None = None,
         where_fields: list[tuple[str, str]] | None = None,
+        as_of: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
         conn = self._connect()
         has_match = bool(query)
-        if not has_match and not where_fields:
+        if not has_match and not where_fields and not as_of:
             # TASK 013: a search with neither an FTS term nor a metadata filter
-            # is meaningless. The CLI refuses this before calling; the DAL
-            # defends the library-caller path.
+            # (TASK 034: nor an `as_of` temporal filter) is meaningless. The CLI
+            # refuses this before calling; the DAL defends the library-caller path.
             raise ValueError(
-                "search_pages requires a non-empty query or at least one "
-                "where_fields predicate"
+                "search_pages requires a non-empty query, at least one "
+                "where_fields predicate, or an as_of date"
             )
         # Shared page-column projection for both paths so `_row_to_page` sees an
         # identical row shape.
@@ -648,6 +649,52 @@ class SQLiteRepository(IndexRepository):
             params.append(value)
             params.append(json_path)
             params.append(value)
+        if as_of is not None:
+            # TASK 034 / R-1 — temporal "active as of DATE" filter. A page is active
+            # iff its effective_from <= DATE AND DATE < its effective_to, where:
+            #   effective_from = COALESCE(authored valid_from, pages.date)
+            #   effective_to   = authored valid_to  (explicit override, half-open),
+            #                    ELSE the date of the earliest page that SUPERSEDES or
+            #                    INVALIDATES it (the TASK 032/034 graph), ELSE +inf.
+            # Frontmatter dates are stored as ISO strings (`_json_safe`, normalization
+            # .py) and `pages.date` is `.isoformat()` TEXT, so the comparisons are
+            # lexicographic = chronological. The `valid_from`/`valid_to` JSON paths are
+            # FIXED literals (no user field name → no allowlist needed); DATE is bound
+            # 3× as a parameter (never interpolated). A page with neither valid_from nor
+            # a `date` is EXCLUDED (the IS NOT NULL clause) so non-temporal pages do not
+            # pollute the result. The `NOT EXISTS` successor-walk rides idx_refs_page +
+            # the pages PK and is bounded by the outer LIMIT.
+            # `substr(...,1,10)` takes the DATE part of an authored valid_from/valid_to
+            # so a datetime-valued override (`2026-02-01 14:30` → ISO `...T14:30:00`)
+            # keeps the half-open [from, to) DAY boundary (vdd-multi logic MED-2);
+            # bare-date overrides are unchanged (`substr` is a no-op on `YYYY-MM-DD`).
+            # `pages.date` is already a pure ISO date (Page.date.isoformat()), so it is
+            # NOT wrapped. The successor walk excludes a target slug that resolves to >1
+            # page: the project-less `entity_slug` cannot disambiguate, so — mirroring
+            # `_derive_inverse_edges`' COUNT=1 guard — an unrelated same-slug page in
+            # ANOTHER project can never wrongly retire P (vdd-multi logic MED-1; a no-op
+            # on single-project vaults where every slug is unique, conservative
+            # "stay active when ambiguous" otherwise).
+            sql_parts.append(
+                " AND COALESCE(substr(json_extract(p.frontmatter_json, '$.valid_from'), 1, 10),"
+                "              p.date) IS NOT NULL"
+                " AND COALESCE(substr(json_extract(p.frontmatter_json, '$.valid_from'), 1, 10),"
+                "              p.date) <= ?"
+                " AND (substr(json_extract(p.frontmatter_json, '$.valid_to'), 1, 10) > ?"
+                "      OR (json_extract(p.frontmatter_json, '$.valid_to') IS NULL"
+                "          AND NOT EXISTS (SELECT 1 FROM page_entity_refs r"
+                "             JOIN pages s ON s.vault_id = r.vault_id"
+                "                         AND s.slug = r.entity_slug"
+                "             WHERE r.vault_id = p.vault_id AND r.page_slug = p.slug"
+                "               AND r.ref_type IN ('superseded-by', 'invalidated-by')"
+                "               AND s.date IS NOT NULL AND s.date <= ?"
+                "               AND (SELECT COUNT(*) FROM pages tc"
+                "                    WHERE tc.vault_id = r.vault_id"
+                "                      AND tc.slug = r.entity_slug) = 1)))"
+            )
+            params.append(as_of)
+            params.append(as_of)
+            params.append(as_of)
         if has_match:
             sql_parts.append(" ORDER BY bm25_score ASC LIMIT ?")
         else:

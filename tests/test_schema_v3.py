@@ -26,10 +26,10 @@ def _fresh_db(tmp_path: Path) -> sqlite3.Connection:
 
 def test_user_version_is_current(tmp_path: Path) -> None:
     # The v3 PK migration (below) persists; the version marker advanced to 4 in
-    # TASK 006, then to 5 in TASK 008 (R-8.9). Authoritative version assertion
-    # lives in test_schema_v5.
+    # TASK 006, 5 in TASK 008, 6 in TASK 032, 7 in TASK 034. Authoritative version
+    # assertion lives in test_schema_v7.
     conn = _fresh_db(tmp_path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 def test_alias_pk_rejects_same_alias_two_slugs(tmp_path: Path) -> None:

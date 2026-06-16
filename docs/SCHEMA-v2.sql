@@ -231,7 +231,16 @@ CREATE TABLE IF NOT EXISTS page_entity_refs (
     entity_slug       TEXT NOT NULL,
     ref_type          TEXT NOT NULL CHECK (ref_type IN (
                           'mentioned', 'defined-here', 'related', 'cited',
-                          'verifies'   -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
+                          'verifies',  -- TASK 008 / R-8.9 (schema v5): verdict-page → audited-query-page edge
+                          -- TASK 032 / R-032-1 (schema v6): event-graph typed edges (ADR-004 D1), inverse-closed
+                          'implements', 'implemented-by',
+                          'supersedes', 'superseded-by',
+                          'causes', 'caused-by',
+                          -- TASK 034 / R-2 (schema v7): temporal + agent-memory edges
+                          'invalidated-by', 'invalidates',
+                          'activated-by', 'activates',
+                          'uses', 'used-by',
+                          'owns', 'owned-by'
                       )),
     -- Provenance v1.1
     line_start        INTEGER,
@@ -520,6 +529,8 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 --   INSERT INTO schema_meta(key, value, updated_at) VALUES ('schema_version', '5.0', <ISO-8601>);
 --   INSERT INTO schema_meta(key, value, updated_at) VALUES ('created_at',     <ISO-8601>, <ISO-8601>);
 --   PRAGMA user_version = 5;   -- v5 (TASK 008 / R-8.9): admit pages.type='verification', ref_type='verifies', event_type='verify' + index_meta parity (wiki-verify-multi).
+--   PRAGMA user_version = 6;   -- v6 (TASK 032 / R-032-1, ADR-004): event-graph typed edges (implements/supersedes/causes + inverses).
+--   PRAGMA user_version = 7;   -- v7 (TASK 034 / R-2): temporal + agent-memory edges (invalidated-by/activated-by/uses/owns + inverses).
 --                              -- v4 (TASK 006): drop dead idx_pages_vault_tags (P-5) + event_date GENERATED (L-2).
 --                              -- Migration on a populated DB: delete .db/-wal/-shm → wiki-init --register-existing → wiki-reindex --full (bare reindex can't relax a CHECK).
 --

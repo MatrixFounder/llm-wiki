@@ -66,3 +66,17 @@ def test_vault_not_found(tmp_path: Path, capsys) -> None:
     db = _db(tmp_path)
     rc, env = _run(capsys, ["backlinks", "x", "--vault", "nope", "--db-path", db])
     assert rc == 6 and env["error"] == "VAULT_NOT_FOUND"
+
+
+@pytest.mark.parametrize("kind", [
+    "invalidated-by", "invalidates", "activated-by", "activates",
+    "uses", "used-by", "owns", "owned-by",
+])
+def test_new_v7_kinds_admitted(tmp_path: Path, capsys, kind: str) -> None:
+    """TASK 034 — the `--kind` allow-list is DERIVED from reindex._INVERSE_REF_TYPE,
+    so every v7 edge kind traverses (no INVALID_KIND). Found by dogfood: a hardcoded
+    list silently dropped the new kinds."""
+    db = _db(tmp_path)
+    rc, env = _run(capsys, ["neighbors", "dec-1", "--vault", "gvault",
+                            "--kind", kind, "--db-path", db])
+    assert rc == 0 and env["action"] == "neighbors"  # accepted, not INVALID_KIND

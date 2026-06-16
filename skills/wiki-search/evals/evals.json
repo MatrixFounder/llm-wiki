@@ -103,6 +103,18 @@
         "fall back to scanning --types research (a coarse bucket that also pulls risk/incident/hypothesis)",
         "claim wiki-search cannot filter by a tags list member"
       ]
+    },
+    {
+      "id": 10,
+      "name": "temporal-as-of-active-decisions",
+      "setup": "Vault `cybos-demo` has a decision `dec-db-global` (date 2026-03-01) superseded by `dec-db-local` (date 2026-05-12, `supersedes: [[dec-db-global]]`), and an incident `inc-42` (date 2026-04-20). The operator asks which decision was active when the incident occurred.",
+      "prompt": "which decision was active on the date of incident inc-42 (2026-04-20)?",
+      "expected_behavior": "Recognises this as a TEMPORAL query and uses `wiki-search --tag decision --as-of 2026-04-20 --vaults cybos-demo` — returns `dec-db-global` (created before, not yet superseded; dec-db-local is dated 2026-05-12 > the as-of date). Does NOT hand-reason over dates with an LLM or claim it must read every decision page; the graph + date derive the answer deterministically. Notes that a later `--as-of 2026-06-01` would flip the active decision to `dec-db-local`.",
+      "must_not": [
+        "author or require a `valid_to` field on the decisions (it is DERIVED from the supersession graph + date)",
+        "manually read each decision's date and reason about supersession in prose instead of using --as-of",
+        "claim wiki-search has no way to answer a point-in-time / 'as of date' question"
+      ]
     }
   ]
 }

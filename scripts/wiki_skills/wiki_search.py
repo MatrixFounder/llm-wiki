@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from datetime import date as _date_cls
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
@@ -61,6 +62,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         "match a MEMBER of the frontmatter `tags` list (e.g. "
                         "--tag decision lists every typed-class 'decision' page). "
                         "List membership, not whole-list equality.")
+    p.add_argument("--as-of", dest="as_of", default=None, metavar="YYYY-MM-DD",
+                   help="TASK 034: temporal filter — return only pages ACTIVE as of "
+                        "this date. 'Active' = created (pages.date / authored "
+                        "valid_from) on-or-before the date AND not yet superseded/"
+                        "invalidated by then (the event graph; or an authored "
+                        "valid_to). Answers 'which decisions were active on the "
+                        "incident date' without an LLM. Composes with the query and "
+                        "the other filters; valid on its own.")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--format", choices=["markdown", "json"], default="json")
     p.add_argument("--no-expand-aliases", action="store_true",
@@ -109,6 +118,18 @@ def main(argv: list[str] | None = None) -> int:
         # `--tag x --where tags=y` (field 'tags' seen twice → INVALID_FILTER).
         where_fields.append(("tags", args.tag))
 
+    # TASK 034 (R-1a): validate + normalize --as-of to a canonical ISO YYYY-MM-DD
+    # at the boundary. A bad date → INVALID_FILTER (exit 2) WITHOUT echoing the
+    # value (CWE-209/117), mirroring the --where posture. The normalized form is
+    # what the DAL binds (so `pages.date`/`valid_*` ISO strings compare cleanly).
+    as_of: str | None = None
+    if args.as_of is not None:
+        try:
+            as_of = _date_cls.fromisoformat(args.as_of.strip()).isoformat()
+        except ValueError:
+            return emit({"error": "INVALID_FILTER", "field": "as-of",
+                         "reason": "not a valid ISO date; use YYYY-MM-DD"}, 2)
+
     # Reject two predicates on the SAME field (vdd-multi critic-logic MED):
     # filters are equality-only and AND-ed, so e.g. `--status open --where
     # 'status=fixed'` (or even via two --where) can never both match → a silent
@@ -129,10 +150,11 @@ def main(argv: list[str] | None = None) -> int:
     # the DF-1 OperationalError net never caught → uncaught crash). Mirrors
     # wiki-query's question strip.
     query_arg = args.query.strip() if args.query else None
-    if not query_arg and not where_fields:
+    if not query_arg and not where_fields and not as_of:
         return emit({"error": "INVALID_QUERY", "field": "query",
-                     "reason": "provide a search query or at least one metadata "
-                               "filter (--where/--status/--severity)"}, 2)
+                     "reason": "provide a search query, at least one metadata "
+                               "filter (--where/--status/--severity/--tag), or "
+                               "--as-of <date>"}, 2)
 
     metadata_only = not query_arg
 
@@ -150,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
             # DF-1 FTS-quote fallback (both operate on an FTS query).
             hits = repo.search_pages(
                 None, vaults=vaults_list, types=types_list,
-                project=args.project, where_fields=wf, limit=args.limit,
+                project=args.project, where_fields=wf, as_of=as_of,
+                limit=args.limit,
             )
         else:
             assert query_arg is not None  # metadata_only False ⇒ query_arg truthy
@@ -165,7 +188,8 @@ def main(argv: list[str] | None = None) -> int:
             def _search(q: str) -> list[PageHit]:
                 return repo.search_pages(
                     q, vaults=vaults_list, types=types_list,
-                    project=args.project, where_fields=wf, limit=args.limit,
+                    project=args.project, where_fields=wf, as_of=as_of,
+                    limit=args.limit,
                 )
 
             # DF-1 (dogfood): a raw query with an FTS5-special char (e.g. the
@@ -195,9 +219,12 @@ def main(argv: list[str] | None = None) -> int:
             return emit({"action": "searched", "query": query_arg,
                          "hits": results, "count": len(results)})
         # Metadata-only listings have no FTS query — describe the filter instead.
+        filter_bits = [f"{f}={v}" for f, v in where_fields]
+        if as_of:
+            filter_bits.append(f"as-of {as_of}")
         heading = (
             f'"{query_arg}"' if query_arg
-            else "filter " + " ".join(f"{f}={v}" for f, v in where_fields)
+            else "filter " + " ".join(filter_bits)
         )
         lines = [f'## {heading} — {len(results)} hits', ""]
         for r in results:

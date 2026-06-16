@@ -33,6 +33,7 @@
   - [Контракт автора: markdown канонический](#контракт-автора-markdown-канонический)
   - [Регистрация готового саммари (не raw)](#регистрация-готового-саммари-не-raw)
   - [Кастомные layout'ы: движок layout](#кастомные-layoutы-движок-layout)
+  - [Справочник: типы страниц и типы связей (модель знаний)](#справочник-типы-страниц-и-типы-связей-модель-знаний)
   - [Смешанный vault: области только для поиска + course-зоны, доступные для enrich](#смешанный-vault-области-только-для-поиска--course-зоны-доступные-для-enrich)
   - [Автоматизация смеси: `wiki-sync` (пофайловая маршрутизация, конвертация, OCR)](#автоматизация-смеси-wiki-sync-пофайловая-маршрутизация-конвертация-ocr)
 - [Использование wiki как внешнего ресурса для других агентов](#использование-wiki-как-внешнего-ресурса-для-других-агентов)
@@ -63,7 +64,7 @@ Obsidian. Файловый слой (синтез страниц с помощь
 | **Поверхность** | 16 CLI (`wiki-*`), каждая также является slash-командой `/wiki-*` внутри Claude Code |
 | **Контракт ввода-вывода** | stdin/аргументы на вход → однострочный JSON-конверт в stdout + код возврата |
 | **Ключевой инвариант** | DB на 100% перестраивается из markdown (`wiki-reindex --full`) |
-| **Схема** | `user_version = 6` (`sql/wiki-index-v2.sql`) |
+| **Схема** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
 | **Среда выполнения** | Python 3.14+; зависимости в `requirements.txt` |
 
 ---
@@ -213,7 +214,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 
 | Команда | Зачем существует / что делает |
 |---|---|
-| **`wiki-search`** | Полнотекстовый поиск FTS5 BM25 по одному или многим vault, ранжированный, со snippet, по умолчанию расширяющийся через алиасы сущностей. **Поиск по умолчанию устойчив к словоформам** (TASK 028): одиночные термины автоматически приводятся к основе с префиксом (по письменности — кириллица→russian, латиница→english) и **сводят ё/е** в запросе и в теле, так что одна введённая форма находит свои словоформы, а `ещё`/`еще` — один токен. `--exact` (`--no-stem`) отключает стемминг для точного буквального поиска (свёртка ё/е сохраняется). Это быстрый поиск, заменяющий перечитывание сырых файлов. Он *также* выполняет **фильтрацию по метаданным**: `--status` / `--severity` / `--where 'field=value'` компилируются в предикат `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` (не полнотекстовый), так что **скалярные** значения с дефисами (`SEV-2`) и числовые (`priority=1`) сопоставляются по строке, А ТАКЖЕ совпадает **элемент списка** (TASK 033) — `--tag decision` (сахар для `--where 'tags=decision'`) перечисляет все страницы типизированного класса `decision` одной командой; опустите запрос для чистого *перечисления* по метаданным. Свёртка ё/е в теле вступает в силу после ближайшей `wiki-reindex --full`; стемминг и свёртка ё/е в запросе — сразу. |
+| **`wiki-search`** | Полнотекстовый поиск FTS5 BM25 по одному или многим vault, ранжированный, со snippet, по умолчанию расширяющийся через алиасы сущностей. **Поиск по умолчанию устойчив к словоформам** (TASK 028): одиночные термины автоматически приводятся к основе с префиксом (по письменности — кириллица→russian, латиница→english) и **сводят ё/е** в запросе и в теле, так что одна введённая форма находит свои словоформы, а `ещё`/`еще` — один токен. `--exact` (`--no-stem`) отключает стемминг для точного буквального поиска (свёртка ё/е сохраняется). Это быстрый поиск, заменяющий перечитывание сырых файлов. Он *также* выполняет **фильтрацию по метаданным**: `--status` / `--severity` / `--where 'field=value'` компилируются в предикат `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` (не полнотекстовый), так что **скалярные** значения с дефисами (`SEV-2`) и числовые (`priority=1`) сопоставляются по строке, А ТАКЖЕ совпадает **элемент списка** (TASK 033) — `--tag decision` (сахар для `--where 'tags=decision'`) перечисляет все страницы типизированного класса `decision` одной командой; опустите запрос для чистого *перечисления* по метаданным. Он *также* выполняет **временную фильтрацию** (TASK 034): `--as-of YYYY-MM-DD` возвращает только страницы, **активные на эту дату** — созданные не позже неё И ещё не вытесненные/аннулированные к этому моменту, *выводится* из `pages.date` + графа supersede/invalidate (без LLM, без ручного `valid_to`; `valid_from`/`valid_to` — необязательные override). Напр. `--tag decision --as-of 2026-04-15` отвечает «какие решения были активны на 2026-04-15». Свёртка ё/е в теле вступает в силу после ближайшей `wiki-reindex --full`; стемминг и свёртка ё/е в запросе — сразу. |
 | **`wiki-index-render`** | Перегенерирует `index.md` — *доступную только для чтения проекцию* DB — сохраняя любые блоки `<!-- BEGIN-CUSTOM:name -->`, созданные оператором. С `--auto-indexes` он также рендерит реестры Class-B «перестраиваемого markdown» (например, `KNOWN_ISSUES.md`, свёрнутый из файлов-источников по отдельным issue). Используйте его, чтобы обновить просматриваемый человеком каталог после ingest. |
 
 ### 3. Разрешение сущностей
@@ -235,7 +236,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 |---|---|
 | **`wiki-query`** | Ответ, дополненный извлечением. `prepare` извлекает (FTS5 BM25 + расширение по алиасам/графу сущностей); агент-orchestrator синтезирует ответ *со ссылками*; `apply` подшивает его как первоклассную накапливающуюся страницу `_queries/<slug>.md` — индексированную, доступную для поиска FTS, с обратными ссылками `cited`, которые переживают полный reindex. Это «хорошие ответы можно подшить обратно в wiki», сделанное долговечным. |
 | **`wiki-verify-multi`** | **Выключенный по умолчанию** аудит прозы четырьмя критиками (factual-grounding / logic-coherence / security-injection / completeness-faithfulness) поданного ответа *относительно процитированных им источников*. Он подшивает страницу-вердикт `_verifications/verify-<slug>.md`. FAIL **фиксирует вердикт и завершается с ненулевым кодом — он никогда не редактирует ответ**. Обращайтесь к нему для ответов с высокой ставкой, где молчаливая галлюцинация обошлась бы дорого. |
-| **`wiki-graph`** | Read-only обход **графа событий** (TASK 032 / ADR-004): типизированные рёбра между страницами (`implements`/`supersedes`/`causes`/`relates-to` + авто-выведенные инверсии), заданные во frontmatter и проиндексированные при reindex. `backlinks` (входящие) / `neighbors` (один шаг, in/out/both, по `--kind`) / `chain` (ограниченная цепочка supersession/causation). Работает в паре с `wiki-query prepare --follow-edges`, который вплетает соседей-по-рёбрам в цитируемый ответ (по умолчанию OFF; детерминирован). «Что вызвало это решение / что заменяет X / родословная». |
+| **`wiki-graph`** | Read-only обход **графа событий** (TASK 032/034 / ADR-004): типизированные рёбра между страницами (`implements`/`supersedes`/`causes`/`relates-to`, плюс рёбра TASK-034 `invalidated-by`/`activated-by`/`uses`/`owns`, + авто-выведенные инверсии), заданные во frontmatter и проиндексированные при reindex. `backlinks` (входящие) / `neighbors` (один шаг, in/out/both, по `--kind`) / `chain` (ограниченная цепочка supersession/causation). Работает в паре с `wiki-query prepare --follow-edges`, который вплетает соседей-по-рёбрам в цитируемый ответ (по умолчанию OFF; детерминирован). «Что вызвало это решение / что заменяет X / родословная». |
 
 ### 5. Поддержание работоспособности
 
@@ -500,7 +501,7 @@ wiki-extract-concepts apply   --vault my-vault --vault-root /abs/path/to/MyVault
 | `karpathy` | Стандартный layout выше. **Байт-в-байт идентичен** легаси-захардкоженному поведению (защищён golden-anchor). Алиасы: `flat`, `per-project`. | `identity` (дословный stem) |
 | `dev-project` | `docs/` репозитория — `tasks/*.md`, `adr/*.md`, `issues/*.md` и т. д. | `transliterate` (ASCII-безопасный) |
 | `obsidian-personal` | Нумерованные папки + Unicode | `preserve-unicode` |
-| `cybos` | **Vault типизированных знаний / «операционной памяти»** (TASK 031): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + инженерный костяк `tasks/ adr/ plans/`. Дом для 7 типизированных классов знаний. | `transliterate` |
+| `cybos` | **Vault типизированных знаний / «операционной памяти»** (TASK 031/034): `decisions/ requirements/ risks/ incidents/ hypotheses/ facts/ events/` + инженерный костяк `tasks/ adr/ plans/` + классы агентной памяти TASK-034 `agents/ tools/ workflows/ capabilities/ executions/ patterns/`. Дом для типизированных классов знаний И модели агентной памяти. | `transliterate` |
 
 Выберите один при init: `wiki-init --scaffold-new --vault <path> --layout dev-project`.
 
@@ -569,18 +570,21 @@ auto_indexes:
 > (`summary`/`lesson-`/`meeting-`/`webinar-`/`tutorial-`/`article-`/`book-`/`video-`/
 > `podcast-`/`course-summary` + `moc`); всё остальное вы отображаете сами.
 
-> **Типизированные классы знаний (TASK 031).** Семь *event-graph* классов знаний —
-> `decision`, `requirement`, `risk`, `incident`, `hypothesis`, `fact`, `event` —
-> поставляются как zero-DDL `type_mapping` tag-route (на существующий enum `pages.type`:
-> decision/risk/incident/hypothesis→`research`, requirement→`brief`, fact→`concept`,
-> event→`summary`). Они первоклассны в layout **`cybos`** (по папкам) и доступны опционально
-> в **`dev-project`** (через явный frontmatter `type:`). Чтобы внедрить их в любой другой
-> vault (например `obsidian-personal`), добавьте блок в `.wiki/layout.yaml` — он
-> ОБЪЕДИНЯЕТСЯ (UNION; проверено на реальном PARA-vault). Поиск по классу — FTS по
-> тег-слову (`wiki-search "decision"`), при желании сужается через `--types <db_type>`.
-> **Шаблоны** заметок — в `templates/page-types/*.md`; полная справка —
-> [`docs/layouts/cybos.md`](../layouts/cybos.md). Типизированные *рёбра* между страницами
-> (собственно граф событий) — задокументированная Фаза 2 (ROADMAP R-13).
+> **Типизированные классы знаний (TASK 031) + классы агентной памяти (TASK 034).** Семь
+> классов знаний — `decision`, `requirement`, `risk`, `incident`, `hypothesis`, `fact`,
+> `event` — плюс шесть классов агентной памяти TASK-034 — `agent`, `tool`, `workflow`,
+> `capability`, `execution`, `pattern` — поставляются как zero-DDL `type_mapping` tag-route
+> (на существующий enum `pages.type`). Они первоклассны в layout **`cybos`** (по папкам), а
+> классы знаний доступны опционально в **`dev-project`** (через явный frontmatter `type:`).
+> Чтобы внедрить их в любой другой vault (например `obsidian-personal`), добавьте блок в
+> `.wiki/layout.yaml` — он ОБЪЕДИНЯЕТСЯ (UNION; проверено на реальном PARA-vault). Поиск по
+> классу — фильтр членства в списке (`wiki-search --tag decision`, TASK 033). **Шаблоны**
+> заметок — в `templates/page-types/*.md`; полная справка —
+> [`docs/layouts/cybos.md`](../layouts/cybos.md). Типизированные *рёбра* между страницами —
+> собственно граф событий (`wiki-graph`) — **поставлены** в TASK 032/034 (ADR-004, схема v7):
+> задавайте `implements`/`supersedes`/`caused_by`/`invalidated_by`/`uses`/`owns`/… во
+> frontmatter в одном направлении, инверсия выводится автоматически. Запрос «что было активно
+> на дату X» — это без-LLM `wiki-search --as-of` (TASK 034).
 
 Три факта дизайна, которые стоит усвоить:
 
@@ -602,6 +606,191 @@ auto_indexes:
   `WIKI_REDOS_BUDGET_S`, по умолчанию 2.0 с — по таймауту файл пропускается с WARN,
   никогда не зависает). Встроенные layout'ы используют stdlib `re` и не несут
   никаких накладных расходов (TASK 012 + 017).
+
+### Справочник: типы страниц и типы связей (модель знаний)
+
+Ценность wiki — в *типизации* того, ЧЕМ является заметка и КАК заметки СВЯЗАНЫ. **Тип**
+заметки маршрутизирует её в бакет `pages.type` + фильтруемый `tag` (так что
+`wiki-search --tag <type>` выводит все заметки этого вида); её **связи** — это типизированные
+рёбра между страницами в event-графе, которые обходит `wiki-graph` и читает
+`wiki-search --as-of`. Тип и рёбра вы задаёте во frontmatter — ниже меню и назначение каждого
+пункта.
+
+#### Типы страниц — для чего каждый
+
+**Классы знаний (TASK 031 — слой «что произошло / что мы знаем»):**
+
+| `type:` | Назначение — когда использовать | бакет `pages.type` |
+|---|---|---|
+| `decision` | Принятое решение с обоснованием («выбрали X, потому что Y»). | research |
+| `requirement` | То, что система ОБЯЗАНА делать — спека / критерий приёмки. | brief |
+| `risk` | То, что *может* пойти не так (pre-mortem / открытая угроза). | research |
+| `incident` | То, что *пошло* не так — сбой / постмортем. | research |
+| `hypothesis` | Непроверенное предположение, которое намерены проверить. | research |
+| `fact` | Атомарное проверяемое утверждение. | concept |
+| `event` | Событие с датой — встреча, релиз, веха. | summary |
+
+**Инженерный костяк (общий с layout `dev-project`):**
+
+| `type:` | Назначение | `pages.type` |
+|---|---|---|
+| `task` | Единица работы и её спека. | brief |
+| `adr` | Architecture Decision Record. | research |
+| `plan` | План реализации. | brief |
+
+**Классы агентной памяти (TASK 034 — слой «кто действует / что выполняется»; моделируют саму агентную систему):**
+
+| `type:` | Назначение | `pages.type` |
+|---|---|---|
+| `agent` | Автономный актор — LLM-агент или человеческая роль. | concept |
+| `tool` | Вызываемая поверхность возможностей — CLI / API, который вызывает агент. | concept |
+| `workflow` | Процедура / конечный автомат (`draft`→`active`→`deprecated`→`superseded`). | brief |
+| `capability` | Атомарный навык, который умеет агент (напр. OCR, суммаризация). | concept |
+| `execution` | Запись одного запуска с датой (`status: success/failed/partial`) — операционная память. | summary |
+| `pattern` | Консолидированный вывод *второго порядка* («большинство инцидентов — из-за пропущенных требований»). | research |
+
+**Базовые типы контента (доступны всегда):** `note` (обычная заметка), `summary` (нарратив с
+датой — напр. саммари встречи/урока), `concept` (атомарная дефиниция), плюс специфика layout —
+`daily-note`, `clipping`, `moc` (map-of-content). Два системных типа, которые не пишут руками:
+`query` (накапливаемый цитируемый RAG-ответ, который пишет `wiki-query`) и `verification`
+(страница-вердикт `wiki-verify-multi`).
+
+> Типы маршрутизируются `type_mapping` layout'а, поэтому *один и тот же* сырой `type:`
+> попадает в нужный бакет CHECK-enum `pages.type` **без изменения схемы**. `--types <bucket>` —
+> грубый фильтр; `--tag <class>` (точное совпадение по члену списка для класса) — то, что нужно
+> обычно. **Шаблоны** заметок для каждого класса лежат в `templates/page-types/*.md` в репозитории;
+> `wiki-init` **копирует все 13 в `<vault>/.wiki/page-types/`** для existing-tree layout'ов
+> (`cybos`/`dev-project`/`obsidian-personal`), чтобы агент или человек, работающий В vault, имел
+> их локально (под `.wiki/` — поэтому они никогда не индексируются).
+
+#### Типы связей — для чего каждое ребро
+
+Рёбра — это **типизированные связи между страницами**, заданные во frontmatter на ИСХОДНОЙ
+странице (значение = `[[wikilink]]` / slug, скаляр или список). Вы задаёте **одно**
+направление; **инверсия выводится автоматически** на целевой странице при reindex, так что граф
+навигируем в обе стороны без двойного учёта. Обход: `wiki-graph backlinks/neighbors/chain
+--kind <edge>`.
+
+| Ключ во frontmatter | Смысл (источник → цель) | Авто-инверсия | Пример |
+|---|---|---|---|
+| `implements` | источник реализует / удовлетворяет цель | `implemented-by` | `decision` *implements* `requirement` |
+| `supersedes` | источник заменяет цель | `superseded-by` | `decision v2` *supersedes* `v1` |
+| `superseded_by` | источник заменён целью (другой конец) | `supersedes` | `v1` *superseded_by* `v2` |
+| `causes` | источник вызывает цель | `caused-by` | `decision` *causes* `incident` |
+| `caused_by` | источник вызван целью | `causes` | `incident` *caused_by* `decision` |
+| `invalidated_by` | цель аннулирует / обнуляет источник (TASK 034) | `invalidates` | `decision` *invalidated_by* `incident` |
+| `activated_by` | цель включает источник / вводит его в действие (TASK 034) | `activates` | `decision` *activated_by* событие раскатки |
+| `uses` | источник (`agent`/`workflow`) вызывает целевой tool/capability (TASK 034) | `used-by` | `agent` *uses* `tool` |
+| `owns` | источник (`agent`) владеет / управляет целевым workflow (TASK 034) | `owned-by` | `agent` *owns* `workflow` |
+| `relates_to` | симметричная ненаправленная связь | `related` (симметрично) | `fact` *relates_to* `decision` |
+
+> **Два ребра питают временно́й запрос.** `wiki-search --as-of <date>` считает страницу
+> переставшей быть активной, как только прошла дата её ближайшего преемника по
+> **`superseded-by`** *или* **`invalidated-by`** — поэтому эти два ребра (плюс собственная
+> `date` страницы или необязательный override `valid_to`) отвечают на «что было активно на дату
+> X» без LLM. `activated_by` **не** снимает страницу с активности (он лишь фиксирует, что её
+> включило); *начало* активности задаётся датой создания `date` / `valid_from`.
+>
+> **Системные ref-типы, которые не пишут руками** (выводятся автоматически, для полноты):
+> `mentioned` (обычный `[[wikilink]]` в теле), `cited` (страница `query` → процитированный
+> источник), `verifies` (страница `verification` → проверенный ею запрос), `defined-here`. Во
+> frontmatter задаются только типизированные рёбра из таблицы выше.
+
+#### Примеры — как создавать страницы (и что это открывает)
+
+Страница — это просто markdown-файл: `type:` и ключи-рёбра идут во frontmatter, содержимое —
+в тело. В vault **`cybos`** каждый тип лежит в своей папке (`decisions/`, `requirements/`, …),
+так что `type:` можно даже опустить; в **`obsidian-personal`** / **`dev-project`** добавьте
+блок `type_mapping` (выше) — и явный `type:` работает где угодно. Значения рёбер — это
+`[[wikilinks]]` (или голые slug), скаляр или список — **задаёте одно направление, инверсия
+выводится автоматически.**
+
+Небольшой связный сценарий (повторяет поставленный `08 - CybOS Demo`):
+
+```markdown
+# requirements/throughput.md
+---
+type: requirement
+title: Пропускная способность ≥ 10k/с
+date: 2026-01-10
+---
+Брокер должен держать 10 000 сообщений/с на пике.
+```
+```markdown
+# decisions/use-rabbitmq.md
+---
+type: decision
+title: Использовать RabbitMQ для асинхронных сообщений
+status: superseded            # proposed | accepted | superseded | rejected
+date: 2026-02-01              # ← задаёт --as-of (когда решение вступило в силу)
+implements: [[throughput]]    # → удовлетворяет требование   (инверсия: implemented-by)
+causes: [[queue-overflow]]    # → привело к инциденту         (инверсия: caused-by)
+superseded_by: [[switch-to-kafka]]  # → позже заменено        (инверсия: supersedes)
+---
+Выбран за операционную простоту.
+```
+```markdown
+# decisions/switch-to-kafka.md
+---
+type: decision
+title: Перейти на брокер Kafka
+status: accepted
+date: 2026-05-01
+implements: [[throughput]]
+supersedes: [[use-rabbitmq]]  # родословная вытеснения
+---
+Партиционированный лог масштабируется за потолок одного брокера RabbitMQ.
+```
+```markdown
+# incidents/queue-overflow.md
+---
+type: incident
+title: Сбой из-за переполнения очереди
+status: resolved
+date: 2026-03-15
+caused_by: [[use-rabbitmq]]
+---
+Неограниченный рост очереди при всплеске нагрузки.
+```
+
+Поддерживающие классы так же коротки — `risk` (`relates_to: [[use-rabbitmq]]`),
+`hypothesis` (`relates_to: [[queue-overflow]]`), `fact` (отдельное утверждение),
+`event` (`type: event`, `date: 2026-05-01`, `relates_to: [[switch-to-kafka]]`).
+
+И сторона агентной памяти — моделируем саму систему:
+
+```markdown
+# agents/claude-code.md
+---
+type: agent
+title: Claude Code
+status: active
+uses: [[wiki-query]]          # → инструмент, который он вызывает (инверсия: used-by)
+owns: [[ingest-pipeline]]     # → workflow, которым он управляет   (инверсия: owned-by)
+implements: [[ocr]]           # → возможность, которую он даёт     (инверсия: implemented-by)
+---
+Агент-оркестратор.
+```
+
+с `tool` (`# tools/wiki-query.md`), `workflow` (`# workflows/ingest-pipeline.md`,
+`status: active`, при желании `supersedes:` прошлую версию), `capability`
+(`# capabilities/ocr.md`), `execution` (`# executions/run-2026-06-16.md`, `type: execution`,
+`status: failed`, `date: 2026-06-16`, `relates_to: [[ingest-pipeline]]`) и `pattern`
+(`# patterns/missing-reqs.md`, `relates_to: [[queue-overflow]]`).
+
+**Что эти страницы теперь открывают — без LLM:**
+
+```bash
+wiki-search --tag decision --vaults V                # все решения (совпадение по члену tags[])
+wiki-search --tag decision --as-of 2026-04-01 --vaults V   # → use-rabbitmq (активно тогда; kafka — 05-01)
+wiki-search --tag decision --as-of 2026-06-01 --vaults V   # → switch-to-kafka (rabbitmq вытеснено 05-01)
+wiki-graph chain switch-to-kafka --kind supersedes --vault V   # родословная → use-rabbitmq
+wiki-graph backlinks throughput --kind implements --vault V    # что реализует требование → оба решения
+wiki-graph backlinks ocr        --kind implements --vault V    # какие агенты умеют OCR → claude-code
+wiki-graph neighbors use-rabbitmq --direction out --vault V    # все его исходящие рёбра
+wiki-search --tag execution --status failed --vaults V         # упавшие запуски (операционная память)
+wiki-query prepare "почему ушли от RabbitMQ?" --vault-root V --follow-edges  # цитируемый RAG, расширенный графом
+```
 
 ### Смешанный vault: области только для поиска + course-зоны, доступные для enrich
 

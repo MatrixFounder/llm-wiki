@@ -377,6 +377,25 @@
 > (`_edge_refs`→`[]` without edge keys). Design: ADR-004 + Q-032-1..6. Spec: docs/TASK.md (RTM
 > R-032-1..8).
 >
+> **TASK 034 (temporal core + agent-memory edges & classes; RFC-001/002 slice) — 🚧 IN
+> PROGRESS 2026-06-16** (branch `task-034-temporal-agent-memory`): builds the one
+> genuinely-new slice of a 6-RFC "agent memory" proposal (the rest was already expressible
+> via TASK 031/032/033). **(1) `wiki-search --as-of DATE`** — a temporal "active as of"
+> filter that is **graph-derived, zero required new fields**: `valid_from = COALESCE(authored
+> override, pages.date)`; `valid_to` = the authored override **or** the `date` of whatever
+> **supersedes/invalidates** the page (the TASK 032 graph) — half-open `[from, to)`. The
+> operator rejected the RFC's literal `valid_from`/`valid_to` fields (`valid_to` is unfillable
+> at authoring time); they survive only as **optional overrides**. SQL appends a `COALESCE(...,
+> p.date) <= ?` + a `NOT EXISTS` successor-walk over `('superseded-by','invalidated-by')` (no
+> `as_of` → zero SQL delta, back-compat). **(2) Schema v6→v7** — `ref_type` gains four new
+> inverse-closed pairs (`invalidated_by`↔`invalidates`, `activated_by`↔`activates`,
+> `uses`↔`used-by`, `owns`↔`owned-by`; `invalidated-by` is also what the `--as-of` walk reads),
+> same mechanical pattern + Class-B migration as TASK 032. **(3) Six agent-memory page types**
+> (`agent`/`tool`/`workflow`/`capability`/`execution`/`pattern`) via the `cybos` layout
+> `type_mapping` + `paths` (config only, zero Python — TASK 031 pattern). Karpathy byte-identity
+> preserved. Deferred (ROADMAP): RFC-004 `wiki-extract-decisions`, RFC-006 `wiki-consolidate`,
+> RFC-003 aggregation, the redundant `wiki-agent`/`wiki-workflow` CLIs. Design: Q-034-1..3.
+>
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
@@ -1520,6 +1539,48 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   injection posture (allowlist `validate_filter_field`, twice-bound params, no value echo, one-predicate-
   per-field dup guard) is unchanged and covers `tags`/`--tag` identically. Perf = the same unindexed
   json scan class as the open R-X3-MF-SCAN (SEV-3) residual; no new index, no regression.
+- **Q-034-1 (TASK 034 — temporal model: new `valid_from`/`valid_to` fields vs derive from the graph).**
+  The RFC proposed authored `valid_from`/`valid_to` fields. **RESOLVED (operator correction): derive,
+  don't author.** `valid_to` is unknowable at authoring time and `valid_from` duplicates the existing
+  indexed `pages.date`. `wiki-search --as-of DATE` computes the half-open validity interval
+  `[effective_from, effective_to)` where `effective_from = COALESCE(authored valid_from, pages.date)`
+  and `effective_to` = authored `valid_to` **or** the `date` of the earliest page that supersedes/
+  invalidates it (the TASK 032 graph, `ref_type IN ('superseded-by','invalidated-by')`) **or** ∞.
+  `valid_from`/`valid_to` survive as **optional overrides only** (future-effective / known-sunset),
+  never required. A page with neither `valid_from` nor `date` is EXCLUDED from `--as-of` so
+  non-temporal pages don't pollute the result. Frontmatter dates are ISO strings via `_json_safe`
+  (`normalization.py`) → `json_extract` text comparison is lexicographic = chronological. SQL is a
+  `COALESCE(…, p.date) <= ?` + a correlated `NOT EXISTS` successor-walk; absent `as_of` → zero SQL
+  delta (back-compat, R-1c). Perf rides `idx_refs_page` + the `pages` PK, bounded by `limit`.
+- **Q-034-2 (TASK 034 — edge set: one authorable direction or both).** **RESOLVED: both** (TASK 032
+  parity — `_INVERSE_REF_TYPE` already carries both ways). Four new inverse-closed pairs added —
+  `invalidated_by`↔`invalidates`, `activated_by`↔`activates`, `uses`↔`used-by`, `owns`↔`owned-by` —
+  i.e. **8 new authorable frontmatter keys + 8 new `ref_type` CHECK values** (schema v6→v7, Class-B
+  rebuild). `invalidated-by`/`superseded-by` are the edges the Q-034-1 `--as-of` walk reads. A drift
+  test asserts the three code maps (`_EDGE_KEY_TO_REF_TYPE`, `_INVERSE_REF_TYPE`, `models.py`) agree
+  with the SQL enum. `wiki-graph --kind <new>` traverses them with no CLI change.
+- **Q-034-3 (TASK 034 — agent-memory classes: where they live).** **RESOLVED: the `cybos` layout,
+  config only.** `agent`/`tool`/`workflow`/`capability`/`execution`/`pattern` → `type_mapping`
+  (existing `db_type` bucket + filterable tag, TASK 031 pattern) + `paths` globs
+  (`agents/**`, …) + per-type `templates/page-types/*` — **zero Python**, zero DDL beyond Q-034-2.
+  Karpathy unaffected. Aggregation reporting over these (RFC-003 "fails most often") needs a new
+  GROUP-BY read surface → deferred (ROADMAP).
+- **Q-034-4 (TASK 034 — `/vdd-multi` + dogfood hardening).** Three findings folded in, all
+  empirically reproduced before acceptance: **DF-034-1** (dogfood, SEV-2) — `wiki-graph`'s
+  `--kind` allow-list was a hardcoded TASK-032 list that silently dropped the v7 edge kinds
+  (`invalidates`/`uses`/… → `INVALID_KIND`); now **derived** `tuple(sorted(_INVERSE_REF_TYPE))`
+  so the traversal allow-list can never drift from the extractor (single source of truth).
+  **MED-1** (logic critic) — the `--as-of` successor walk JOINs the project-less `entity_slug`,
+  so on a multi-project vault a same-slug page in ANOTHER project could wrongly retire P; fixed
+  with the same `COUNT=1` ambiguity guard `_derive_inverse_edges` uses (conservative "stay
+  active when ambiguous" — over-report, never silent retirement; aligned with the data layer;
+  residual confined to the TASK-020/021 cross-project slug-collision hygiene case). **MED-2**
+  (logic critic) — a datetime-valued `valid_from`/`valid_to` override broke the half-open day
+  boundary (`"…T14:30:00" > "2026-02-01"`); fixed by comparing `substr(json_extract(…),1,10)`
+  (the date part); `pages.date` is already a pure ISO date (unwrapped). **Perf** (perf critic):
+  the `--as-of` *scalar* `json_extract(valid_from/valid_to)` branch is a co-beneficiary of a
+  future generated-column/expression index — recorded against the open R-X3-MF-SCAN issue
+  (the `--where` *membership* `json_each` branch is NOT; the scalar one is). No new index now.
 
 ---
 

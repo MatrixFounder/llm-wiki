@@ -29,7 +29,8 @@ cd "/path/to/your/Obsidian/Vault"     # the vault root (has WIKI_SCHEMA.md)
 wiki-search "дофамин"                       --vaults personal
 wiki-search "lasso regularization"          --vaults personal --limit 5
 wiki-search "переговоры" --vaults personal --project "Learning/Переговоры"
-wiki-search --vaults personal --where "type=lesson-summary" --limit 10   # list by frontmatter field (no FTS query)
+wiki-search --vaults personal --where "type=lesson-summary" --limit 10   # фильтр по полю frontmatter (без FTS-запроса)
+wiki-search --vaults cybos --tag decision --as-of 2026-04-20               # ВРЕМЕННОЙ срез: решения, АКТИВНЫЕ на дату (TASK 034; вытесненные/аннулированные к этой дате исключаются — без LLM и без ручного valid_to)
 wiki-search "smart money" --vaults personal --types summary               # restrict to a db type
 wiki-search "агент" --vaults personal --exact                            # точный поиск: без стемминга (ё/е всё равно сводятся)
 ```

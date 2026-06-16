@@ -276,11 +276,16 @@ def test_cybos_config_loads_and_validates(tmp_path: Path) -> None:
     assert is_two_tier_scaffold("cybos") is False
     globs = {p.glob for p in cfg.paths}
     for folder in ("decisions", "requirements", "risks", "incidents",
-                   "hypotheses", "facts", "events"):
+                   "hypotheses", "facts", "events",
+                   # TASK 034 — agent-memory class folders
+                   "agents", "tools", "workflows", "capabilities",
+                   "executions", "patterns"):
         assert f"{folder}/**/*.md" in globs, f"cybos missing {folder} glob"
     assert set(cfg.type_mapping) == {
         "decision", "requirement", "risk", "incident", "hypothesis", "fact",
         "event", "task", "adr", "plan",
+        # TASK 034 — agent-memory classes
+        "agent", "tool", "workflow", "capability", "execution", "pattern",
     }
     # ref extraction: wiki-link + markdown-link + id-ref (built-in → stdlib re)
     assert {r.kind for r in cfg.ref_extraction} == {"wiki-link", "markdown-link", "id-ref"}
