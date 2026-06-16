@@ -202,6 +202,7 @@
   },
   "active": "c001e100f31ab5ad",
   "lastOpenFiles": [
+    "docs/architectures/open-questions.md",
     "docs/reviews/task-035-real-vault-dogfood.md",
     "tests/__pycache__/test_search_pages_fts_membership.cpython-314-pytest-9.0.3.pyc",
     "tests/test_search_pages_fts_membership.py",
@@ -236,7 +237,6 @@
     "samples/cybos-dogfood/CLAUDE.md",
     "samples/cybos-dogfood/workflows/wiki-sync.md",
     "samples/cybos-dogfood/tools/wiki-query.md",
-    "samples/cybos-dogfood/incidents/inc-42.md",
-    "samples/cybos-dogfood/decisions/dec-sync-v1.md"
+    "samples/cybos-dogfood/incidents/inc-42.md"
   ]
 }

@@ -753,10 +753,12 @@ the misleading docstring.
   edge graph for Obsidian Graph-View parity.
 - **CI workflow** for benchmarks — wire `bench --enforce-slos` into a
   GitHub Action (currently runs locally only).
-- **`docs/ARCHITECTURE.md` Index-Mode split** (doc-hygiene) — the file crossed the
-  1500-line soft threshold (1528 after TASK 032); two arch-reviews deferred the §11
-  (Q-NNN decision-log) split to a dedicated task to avoid `#q-0NN-N` anchor churn
-  mid-feature. Extract §11 → `architectures/open-questions.md` + a short index.
+- **`docs/ARCHITECTURE.md` Index-Mode split** (doc-hygiene) — ✅ **DONE 2026-06-16**: §11
+  (Q-NNN decision-log, ~983 lines) extracted to `architectures/open-questions.md` (985 lines,
+  97 Q-entries) with a summary+`→ [details]` stub + ToC link, matching the §§1-10 pattern.
+  **ARCHITECTURE.md 1633 → 660 lines.** No `#q-0NN-N` anchor churn (only prose `ARCHITECTURE
+  Q-0XX` refs exist — they survive the same indirection §§1-10 already use; verified no
+  markdown hard-link to a `#q-` anchor). Content moved verbatim (marker-based surgery).
 
 ---
 
