@@ -537,6 +537,85 @@ built (compose `wiki-graph`/`wiki-search`, Decision-17).
 
 ---
 
+### R-15. Derived knowledge health (lifecycle-drift + coverage) — PROPOSED 2026-06-16
+
+A **third RFC batch** (RFC-007 Evolution Engine · 008 Evidence · 009 Pattern Mining ·
+010 Coverage Analysis · 011 Retrieval Context Builder) arrived continuing the
+RFC-001..006 numbering (see R-14). Same audit outcome as R-14: **most of it is already
+built or is an anti-pattern for this stack**, and the value collapses into **one coherent
+capability** — a Class-B **derivation/analysis layer** over the existing markdown + edge
+graph (**zero new authored fields, zero DDL**), not five new things to store. Per-RFC
+verdict:
+
+- **RFC-011 (the agent's "P0", "most valuable")** — **~80% already shipped** as `wiki-query
+  --follow-edges` (R-13 / TASK 032). Real delta is small + separable → **Track B** below,
+  NOT a P0.
+- **RFC-010 Coverage** — ★ the genuinely-new high-value slice (Track A / A2).
+- **RFC-007 Evolution** — take only the **derivable** half = drift (Track A / A1).
+  `risk→incident` / `decision→invalidated` are already answerable via `wiki-graph` +
+  `--as-of`; the `type: transition` page + authored `confidence` + auto-status-rewrite are
+  **REJECTED** (Class-A authored state that's derivable from edges — the TASK 034 `valid_to`
+  precedent).
+- **RFC-009 Pattern Mining** — same `GROUP BY ref_type HAVING count` family; **DEFERRED**
+  (support counts are tiny until vault density grows; slots in later as a third `wiki-health`
+  subcommand; if built, `log()` the `--min-support` cut — no silent truncation).
+- **RFC-008 Evidence** — full version **REJECTED** (`type: evidence` = schema v8 + an
+  authored `strength` field → bites zero-DDL + derive-don't-author). A **lite** version
+  (reuse the existing `trust_level` column + `cited`/`related` edges) slots after A2 as a
+  coverage-rule variant.
+
+**Track A — derived knowledge health (the new capability; zero DDL, read-side only):**
+
+- **Slice A1 — lifecycle-drift as `wiki-lint` rules (MVP, do first).** Flag a page whose
+  **authored `status` contradicts its graph state**. v1 = 3 high-confidence contradiction
+  rules: decision with inbound `superseded-by` but `status ≠ superseded`; decision with
+  inbound `invalidated-by` but `status ∈ {proposed, accepted}`; workflow with inbound
+  `superseded-by` but `status ≠ superseded`. **Zero DDL** — verbatim reuse of the `--as-of`
+  `NOT EXISTS` walk + the COUNT=1 same-slug guard (`sqlite_repository.py:679-681`); key on
+  `json_extract(frontmatter_json,'$.type'/'$.status')` (**NOT** `pages.type`, which is the
+  db-bucket — the most likely impl bug). Rules live in `layouts/*.yaml` (`drift_rules`,
+  config-driven; cybos only — other layouts default empty). New `lifecycle-drift`
+  `LintIssue` category + a loop in `lint.py:run_all_checks()`.
+  **DESIGN DECISION (settled): semantic drift rides `wiki-lint`**, not a separate CLI, so it
+  inherits the existing exit policy — **advisory by default, non-zero only under `--strict`**
+  (drift is a true contradiction, so CI-gatable). hypothesis excluded from v1 (its state is
+  prose, not the graph); risk-drift INFO/deferred (an open risk legitimately has a
+  `caused_by`).
+
+- **Slice A2 — coverage gaps via a new read-only CLI (the most valuable *second* piece).**
+  `wiki-health` / `wiki-coverage` (clone `wiki_graph.py`: single JSON envelope, allow-listed
+  `--kind`, exit `0/2/6`), **always exit 0** — a gap is *data*, not a failure (unlike drift;
+  the base-rate is high on a young vault, so it must never gate). v1 rules: requirement /
+  capability with no inbound `implements`; fact with an empty `source:` frontmatter scalar.
+  **Same DAL engine as A1** (the `NOT EXISTS` variant) → A2 reuses A1's repo method + YAML
+  rule scaffolding. **Corrected edge semantics** (the source RFC's maps were WRONG): a
+  requirement is covered by inbound `implements` (not a risk); "rationale" is decision *prose*
+  (`## Consequences`), not an edge; "fact evidence" is the `source:` scalar. Body-section
+  rules (decision-rationale, incident-root-cause) need H2 parsing → deferred to phase 2.
+
+**Track B (separate; pick up when synthesis quality is the priority).** RFC-011 polish —
+group the already-flat `wiki-query --follow-edges` hits into a hierarchical subgraph in the
+`prepare` envelope (`{supersession:[…], causation:[…]}`) + update the `wiki-query-synthesis`
+contract so the LLM gets explicit lineage structure, not flat hits + `via_edge` labels.
+Touches only `wiki_query.py` envelope shaping + the synthesis prompt; independent of Track A,
+no schema, no DAL change.
+
+**Rejected (recorded, not silent):** `type: transition` page (007); authored `confidence` /
+auto-status-rewrite (007); `type: evidence` + `strength` schema v8 (008); any auto-fix that
+mutates a Class-A `status` (would need a `prepare`/`apply` write contract — outside this
+read-only slice).
+
+**Trigger**: a real cybos/dev vault accumulates cross-linked decisions/incidents where
+authored `status` drifts from the graph (A1), or where "which requirements have no
+implementer / which facts have no source" becomes a routine question (A2). **Effort**: A1 ≈ 1
+small TASK (rides existing `wiki-lint`); A2 ≈ 1 small TASK (new CLI, reuses A1's DAL).
+**Builds on** R-13 (event graph) + R-14 (`--as-of` `NOT EXISTS` SQL + the config-driven
+layout rule pattern). **Files**: `repository.py`/`sqlite_repository.py` (new `find_lifecycle_drift`
+/ `find_coverage_gaps`), `lint.py`, new `scripts/wiki_skills/wiki_health.py` + `bin/wiki-health`,
+`layout_config.py` + `config/layout-config.schema.yaml` + `layouts/cybos.yaml`.
+
+---
+
 ## P2 — Cross-project indexing
 
 Design doc: [`docs/proposals/indexing-agentic-dev-artifacts.md`](proposals/indexing-agentic-dev-artifacts.md)
