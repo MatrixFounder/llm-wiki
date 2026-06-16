@@ -103,7 +103,8 @@ default**).
 ### Lint — health-check
 
 ```bash
-wiki-lint --vault ${vault_id}   # drift, orphan links, hash mismatch, cross-vault dups
+wiki-lint --vault ${vault_id}            # SQL health + lifecycle-drift (authored status vs graph)
+wiki-lint --vault ${vault_id} --strict    # exit non-zero on any issue (CI gate)
 ```
 
 ### Query (RAG)
@@ -130,6 +131,9 @@ wiki-search --tag decision --as-of 2026-04-15 --vaults ${vault_id} # decisions A
 wiki-graph chain     <slug> --kind supersedes --vault ${vault_id}  # supersession lineage
 wiki-graph backlinks <slug> --kind implements --vault ${vault_id}  # what implements a requirement
 wiki-graph neighbors <slug> --direction out   --vault ${vault_id}  # one-hop typed edges
+wiki-health coverage --vault ${vault_id}                          # pages MISSING an expected edge/field (R-15; exit 0)
+wiki-health coverage --vault ${vault_id} --class requirement      # e.g. requirements nothing implements
+# lifecycle-drift (authored status vs the graph, e.g. superseded-but-accepted) rides `wiki-lint --strict`
 ```
 
 `--as-of` reads each page's `date` plus its `superseded-by` / `invalidated-by` edges to
@@ -182,11 +186,12 @@ wiki-reindex --full --vault ${vault_id}
 
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, optional `index_db`.
 - **`.wiki/layout.yaml`** / **`.wiki/sync.yaml`** — per-vault index + sync tuning.
-- **obsidian-llm-wiki** — the index layer (16 CLIs). Search/RAG: `wiki-search`
+- **obsidian-llm-wiki** — the index layer (17 CLIs). Search/RAG: `wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `wiki-query`, `wiki-verify-multi`.
   Event graph: `wiki-graph` (typed page-to-page edges). Construction: `wiki-sync`
   (mixed-zone auto-router), `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`.
-  Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint`, `wiki-index-render`. Install
+  Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint` (+ lifecycle-drift, gates
+  `--strict`), `wiki-health` (coverage gaps; R-15), `wiki-index-render`. Install
   per its `README.md`; ensure its `bin/` is on `PATH`.
 - **obsidian-cli** — drives the *running* Obsidian app via its official CLI (Obsidian
   1.12+): link-safe `rename`/`move` (the app rewrites backlinks; a plain `mv` orphans

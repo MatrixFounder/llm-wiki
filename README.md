@@ -105,7 +105,7 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 16 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py` + the `wiki_extract_concepts/` package) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
+| **CLIs** | `scripts/wiki_skills/` | 17 thin entry points (16 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` package) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
 | **Vendored file layer** | `scripts/wiki_ingest/` | In-process snapshot of the external `wiki-ingest` skill (TASK 004). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
@@ -408,6 +408,7 @@ binaries.
 | `wiki-query prepare/apply --vault-root <path>` | RAG: retrieve → orchestrator-cited synthesis → file a compounding `_queries/<slug>.md` page (`prepare`/`apply`). |
 | `wiki-verify-multi prepare/apply` | Off-by-default 4-critic audit of a filed answer vs its cited sources → `_verifications/verify-<slug>.md` verdict page; FAIL records + exits non-zero, never mutates the answer. |
 | `wiki-graph neighbors/chain/backlinks <slug> --vault <vid> [--kind K] [--direction D] [--depth N]` | Read-only **event-graph** traversal over the typed page-to-page edges (implements/supersedes/causes/relates-to + the TASK-034 invalidated-by/activated-by/uses/owns + auto-derived inverses). TASK 032/034 / ADR-004; pairs with `wiki-query --follow-edges`. |
+| `wiki-health coverage --vault <vid> [--class C]` | Read-only **coverage** report (R-15 / TASK 036, ADR-006): pages MISSING an expected relation (requirement/capability with no `implemented-by`; fact with no `source:`). Layout-config-driven (`coverage_rules`; cybos ships them); **always exits 0** — a gap is data. Its sibling **lifecycle-drift** (authored `status` vs graph state) rides `wiki-lint` and gates `--strict`. |
 
 ### Knowledge construction
 

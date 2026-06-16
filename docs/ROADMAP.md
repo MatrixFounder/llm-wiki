@@ -537,7 +537,19 @@ built (compose `wiki-graph`/`wiki-search`, Decision-17).
 
 ---
 
-### R-15. Derived knowledge health (lifecycle-drift + coverage) — PROPOSED 2026-06-16
+### R-15. Derived knowledge health (lifecycle-drift + coverage) — Track A ✅ SHIPPED (TASK 036, 2026-06-16)
+
+**✅ SHIPPED (TASK 036, 2026-06-16) — Track A (A1 lifecycle-drift + A2 coverage).** Zero DDL
+(`user_version` stays 7); read-side only. **A1** = a `lifecycle-drift` `wiki-lint` category
+(advisory; gates `--strict`) flagging a page whose authored `status` contradicts its graph
+state. **A2** = a new read-only **`wiki-health coverage`** CLI (17th `wiki-*`; always exit 0)
+reporting pages missing an expected edge/field. Rules are layout-config-driven (`drift_rules`/
+`coverage_rules`; cybos ships 3+3), validated at load; the DAL mirrors the `--as-of` `NOT EXISTS`
+walk (all values bound). `/vdd-multi` converged (3 logic + 2 perf fixes folded in); live cybos
+dogfood green; **1524 pytest, mypy strict**. Design: **ADR-006** (D-036: drift→lint/`--strict`
+because it is a *contradiction*; coverage→always-exit-0 report because a gap is *expected*).
+**Deferred:** Track B (RFC-011 subgraph polish), RFC-008-lite (`trust_level`), RFC-009
+pattern-mining, body-section coverage. See `docs/tasks/task-036-*`, `docs/adr/ADR-006-*`.
 
 A **third RFC batch** (RFC-007 Evolution Engine · 008 Evidence · 009 Pattern Mining ·
 010 Coverage Analysis · 011 Retrieval Context Builder) arrived continuing the
@@ -564,7 +576,7 @@ verdict:
   (reuse the existing `trust_level` column + `cited`/`related` edges) slots after A2 as a
   coverage-rule variant.
 
-**Track A — derived knowledge health (the new capability; zero DDL, read-side only):**
+**Track A — derived knowledge health ✅ SHIPPED (TASK 036) — zero DDL, read-side only:**
 
 - **Slice A1 — lifecycle-drift as `wiki-lint` rules (MVP, do first).** Flag a page whose
   **authored `status` contradicts its graph state**. v1 = 3 high-confidence contradiction

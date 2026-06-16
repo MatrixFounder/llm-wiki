@@ -14,7 +14,7 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**16 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**17 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
 
 - *Construct* — `wiki-enrich` (raw source → summary via the vendored `wiki-ingest`),
   `wiki-extract-concepts` (densify an indexed source), `wiki-index-upsert` (index one
@@ -25,7 +25,9 @@ event graph, cited RAG answers, and a verification layer.
 - *Resolve entities* — `wiki-confirm` / `wiki-alias` / `wiki-merge`.
 - *Answer / verify (RAG)* — `wiki-query` (retrieve → cited synthesis → file a
   compounding `_queries/*` page), `wiki-verify-multi` (off-by-default 4-critic audit).
-- *Maintain / lifecycle* — `wiki-lint`, `wiki-reindex` (`--full`/`--delta`), `wiki-init`.
+- *Maintain / lifecycle* — `wiki-lint` (SQL health + R-15 lifecycle-drift, gates `--strict`),
+  `wiki-health` (R-15 coverage gaps — read-only, always exit 0), `wiki-reindex`
+  (`--full`/`--delta`), `wiki-init`.
 
 ### Durable invariants (what a change must not break)
 
@@ -110,7 +112,7 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — one spec (+ plan) per shipped task; `docs/TASK.md`/`docs/PLAN.md` hold the **current** task. The shipped-task log lives here and in git — not in this file. ADRs in `docs/adr/` (001 wrap+index · 002 multi-vault/Class-A-B-C · 003 typed classes · 004 event graph · 005 FTS-narrowed membership).
+- `docs/tasks/` + `docs/plans/` — one spec (+ plan) per shipped task; `docs/TASK.md`/`docs/PLAN.md` hold the **current** task. The shipped-task log lives here and in git — not in this file. ADRs in `docs/adr/` (001 wrap+index · 002 multi-vault/Class-A-B-C · 003 typed classes · 004 event graph · 005 FTS-narrowed membership · 006 derived knowledge health).
 - `docs/ARCHITECTURE.md` — living INDEX of the system architecture; section bodies
   in `docs/architectures/` (the Q-0XX per-task design rationale is in
   `docs/architectures/open-questions.md`).

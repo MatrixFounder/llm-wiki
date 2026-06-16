@@ -51,6 +51,7 @@ from scripts.wiki_index.config_loader import (
     load_root_config,
 )
 from scripts.wiki_index.layout import SCHEMA_FILE, SYSTEM_FILES, VAULT_TIER_PROJECT
+from scripts.wiki_index.models import CoverageRule, DriftRule
 from scripts.wiki_index.security import (
     PathTraversalError,
     assert_no_symlink_escape,
@@ -382,6 +383,8 @@ class LayoutConfig:
     file_extensions: tuple[str, ...] = (".md",)
     frontmatter_synthesis: dict[str, Any] = field(default_factory=dict)
     auto_indexes: tuple[dict[str, Any], ...] = ()
+    drift_rules: tuple[DriftRule, ...] = ()         # TASK 036 / R-15 (Slice A1)
+    coverage_rules: tuple[CoverageRule, ...] = ()   # TASK 036 / R-15 (Slice A2)
     # R-X1-REDOS-RT (TASK 017) provenance — True iff a per-vault override SUPPLIED
     # this list (Q-012-f merge REPLACES it wholesale). Drives the runtime ReDoS
     # guard: operator-supplied patterns run under `regex`+timeout; built-in patterns
@@ -466,6 +469,23 @@ def _build(
         )
         for r in (merged.get("ref_extraction") or ())
     )
+    drift_rules = tuple(
+        DriftRule(
+            page_class=r["class"],
+            edge=r["edge"],
+            expect_status=r.get("expect_status"),
+            forbid_status=tuple(r.get("forbid_status") or ()),
+        )
+        for r in (merged.get("drift_rules") or ())
+    )
+    coverage_rules = tuple(
+        CoverageRule(
+            page_class=r["class"],
+            requires_edge=r.get("requires_edge"),
+            requires_field=r.get("requires_field"),
+        )
+        for r in (merged.get("coverage_rules") or ())
+    )
     return LayoutConfig(
         schema_version=merged["schema_version"],
         layout=merged["layout"],
@@ -478,6 +498,8 @@ def _build(
         file_extensions=tuple(merged.get("file_extensions") or (".md",)),
         frontmatter_synthesis=dict(merged.get("frontmatter_synthesis") or {}),
         auto_indexes=tuple(merged.get("auto_indexes") or ()),
+        drift_rules=drift_rules,
+        coverage_rules=coverage_rules,
         ref_extraction_operator_supplied=ref_extraction_operator_supplied,
         paths_operator_supplied=paths_operator_supplied,
     )
@@ -571,7 +593,69 @@ def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutC
                  ref_extraction_operator_supplied=refs_op)
     _validate_path_patterns(cfg.paths, operator_supplied=cfg.paths_operator_supplied)
     _redos_budget_check(cfg)            # PW-D ReDoS gate (ref + project regexes)
+    _validate_health_rules(cfg)         # TASK 036 / R-15 — drift/coverage rule gate
     return cfg
+
+
+def _validate_health_rules(config: LayoutConfig) -> None:
+    """TASK 036 / R-15 — validate the derived-knowledge-health rules at config-load
+    (raise LayoutConfigError → exit 6, the fail-loud posture of the regex/template
+    gates). The schema `oneOf` already enforces the structural exactly-one-of; this
+    adds the SEMANTIC checks JSON Schema cannot express:
+      - each drift/coverage `edge` is a known typed event-graph ref_type
+        (`reindex._INVERSE_REF_TYPE` — the SAME allow-list `wiki-graph` traverses, so
+        a layout rule can never name an edge the graph does not derive → no silent
+        never-fires drift / always-gap coverage from a typo);
+      - each coverage `requires_field` is an allow-listed frontmatter field name
+        (`validate_filter_field`) — it is interpolated into a `$.<field>` JSON path.
+
+    Imports are LAZY: `reindex` imports THIS module (a top-level import would cycle);
+    `validate_filter_field` is pulled at call-time for symmetry. Early-returns for the
+    common case (Karpathy/dev/obsidian ship no health rules) so they never import
+    reindex."""
+    if not config.drift_rules and not config.coverage_rules:
+        return
+    from scripts.wiki_index.reindex import _INVERSE_REF_TYPE
+    from scripts.wiki_index.repository import validate_filter_field
+
+    valid_edges = set(_INVERSE_REF_TYPE)
+    for dr in config.drift_rules:
+        # Defensive: the schema oneOf already guarantees exactly one, but a hand-built
+        # LayoutConfig (tests / library callers, bypassing the YAML schema) must not
+        # slip a malformed rule through.
+        if (dr.expect_status is not None) == bool(dr.forbid_status):
+            raise LayoutConfigError(
+                f"drift_rule for class {dr.page_class!r} must set exactly one of "
+                f"expect_status / forbid_status")
+        if dr.edge not in valid_edges:
+            raise LayoutConfigError(
+                f"drift_rule for class {dr.page_class!r} names unknown edge {dr.edge!r} "
+                f"(valid event-graph edges: {sorted(valid_edges)})")
+        # vdd-multi critic-logic LOW: an empty/whitespace status value is a footgun —
+        # `expect_status: ""` would flag EVERY page with the edge; `forbid_status: [""]`
+        # is a dead rule. Reject at load.
+        if dr.expect_status is not None and not dr.expect_status.strip():
+            raise LayoutConfigError(
+                f"drift_rule for class {dr.page_class!r}: expect_status must be non-empty")
+        if any(not s.strip() for s in dr.forbid_status):
+            raise LayoutConfigError(
+                f"drift_rule for class {dr.page_class!r}: forbid_status must not contain "
+                f"an empty value")
+    for cr in config.coverage_rules:
+        if (cr.requires_edge is not None) == (cr.requires_field is not None):
+            raise LayoutConfigError(
+                f"coverage_rule for class {cr.page_class!r} must set exactly one of "
+                f"requires_edge / requires_field")
+        if cr.requires_edge is not None and cr.requires_edge not in valid_edges:
+            raise LayoutConfigError(
+                f"coverage_rule for class {cr.page_class!r} names unknown edge "
+                f"{cr.requires_edge!r} (valid event-graph edges: {sorted(valid_edges)})")
+        if cr.requires_field is not None:
+            try:
+                validate_filter_field(cr.requires_field)
+            except ValueError as exc:
+                raise LayoutConfigError(
+                    f"coverage_rule for class {cr.page_class!r}: {exc}") from exc
 
 
 def _redos_budget_check(config: LayoutConfig) -> None:

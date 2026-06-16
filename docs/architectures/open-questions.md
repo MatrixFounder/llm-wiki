@@ -983,3 +983,33 @@
   **untouched**. Zero DDL (`user_version` stays 7), no layering inversion (the phrase-quote is
   inlined in the DAL — `wiki_index` must not import `wiki_skills`).
 
+- **Q-036-1 (TASK 036 / R-15 — derived health: new authored state vs derive from the graph).**
+  The RFC-007/008 proposals (a `type: transition` page, a `confidence`/`strength` field,
+  auto-status-rewrite) would author state that is already derivable from the event graph, and
+  RFC-008 full forces a schema v8 bump. **RESOLVED: reject the authored state; build a read-only
+  Class-B derivation layer** (`find_lifecycle_drift`/`find_coverage_gaps`) over
+  `pages.frontmatter_json` + `page_entity_refs` — zero new fields, **zero DDL** (`user_version`
+  stays 7), consistent with the Q-034-1 `valid_to` precedent (derive, don't author). See ADR-006.
+- **Q-036-2 (TASK 036 — one machinery, two surfaces: where drift vs coverage live).** Both are
+  the same `EXISTS`/`NOT EXISTS` query over the graph keyed on `json_extract(fm,'$.type')` (the
+  RAW class, NOT `pages.type` — the db-bucket). They differ on base-rate/actionability, which
+  decides the surface (**D-036**): **drift** is a *contradiction* (authored `status` vs the
+  graph) → a new `lifecycle-drift` `wiki-lint` category that inherits the existing exit policy
+  (advisory; non-zero only under `--strict`) — the one SEMANTIC check that belongs on lint's
+  gate. **Coverage** is an *absence* (expected, high base-rate) → a separate read-only
+  `wiki-health coverage` CLI that **always exits 0** (gating it would cry wolf). Rules are layout
+  grammar (`drift_rules`/`coverage_rules` in `layouts/*.yaml`; cybos ships 3+3), validated at
+  config-load against `reindex._INVERSE_REF_TYPE` (edges) + the metadata-filter field allow-list.
+- **Q-036-3 (TASK 036 — `/vdd-multi` + dogfood hardening).** Security ✓ bikeshedding-only (all
+  rule values bound; the only string-built fragment is a `?`-placeholder count; `requires_field`
+  double-gated by the `fullmatch` allow-list; INVALID_CLASS never echoes the value). Logic — 3
+  fixed: a non-scalar `status: [x]` phantom-drift → a `json_type='text'` guard; `source: []`
+  (empty container) → treated as a gap (`IN ('', '[]', '{}')`); empty/whitespace status values →
+  rejected at config-load. Perf — 2 fixed: the per-vault double `resolve_layout_config` collapsed
+  to one shared resolve; an `EXPLAIN QUERY PLAN` test pins the EXISTS correlation to an index seek
+  (the PK covering auto-index), not a per-row full scan. Documented: drift reads the auto-derived
+  inverse edge, which a `--delta` can leave transiently stale until `--full` (so `--strict` drift
+  gating assumes a recent `--full`); and the `O(N·rules)` scan cost-shape + a "single CASE/CTE
+  pass if a typed partition grows large" tripwire (YAGNI now — `$.type` unindexed by P-5, small
+  typed vaults). 1524 pytest, mypy strict.
+

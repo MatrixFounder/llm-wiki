@@ -152,8 +152,11 @@ ref) that resolves to a `_sources/` page — so it traces back to the raw source
 ### 3. Lint — health-check
 
 ```bash
-# SQL-level (drift, orphan links, hash mismatch, cross-vault dups)
-/wiki-lint --vault ${vault_id}
+# SQL-level (drift, orphan links, hash mismatch, cross-vault dups + lifecycle-drift)
+/wiki-lint --vault ${vault_id}              # --strict to gate on lifecycle-drift (status vs graph)
+
+# Derived knowledge health — pages MISSING an expected relation (typed-class vaults; exit 0)
+/wiki-health coverage --vault ${vault_id}
 
 # File-level (open contradictions, dangling [[links]], missing pages)
 /wiki-ingest lint

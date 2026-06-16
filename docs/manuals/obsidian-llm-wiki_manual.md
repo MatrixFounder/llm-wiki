@@ -60,7 +60,7 @@ layer.
 | **Type** | Multi-vault knowledge-base index + CLI toolkit |
 | **Canonical source** | Markdown in the Obsidian vault (Class A) |
 | **Derived cache** | One global SQLite DB (FTS5 + WAL), partitioned by `vault_id` (Class B/C) |
-| **Surface** | 16 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
+| **Surface** | 17 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
 | **I/O contract** | stdin/args in → one-line JSON envelope on stdout + exit code |
 | **Core invariant** | The DB is 100% rebuildable from markdown (`wiki-reindex --full`) |
 | **Schema** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
@@ -192,7 +192,7 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 
 ## The command vocabulary, by purpose
 
-The 16 CLIs are not a flat list — each plays a role in the loop above. Below,
+The 17 CLIs are not a flat list — each plays a role in the loop above. Below,
 each command is given as *why it exists* and *when to reach for it*, not just its
 flags (those live in each [`SKILL.md`](../../skills/)).
 
@@ -242,7 +242,8 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**. Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans). `--mtime-skip` trades full-hash integrity for speed. |
+| **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**. Since **R-15 / TASK 036** it also runs **lifecycle-drift** — a page whose authored `status` *contradicts* the event graph (a `decision` carrying a `superseded-by` edge but still `status: accepted`; one an incident `invalidates` but still live). Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans). Drift is **advisory by default and gates only `--strict`** (it is a true contradiction); `--mtime-skip` trades full-hash integrity for speed. |
+| **`wiki-health`** | Read-only **derived knowledge-health** report (R-15 / TASK 036, ADR-006) — the *coverage* sibling of `wiki-lint`'s drift. `wiki-health coverage --vault <id> [--class C]` lists pages **missing an expected relation** — a `requirement` nothing implements, a `capability` no agent provides, a `fact` with no `source:` — computed over frontmatter + the event graph (layout-config-driven `coverage_rules`; the `cybos` layout ships them, other layouts → an empty report). A gap is *data*, not a failure → it **always exits 0** (whereas drift gates `--strict`). Pure derivation: zero new fields, zero DDL. |
 | **`wiki-reindex`** | Rebuilds the DB from markdown. `--full` wipes and rebuilds (this is the **rebuildability gate** — if a vault can't survive `--full`, the Class A→B contract is broken); `--delta` does an incremental mtime/hash-based pass after manual edits. The authoritative reconciliation of cache ↔ canon. |
 
 ### 6. Vault lifecycle

@@ -62,9 +62,16 @@ wiki-sync scan "03 - Learning" --vault personal --dry-run     # human-readable p
 # Executing the plan (summarising etc.) is orchestrator/LLM work → use Claude CLI (§B).
 ```
 
-**Проверка здоровья** (drift, висячие `[[links]]`, расхождение хэшей, межвалтовые дубли)
+**Проверка здоровья** (drift, висячие `[[links]]`, расхождение хэшей, межвалтовые дубли + lifecycle-drift)
 ```bash
-wiki-lint --vault personal
+wiki-lint --vault personal                   # SQL-здоровье + lifecycle-drift (авторский status против графа)
+wiki-lint --vault personal --strict           # ненулевой выход при любой проблеме (CI-гейт)
+```
+
+**Производное «здоровье знаний»** (vault'ы с типизированными классами, напр. `cybos`) — чего НЕ ХВАТАЕТ
+```bash
+wiki-health coverage --vault cybos                       # страницы без ожидаемого ребра/поля (всегда exit 0)
+wiki-health coverage --vault cybos --class requirement   # напр. requirement'ы, которые ничто не реализует
 ```
 
 **Задать вопрос и получить синтез с цитатами (RAG)** — в два шага `prepare`/`apply`:
@@ -112,7 +119,7 @@ claude        # or your Claude Code launcher
 - *«Разложи этот meeting-summary как заметку в `04 - Work projects/<Client>/` и проиндексируй.»*
 
 Для частых действий есть и слэш-команды: `/wiki-search`, `/wiki-query`, `/wiki-sync`,
-`/wiki-reindex`, `/wiki-lint`, `/wiki-enrich`. Агент держит вас в курсе всего, что пишет
+`/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-enrich`. Агент держит вас в курсе всего, что пишет
 (саммари, новые заметки), и безопасен к повторному запуску (идемпотентность по файлам).
 
 ---
@@ -125,7 +132,8 @@ claude        # or your Claude Code launcher
 | **Новый транскрипт / raw-документ в зоне курса** | Claude CLI: «просканируй и суммаризируй `<zone>`» → он планирует (`wiki-sync scan`), затем исполняет; повторный запуск — no-op (уже суммаризированные raw пропускаются) |
 | **Что-то найти** | `wiki-search "…" --vaults personal` (или попросить Claude) |
 | **Нужен синтезированный ответ с цитатами** | `wiki-query prepare/apply` (или попросить Claude) |
-| **Периодическое здоровье** | `wiki-lint --vault personal` (бэклог orphan-links ожидаем; со временем дренируется) |
+| **Периодическое здоровье** | `wiki-lint --vault personal` (бэклог orphan-links ожидаем; со временем дренируется); `--strict` — гейт по lifecycle-drift |
+| **Пробелы покрытия (типизированные vault'ы)** | `wiki-health coverage --vault cybos` — requirement'ы без реализатора, факты без источника; пробел это данные, exit 0 |
 | **Индекс выглядит неверно / после большого перемещения** | `wiki-reindex --full --vault personal` (безопасно — пересборка из markdown) |
 
 **Тюнинг** живёт в двух per-vault файлах (см. runbook): `<vault>/.wiki/layout.yaml`

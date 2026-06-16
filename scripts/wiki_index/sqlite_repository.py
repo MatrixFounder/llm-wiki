@@ -26,7 +26,11 @@ from scripts.wiki_index.models import (
     AliasCollision,
     BatchMode,
     BatchRun,
+    CoverageGap,
+    CoverageRule,
+    DriftHit,
     DriftReport,
+    DriftRule,
     Entity,
     LogEvent,
     MergeReport,
@@ -810,6 +814,124 @@ class SQLiteRepository(IndexRepository):
             )
             for r in rows
         ]
+
+    def find_lifecycle_drift(
+        self, vault_id: str, rules: list[DriftRule]
+    ) -> list[DriftHit]:
+        # TASK 036 / R-15 (Slice A1) — a page whose AUTHORED `$.status` contradicts its
+        # event-graph state. Keyed on frontmatter `$.type` (the RAW class, NOT pages.type
+        # which is the db-bucket) + an EXISTS over page_entity_refs where page_slug IS this
+        # page (the auto-derived INVERSE edge, e.g. superseded-by — unambiguous on the page
+        # side, so no cross-project COUNT guard is needed: the inverse was only derived when
+        # the forward target resolved uniquely). page_class/edge/status values are BOUND
+        # params; the `$.type`/`$.status` JSON paths are FIXED literals (no user field name).
+        # Read-only; zero DDL.
+        #
+        # NOTE (vdd-multi): the inverse-edge reliance means drift can UNDER-report right
+        # after a `wiki-reindex --delta` that re-walked only ONE side of a bidirectionally-
+        # authored edge — the inverse on the un-walked page is restored on the next `--full`
+        # (see reindex.py). So `wiki-lint --strict` drift gating assumes a recent `--full`.
+        # COST: one scan of `pages` PER rule (O(N·rules); `$.type` is unindexed by design,
+        # P-5) — fine for the small typed vaults; revisit a single CASE/CTE pass only if a
+        # typed partition grows large.
+        conn = self._connect()
+        out: list[DriftHit] = []
+        for rule in rules:
+            sql = (
+                "SELECT p.slug, p.project, "
+                "CAST(json_extract(p.frontmatter_json, '$.status') AS TEXT) AS status "
+                "FROM pages p "
+                "WHERE p.vault_id = ? "
+                "AND json_extract(p.frontmatter_json, '$.type') = ? "
+                "AND EXISTS (SELECT 1 FROM page_entity_refs r "
+                "            WHERE r.vault_id = p.vault_id "
+                "              AND r.page_slug = p.slug "
+                "              AND r.page_project = p.project "
+                "              AND r.ref_type = ?) "
+            )
+            params: list[Any] = [vault_id, rule.page_class, rule.edge]
+            # Only a SCALAR text status is a clean contradiction. `json_type(...) = 'text'`
+            # excludes BOTH an absent status (path missing → NULL → not 'text') AND a
+            # NON-scalar status (a YAML list `status: [superseded]` json_extract's to the
+            # text `["superseded"]`, which would otherwise phantom-match `<> expected`;
+            # vdd-multi critic-logic MED). So NULL/list/object statuses are never drift.
+            sql += "AND json_type(p.frontmatter_json, '$.status') = 'text' "
+            if rule.expect_status is not None:
+                # Drift = scalar status present and != expected.
+                sql += "AND CAST(json_extract(p.frontmatter_json, '$.status') AS TEXT) <> ? "
+                params.append(rule.expect_status)
+                expected = f"status == {rule.expect_status}"
+            elif rule.forbid_status:
+                # Drift = scalar status IN the forbidden set.
+                placeholders = ",".join("?" * len(rule.forbid_status))
+                sql += (f"AND CAST(json_extract(p.frontmatter_json, '$.status') AS TEXT) "
+                        f"IN ({placeholders}) ")
+                params.extend(rule.forbid_status)
+                expected = "status not in {" + ", ".join(rule.forbid_status) + "}"
+            else:
+                # Defensive (critic-security LOW-1, parity with find_coverage_gaps): a
+                # hand-built rule (bypassing the config-load gate) with NEITHER branch would
+                # otherwise build a degenerate `IN ()`. Skip it — never crash, never inject.
+                continue
+            sql += "ORDER BY p.project, p.slug"
+            for r in conn.execute(sql, params).fetchall():
+                out.append(DriftHit(
+                    vault_id=vault_id, page_slug=r["slug"], page_project=r["project"],
+                    page_class=rule.page_class, edge=rule.edge,
+                    status=r["status"], expected=expected,
+                ))
+        return out
+
+    def find_coverage_gaps(
+        self, vault_id: str, rules: list[CoverageRule]
+    ) -> list[CoverageGap]:
+        # TASK 036 / R-15 (Slice A2) — a page MISSING an expected relation. Keyed on
+        # frontmatter `$.type`. `requires_edge` → NOT EXISTS a page_entity_refs row
+        # (page_slug IS this page) of that ref_type. `requires_field` → the frontmatter
+        # scalar `$.<field>` is absent OR empty (''). Field names are re-validated
+        # (library-caller defense; the config-load gate already validated built-ins) and
+        # the JSON path is bound as a param. Read-only; zero DDL.
+        conn = self._connect()
+        out: list[CoverageGap] = []
+        for rule in rules:
+            params: list[Any] = [vault_id, rule.page_class]
+            if rule.requires_edge is not None:
+                sql = (
+                    "SELECT p.slug, p.project FROM pages p "
+                    "WHERE p.vault_id = ? "
+                    "AND json_extract(p.frontmatter_json, '$.type') = ? "
+                    "AND NOT EXISTS (SELECT 1 FROM page_entity_refs r "
+                    "                WHERE r.vault_id = p.vault_id "
+                    "                  AND r.page_slug = p.slug "
+                    "                  AND r.page_project = p.project "
+                    "                  AND r.ref_type = ?) "
+                    "ORDER BY p.project, p.slug"
+                )
+                params.append(rule.requires_edge)
+                kind, detail = "edge", rule.requires_edge
+            else:
+                field = validate_filter_field(rule.requires_field or "")
+                json_path = f"$.{field}"
+                # Gap = the scalar is absent (NULL), an empty string, or an EMPTY container
+                # (`source: []` / `{}` — "no value", json_extract's to the text '[]'/'{}';
+                # vdd-multi critic-logic MED). A non-empty scalar OR a non-empty list/object
+                # counts as covered. The IN-list is a fixed literal (no params).
+                sql = (
+                    "SELECT p.slug, p.project FROM pages p "
+                    "WHERE p.vault_id = ? "
+                    "AND json_extract(p.frontmatter_json, '$.type') = ? "
+                    "AND (json_extract(p.frontmatter_json, ?) IS NULL "
+                    "     OR CAST(json_extract(p.frontmatter_json, ?) AS TEXT) IN ('', '[]', '{}')) "
+                    "ORDER BY p.project, p.slug"
+                )
+                params.extend([json_path, json_path])
+                kind, detail = "field", field
+            for r in conn.execute(sql, params).fetchall():
+                out.append(CoverageGap(
+                    vault_id=vault_id, page_slug=r["slug"], page_project=r["project"],
+                    page_class=rule.page_class, kind=kind, detail=detail,
+                ))
+        return out
 
     def find_pages_missing_in_index(
         self, vault_id: str, vault_root: Path

@@ -61,9 +61,16 @@ wiki-sync scan "03 - Learning" --vault personal --dry-run     # human-readable p
 # Executing the plan (summarising etc.) is orchestrator/LLM work → use Claude CLI (§B).
 ```
 
-**Health check** (drift, dangling `[[links]]`, hash mismatch, cross-vault dups)
+**Health check** (drift, dangling `[[links]]`, hash mismatch, cross-vault dups + lifecycle-drift)
 ```bash
-wiki-lint --vault personal
+wiki-lint --vault personal                   # SQL health + lifecycle-drift (authored status vs graph)
+wiki-lint --vault personal --strict           # exit non-zero if any issue (CI gate)
+```
+
+**Derived knowledge health** (typed-class vaults, e.g. `cybos`) — what's MISSING
+```bash
+wiki-health coverage --vault cybos                       # pages with no expected edge/field (always exit 0)
+wiki-health coverage --vault cybos --class requirement   # e.g. requirements nothing implements
 ```
 
 **Ask a question and get a cited synthesis (RAG)** — a two-step `prepare`/`apply`:
@@ -111,7 +118,7 @@ Then, for example:
 - *"File this meeting summary as a note in `04 - Work projects/<Client>/` and index it."*
 
 Slash commands also exist for the common verbs: `/wiki-search`, `/wiki-query`,
-`/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-enrich`. The agent keeps you in
+`/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-enrich`. The agent keeps you in
 the loop on anything that writes (summaries, new notes) and is safe to re-run
 (per-file idempotency).
 
@@ -125,7 +132,8 @@ the loop on anything that writes (summaries, new notes) and is safe to re-run
 | **New transcript / raw doc in a course zone** | Claude CLI: "scan & summarise `<zone>`" → it plans (`wiki-sync scan`) then executes; re-running is a no-op (already-summarised raws skip) |
 | **Look something up** | `wiki-search "…" --vaults personal` (or ask Claude) |
 | **Need a synthesised, cited answer** | `wiki-query prepare/apply` (or ask Claude) |
-| **Periodic health** | `wiki-lint --vault personal` (orphan-links backlog is expected; drains over time) |
+| **Periodic health** | `wiki-lint --vault personal` (orphan-links backlog is expected; drains over time); `--strict` to gate on lifecycle-drift |
+| **Coverage gaps (typed vaults)** | `wiki-health coverage --vault cybos` — requirements w/o implementer, facts w/o source; a gap is *data*, exits 0 |
 | **Index looks wrong / after a big move** | `wiki-reindex --full --vault personal` (safe — rebuilds from markdown) |
 
 **Tuning** lives in two per-vault files (see the runbook): `<vault>/.wiki/layout.yaml`

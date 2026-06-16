@@ -8,6 +8,7 @@ from typing import Any, Literal, TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from scripts.wiki_index.layout_config import LayoutConfig
     from scripts.wiki_index.repository import IndexRepository
 
 Severity = Literal["error", "warning", "info"]
@@ -39,6 +40,10 @@ def run_all_checks(
     to `check_drift` — skips the re-hash for mtime-unchanged files (integrity-relaxed;
     default off → always full-hash)."""
     issues: list[LintIssue] = []
+    # Resolve each vault's layout grammar ONCE and share it across the config-driven checks
+    # below (vdd-multi perf LOW: it was resolved independently per check). Lazy import keeps
+    # lint→layout_config off the module import graph (cycle-safe).
+    from scripts.wiki_index.layout_config import resolve_layout_config
     target_vaults: list[str]
     if vaults is None:
         target_vaults = [v.vault_id for v in repo.list_vaults()]
@@ -98,8 +103,12 @@ def run_all_checks(
                 details={"alias": _safe_surface(col.alias), "slugs": col.slugs,
                          "kind": col.kind},
             ))
-        # PW-Q (TASK 012): auto-generated ledger drift (hand edit / stale render)
-        issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path))
+        # PW-Q (TASK 012) ledger drift + R-15 (A1) lifecycle-drift: both config-driven —
+        # resolve the layout grammar ONCE and share it.
+        config = resolve_layout_config(v.root_path)
+        issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path, config=config))
+        issues.extend(
+            check_lifecycle_drift(repo, vid, v.root_path, strict=strict, config=config))
 
     # Cross-vault duplicates (R-29)
     for slug, vault_ids in repo.find_cross_vault_concept_duplicates():
@@ -116,6 +125,7 @@ def run_all_checks(
 
 def check_auto_generated_unchanged(
     repo: "IndexRepository", vault_id: str, vault_root: "Path",
+    *, config: "LayoutConfig | None" = None,
 ) -> list[LintIssue]:
     """PW-Q (TASK 012): for each `auto_indexes[].output` (e.g. docs/KNOWN_ISSUES.md),
     re-render from the index and compare the header-stripped body sha256 against the
@@ -123,8 +133,8 @@ def check_auto_generated_unchanged(
     rebuildable-markdown file → flag with a remediation hint (don't overwrite).
     Operator BEGIN-CUSTOM blocks are preserved in the re-render, so editing those
     is NOT flagged — only edits to the generated body. No-op for layouts without
-    `auto_indexes[]` (Karpathy/obsidian-personal)."""
-    from scripts.wiki_index.layout_config import resolve_layout_config
+    `auto_indexes[]` (Karpathy/obsidian-personal). `config` is reused from
+    `run_all_checks` when provided, else resolved here (direct callers)."""
     from scripts.wiki_index.rendering import (
         auto_index_body_sha,
         extract_custom_sections,
@@ -135,7 +145,9 @@ def check_auto_generated_unchanged(
     if not isinstance(repo, SQLiteRepository):
         return []
     out: list[LintIssue] = []
-    config = resolve_layout_config(vault_root)
+    if config is None:
+        from scripts.wiki_index.layout_config import resolve_layout_config
+        config = resolve_layout_config(vault_root)
     for auto_index in config.auto_indexes:
         output_rel = str(auto_index["output"])
         out_path = vault_root / output_rel
@@ -157,6 +169,42 @@ def check_auto_generated_unchanged(
                              "move your edit into the per-issue file"),
                 },
             ))
+    return out
+
+
+def check_lifecycle_drift(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
+    config: "LayoutConfig | None" = None,
+) -> list[LintIssue]:
+    """TASK 036 / R-15 (Slice A1): flag pages whose AUTHORED `status` contradicts their
+    event-graph state (e.g. a decision carrying a `superseded-by` edge but still
+    `status: accepted`). Rules are layout-config-driven (`drift_rules`; the `cybos`
+    layout ships them), so a layout without them (Karpathy/dev-project/obsidian-personal)
+    is a no-op — and no DAL call is made. Severity rides the existing lint policy
+    (warning → error under `--strict`): drift surfaces in the report by default and gates
+    ONLY `wiki-lint --strict` (D-036 — drift is a genuine contradiction, so it is the one
+    SEMANTIC check that belongs on lint's `--strict` rail; coverage GAPS, which are
+    expected, live in the always-exit-0 `wiki-health` CLI instead).
+
+    CAVEAT (vdd-multi): drift reads the auto-derived INVERSE edges, which a
+    `wiki-reindex --delta` can leave transiently stale on one side of a bidirectionally-
+    authored edge until the next `--full` — so `--strict` drift gating assumes a recent
+    `--full`. `config` is reused from `run_all_checks` when provided (else resolved here)."""
+    if config is None:
+        from scripts.wiki_index.layout_config import resolve_layout_config
+        config = resolve_layout_config(vault_root)
+    if not config.drift_rules:
+        return []
+    sev: Severity = "error" if strict else "warning"
+    out: list[LintIssue] = []
+    for hit in repo.find_lifecycle_drift(vault_id, list(config.drift_rules)):
+        out.append(LintIssue(
+            category="lifecycle-drift", severity=sev, vault_id=vault_id,
+            page_slug=hit.page_slug,
+            details={"project": hit.page_project, "class": hit.page_class,
+                     "edge": hit.edge, "status": hit.status,
+                     "expected": hit.expected},
+        ))
     return out
 
 

@@ -141,6 +141,56 @@ $defs:
         default: []
 
   # ----------------------------------------------------------------------------
+  # DriftRule (TASK 036 / R-15, Slice A1) — one lifecycle-drift rule: a page of
+  # `class` (frontmatter $.type) carrying the typed `edge` (a STORED ref_type the
+  # page itself holds — the auto-derived inverse, e.g. superseded-by) whose AUTHORED
+  # `status` contradicts that. STRICT. `oneOf` enforces exactly one of expect_status
+  # / forbid_status. The `edge` vocabulary + structure are re-checked in Python
+  # (layout_config._validate_health_rules) against reindex._INVERSE_REF_TYPE.
+  # ----------------------------------------------------------------------------
+  DriftRule:
+    type: object
+    additionalProperties: false
+    required: [class, edge]
+    properties:
+      class: {type: string, description: 'frontmatter $.type this rule applies to'}
+      edge:
+        type: string
+        description: 'stored ref_type carried by the page (auto-derived inverse, e.g. superseded-by)'
+      expect_status:
+        type: string
+        description: 'drift when status is PRESENT and != this value (NULL status is never drift)'
+      forbid_status:
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: 'drift when status is one of these values'
+    oneOf:
+      - {required: [expect_status]}
+      - {required: [forbid_status]}
+
+  # ----------------------------------------------------------------------------
+  # CoverageRule (TASK 036 / R-15, Slice A2) — one coverage-gap rule: a page of
+  # `class` MISSING an expected relation. STRICT. `oneOf` enforces exactly one of
+  # requires_edge / requires_field.
+  # ----------------------------------------------------------------------------
+  CoverageRule:
+    type: object
+    additionalProperties: false
+    required: [class]
+    properties:
+      class: {type: string}
+      requires_edge:
+        type: string
+        description: 'gap when the page has NO typed edge of this ref_type (e.g. implemented-by)'
+      requires_field:
+        type: string
+        description: 'gap when frontmatter scalar $.<field> is absent/empty (allow-listed name)'
+    oneOf:
+      - {required: [requires_edge]}
+      - {required: [requires_field]}
+
+  # ----------------------------------------------------------------------------
   # LayoutConfig — the merged grammar the engine consumes.
   # ----------------------------------------------------------------------------
   LayoutConfig:
@@ -180,6 +230,20 @@ $defs:
         type: array
         items: {$ref: '#/$defs/AutoIndex'}
         default: []
+      # TASK 036 / R-15 — derived knowledge-health rules (zero DDL; computed over
+      # pages.frontmatter_json + page_entity_refs). Both OPTIONAL with [] defaults so
+      # every pre-036 layout YAML keeps validating; an operator override REPLACES the
+      # list wholesale (same merge semantics as paths/ref_extraction).
+      drift_rules:
+        type: array
+        items: {$ref: '#/$defs/DriftRule'}
+        default: []
+        description: 'lifecycle-drift rules (Slice A1, surfaced by wiki-lint).'
+      coverage_rules:
+        type: array
+        items: {$ref: '#/$defs/CoverageRule'}
+        default: []
+        description: 'coverage-gap rules (Slice A2, surfaced by wiki-health coverage).'
       # TASK 031 / R-031-3 — INIT-ONLY registry metadata (the layout registry
       # reads these RAW; the indexer ignores them, so they do NOT affect
       # discovery/pages/refs → Karpathy byte-identity holds). Both OPTIONAL with

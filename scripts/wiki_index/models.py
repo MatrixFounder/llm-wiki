@@ -368,3 +368,81 @@ class MergeReport:
     aliases_skipped: list[str]
     """Surfaces that could not be registered as `into` aliases because they
     already resolve to a *third* entity (reported, never silently dropped)."""
+
+
+# -----------------------------------------------------------------------------
+# Derived knowledge health — TASK 036 (R-15): lifecycle-drift + coverage.
+# Read-only DAL boundary types (zero DDL — computed over pages.frontmatter_json
+# + page_entity_refs). Rules are layout grammar (parsed by layout_config); hits
+# are the DAL results. Defined here so layout_config / repository / sqlite_repository
+# share ONE definition with no import cycle (models imports nothing internal).
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DriftRule:
+    """One lifecycle-drift rule (Slice A1): a page of class ``page_class`` that
+    carries the typed edge ``edge`` (a STORED ref_type where
+    ``page_entity_refs.page_slug`` IS the page — i.e. the auto-derived inverse such
+    as ``superseded-by``/``invalidated-by``) but whose AUTHORED ``status``
+    frontmatter contradicts that graph state is DRIFT. Exactly one of
+    ``expect_status`` / ``forbid_status`` is set (enforced by the layout-config
+    schema ``oneOf`` + a load-time check in ``layout_config``):
+
+      - ``expect_status`` — drift when the page's status is PRESENT and != this
+        value (a NULL/absent status is NEVER drift — only an explicit contradiction).
+      - ``forbid_status`` — drift when the page's status is one of these values.
+
+    Authored as built-in ``layouts/*.yaml`` ``drift_rules`` (cybos only); an operator
+    override may supply its own. Grammar over existing data; derived, never stored."""
+
+    page_class: str
+    edge: str
+    expect_status: str | None = None
+    forbid_status: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CoverageRule:
+    """One coverage-gap rule (Slice A2): a page of class ``page_class`` MISSING an
+    expected relation. Exactly one of ``requires_edge`` / ``requires_field`` is set:
+
+      - ``requires_edge`` — gap when the page has NO typed edge of this ref_type
+        (e.g. a ``requirement`` with no ``implemented-by`` = nothing implements it).
+      - ``requires_field`` — gap when the page's frontmatter scalar ``$.<field>`` is
+        absent OR empty (e.g. a ``fact`` with an empty ``source:``). The field name
+        is allow-listed (``validate_filter_field``)."""
+
+    page_class: str
+    requires_edge: str | None = None
+    requires_field: str | None = None
+
+
+@dataclass(frozen=True)
+class DriftHit:
+    """One lifecycle-drift finding (Slice A1): the page's AUTHORED ``status``
+    contradicts its graph state (it carries ``edge``)."""
+
+    vault_id: str
+    page_slug: str
+    page_project: str
+    page_class: str
+    edge: str
+    status: str | None
+    expected: str
+    """Human-readable description of the non-drift state (e.g. ``status == superseded``
+    or ``status not in {proposed, accepted}``)."""
+
+
+@dataclass(frozen=True)
+class CoverageGap:
+    """One coverage-gap finding (Slice A2): a page missing an expected relation —
+    an edge of ref_type ``detail`` when ``kind == 'edge'``, or a non-empty
+    frontmatter field ``detail`` when ``kind == 'field'``."""
+
+    vault_id: str
+    page_slug: str
+    page_project: str
+    page_class: str
+    kind: str
+    detail: str

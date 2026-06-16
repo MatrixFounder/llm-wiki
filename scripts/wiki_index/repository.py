@@ -27,7 +27,11 @@ from scripts.wiki_index.models import (
     AliasCollision,
     BatchMode,
     BatchRun,
+    CoverageGap,
+    CoverageRule,
+    DriftHit,
     DriftReport,
+    DriftRule,
     Entity,
     LogEvent,
     MergeReport,
@@ -312,6 +316,37 @@ class IndexRepository(abc.ABC):
             List of (concept_slug, [vault_id, ...]) tuples where len(vault_ids) ≥ 2.
             Sorted by len descending then alphabetically.
         """
+        ...
+
+    # =========================================================================
+    # Derived knowledge health — TASK 036 (R-15): lifecycle-drift + coverage
+    # =========================================================================
+
+    @abc.abstractmethod
+    def find_lifecycle_drift(
+        self, vault_id: str, rules: list[DriftRule]
+    ) -> list[DriftHit]:
+        """TASK 036 / R-15 (Slice A1) — pages whose AUTHORED ``status`` frontmatter
+        contradicts their event-graph state, per ``rules`` (e.g. a ``decision`` that
+        carries a ``superseded-by`` edge but is still ``status: accepted``). A page is
+        matched by its frontmatter ``$.type`` (the raw class, NOT ``pages.type``) and an
+        ``EXISTS`` over ``page_entity_refs`` where ``page_slug`` IS the page (the
+        auto-derived inverse edge — unambiguous on the page side). A NULL/absent status
+        is NEVER drift (only an explicit contradiction). Read-only over
+        ``pages.frontmatter_json`` + ``page_entity_refs``; **zero DDL**. Surfaced by
+        ``wiki-lint`` (advisory; gates ``--strict``)."""
+        ...
+
+    @abc.abstractmethod
+    def find_coverage_gaps(
+        self, vault_id: str, rules: list[CoverageRule]
+    ) -> list[CoverageGap]:
+        """TASK 036 / R-15 (Slice A2) — pages MISSING an expected relation, per
+        ``rules``: ``requires_edge`` → no ``page_entity_refs`` row of that ref_type on
+        the page (e.g. a ``requirement`` with no ``implemented-by``); ``requires_field``
+        → the frontmatter scalar ``$.<field>`` is absent/empty (e.g. a ``fact`` with an
+        empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
+        coverage`` (a gap is data, not a failure → always exit 0)."""
         ...
 
     # =========================================================================

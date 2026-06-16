@@ -1,131 +1,103 @@
-# TASK 035 — FTS-narrowed tag-membership search (R-X3-MF-SCAN, membership branch)
+# TASK 036 — Derived knowledge health: lifecycle-drift + coverage (R-15, Track A)
 
 ## 0. Meta
-- **Task ID:** 035 · **Slug:** `task-035-fts-narrowed-tag-membership`
-- **Mode:** VDD (full pipeline). Code task (`scripts/`, `tests/`, `docs/`), Stub-First,
+- **Task ID:** 036 · **Slug:** `task-036-derived-knowledge-health`
+- **Mode:** VDD (full pipeline). Code task (`scripts/`, `tests/`, `config/`, `docs/`),
   green-throughout, mypy `--strict`. **Zero DDL** (`user_version` stays **7**); **zero new
-  deps**; **no `import anthropic`**; Karpathy byte-identity preserved. **Additive,
-  behaviour-preserving** — the result set of every existing query is unchanged; the only
-  delta is *how fast* the metadata-only `tags`-membership path reaches it.
-- **Source:** operator request 2026-06-16 — *"проработай все issues в
-  `docs/issues/r-x3-metadata-filter-unindexed-scan.md`"* + *"оформи по этому кейсу также
-  отдельный ADR"*. After measuring the real deployments (below), operator chose **Option 1
-  (targeted zero-DDL fix)** over the full v7→v8 consolidation (Option 2, contraindicated by
-  the data) and over record-only (Option 3).
-- **ADR:** **ADR-005** (`docs/adr/ADR-005-fts-narrowed-membership-filter.md`) — the design
-  decision + the explicit rejection of speculative scalar expression-indexes (P-5).
+  deps**; **no `import anthropic`**; Karpathy byte-identity preserved (the new layout-grammar
+  keys default to `[]`, so non-cybos layouts are unaffected). Read-side only — no Class-A
+  writes, no schema migration.
+- **Source:** ROADMAP **R-15** (the third RFC batch, RFC-007..011, audited like R-14). The
+  high-value, not-yet-built, in-architecture slice is a Class-B **derivation/analysis layer**
+  over the existing markdown + event graph. Track A = the two halves that are the SAME
+  machinery (LEFT-JOIN the edge graph against page `status`/`type`): **A1 lifecycle-drift**
+  (the derivable half of RFC-007) + **A2 coverage gaps** (RFC-010). (Track B RFC-011-polish
+  and the deferred RFC-008-lite/RFC-009 are NOT in this task.)
+- **ADR:** **ADR-006** (`docs/adr/ADR-006-derived-knowledge-health.md`) — the D-036 decision
+  (drift rides `wiki-lint`/`--strict` because it is a CONTRADICTION; coverage is a separate
+  always-exit-0 `wiki-health` report because a gap is expected data), and the rejection of
+  authored lifecycle state (`type: transition`, `confidence`).
 - **Status:** ✅ **COMPLETE / merge-ready** 2026-06-16 (uncommitted per operator rule). Full
-  VDD pipeline: task/arch/plan reviews **APPROVED** (findings folded in *pre*-implementation —
-  the empty→scan safety net, the adversarial equivalence corpus, the private `_use_fts_narrowing`
-  seam) + **`/vdd-multi` converged**: Security ✓ **bikeshedding-only** (bound-param +
-  phrase-quote-doubling + the `json_each` confirm close all 5 injection vectors); Performance ✓
-  — **2 LOW recorded in the issue** (empty-result +3-4 % double-probe; high-cardinality
-  near-universal-tag crossover, bounded O(N), not the selective typed-class use case); Logic ✓ —
-  iter-1 1 MED **empirically reproduced + fixed + re-verified clean-pass** (a non-`str`
-  library-caller value crashed the FTS path where the scan didn't → `isinstance(value, str)` guard
-  routes non-str to the scan, equivalence preserved); + **code-review MERGE**. **Live dogfood
-  GREEN** (real 2493-page `personal` vault): 6 real tags incl. Cyrillic → 0 mismatches vs scan;
-  EXPLAIN driver = `SCAN pages_fts VIRTUAL TABLE` + rowid PK join; **1.93 → 0.47 ms (~4.1×)**.
-  **1504 pytest (+11 over the 1493 baseline; the 52-test `test_search_pages_fts_membership.py`),
-  mypy strict (76 files).**
-  **Operator-requested `/vdd-multi` re-verification + comprehensive dogfood (2026-06-16) —
-  CONVERGED / all GREEN** (`docs/reviews/task-035-real-vault-dogfood.md`): the 3-critic re-run over
-  the complete final changeset returned **Logic ✓ Security ✓ Performance ✓ all clean-pass** (the
-  security scan's 7 "SQL f-string" CRITICALs adjudicated as the hardcoded-constant false-positive
-  class — `page_cols`/`_REF_COLS`, never user input; the 1 HIGH + 1 MED are outside the diff,
-  pre-existing). The comprehensive real-vault dogfood proved equivalence over **ALL 1135 distinct
-  tags** (FTS == scan, list+order; + CLI `--tag` == an independent `json_each` ground truth), full
-  CLI composition/edge-case/exit-code coverage (9/9), latency 4–28×, and no regression in the other
-  search modes. No new findings; no fixes required.
+  VDD: **`/vdd-multi` converged** — Security ✓ **bikeshedding-only** (every rule value is a
+  bound param; the sole string-built fragment is a `?`-placeholder count; `requires_field`
+  double-gated by the `[a-z][a-z0-9_]*` `fullmatch` allow-list at load + in the DAL; INVALID_CLASS
+  never echoes the offending value), Logic ✓ — **3 findings fixed + re-verified** (list-valued
+  `status` phantom-drift → `json_type='text'` guard; empty-container `source: []` → treated as a
+  gap; empty/whitespace status values → rejected at config-load; + the `--delta` inverse-edge
+  staleness caveat documented), Performance ✓ — **2 fixed** (the per-vault double
+  `resolve_layout_config` collapsed to one shared resolve; an `EXPLAIN QUERY PLAN` index-seek
+  guard test added) **+ the O(N·rules) cost-shape + tripwire documented** (YAGNI: small typed
+  vaults, `$.type` unindexed by P-5). **Live dogfood GREEN** (a real cybos vault: `wiki-lint`
+  surfaced 2 drift contradictions — advisory exit 0, `--strict` exit 1; `wiki-health coverage`
+  reported 2 gaps exit 0; `--class` filter correct). **1524 pytest (+20 over the 1504 baseline:
+  the 20-test health trio), mypy strict (77 files).**
 
 ## 1. Problem
 
-`R-X3-MF-SCAN` (SEV-3, open since 2026-06-01) documents that the `wiki-search` metadata
-filter on the **metadata-only path** (a filter with NO FTS query — `--tag X`, `--status X`,
-`--as-of D` alone) compiles to a full scan of the vault/type/project partition: one
-`json_extract`/`json_each` JSON-parse per surviving row, then a `USE TEMP B-TREE FOR ORDER
-BY` filesort, `LIMIT` applied only after the sort. There is no index on
-`pages.frontmatter_json` by deliberate design (TASK 006 / **P-5** removed a speculative
-`idx_pages_vault_tags` JSON index as dead write-weight).
+The system stores typed knowledge classes + a typed event graph, but knowledge state is
+**authored, never derived**: a `status:` is updated by hand, and nothing reports missing
+relations. Two derivable signals are unbuilt:
 
-The issue has three branches (TASK 013 scalar `=`, TASK 033 `tags[]` membership, TASK 034
-`--as-of` temporal). **Measurement decides which, if any, to fix** — the issue's own trigger
-is *"a single-vault partition exceeds ~1k pages AND the metadata-only path is used
-routinely"* and its P-5 rule is *"do NOT pre-add speculatively — add only when a real field
-is measured hot."*
+1. **Lifecycle-drift** — a page whose AUTHORED `status` contradicts its graph state (a
+   `decision` carrying a `superseded-by` edge but still `status: accepted`; a decision an
+   incident `invalidates` but still `accepted`). This is a genuine *contradiction*.
+2. **Coverage gaps** — a page MISSING an expected relation (a `requirement` nothing
+   `implements`; a `fact` with no `source:`). This is an *absence* — expected, not a failure.
 
-### Measured ground truth (2026-06-16, real deployments)
+Both are computable today (zero new fields, zero DDL) from `pages.frontmatter_json` + the
+`page_entity_refs` graph — the same `EXISTS`/`NOT EXISTS` machinery the TASK-034 `--as-of`
+walk already uses. The RFC's proposed authored state (`type: transition`, `confidence`,
+`type: evidence` + `strength`) is rejected (violates Class-A/B layering + "derive, don't
+author" — the TASK-034 `valid_to` precedent).
 
-| Path | Hot field at scale? | 2493-page vault | Indexed today? |
-|---|---|---|---|
-| `--tag` / `tags=` **membership** | **YES — `tags` on all 2493/2493 pages** | scan + filesort, **1.50 ms/query** | No (json_each) — but **`pages_fts.tags` already exists** |
-| `--status`/`--severity`/`--where` **scalar** | No — `status` 59, `severity` 22 (413-page dev vault); ~absent in the 2493-page vault | sub-ms | No |
-| `--as-of` **temporal** | No — `valid_from`/`valid_to` on **0 pages** (optional overrides, by design); successor-walk already index-backed | sub-ms | partial |
+## 2. Scope — two read-side slices, one machinery
 
-- The 2493-page `personal` partition is **past the 1k trigger**, and `--tag` typed-class
-  retrieval is used routinely (TASK 031/033) → the **membership branch trigger is MET**.
-- The scalar/temporal branches are **NOT** hot: their fields are sparse-to-absent, so an
-  expression index / generated column there would re-introduce exactly the P-5 dead-weight
-  the schema removed once. **Out of scope** (recorded in the issue + ADR-005).
+- **A1 — lifecycle-drift as `wiki-lint` rules.** A new `lifecycle-drift` `LintIssue` category.
+  Rules are **layout-config-driven** (`drift_rules` in `layouts/*.yaml`; cybos ships 3
+  high-confidence contradiction rules: decision `superseded-by`→expect `superseded`; decision
+  `invalidated-by`→forbid {proposed,accepted}; workflow `superseded-by`→expect `superseded`).
+  A page is matched by `json_extract(frontmatter_json,'$.type')` (the RAW class, **not**
+  `pages.type`) + an `EXISTS` over `page_entity_refs` where `page_slug` IS the page (the
+  auto-derived inverse edge — unambiguous on the page side, no COUNT guard needed). A NULL/
+  non-scalar status is NEVER drift. **D-036: drift rides `wiki-lint`** — advisory by default,
+  non-zero only under `--strict` (it is a contradiction, the one SEMANTIC check that belongs
+  on lint's gate).
+- **A2 — coverage gaps as a new read-only `wiki-health` CLI** (17th `wiki-*`). `wiki-health
+  coverage --vault <vid> [--class C]`: `requires_edge` (NOT EXISTS that ref_type on the page)
+  or `requires_field` (frontmatter scalar `$.<field>` absent/empty/empty-container). cybos
+  ships 3 rules (requirement/capability `implemented-by`; fact `source`). **Always exit 0** —
+  a gap is data, not a failure (contrast drift). Clone of `wiki-graph` (single envelope,
+  allow-listed `--class`, exit `0/2/6`).
 
-## 2. Scope — one delta
+Both rule sets are validated at config-load (`_validate_health_rules`): edge vocabulary
+against `reindex._INVERSE_REF_TYPE`, field names via `validate_filter_field`, exactly-one-of
+via the schema `oneOf` + a defensive re-check. The DAL methods (`find_lifecycle_drift` /
+`find_coverage_gaps`) take the rules and bind every value.
 
-**Route ONLY the metadata-only `tags`-membership branch through the already-existing,
-already-maintained `pages_fts.tags` FTS index**, as a candidate **narrower**, keeping the
-exact `json_each(...) = ?` predicate as the **confirmer**. "FTS narrows, json_each confirms."
-
-- **Where:** `SQLiteRepository.search_pages`
-  ([sqlite_repository.py:548](../scripts/wiki_index/sqlite_repository.py#L548)),
-  metadata-only branch (`not has_match`) only. The FTS branch (`has_match`, a real query
-  present) is untouched — the issue already calls its `json_extract` on the small MATCH
-  candidate set "a non-issue".
-- **How:** when `not has_match` AND a `where_fields` predicate is on field `tags` AND the
-  value yields ≥1 FTS token (guard: `any(c.isalnum() for c in value)`), build
-  `FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ?` with a
-  **column-filtered phrase** param `'tags : ' + fts_quote(value)` (column name `tags` is a
-  FIXED literal; value is FTS-phrase-quoted, doubling `"`). All existing AND-clauses (vault/
-  type/project/exclude/`where`/`as_of`) — **including the `tags` json_each confirm** — append
-  unchanged. ORDER BY / score / snippet identical to the scan path (`0.0`, `''`,
-  `project,slug,vault_id`).
-- **Correctness invariant (empirically validated):** for any value whose FTS phrase has ≥1
-  token, the FTS column-match set is a **superset** of the exact json_each set (same tokenizer
-  folds both sides; the element's tokens always appear adjacently in that element's FTS text —
-  the match is all-or-nothing *per value*, not per page). The json_each confirm removes FTS
-  extras → **result list byte-identical to today**.
-  - *Evidence:* 40 real tags over the 2493-page vault (hyphenated `AI-Agents`,
-    numeric-leading, transliterated-Cyrillic) → **0 mismatches**; 5 zero-token values
-    (`+`,`-`,`  `,`—`,`::`) → FTS returns 0 without error, all `any-alnum=False`.
-- **Safety net (design-review M2, the load-bearing correctness mechanism):** correctness does
-  NOT rest on the `any(isalnum)` guard (which is only a *perf fast-path* — it can be true while
-  unicode61 yields no token, e.g. `½`/`②`). The net is: **if the FTS-narrowed query returns
-  ZERO rows, re-run the plain scan.** Because the match is all-or-nothing per value, a value
-  that FTS can't tokenize → FTS ∅ → fall back → the scan returns the literal-tag pages → no
-  silent under-match. Belt-and-braces: an `sqlite3.OperationalError` from a degenerate MATCH
-  also falls back (phrase-quoting makes this near-unreachable; kept as defense).
-
-### Out of scope (explicit, recorded in the issue + ADR-005)
-- Scalar `--where`/`--status`/`--severity` expression index or generated column (P-5: fields
-  sparse/absent; `--where` is general so a per-field column doesn't generalize).
-- `--as-of` `valid_from`/`valid_to` generated columns (0 pages author them).
-- Any schema change / `user_version` bump.
-- The other-list-field membership (`concepts`, `participants`, …) — no FTS projection; the
-  optimization is `tags`-specific (the only FTS-indexed list column). Their scan is unchanged.
+### Out of scope (recorded in ADR-006 / ROADMAP R-15)
+- Authored lifecycle state: `type: transition`, `confidence`, auto-status-rewrite (007 full).
+- `type: evidence` + `strength` schema v8 (008 full); RFC-008-lite (`trust_level`) is deferred.
+- RFC-009 pattern-mining (`GROUP BY ref_type HAVING count`) — deferred to vault density.
+- RFC-011-polish (Track B — subgraph grouping in `wiki-query` synthesis) — separate track.
+- Body-section coverage (decision `## Rationale`, incident `## Root cause`) — needs H2 parsing.
+- Any auto-fix (mutating a Class-A `status`) — would need a `prepare`/`apply` write contract.
 
 ## 3. Requirements Traceability Matrix
 
 | # | Requirement | Acceptance | Verify |
 |---|---|---|---|
-| R-1 | Metadata-only `tags`-membership uses `pages_fts.tags` to narrow | EXPLAIN shows `pages_fts` as the DRIVING table joined by rowid (positive signature, not "absence of SCAN" — M-task-1); `tags` column-name is a hardcoded constant, a non-`tags` field never takes the FTS branch (M-task-2) | `test_*` + EXPLAIN assertion |
-| R-2 | Result list byte-identical to the pre-035 scan, all tag shapes incl. adversarial | parametrized equality over an adversarial corpus (plain / hyphenated / numeric / Cyrillic NFC&NFD / mixed-case / substring-of-another / multi-word / embedded `"` / backslash / interior-whitespace / symbol) (M-arch-1) + `>limit` ORDER-BY-boundary slice (M-plan-4) | equivalence tests |
-| R-3 | Zero-/no-token value falls back to scan; the FTS-empty safety net catches under-match | `--tag '+'`/`'½'` returns the same as the scan (literal-punctuation fixture); a deterministic over-match (`SEV-2` probed `sev`) proves the `json_each` confirm is load-bearing (M-plan-5) | edge tests |
-| R-4 | Composition unchanged | `--tag` + `--as-of`, + `--types`, + `--project`, + a 2nd non-`tags` `--where`, + `--vault all` tie-break all identical to the scan | composition tests |
-| R-5 | Scalar/list-non-tags/temporal branches untouched (regression) | existing `test_wiki_search_metadata_filter` / `_as_of` / `test_search_pages` green | full suite |
-| R-6 | Injection-safe | tag value with FTS-special chars / quotes / `OR`/`*`/column-syntax cannot break out (phrase-quoted) or return wrong rows (confirm) | adversarial test |
-| R-7 | Library-caller defense | DAL re-validates field; CLI dup-guard/echo posture unchanged | DAL test |
-| R-8 | Docs current | issue → MEASURED + membership SHIPPED; ADR-005; ADR index; CLAUDE.md; manuals; SKILL.md | review |
+| R-1 | Lifecycle-drift flags authored-status-vs-graph contradictions per layout rules | the 3 cybos rules catch forward- AND inverse-authored `superseded-by`, and `invalidated-by` + live status; nothing else | `test_lifecycle_drift::test_find_lifecycle_drift_dal` |
+| R-2 | NULL / non-scalar status is never drift | absent status + `status: [superseded]` (list) not flagged (`json_type='text'` guard) | `test_drift_controls_not_flagged`, `test_list_valued_status_not_drift` |
+| R-3 | Drift rides `wiki-lint`: advisory default, gates `--strict` | exit 0 default (issues reported); exit 1 under `--strict` | `test_lint_reports_lifecycle_drift`, `test_lint_cli_strict_gates_on_drift` |
+| R-4 | Coverage reports edge-absence + field-emptiness gaps; always exit 0 | requirement/capability no `implemented-by`; fact empty/absent/empty-container `source` | `test_wiki_health::test_coverage_all`, `test_empty_container_source_is_gap` |
+| R-5 | `wiki-health` controls + `--class` filter + envelope hygiene | covered pages absent; `--class` scopes; INVALID_CLASS (2, no echo); VAULT_NOT_FOUND (6); no-rules note | `test_coverage_controls_not_gaps`/`_class_filter`/`_invalid_class_no_echo`/`_vault_not_found`/`_no_rules_note` |
+| R-6 | Layout-config-driven, validated at load; zero DDL | cybos ships 3+3 rules; unknown edge / bad field / both-branches / empty status → LayoutConfigError | `test_health_rules_config::*` |
+| R-7 | Injection-safe; index-backed | all rule values bound; `$.field` allow-listed; EXISTS rides an index seek not a full scan | critic-security clean + `test_drift_exists_uses_refs_index` |
+| R-8 | Docs current | ADR-006; ROADMAP R-15 SHIPPED; CLAUDE.md (17 CLIs); ARCHITECTURE; README; SKILL/command | review |
 
 ## 4. Non-goals / invariants
 - `mypy --strict scripts/` clean; full `pytest tests/` green; no new dep; no `import anthropic`.
-- No layering inversion: the FTS phrase-quote is inlined in the DAL (the DAL must not import
-  the `wiki_skills._retrieval.fts_quote`; `wiki_skills` depends on `wiki_index`, not vice-versa).
-- Karpathy byte-identity preserved (a vault with no `tags` filter never touches the new path).
+- Decision-17: deterministic SQL + config; one JSON envelope + stable exit code (NOT
+  prepare/apply — that contract is for Class-A writers; these are read-only analytics).
+- Class A/B/C: output is a derived view, never persisted as knowledge; `user_version` stays 7.
+- Layout-grammar change (new `layout-config.schema.yaml` keys) is NOT a DB-schema change.

@@ -102,3 +102,28 @@ frontmatter_synthesis:
 # A rebuildable DECISIONS / INCIDENTS ledger (PW-H, like dev-project's KNOWN_ISSUES) is a
 # candidate follow-on — omitted in Phase 1 to keep the bead tight (ADR-003 / plan 🟢-2).
 auto_indexes: []
+
+# --- TASK 036 / R-15: derived knowledge health (zero-DDL, read-only) ---
+# Lifecycle-drift (Slice A1, surfaced by `wiki-lint`): a page whose AUTHORED `status`
+# contradicts its event-graph state. `edge` is the STORED ref_type carried by the page
+# (the auto-derived inverse — a decision authored `superseded_by:` OR superseded by
+# another page's `supersedes:` both yield a `superseded-by` row ON the page). A NULL/
+# absent status is NEVER drift (only an explicit contradiction). High-confidence
+# contradictions only; hypothesis (state lives in prose) + risk (an open risk legitimately
+# has a `caused_by`) are intentionally NOT included. Drift rides `wiki-lint` and gates only
+# under `--strict`.
+drift_rules:
+  - {class: decision, edge: superseded-by,  expect_status: superseded}             # superseded but not marked so
+  - {class: decision, edge: invalidated-by, forbid_status: [proposed, accepted]}   # voided by an incident, still live
+  - {class: workflow, edge: superseded-by,  expect_status: superseded}             # replaced workflow version
+
+# Coverage gaps (Slice A2, surfaced by `wiki-health coverage`): a page MISSING an expected
+# relation. `requires_edge` = the page should carry this ref_type (gap if not); `requires_field`
+# = the page should have a non-empty frontmatter scalar (gap if empty/absent). A gap is DATA,
+# not a failure — `wiki-health` always exits 0. Edge semantics from templates/page-types/*:
+# requirement/capability are covered by an inbound `implements` (stored as `implemented-by`
+# on the page); a fact's evidence is its `source:` scalar (NOT an edge).
+coverage_rules:
+  - {class: requirement, requires_edge: implemented-by}   # nothing implements this requirement
+  - {class: capability,  requires_edge: implemented-by}   # no agent/tool provides this capability
+  - {class: fact,        requires_field: source}          # fact with no cited source
