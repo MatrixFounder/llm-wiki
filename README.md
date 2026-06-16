@@ -7,11 +7,11 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 030**
-> (indexer hardening: rename-aware `--delta`, 2× faster chunked `--full`,
-> single-pass pruned walk; shipped 2026-06-12). Schema **v5**
-> (`user_version = 5`). **1310+ pytest passed,
-> `mypy --strict` clean on 75 source files.** The repo's own `docs/` is
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 033**
+> (typed knowledge classes + event graph [typed page-to-page edges, `wiki-graph`,
+> graph-aware RAG] + the list-membership `--where`/`--tag` metadata filter). Schema
+> **v6** (`user_version = 6`). **1393 pytest passed,
+> `mypy --strict` clean on 76 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -123,7 +123,7 @@ itself stays vault-free.)
 
 ![data-model-infopraphic](Images/data-model-infopraphic.png)
 
-One global DB (`sql/wiki-index-v2.sql`, `user_version = 5`), every table
+One global DB (`sql/wiki-index-v2.sql`, `user_version = 6`), every table
 partitioned by `vault_id`. The three-class contract (ADR-002 §D8):
 
 - **Class A** — vault markdown. Semantic, canonical, human-/LLM-authored.
@@ -285,10 +285,12 @@ wiki-reindex --full --vault my-vault
 wiki-search "concept name" --vaults my-vault
 
 # 4b. Filter by frontmatter metadata (status / severity / any field).
-#     Compiles to a CAST(json_extract(...) AS TEXT) predicate (not full-text),
-#     so hyphenated (SEV-2) and numeric (priority=1) values match by string.
+#     Compiles to a `CAST(json_extract(...) AS TEXT)=? OR EXISTS(json_each ...=?)`
+#     predicate (not full-text): hyphenated (SEV-2) / numeric (priority=1) SCALARS
+#     match by string AND a LIST member matches too (TASK 033).
 wiki-search --status open --severity SEV-2 --vaults my-vault
 wiki-search "drift" --where 'status=open' --vaults my-vault   # combine with FTS
+wiki-search --tag decision --vaults my-vault   # list every page tagged 'decision' (tags[] member)
 ```
 
 For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
@@ -399,7 +401,7 @@ binaries.
 | Command | What it does |
 |---|---|
 | `wiki-search "<query>" --vaults <vid>[,<vid>…]` | FTS5 BM25 search across one/many vaults; ranked hits + snippets; expands aliases. |
-| `wiki-search [--status <v>] [--severity <v>] [--where 'field=value'] --vaults <vid>` | Filter by frontmatter metadata (query optional → pure listing). |
+| `wiki-search [--status <v>] [--severity <v>] [--tag <v>] [--where 'field=value'] --vaults <vid>` | Filter by frontmatter metadata — scalar OR list member (`--tag`/`--where 'tags=…'`, TASK 033); query optional → pure listing. |
 | `wiki-query prepare/apply --vault-root <path>` | RAG: retrieve → orchestrator-cited synthesis → file a compounding `_queries/<slug>.md` page (`prepare`/`apply`). |
 | `wiki-verify-multi prepare/apply` | Off-by-default 4-critic audit of a filed answer vs its cited sources → `_verifications/verify-<slug>.md` verdict page; FAIL records + exits non-zero, never mutates the answer. |
 | `wiki-graph neighbors/chain/backlinks <slug> --vault <vid> [--kind K] [--direction D] [--depth N]` | Read-only **event-graph** traversal over the typed page-to-page edges (implements/supersedes/causes/relates-to + auto-derived inverses). TASK 032 / ADR-004; pairs with `wiki-query --follow-edges`. |
@@ -479,7 +481,7 @@ docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, pla
   adr/                      ADR-001 (wrap+index), ADR-002 (multi-vault + Class A/B/C)
   KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
 config/                     layout-config / wiki-config / sync-config schema.yaml (the 3 config systems)
-sql/wiki-index-v2.sql       the SQLite DDL (user_version = 5)
+sql/wiki-index-v2.sql       the SQLite DDL (user_version = 6)
 templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md)
                             mapped in agent-files.yaml — for new/registered vaults
 

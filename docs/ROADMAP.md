@@ -498,9 +498,11 @@ re-authoring. New **`wiki-graph`** CLI (16th: `neighbors`/`chain`/`backlinks`) +
 DAL reads (`get_backlinks(kind=)`/`refs_from`/`neighbors`/`edge_chain`); **graph-aware
 RAG** via `wiki-query prepare --follow-edges` (default OFF, deterministic `question_hash`).
 Delta: scoped inverse-additions + removal-deferred-to-`--full` (provenance-safe). See
-ADR-004, `docs/tasks/task-032-*`, ARCHITECTURE Q-032-1..6. **Residual candidate** (still
-open): a list-membership `--where` filter (TASK 013 surface) for one-predicate per-class
-filtering (Phase-1 classes use `--types <db_type>` + FTS on the tag word).
+ADR-004, `docs/tasks/task-032-*`, ARCHITECTURE Q-032-1..6. **Residual — ✅ SHIPPED (TASK 033,
+2026-06-15):** the list-membership `--where 'tags=<class>'` filter (+ `--tag <class>` sugar)
+for one-clean-command per-class listing — `search_pages` gained a scalar-OR-`json_each`-membership
+predicate (the proven `find_pages_citing_source` shape, zero DDL, back-compatible). See
+`docs/tasks/task-033-list-membership-metadata-filter.md`, ARCHITECTURE Q-033-1/2.
 
 **Phase-2 trigger (historical)**: a real cybos vault accumulates enough cross-linked
 decisions/incidents that "what did this decision cause / what implements it?"

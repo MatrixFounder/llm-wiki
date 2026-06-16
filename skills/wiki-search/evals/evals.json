@@ -8,7 +8,10 @@
       "setup": "Vault `personal` is registered + indexed and contains a page 'Сценарии продаж П-К-Ч' whose body uses the token 'ПКЧ' many times.",
       "prompt": "search the wiki for пкч",
       "expected_behavior": "Invokes `wiki-search \"пкч\" --vaults personal` (the on-PATH wrapper, not `python -m scripts...`); returns the П-К-Ч page among the hits; any answer is grounded in it and cites the slug.",
-      "must_not": ["fabricate a definition", "claim the term is absent from the wiki"]
+      "must_not": [
+        "fabricate a definition",
+        "claim the term is absent from the wiki"
+      ]
     },
     {
       "id": 2,
@@ -16,7 +19,11 @@
       "setup": "Same vault. The term is indexed as 'ПКЧ' / 'П-К-Ч' only — the string 'КПЧ' (К↔П transposed) appears nowhere. NB: engine stemming does NOT fix this — a letter transposition is not a morphological inflection, and ALL-CAPS acronyms are not stemmed.",
       "prompt": "что такое кпч-сценарий?",
       "expected_behavior": "The first query (`кпч` / `кпч сценарий`) still returns count 0 (stemming can't repair the transposition); the agent does NOT stop there — it BROADENS per the skill: searches the distinctive content words (e.g. `сценарии продаж` — now auto-stemmed), and/or tries the transposed/hyphenated acronym (`ПКЧ`/`П-К-Ч`), finds 'Сценарии продаж П-К-Ч', and answers grounded in that page (may note the term is likely spelled ПКЧ).",
-      "must_not": ["conclude 'not in the wiki' after only the literal КПЧ query", "invent an expansion of КПЧ (e.g. 'Кризис → Падение → Частичное восстановление')", "answer from general knowledge presented as the vault's content"]
+      "must_not": [
+        "conclude 'not in the wiki' after only the literal КПЧ query",
+        "invent an expansion of КПЧ (e.g. 'Кризис → Падение → Частичное восстановление')",
+        "answer from general knowledge presented as the vault's content"
+      ]
     },
     {
       "id": 3,
@@ -24,7 +31,10 @@
       "setup": "Same vault. No page mentions 'квантовая криптография' in any spelling/inflection — so even the default stemmed+folded query returns nothing.",
       "prompt": "what does my wiki say about квантовой криптографии?",
       "expected_behavior": "The default (stemmed `квантов*`/`криптограф*`) search is already broad and still returns empty; the agent states plainly that no page in the wiki matches the term and offers `/wiki-enrich` to add a source.",
-      "must_not": ["fabricate a definition or any domain fact about the term", "present an ungrounded answer as if it came from the vault"]
+      "must_not": [
+        "fabricate a definition or any domain fact about the term",
+        "present an ungrounded answer as if it came from the vault"
+      ]
     },
     {
       "id": 4,
@@ -32,7 +42,11 @@
       "setup": "Vault `personal`. A QED course page '03 - Первое касание' is ABOUT 'продуктовое осведомление' (body uses 'осведомление'/'осведомленность' and 'продуктовая', NOT the exact pair 'продуктовое осведомление'). A separate AI-panel page mentions 'продуктовое мышление' once.",
       "prompt": "что такое продуктовое осведомление?",
       "expected_behavior": "Runs the DEFAULT search `wiki-search \"продуктовое осведомление\" --vaults personal` (no manual `*`); engine stemming (`продуктов*` AND `осведомлен*`) ranks the on-topic '03 - Первое касание' near the top and AND-excludes the tangential 'продуктовое мышление' page; the agent answers grounded in '03 - Первое касание', citing its slug.",
-      "must_not": ["answer from the tangential AI-panel 'продуктовое мышление' page", "hand-craft a manual prefix query as the FIRST attempt (the engine already stems)", "claim FTS has no stemming"]
+      "must_not": [
+        "answer from the tangential AI-panel 'продуктовое мышление' page",
+        "hand-craft a manual prefix query as the FIRST attempt (the engine already stems)",
+        "claim FTS has no stemming"
+      ]
     },
     {
       "id": 5,
@@ -40,7 +54,10 @@
       "setup": "Vault `personal`. A page's body uses 'сценарий'/'продажи' (inflected) and its title is 'Сценарии продаж П-К-Ч'.",
       "prompt": "search the wiki for сценарии продаж",
       "expected_behavior": "The DEFAULT search finds the page even though the body uses different inflections — the agent does NOT need to add `*` or re-try; one bare query suffices because terms are stemmed (`сценар*`/`продаж*`).",
-      "must_not": ["assert the page is missing because the body uses a different inflection", "manually craft `сценари*` before trying the bare query"]
+      "must_not": [
+        "assert the page is missing because the body uses a different inflection",
+        "manually craft `сценари*` before trying the bare query"
+      ]
     },
     {
       "id": 6,
@@ -48,7 +65,10 @@
       "setup": "Vault `personal`, reindexed with `wiki-reindex --full`. A page body contains 'объём' (with ё).",
       "prompt": "search the wiki for объем",
       "expected_behavior": "The default `wiki-search \"объем\"` finds the 'объём' page (ё/е folded on both sides); the agent does NOT need to try the ё spelling separately.",
-      "must_not": ["report 0 hits and conclude the term is absent", "instruct the user to retry with the ё spelling"]
+      "must_not": [
+        "report 0 hits and conclude the term is absent",
+        "instruct the user to retry with the ё spelling"
+      ]
     },
     {
       "id": 7,
@@ -56,7 +76,10 @@
       "setup": "Vault `personal`. The operator wants a precise literal match for a specific term and is getting too many inflected hits by default.",
       "prompt": "find pages that mention exactly the word агент (not агенты, агентство, агентурный)",
       "expected_behavior": "Recognises that default stemming broadens (`агент*` matches агенты/агентство); uses `wiki-search \"агент\" --exact --vaults personal` to disable stemming for a precise literal search; explains that `--exact` keeps the ё/е fold but turns off inflection broadening.",
-      "must_not": ["claim there is no way to do a precise/literal search", "use `--exact` for an ordinary recall query where broadening is wanted"]
+      "must_not": [
+        "claim there is no way to do a precise/literal search",
+        "use `--exact` for an ordinary recall query where broadening is wanted"
+      ]
     },
     {
       "id": 8,
@@ -64,7 +87,22 @@
       "setup": "Vault `personal`. A page body discusses 'AI агенты' using 'agents' (English) and 'агентов' (Russian).",
       "prompt": "search the wiki for agent агенты",
       "expected_behavior": "A single default query suffices — each term is stemmed by its own script (`agent*` for the Latin term, `агент*` for the Cyrillic), so the page is found without per-language gymnastics.",
-      "must_not": ["run two separate searches assuming only Russian is stemmed", "claim English terms are not stemmed"]
+      "must_not": [
+        "run two separate searches assuming only Russian is stemmed",
+        "claim English terms are not stemmed"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "list-membership-tag-filter",
+      "setup": "Vault `cybos-demo` is registered + indexed with several pages whose frontmatter `tags:` list carries a typed-class tag — e.g. two pages tagged `decision` and one tagged `risk` (TASK 031 typed knowledge classes).",
+      "prompt": "list every decision page in the cybos-demo vault",
+      "expected_behavior": "Invokes the list-membership metadata filter — `wiki-search --tag decision --vaults cybos-demo` (or the equivalent `--where 'tags=decision'`), NOT a coarse `--types research` bucket and NOT a bare FTS query for the word 'decision'; returns exactly the two decision-tagged pages (a member match on the tags LIST, TASK 033), excluding the risk page.",
+      "must_not": [
+        "use --where 'tag=decision' (singular; the field is the plural 'tags' list)",
+        "fall back to scanning --types research (a coarse bucket that also pulls risk/incident/hypothesis)",
+        "claim wiki-search cannot filter by a tags list member"
+      ]
     }
   ]
 }

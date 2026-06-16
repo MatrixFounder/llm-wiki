@@ -43,9 +43,9 @@ paths:
 # Tag-route: each raw knowledge-class type → an existing db_type CHECK enum value + a
 # filterable tag (db_type rationale: research = analysis/finding; brief = concise spec;
 # concept = atomic definitional unit; summary = timestamped narrative record — ADR-003
-# D1 / Q-031-2). Precise per-class CLI filtering = `wiki-search --types <db_type>`
-# (bucket) + FTS on the tag word — NOT `--where tag=` (the tag lives in the tags LIST;
-# TASK F10). A list-membership filter is a documented Phase-2 follow-on (ROADMAP).
+# D1 / Q-031-2). Precise per-class CLI filtering = `wiki-search --tag <class>` (or
+# `--where 'tags=<class>'`) — a list-membership match on the tags LIST via json_each
+# (TASK 033 / Q-033). The `--types <db_type>` bucket + FTS tag word still work too.
 type_mapping:
   # --- the 7 typed knowledge classes ---
   decision:    {db_type: research, tag: decision}     # a choice made, with rationale

@@ -59,10 +59,10 @@ layer.
 | **Type** | Multi-vault knowledge-base index + CLI toolkit |
 | **Canonical source** | Markdown in the Obsidian vault (Class A) |
 | **Derived cache** | One global SQLite DB (FTS5 + WAL), partitioned by `vault_id` (Class B/C) |
-| **Surface** | 15 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
+| **Surface** | 16 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
 | **I/O contract** | stdin/args in → one-line JSON envelope on stdout + exit code |
 | **Core invariant** | The DB is 100% rebuildable from markdown (`wiki-reindex --full`) |
-| **Schema** | `user_version = 5` (`sql/wiki-index-v2.sql`) |
+| **Schema** | `user_version = 6` (`sql/wiki-index-v2.sql`) |
 | **Runtime** | Python 3.14+; deps in `requirements.txt` |
 
 ---
@@ -191,7 +191,7 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 
 ## The command vocabulary, by purpose
 
-The 15 CLIs are not a flat list — each plays a role in the loop above. Below,
+The 16 CLIs are not a flat list — each plays a role in the loop above. Below,
 each command is given as *why it exists* and *when to reach for it*, not just its
 flags (those live in each [`SKILL.md`](../../skills/)).
 
@@ -213,7 +213,7 @@ The everyday read path — **search before you grep**.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ?` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) values match by string; omit the query for a pure metadata *listing*. The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
+| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing*. The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
 | **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files). Use it to refresh the human-browsable catalog after ingests. |
 
 ### 3. Resolve entities
@@ -962,7 +962,8 @@ The lightest integration needs no `prepare`/`apply` at all:
   expansion. The fastest "what do we know about X" for an agent that will do its
   own reasoning over the snippets.
 - **`wiki-search --where 'field=value' --vaults v`** — structured metadata
-  retrieval (status boards, severity queues) without full-text.
+  retrieval (status boards, severity queues) without full-text. Matches scalars AND
+  **list members** (`--where 'tags=decision'`, or the `--tag decision` sugar) — TASK 033.
 - **`wiki-query`** — when you want a *durable, cited* answer filed back, not just
   raw hits.
 

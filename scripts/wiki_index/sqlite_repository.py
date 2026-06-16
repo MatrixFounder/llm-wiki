@@ -614,20 +614,39 @@ class SQLiteRepository(IndexRepository):
             sql_parts.append(" AND p.project = ?")
             params.append(project)
         for field, value in where_fields or []:
-            # TASK 013 (R-X3-META-FILTER): library-caller defense — re-validate
-            # the field name (CLI validates too), then bind BOTH the JSON path and
-            # the value as parameters. No operator string ever reaches the SQL text.
-            # `CAST(... AS TEXT)` makes the equality match by STRING representation:
-            # `json_extract` returns the value in its native JSON storage class
-            # (e.g. INTEGER 1 for `priority: 1`), which SQLite will NOT equate to a
-            # TEXT-bound `'1'`. Casting normalises both sides so a numeric/boolean
-            # frontmatter value matches the (always-string) CLI value, while string
-            # values (the common `status`/`severity` case) stay byte-identical.
+            # TASK 013 (R-X3-META-FILTER) + TASK 033 (R-1, list membership):
+            # library-caller defense — re-validate the field name (CLI validates
+            # too), then bind the JSON path and the value as parameters (FOUR per
+            # field, order `(path, value, path, value)` — B-1; positional `?` can't
+            # be reused across the two subexpressions). No operator string ever
+            # reaches the SQL text.
+            #
+            # Branch 1 — SCALAR equality. `CAST(... AS TEXT)` matches by STRING
+            #   representation: `json_extract` returns the value in its native JSON
+            #   storage class (INTEGER 1 for `priority: 1`), which SQLite will NOT
+            #   equate to a TEXT-bound `'1'`; the CAST normalises both sides so a
+            #   numeric/boolean frontmatter value matches the (always-string) CLI
+            #   value, while string values stay byte-identical.
+            # Branch 2 — LIST MEMBERSHIP (TASK 033). `json_each` over a list field
+            #   (`tags: [eg-demo, decision]` — the TASK-031 typed-class tag) yields
+            #   one row per member, so `value = ?` matches a single member that the
+            #   scalar branch's whole-array text never could. Over a SCALAR field
+            #   json_each yields one row equal to the scalar (so the OR is a strict
+            #   superset → scalar `--status`/`--severity` result sets are UNCHANGED,
+            #   AC-3); over an ABSENT path it yields zero rows (no match, no error).
+            #   This is the proven `find_pages_citing_source` shape (M-1: the
+            #   membership branch is text-only — no CAST — so a NUMERIC list member
+            #   is not string-coerced; the typed-class `tags[]` use case is all text).
             validate_filter_field(field)
             sql_parts.append(
-                " AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?"
+                " AND (CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?"
+                " OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json, ?)"
+                "            WHERE value = ?))"
             )
-            params.append(f"$.{field}")
+            json_path = f"$.{field}"
+            params.append(json_path)
+            params.append(value)
+            params.append(json_path)
             params.append(value)
         if has_match:
             sql_parts.append(" ORDER BY bm25_score ASC LIMIT ?")

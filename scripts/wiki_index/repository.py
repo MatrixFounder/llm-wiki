@@ -177,16 +177,26 @@ class IndexRepository(abc.ABC):
                 a real hit from the top-`limit` window (idempotency).
             project: limit to this project (e.g. '_vault_' or '<course-slug>');
                 None = all projects within the selected vaults.
-            where_fields: TASK 013 (R-X3-META-FILTER) — frontmatter metadata
-                predicates as ``(field, value)`` pairs. Each compiles to a
-                parameterized ``CAST(json_extract(p.frontmatter_json, '$.<field>')
-                AS TEXT) = ?`` clause; multiple pairs are AND-ed. The ``CAST``
-                matches by **string representation**, so a numeric/boolean
-                frontmatter value (e.g. ``priority: 1``) matches the string filter
-                ``("priority", "1")``. Field names MUST satisfy
-                `validate_filter_field` (re-validated here as library-caller
-                defense); values are bound parameters (any string is safe,
-                incl. hyphenated `SEV-2`). When ``query`` is empty the search
+            where_fields: TASK 013 (R-X3-META-FILTER) + TASK 033 (R-1) —
+                frontmatter metadata predicates as ``(field, value)`` pairs.
+                Each compiles to a parameterized **scalar-OR-list-membership**
+                clause: ``CAST(json_extract(p.frontmatter_json, '$.<field>') AS
+                TEXT) = ? OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json,
+                '$.<field>') WHERE value = ?)``; multiple pairs are AND-ed. The
+                scalar ``CAST`` branch matches by **string representation**, so a
+                numeric/boolean frontmatter value (e.g. ``priority: 1``) matches
+                the string filter ``("priority", "1")``. The ``json_each``
+                membership branch (TASK 033) matches a single member of a
+                **list-valued** field — e.g. ``("tags", "decision")`` over
+                ``tags: [eg-demo, decision]`` (the TASK-031 typed-class tag) —
+                which the whole-array scalar text never could; it is a strict
+                superset (``json_each`` over a scalar yields one row equal to the
+                scalar, over an absent path zero rows), so scalar-field filters are
+                **unchanged** (back-compatible). The membership branch is text-only
+                (no CAST), so a numeric *list* member is not string-coerced. Field
+                names MUST satisfy `validate_filter_field` (re-validated here as
+                library-caller defense); values are bound parameters (any string is
+                safe, incl. hyphenated `SEV-2`). When ``query`` is empty the search
                 takes a non-FTS path ordered by ``(project, slug, vault_id)`` —
                 the full page identity, so ties are deterministic — with no BM25
                 score. None/empty = no metadata filter (today's behaviour).

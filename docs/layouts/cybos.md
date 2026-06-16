@@ -71,25 +71,26 @@ Frontmatter-less notes also work — the title is synthesised from the first `# 
 
 ## Finding typed knowledge
 
-Per-class retrieval in Phase 1 is **FTS on the tag word** (the routed tag is an FTS
-column), optionally **narrowed by `--types <db_type>`**. It is NOT a scalar field
-match: the routed tag lands in the `tags:` **list**, and `wiki-search --where` is
-scalar-equality on a `json_extract` (it cannot match a list element).
+Per-class retrieval is a **list-membership metadata filter** (TASK 033): the routed
+tag lands in the `tags:` **list**, and `wiki-search --where 'tags=<class>'` (or the
+`--tag <class>` sugar) matches a *member* of that list via `json_each` — one clean
+command that lists every page of a class, with no FTS query needed. (FTS on the tag
+word and the `--types <db_type>` bucket narrowing both still work as alternatives.)
 
 ```bash
-# primary per-class retrieval — FTS on the tag word (each class's tag returns its notes):
-wiki-search <vault> "decision"           # -> the decision notes
-wiki-search <vault> "incident"           # -> the incident notes
+# primary per-class retrieval — the list-membership filter (standalone lister, TASK 033):
+wiki-search --tag decision --vaults <vault>            # -> every decision note
+wiki-search --where 'tags=incident' --vaults <vault>   # -> every incident note (== --tag)
 
-# narrow an FTS query to a db_type bucket with --types (a FILTER on a query, not a
-# standalone lister — `--types research` alone returns nothing):
-wiki-search <vault> "RabbitMQ" --types concept     # RabbitMQ hits, narrowed to facts
-wiki-search <vault> "queue" --types research       # queue hits, narrowed to the research bucket
+# combine with an FTS query (AND-ed) or a db_type bucket:
+wiki-search "RabbitMQ" --tag decision --vaults <vault>     # decision notes matching RabbitMQ
+wiki-search "queue" --types research --vaults <vault>      # queue hits, narrowed to research bucket
 ```
 
-> A standalone single-predicate list-membership filter (e.g. `--tag decision`, or a
-> "list every page of type X") is a documented follow-on (ROADMAP) — Phase 1 uses the
-> FTS tag word above.
+> Before TASK 033 this needed `--types <db_type>` (a coarse bucket — decision/risk/
+> incident/hypothesis all collapse to `research`) plus FTS on the tag word. The
+> list-membership `--where`/`--tag` filter (ROADMAP R-13 residual, now shipped) makes
+> per-class listing exact and standalone.
 
 ## Per-project customisation (no fork, no Python)
 

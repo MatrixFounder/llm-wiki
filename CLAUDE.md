@@ -496,6 +496,29 @@ the FTS hits along edges (depth 1, cap 3; folded into `question_hash`; excludes 
 **1381 pytest (+5 skipped), mypy strict (76 files).** Dev caught+fixed 2 real bugs (YAML
 `[[wikilink]]` nested-list flatten; inverse-of-inverse resurrection on delta). See ADR-004,
 `docs/tasks/task-032-*`, `docs/plans/plan-032-*`, ARCHITECTURE §4 + Q-032-1..6.
+**TASK 033 (list-membership metadata filter — `wiki-search` `--where`/`--tag` over list-valued
+frontmatter; ROADMAP R-13 residual) COMPLETE / merge-ready 2026-06-16** (uncommitted): the
+TASK-013 `--where 'field=value'` predicate was scalar-only (`CAST(json_extract(fm, ?) AS TEXT)=?`),
+so a list field like `tags[]` (which carries the TASK-031 typed-class tag) never matched a member.
+**R-1** generalizes the `search_pages` predicate to
+`CAST(json_extract(fm, ?) AS TEXT)=? OR EXISTS(SELECT 1 FROM json_each(fm, ?) WHERE value=?)` —
+the **proven `find_pages_citing_source` shape** lifted with zero new mechanism (4-param
+`(path,value,path,value)` bind, B-1); scalar `--status`/`--severity` stay byte-identical (the OR
+is a strict superset: json_each over a scalar yields one row=scalar, over an absent path zero rows).
+**R-2** adds `--tag <v>` sugar (≡ `--where 'tags=<v>'`, mirrors `--status`/`--severity`) → one clean
+per-typed-class command. Injection posture preserved (allowlist `validate_filter_field` + twice-bound
+params + `INVALID_FILTER` never echoes the value + one-predicate-per-field dup-guard covers `--tag`).
+Perf = same unindexed json-scan class as the open R-X3-MF-SCAN (SEV-3; membership branch won't benefit
+from an expression-index fix — needs the FTS-tags projection, noted in the issue). **Zero DDL**
+(`user_version` 6), no new deps, Karpathy unaffected. Full VDD pipeline (task/arch/plan reviews
+APPROVED) + **`/vdd-multi` converged iter-1 (Logic ✓ Security ✓ Performance ✓ — all clean-pass)** +
+inline code-review. `skills/wiki-search/SKILL.md`→v1.5 (+eval case 9), manuals EN/RU + cli-quick-ref +
+cybos.md/cybos.yaml gap-notes flipped + ROADMAP R-13 residual marked SHIPPED. **1393 pytest (+10),
+mypy strict (76 files).** Real-vault dogfood GREEN (obsidian-personal PARA, 2493 pages, query-time —
+no reindex): 7 typed classes → exact pages; 5 real tags incl. Cyrillic match the membership-predicate
+count EXACTLY; `--where`≡`--tag`; FTS+tag AND; scalar back-compat; genuine member-match; dup-guard +
+no-echo. See `docs/tasks/task-033-list-membership-metadata-filter.md`,
+`docs/plans/plan-033-*`, ARCHITECTURE Q-033-1/2.
 
 ## Knowledge lookup priority
 
@@ -543,10 +566,14 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 032
-  `event-graph-relations`** (R-13 Phase-2; typed page-to-page edges + auto-inverse +
-  `wiki-graph` CLI + graph-aware RAG; schema v5→v6; `docs/TASK.md` + `docs/PLAN.md` +
-  `docs/tasks/task-032-00..06-*.md` live at HEAD; ADR-004). Preceded by **TASK 031
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 033
+  `list-membership-metadata-filter`** (ROADMAP R-13 residual; `wiki-search --where`/`--tag`
+  matches a list member of `tags[]` via a scalar-OR-`json_each` predicate; zero DDL,
+  `user_version` 6; `docs/TASK.md` + `docs/PLAN.md` live at HEAD; ARCHITECTURE Q-033-1/2).
+  Preceded by **TASK 032 `event-graph-relations`** (R-13 Phase-2; typed page-to-page edges +
+  auto-inverse + `wiki-graph` CLI + graph-aware RAG; schema v5→v6; archived
+  `docs/tasks/task-032-event-graph-relations.md` + beads `task-032-00..06-*.md` +
+  `docs/plans/plan-032-event-graph-relations.md`; ADR-004). Preceded by **TASK 031
   `typed-knowledge-classes`** (R-13 Phase-1; extended article-type taxonomy + the
   config-driven layout registry de-hardcode; archived
   `docs/tasks/task-031-typed-knowledge-classes.md` + beads `task-031-00..04-*` +

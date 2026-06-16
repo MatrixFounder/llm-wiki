@@ -8,7 +8,7 @@ description: >-
   Triggers: "search wiki", "find in vault", "wiki-search", "what is", "how do I",
   any vault-domain question.
 tier: 2
-version: 1.4
+version: 1.5
 ---
 
 # wiki-search
@@ -36,12 +36,14 @@ wiki-search "<query>" \
     [--vaults "<id1,id2>" | --vaults all] \
     [--types summary,concept,entity] \
     [--project _vault_] [--limit 20] \
+    [--where 'field=value' ...] [--status <v>] [--severity <v>] [--tag <v>] \
     [--exact | --no-stem] \
     [--format json|markdown] \
     [--db-path <override>]
 ```
 
-Or `/wiki-search "<query>" [...]`.
+Or `/wiki-search "<query>" [...]`. The `<query>` is OPTIONAL when a metadata filter
+(`--where`/`--status`/`--severity`/`--tag`) is given — then a non-FTS listing is returned.
 
 ## Contract
 
@@ -55,6 +57,15 @@ Or `/wiki-search "<query>" [...]`.
   are passed through untouched. `--exact` (alias `--no-stem`) disables stemming
   for precise literal terms (the ё/е fold still applies — the corpus is folded).
 - `--vaults` omitted OR `all` → searches every registered vault.
+- **Metadata filter (TASK 013 + 033)** — `--where 'field=value'` (repeatable, AND-ed)
+  filters by a frontmatter field, NOT full-text: it compiles to
+  `CAST(json_extract(frontmatter_json,'$.field') AS TEXT)=? OR EXISTS(json_each … = ?)`,
+  so it matches a **scalar** value *or* a **list member**. `--status`/`--severity` are
+  sugar for `--where 'status=…'`/`'severity=…'`; **`--tag <v>` (TASK 033)** is sugar for
+  `--where 'tags=<v>'` — match a member of the `tags` list, e.g. `--tag decision` lists
+  every typed-class decision page (one clean command). Hyphenated (`SEV-2`) / numeric
+  (`priority=1`) scalar values match by string-rep. Omit the query for a pure listing.
+  At most one predicate per field (a dup → `INVALID_FILTER`, exit 2, value never echoed).
 - Default output: JSON envelope with `hits[]` (each hit has `vault_id`,
   `slug`, `project`, `type`, `title`, `bm25_score`, `snippet`).
 

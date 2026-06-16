@@ -302,3 +302,109 @@ def test_cli_no_flag_search_schema_unchanged(repo, capsys) -> None:
     assert payload["query"] == "drift"
     assert set(payload["hits"][0].keys()) == {
         "vault_id", "slug", "project", "type", "title", "bm25_score", "snippet"}
+
+
+# =============================================================================
+# TASK 033 — list-membership predicate (033-00 DAL) + --tag sugar (033-01 CLI)
+# =============================================================================
+
+@pytest.fixture
+def tagrepo(repo):
+    """The shared `repo` plus typed-class pages whose `tags[]` carries the class
+    (the TASK-031 routing) — for list-membership assertions."""
+    repo.upsert_page(_page("dec-rabbitmq", extra_fm={"tags": ["eg-demo", "decision"]},
+                           body="use rabbitmq broker"))
+    repo.upsert_page(_page("dec-kafka", extra_fm={"tags": ["eg-demo", "decision"]},
+                           body="switch to kafka broker"))
+    repo.upsert_page(_page("risk-spof", extra_fm={"tags": ["eg-demo", "risk"]},
+                           body="single point of failure"))
+    return repo
+
+
+def test_where_list_membership_matches_member(tagrepo) -> None:
+    # AC-1: `tags=decision` matches a MEMBER of tags[]; the risk page is excluded.
+    hits = tagrepo.search_pages(None, where_fields=[("tags", "decision")])
+    assert {h.page.slug for h in hits} == {"dec-rabbitmq", "dec-kafka"}
+
+
+def test_where_membership_and_scalar_backcompat_same_block(tagrepo) -> None:
+    # B-1 (arch-review): the SAME predicate code must serve list-membership AND
+    # keep scalar equality byte-identical — asserted together so a swapped
+    # (path,value,path,value) param order can't pass one half silently.
+    membership = {h.page.slug for h in tagrepo.search_pages(
+        None, where_fields=[("tags", "risk")])}
+    scalar = {h.page.slug for h in tagrepo.search_pages(
+        None, where_fields=[("status", "open")])}
+    assert membership == {"risk-spof"}                       # list member
+    assert scalar == {"issue-a", "issue-b", "issue-d"}        # scalar unchanged
+
+
+def test_where_membership_absent_field_excludes(tagrepo) -> None:
+    # A page with no `tags` member 'decision' (and the fixture pages whose tags
+    # are ["t"]) are excluded; json_each over the absent/non-matching list → 0 rows.
+    hits = tagrepo.search_pages(None, where_fields=[("tags", "decision")])
+    assert "plain-note" not in {h.page.slug for h in hits}
+    assert "issue-a" not in {h.page.slug for h in hits}
+
+
+def test_where_membership_plus_scalar_anded(tagrepo) -> None:
+    # AND across a membership field and a scalar field, both bound correctly.
+    tagrepo.upsert_page(_page("dec-open", status="open",
+                              extra_fm={"tags": ["decision"]}, body="open decision"))
+    hits = tagrepo.search_pages(
+        None, where_fields=[("tags", "decision"), ("status", "open")])
+    assert {h.page.slug for h in hits} == {"dec-open"}
+
+
+def test_where_scalar_cast_still_matches_numeric(tagrepo) -> None:
+    # M-1 guard: the scalar CAST branch is retained, so numeric `priority: 1`
+    # still matches "1" (the membership branch is additive, not a replacement).
+    assert {h.page.slug for h in tagrepo.search_pages(
+        None, where_fields=[("priority", "1")])} == {"issue-num"}
+
+
+def test_cli_tag_sugar_equals_where_tags(tagrepo, capsys) -> None:
+    # AC-2: --tag decision ≡ --where tags=decision (via the CLI main).
+    rc = wiki_search.main(["--tag", "decision", "--vaults", VAULT_ID,
+                           "--db-path", str(tagrepo.db_path)])
+    assert rc == 0
+    via_tag = _hits(capsys)
+    rc = wiki_search.main(["--where", "tags=decision", "--vaults", VAULT_ID,
+                           "--db-path", str(tagrepo.db_path)])
+    assert rc == 0
+    assert via_tag == _hits(capsys) == {"dec-rabbitmq", "dec-kafka"}
+
+
+def test_cli_tag_dup_with_where_tags_rejected(tagrepo, capsys) -> None:
+    # AC-4: --tag x + --where tags=y → one-predicate-per-field guard fires.
+    rc = wiki_search.main(["--tag", "decision", "--where", "tags=risk",
+                           "--vaults", VAULT_ID, "--db-path", str(tagrepo.db_path)])
+    assert rc == 2
+    payload = _payload(capsys)
+    assert payload["error"] == "INVALID_FILTER"
+    assert payload["field"] == "tags"
+
+
+def test_cli_tag_no_value_echo_on_bad_combo(tagrepo, capsys) -> None:
+    # The dup-guard envelope names only the field, never a value.
+    rc = wiki_search.main(["--tag", "SECRETTAG", "--where", "tags=OTHER",
+                           "--vaults", VAULT_ID, "--db-path", str(tagrepo.db_path)])
+    assert rc == 2
+    raw = capsys.readouterr().out
+    assert "SECRETTAG" not in raw and "OTHER" not in raw
+
+
+def test_cli_tag_plus_fts_and_types(tagrepo, capsys) -> None:
+    # AC-6: --tag combines with an FTS query (AND-ed). "rabbitmq" + tag=decision.
+    rc = wiki_search.main(["rabbitmq", "--tag", "decision", "--vaults", VAULT_ID,
+                           "--db-path", str(tagrepo.db_path)])
+    assert rc == 0
+    assert _hits(capsys) == {"dec-rabbitmq"}
+
+
+def test_cli_tag_no_query_listing(tagrepo, capsys) -> None:
+    # AC-6 (listing path): --tag with no FTS query → non-FTS listing.
+    rc = wiki_search.main(["--tag", "risk", "--vaults", VAULT_ID,
+                           "--db-path", str(tagrepo.db_path)])
+    assert rc == 0
+    assert _hits(capsys) == {"risk-spof"}

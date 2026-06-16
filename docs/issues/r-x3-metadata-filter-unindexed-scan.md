@@ -47,3 +47,12 @@ slug: r-x3-metadata-filter-unindexed-scan
 - **Prevention**: documented here with a concrete trigger so it isn't
   rediscovered; the `LIMIT`-bounded result + index-pruned partition keep it cheap
   at present scale.
+- **TASK 033 note (list-membership branch)**: the `--where`/`--tag` predicate now
+  also matches a LIST member via `OR EXISTS (SELECT 1 FROM json_each(frontmatter_json,
+  ?) WHERE value = ?)` (TASK 033 / Q-033-1). This stacks a second per-row JSON parse
+  on the scalar-miss branch (OR short-circuits on a scalar hit) — same unindexed scan
+  class, bounded by per-page array length. **Neither fix-option above helps the
+  membership branch**: an expression index on `json_extract(…,'$.field')` accelerates
+  only the scalar `=` branch. The natural remedy for `tags`-membership is the FTS-tags
+  projection (`pages_fts` already indexes `json_extract(…,'$.tags')`) or a normalized
+  tag table — fold that in when this residual is addressed.

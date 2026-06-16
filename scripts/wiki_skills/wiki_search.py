@@ -56,6 +56,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Convenience alias for --where 'status=<value>'.")
     p.add_argument("--severity", default=None,
                    help="Convenience alias for --where 'severity=<value>'.")
+    p.add_argument("--tag", default=None,
+                   help="TASK 033: convenience alias for --where 'tags=<value>' — "
+                        "match a MEMBER of the frontmatter `tags` list (e.g. "
+                        "--tag decision lists every typed-class 'decision' page). "
+                        "List membership, not whole-list equality.")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--format", choices=["markdown", "json"], default="json")
     p.add_argument("--no-expand-aliases", action="store_true",
@@ -98,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         where_fields.append(("status", args.status))
     if args.severity is not None:
         where_fields.append(("severity", args.severity))
+    if args.tag is not None:
+        # TASK 033 (R-2): --tag desugars to a `tags` predicate; the DAL predicate
+        # matches it as a LIST MEMBER (json_each), and the dup-guard below covers
+        # `--tag x --where tags=y` (field 'tags' seen twice → INVALID_FILTER).
+        where_fields.append(("tags", args.tag))
 
     # Reject two predicates on the SAME field (vdd-multi critic-logic MED):
     # filters are equality-only and AND-ed, so e.g. `--status open --where

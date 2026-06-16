@@ -202,6 +202,10 @@
   },
   "active": "c001e100f31ab5ad",
   "lastOpenFiles": [
+    "docs/PLAN.md",
+    "docs/TASK.md",
+    "docs/plans/plan-032-event-graph-relations.md",
+    "docs/tasks/task-032-event-graph-relations.md",
     "bin/wiki-graph",
     "samples/cybos-graph-demo/tasks/task-broker.md",
     "samples/cybos-graph-demo/requirements/req-throughput.md",
@@ -219,7 +223,6 @@
     "samples/cybos-graph-demo/CLAUDE.md",
     "samples/cybos-graph-demo",
     "tests/__pycache__/test_graph_rag.cpython-314-pytest-9.0.3.pyc",
-    "tests/test_graph_rag.py",
     "skills/wiki-graph/SKILL.md",
     "docs/tasks/task-032-06-activate-edges-and-docs.md",
     "docs/tasks/task-032-05-graph-aware-rag.md",
@@ -228,15 +231,12 @@
     "docs/tasks/task-032-02-auto-inverse-derivation.md",
     "docs/tasks/task-032-01-edge-refs-forward-extraction.md",
     "docs/tasks/task-032-00-schema-v6-ref-type.md",
-    "docs/PLAN.md",
     "docs/adr/ADR-004-event-graph-typed-edges.md",
-    "docs/TASK.md",
     "docs/plans/plan-031-typed-knowledge-classes.md",
     "docs/tasks/task-031-typed-knowledge-classes.md",
     "samples/cybos-demo/events/standup.md",
     "samples/cybos-demo/events/release-4-3.md",
     "samples/cybos-demo/facts/rabbitmq-amqp.md",
-    "samples/cybos-demo/hypotheses/polling-bottleneck.md",
-    "samples/cybos-demo/incidents/inc-queue-overflow.md"
+    "samples/cybos-demo/hypotheses/polling-bottleneck.md"
   ]
 }

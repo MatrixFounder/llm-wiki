@@ -1500,6 +1500,26 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   kind-filter (ABC `repository.py:221` + impl in lockstep, mypy strict) + outbound `refs_from(...)` +
   bounded `neighbors`/`chain` (depth-capped, visited-set cycle-safe); existing `idx_refs_type/entity/page`
   support them. ADR-004 D-DAL.
+- **Q-033-1 (TASK 033 — list-membership `--where`; the R-13 residual).** The TASK-013 `--where`
+  predicate is scalar-only (`CAST(json_extract(fm, ?) AS TEXT) = ?`), so a list field like `tags[]`
+  (which carries the TASK-031 typed-class tag) never matches a single member → no clean per-class
+  filter. **RESOLVED: generalize the `search_pages` per-field predicate to
+  `CAST(json_extract(fm, ?) AS TEXT) = ? OR EXISTS (SELECT 1 FROM json_each(fm, ?) WHERE value = ?)`** —
+  the **proven `find_pages_citing_source` shape** (sqlite_repository.py:1359, TASK 019), lifted with
+  **zero new mechanism**. Keep BOTH branches (do NOT collapse to `json_each`-only): the `=` branch is the
+  robust scalar fast-path the codebase already trusts, and `json_each` over a scalar yields one row equal
+  to the scalar (so the OR is a strict superset for scalars, a no-op for absent fields) → **backward-
+  compatible**: scalar `--status`/`--severity` result sets are unchanged. The value is **bound TWICE**
+  (path+value per branch — positional `?` can't be reused across subexpressions). A scalar sugar field now
+  ALSO matches a list-valued member (intended, free). **Zero DDL** (`user_version` stays 6).
+- **Q-033-2 (TASK 033 — `tag=decision` UX: magic field vs sugar flag).** The operator's literal ask was
+  `--where tag=decision`, but the real frontmatter key is `tags` (a list). **RESOLVED: `--where` uses the
+  HONEST field name (`--where 'tags=decision'`); a separate `--tag <value>` convenience flag** (mirroring
+  `--status`/`--severity`) desugars to `where_fields += ("tags", value)`. We do NOT special-case a
+  `tag→tags` rename inside `--where` (surprising; would collide with a hypothetical real `tag` field). The
+  injection posture (allowlist `validate_filter_field`, twice-bound params, no value echo, one-predicate-
+  per-field dup guard) is unchanged and covers `tags`/`--tag` identically. Perf = the same unindexed
+  json scan class as the open R-X3-MF-SCAN (SEV-3) residual; no new index, no regression.
 
 ---
 
@@ -1523,6 +1543,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Indexer hardening (TASK 030, SHIPPED)**: rename-aware `--delta` (new-path membership predicate, zero extra I/O, swap-class residual documented), chunked-tx `--full` (private txn-free DML helpers; M-4/FTS-trigger posture untouched), single-pass pruned walk (descent predicate preserves karpathy "root never walked"; `Path.glob` symlink parity); zero DDL; design at Q-030-1..6; spec docs/TASK.md + reviews/task-030-review.md.
 - [x] **Typed knowledge classes (TASK 031)**: classification-only Phase 1 — 7 classes tag-routed zero-DDL onto the existing db_type enum (Q-031-1/2) in `dev-project` + new `cybos` layout (Q-031-3); layout registry de-hardcoded to one cached YAML-derived source via additive `aliases`/`init_scaffold` keys (Q-031-4); event graph deferred Phase-2 (Q-031-5 / ROADMAP R-13). ADR-003; Karpathy byte-identity preserved; 1339 pytest, mypy strict; `/vdd-multi` converged (5 LOW: 3 fixed + 2 accepted-residual). DF-031-1 dogfood doc-fix folded.
 - [x] **Event graph (TASK 032)**: R-13 Phase 2 — typed page-to-page edges + graph-aware RAG (ADR-004). Schema v5→v6 inverse-closed `ref_type` (first DDL since TASK 008; Class-B rebuild). Forward edges via per-page `replace_refs` (M-1 intact); auto-inverse via a global AM-3-sibling post-pass (Q-032-2); delta scoped-additions + removal-deferred-to-`--full` (provenance-safe, Q-032-3). New `wiki-graph` CLI (Q-032-5) + typed-edge DAL reads (Q-032-6); `wiki-query --follow-edges` graph-RAG, default OFF, deterministic hash (Q-032-4). Karpathy byte-identity preserved. 1381 pytest, mypy strict.
+- [x] **List-membership metadata filter (TASK 033)**: `wiki-search --where` now matches list-valued frontmatter (`tags[]`) via `scalar = ? OR EXISTS(json_each … = ?)` — the proven `find_pages_citing_source` shape lifted into `search_pages` (Q-033-1), + a `--tag <value>` sugar flag (Q-033-2). Closes the ROADMAP R-13 residual (one clean per-typed-class command). Backward-compatible (scalar `--status`/`--severity` unchanged), injection posture preserved (allowlist + twice-bound params + no echo + dup-guard), **zero DDL** (`user_version` 6).
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).
