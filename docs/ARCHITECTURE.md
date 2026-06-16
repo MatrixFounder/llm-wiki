@@ -1581,6 +1581,28 @@ Environments (single-user laptop, optional iCloud sync), CI/CD pipeline (pytest 
   the `--as-of` *scalar* `json_extract(valid_from/valid_to)` branch is a co-beneficiary of a
   future generated-column/expression index — recorded against the open R-X3-MF-SCAN issue
   (the `--where` *membership* `json_each` branch is NOT; the scalar one is). No new index now.
+- **Q-035-1 (TASK 035 — R-X3-MF-SCAN, which branch to fix).** Measuring the real deployments
+  decided it (ADR-005): the **2493-page** `personal` vault is past the issue's ~1k trigger and
+  `--tag` is used routinely → the **`tags`-membership branch is hot** (`tags` on 2493/2493
+  pages). The **scalar** (`status` 59, `severity` 22 on a 413-page vault) and **temporal**
+  (`valid_from`/`valid_to` on **0** pages) branches are NOT — an expression index / generated
+  column there would re-introduce the exact **P-5** dead-weight the schema removed once.
+  **RESOLVED: fix only the membership branch, zero-DDL, by reusing the index that already
+  exists** — `pages_fts.tags` (the FTS triggers already project `json_extract(fm,'$.tags')`).
+- **Q-035-2 (TASK 035 — how to reuse FTS without changing results).** **RESOLVED: "FTS
+  narrows, json_each confirms."** On the metadata-only path (`not has_match`) with a `tags`
+  predicate whose value has ≥1 alnum char, `search_pages` switches `FROM pages p` to
+  `FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ?` with a
+  column-filtered phrase `'tags : ' + <phrase-quoted value>` (column literal fixed; value
+  `"`-doubled — injection-safe). The existing `json_each(...) = ?` confirm and every other
+  AND-clause stay, so the FTS set (a *superset* — the same tokenizer folds both sides, so the
+  array element's tokens always appear in the FTS text) is filtered back to the **byte-identical
+  result list**. A zero-token value (pure punctuation) → fall back to the scan (FTS would ∅ and
+  could under-match a literal-punctuation tag); a degenerate-MATCH `OperationalError` also falls
+  back. Empirically validated: 40 real tags (hyphenated/numeric/Cyrillic) → 0 mismatches. The
+  FTS branch (a real query present) and the scalar/temporal/non-tags-list branches are
+  **untouched**. Zero DDL (`user_version` stays 7), no layering inversion (the phrase-quote is
+  inlined in the DAL — `wiki_index` must not import `wiki_skills`).
 
 ---
 
@@ -1605,6 +1627,7 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Typed knowledge classes (TASK 031)**: classification-only Phase 1 — 7 classes tag-routed zero-DDL onto the existing db_type enum (Q-031-1/2) in `dev-project` + new `cybos` layout (Q-031-3); layout registry de-hardcoded to one cached YAML-derived source via additive `aliases`/`init_scaffold` keys (Q-031-4); event graph deferred Phase-2 (Q-031-5 / ROADMAP R-13). ADR-003; Karpathy byte-identity preserved; 1339 pytest, mypy strict; `/vdd-multi` converged (5 LOW: 3 fixed + 2 accepted-residual). DF-031-1 dogfood doc-fix folded.
 - [x] **Event graph (TASK 032)**: R-13 Phase 2 — typed page-to-page edges + graph-aware RAG (ADR-004). Schema v5→v6 inverse-closed `ref_type` (first DDL since TASK 008; Class-B rebuild). Forward edges via per-page `replace_refs` (M-1 intact); auto-inverse via a global AM-3-sibling post-pass (Q-032-2); delta scoped-additions + removal-deferred-to-`--full` (provenance-safe, Q-032-3). New `wiki-graph` CLI (Q-032-5) + typed-edge DAL reads (Q-032-6); `wiki-query --follow-edges` graph-RAG, default OFF, deterministic hash (Q-032-4). Karpathy byte-identity preserved. 1381 pytest, mypy strict.
 - [x] **List-membership metadata filter (TASK 033)**: `wiki-search --where` now matches list-valued frontmatter (`tags[]`) via `scalar = ? OR EXISTS(json_each … = ?)` — the proven `find_pages_citing_source` shape lifted into `search_pages` (Q-033-1), + a `--tag <value>` sugar flag (Q-033-2). Closes the ROADMAP R-13 residual (one clean per-typed-class command). Backward-compatible (scalar `--status`/`--severity` unchanged), injection posture preserved (allowlist + twice-bound params + no echo + dup-guard), **zero DDL** (`user_version` 6).
+- [x] **FTS-narrowed tag membership (TASK 035, ADR-005)**: closes the hot branch of R-X3-MF-SCAN measured on the real 2493-page vault. Metadata-only `--tag`/`tags=` membership now narrows via the already-existing `pages_fts.tags` index ("FTS narrows, `json_each` confirms" — Q-035-2) instead of a full-partition scan; result list byte-identical (superset + exact confirm, empirically 0 mismatches over 40 real tags), zero-token values fall back to the scan. The scalar/temporal/non-tags branches are left as a scan by design (P-5: their fields are sparse/absent — Q-035-1). **Zero DDL** (`user_version` stays 7), no new dep, no layering inversion, Karpathy byte-identity preserved.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

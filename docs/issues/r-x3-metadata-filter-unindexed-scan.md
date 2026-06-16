@@ -10,6 +10,18 @@ slug: r-x3-metadata-filter-unindexed-scan
 
 # wiki-search metadata filter is an unindexed json_extract scan + filesort
 
+> **UPDATE 2026-06-16 (TASK 035, ADR-005) — the HOT branch is FIXED; the issue stays
+> `open` for the two cold branches.** A measurement of the real deployments (the
+> 2493-page `personal` vault) showed the **`tags`-membership** branch is the only one
+> hot at scale (`tags` on 2493/2493 pages; routine `--tag` typed-class retrieval since
+> TASK 031/033), while the **scalar** (`status` 59, `severity` 22 on a 413-page vault)
+> and **temporal** (`valid_from`/`valid_to` on **0** pages) branches are sparse-to-absent
+> — an index there would re-introduce the P-5 dead-weight this issue warns against.
+> TASK 035 closed the membership branch with **zero DDL** by reusing the
+> already-existing `pages_fts.tags` index ("FTS narrows, `json_each` confirms"); see the
+> *Resolution* section below. The scalar/temporal branches remain deferred (still cheap:
+> sub-ms / 1.5 ms at 2493 pages) under the same trigger.
+
 - **Symptom**: The TASK 013 (R-X3-META-FILTER) metadata filter compiles to
   `AND json_extract(p.frontmatter_json, ?) = ?` over the **unindexed**
   `pages.frontmatter_json` TEXT column. The metadata-only path
@@ -47,15 +59,48 @@ slug: r-x3-metadata-filter-unindexed-scan
 - **Prevention**: documented here with a concrete trigger so it isn't
   rediscovered; the `LIMIT`-bounded result + index-pruned partition keep it cheap
   at present scale.
-- **TASK 033 note (list-membership branch)**: the `--where`/`--tag` predicate now
-  also matches a LIST member via `OR EXISTS (SELECT 1 FROM json_each(frontmatter_json,
-  ?) WHERE value = ?)` (TASK 033 / Q-033-1). This stacks a second per-row JSON parse
-  on the scalar-miss branch (OR short-circuits on a scalar hit) — same unindexed scan
-  class, bounded by per-page array length. **Neither fix-option above helps the
-  membership branch**: an expression index on `json_extract(…,'$.field')` accelerates
-  only the scalar `=` branch. The natural remedy for `tags`-membership is the FTS-tags
-  projection (`pages_fts` already indexes `json_extract(…,'$.tags')`) or a normalized
-  tag table — fold that in when this residual is addressed.
+- **TASK 033 note (list-membership branch) — RESOLVED by TASK 035 (ADR-005)**: the
+  `--where`/`--tag` predicate matches a LIST member via `OR EXISTS (SELECT 1 FROM
+  json_each(frontmatter_json, ?) WHERE value = ?)` (TASK 033 / Q-033-1). Neither
+  fix-option-1/2 above helps it (an expression index on `json_extract(…,'$.field')`
+  accelerates only the scalar `=` branch). The remedy foreseen here — **the FTS-tags
+  projection** — shipped in TASK 035: `pages_fts` already indexes
+  `json_extract(…,'$.tags')`, so the metadata-only `tags`-membership path now narrows
+  through that index ("FTS narrows, `json_each` confirms") with **zero new DDL/index**.
+  See *Resolution* below.
+
+## Resolution — membership branch (TASK 035 / ADR-005, 2026-06-16)
+
+- **Measured trigger check** (real deployments): the `personal` partition is **2493
+  pages** (past the ~1k trigger) and carries `tags` on **2493/2493** pages, with
+  routine `--tag` use → the membership-branch trigger **is met**; the scalar/temporal
+  fields are sparse-to-absent → **NOT met** (deferred, evidence-backed).
+- **Fix** (`scripts/wiki_index/sqlite_repository.py::search_pages`, metadata-only path):
+  a `tags` predicate switches `FROM pages p` → `FROM pages_fts JOIN pages p ON
+  pages_fts.rowid = p.id WHERE pages_fts MATCH 'tags : "<phrase-quoted value>"'`,
+  keeping the `json_each(...) = ?` predicate as the **confirm**. The FTS column-match
+  is a superset (same tokenizer folds both sides), the confirm removes the extras →
+  **result list byte-identical**. **Safety net**: an FTS-empty result (or
+  `OperationalError`) re-runs the scan, so an untokenizable value (`½`/`②`, or pure
+  punctuation) can never silently under-match.
+- **Measured win** (2493-page vault, `--tag Stratoplan`): **1.93 ms → 0.47 ms (~4.1×)**,
+  EXPLAIN driver flips from a partition scan to `SCAN pages_fts VIRTUAL TABLE` + a
+  rowid PK join. **Zero DDL** (`user_version` stays 7), no new index/dep.
+- **Residual perf notes** (`/vdd-multi` perf critic, both LOW, recorded — not regressions):
+  (a) a *legitimately-empty* tag result now runs two queries (empty FTS probe **then**
+  the scan via the safety net) — about **+3-4 %** on the empty case (the empty scan
+  dominates; the FTS probe never touches `pages`). (b) **High-cardinality crossover**:
+  for a near-universal tag (present on the large majority of pages) the FTS path can be
+  *slower* than the plain scan (FTS posting-list scan + random rowid PK joins vs one
+  sequential cached scan) — bounded (O(N), `LIMIT`-capped, no blow-up), and not a
+  concern for the intended **selective** typed-class tags; revisit with a selectivity
+  heuristic only if a vault filters on a near-universal tag AND it measures slow.
+- **Still open (this issue stays `open`)**: the **scalar** `--where`/`--status`/
+  `--severity` and the **`--as-of` temporal** `valid_from`/`valid_to` reads — same
+  unindexed `json_extract` scan class, still imperceptible at present scale. They ARE
+  co-beneficiaries of fix-option 1/2 (a targeted expression index / generated column on
+  a *measured-hot scalar* field), unlike the membership branch. Add only when a real
+  scalar field is measured hot (P-5); fold into the P-1..P-4 consolidation.
 - **TASK 034 note (`--as-of` temporal branch)**: `wiki-search --as-of` adds
   `COALESCE(substr(json_extract(frontmatter_json,'$.valid_from'),1,10), p.date)` +
   `substr(json_extract(…,'$.valid_to'),1,10)` predicates (scalar `json_extract`, plus a

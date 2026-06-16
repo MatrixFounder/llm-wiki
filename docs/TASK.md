@@ -1,120 +1,131 @@
-# TASK 034 — Temporal core (`wiki-search --as-of`) + agent-memory edge types & classes
+# TASK 035 — FTS-narrowed tag-membership search (R-X3-MF-SCAN, membership branch)
 
 ## 0. Meta
-- **Task ID:** 034 · **Slug:** `task-034-temporal-agent-memory`
+- **Task ID:** 035 · **Slug:** `task-035-fts-narrowed-tag-membership`
 - **Mode:** VDD (full pipeline). Code task (`scripts/`, `tests/`, `docs/`), Stub-First,
-  green-throughout, mypy `--strict`. **One schema bump** (`user_version` **6 → 7**,
-  Class-B rebuild — the TASK 032 precedent); additive + backward-compatible; no new deps;
-  **no `import anthropic`**.
-- **Source:** operator request 2026-06-16 — work through a 6-RFC "agent memory system"
-  proposal from a second agent. Audit found ~60-70 % already expressible (TASK 031/032/033).
-  Operator chose to build the one genuinely-new high-leverage slice (RFC-001 temporal core
-  + the cheap RFC-001/002 edge & classification wins). **Operator design correction:** the
-  RFC's `valid_from`/`valid_to` are awkward (`valid_to` unfillable at authoring time;
-  `valid_from` duplicates the existing `date`) → temporality is **derived** from the indexed
-  `pages.date` + the supersession/invalidation graph; `valid_from`/`valid_to` survive only as
-  **optional overrides** (never required). Plan file: `~/.claude/plans/merry-wishing-seal.md`.
-- **Status:** ✅ **COMPLETE / merge-ready** 2026-06-16 (uncommitted per operator rule,
-  branch `task-034-temporal-agent-memory`). Full VDD pipeline + **`/vdd-multi` converged**
-  (Security ✓ clean-pass; Performance ✓ — 2 LOW, both pre-existing accepted cost class
-  [R-X3-MF-SCAN sibling], no new regression; Logic ✓ — iter-1 found 2 MED on untested
-  input classes, both **empirically reproduced + fixed + re-verified clean-pass**: MED-1
-  cross-project successor ambiguity → COUNT=1 guard mirroring `_derive_inverse_edges`
-  [conservative "stay active when ambiguous", aligned with the data layer]; MED-2
-  datetime-valued `valid_to`/`valid_from` override → `substr(…,1,10)` date-part compare
-  to hold the half-open day boundary; + 3 LOW documented). **Live CLI dogfood GREEN** on
-  `samples/cybos-dogfood` (vault-local `index_db`): `--as-of 2026-04-20` → the one
-  active decision `dec-db-global` (the RFC acceptance test, no LLM), flips to
-  `dec-db-local` at `2026-06-01`; `wiki-graph chain --kind supersedes` lineage,
-  `backlinks ocr --kind implements` → claude-code, `neighbors inc-42 --kind invalidates`
-  → dec-sync-v1. Dogfood found + fixed **DF-034-1** (SEV-2): `wiki-graph`'s `--kind`
-  allow-list was a hardcoded TASK-032 list that silently dropped the v7 edge kinds → now
-  **derived from `reindex._INVERSE_REF_TYPE`** (single source of truth, drift-proof) +
-  regression test. **1443 pytest (+50 over the 1393 baseline), mypy strict (76 files).**
-  **Post-ship operator-requested `/vdd-multi` re-verification (2026-06-16) — CONVERGED
-  clean** over the full final changeset (evidence: 1443 pytest green, mypy strict clean,
-  security scan = 8 pattern-CRITICALs ALL pre-existing/outside the diff): Security
-  **clean-pass**, Performance **clean-pass** (the inner `COUNT=1` sub-subquery is
-  index-backed via the `(vault_id, slug)` PK-prefix; `substr` is free on the already-paid
-  `json_extract`; predicate gated `if as_of is not None` → zero-cost when unused), Logic
-  **bikeshedding-only** (2 LOW, both non-blocking: non-ISO `valid_to`/`valid_from` override
-  fails open = documented "garbage-in" SKILL caveat; pre-existing "`user_version` stays 5"
-  per-feature docstrings in `repository.py`/`sqlite_repository.py` — historical TASK-019
-  zero-DDL notes, correctly NOT bumped, untouched by 032 either). No fixes required.
+  green-throughout, mypy `--strict`. **Zero DDL** (`user_version` stays **7**); **zero new
+  deps**; **no `import anthropic`**; Karpathy byte-identity preserved. **Additive,
+  behaviour-preserving** — the result set of every existing query is unchanged; the only
+  delta is *how fast* the metadata-only `tags`-membership path reaches it.
+- **Source:** operator request 2026-06-16 — *"проработай все issues в
+  `docs/issues/r-x3-metadata-filter-unindexed-scan.md`"* + *"оформи по этому кейсу также
+  отдельный ADR"*. After measuring the real deployments (below), operator chose **Option 1
+  (targeted zero-DDL fix)** over the full v7→v8 consolidation (Option 2, contraindicated by
+  the data) and over record-only (Option 3).
+- **ADR:** **ADR-005** (`docs/adr/ADR-005-fts-narrowed-membership-filter.md`) — the design
+  decision + the explicit rejection of speculative scalar expression-indexes (P-5).
+- **Status:** ✅ **COMPLETE / merge-ready** 2026-06-16 (uncommitted per operator rule). Full
+  VDD pipeline: task/arch/plan reviews **APPROVED** (findings folded in *pre*-implementation —
+  the empty→scan safety net, the adversarial equivalence corpus, the private `_use_fts_narrowing`
+  seam) + **`/vdd-multi` converged**: Security ✓ **bikeshedding-only** (bound-param +
+  phrase-quote-doubling + the `json_each` confirm close all 5 injection vectors); Performance ✓
+  — **2 LOW recorded in the issue** (empty-result +3-4 % double-probe; high-cardinality
+  near-universal-tag crossover, bounded O(N), not the selective typed-class use case); Logic ✓ —
+  iter-1 1 MED **empirically reproduced + fixed + re-verified clean-pass** (a non-`str`
+  library-caller value crashed the FTS path where the scan didn't → `isinstance(value, str)` guard
+  routes non-str to the scan, equivalence preserved); + **code-review MERGE**. **Live dogfood
+  GREEN** (real 2493-page `personal` vault): 6 real tags incl. Cyrillic → 0 mismatches vs scan;
+  EXPLAIN driver = `SCAN pages_fts VIRTUAL TABLE` + rowid PK join; **1.93 → 0.47 ms (~4.1×)**.
+  **1504 pytest (+11 over the 1493 baseline; the 52-test `test_search_pages_fts_membership.py`),
+  mypy strict (76 files).**
+  **Operator-requested `/vdd-multi` re-verification + comprehensive dogfood (2026-06-16) —
+  CONVERGED / all GREEN** (`docs/reviews/task-035-real-vault-dogfood.md`): the 3-critic re-run over
+  the complete final changeset returned **Logic ✓ Security ✓ Performance ✓ all clean-pass** (the
+  security scan's 7 "SQL f-string" CRITICALs adjudicated as the hardcoded-constant false-positive
+  class — `page_cols`/`_REF_COLS`, never user input; the 1 HIGH + 1 MED are outside the diff,
+  pre-existing). The comprehensive real-vault dogfood proved equivalence over **ALL 1135 distinct
+  tags** (FTS == scan, list+order; + CLI `--tag` == an independent `json_each` ground truth), full
+  CLI composition/edge-case/exit-code coverage (9/9), latency 4–28×, and no regression in the other
+  search modes. No new findings; no fixes required.
 
 ## 1. Problem
 
-Three gaps the current primitives cannot reach, all on the "agent memory" axis:
+`R-X3-MF-SCAN` (SEV-3, open since 2026-06-01) documents that the `wiki-search` metadata
+filter on the **metadata-only path** (a filter with NO FTS query — `--tag X`, `--status X`,
+`--as-of D` alone) compiles to a full scan of the vault/type/project partition: one
+`json_extract`/`json_each` JSON-parse per surviving row, then a `USE TEMP B-TREE FOR ORDER
+BY` filesort, `LIMIT` applied only after the sort. There is no index on
+`pages.frontmatter_json` by deliberate design (TASK 006 / **P-5** removed a speculative
+`idx_pages_vault_tags` JSON index as dead write-weight).
 
-1. **No temporal query.** `wiki-search --where` is **equality-only**
-   ([sqlite_repository.py:642](../scripts/wiki_index/sqlite_repository.py#L642)). The
-   question *"which decisions were active on the incident date?"* — RFC-001's acceptance
-   test — cannot be answered without an LLM, even though `pages.date` (indexed) and the
-   `superseded_by` graph (TASK 032) already hold the facts.
-2. **Missing typed edges.** The event graph (TASK 032) ships
-   `implements`/`supersedes`/`causes`/`relates_to` but not `invalidated_by`/`activated_by`
-   (RFC-001 temporal causality) or `uses`/`owns` (RFC-002 agent↔tool/workflow). `invalidated-by`
-   is also the edge the temporal `valid_to` walk reads.
-3. **No agent-memory classes.** `agent`/`tool`/`workflow`/`capability`/`execution`/`pattern`
-   are not classifiable types, so RFC-002/003/005/006 notes fall to `_vault_`/`UnmappedType`.
+The issue has three branches (TASK 013 scalar `=`, TASK 033 `tags[]` membership, TASK 034
+`--as-of` temporal). **Measurement decides which, if any, to fix** — the issue's own trigger
+is *"a single-vault partition exceeds ~1k pages AND the metadata-only path is used
+routinely"* and its P-5 rule is *"do NOT pre-add speculatively — add only when a real field
+is measured hot."*
 
-## 2. Goal / Non-Goals
+### Measured ground truth (2026-06-16, real deployments)
 
-**Goal:** add `wiki-search --as-of DATE` (graph-derived, zero required new fields, optional
-`valid_from`/`valid_to` overrides), the four new inverse-closed edge pairs, and the six
-agent-memory page types — so RFC-001 is fully answerable without an LLM and RFC-002/005's
-classification + lineage work today.
+| Path | Hot field at scale? | 2493-page vault | Indexed today? |
+|---|---|---|---|
+| `--tag` / `tags=` **membership** | **YES — `tags` on all 2493/2493 pages** | scan + filesort, **1.50 ms/query** | No (json_each) — but **`pages_fts.tags` already exists** |
+| `--status`/`--severity`/`--where` **scalar** | No — `status` 59, `severity` 22 (413-page dev vault); ~absent in the 2493-page vault | sub-ms | No |
+| `--as-of` **temporal** | No — `valid_from`/`valid_to` on **0 pages** (optional overrides, by design); successor-walk already index-backed | sub-ms | partial |
 
-**Non-Goals (explicit, ROADMAP):** RFC-004 `wiki-extract-decisions` (separate — clones the
-`wiki-extract-concepts` rail); RFC-006 `wiki-consolidate` (separate, greenfield); RFC-003
-aggregation reporting ("fails most often" — needs a GROUP-BY read surface); redundant CLIs
-`wiki-agent graph` / `wiki-workflow status` / `wiki-graph timeline` (Decision-17 — compose
-`wiki-graph`/`wiki-search`); generalizing `--where` to comparison operators.
+- The 2493-page `personal` partition is **past the 1k trigger**, and `--tag` typed-class
+  retrieval is used routinely (TASK 031/033) → the **membership branch trigger is MET**.
+- The scalar/temporal branches are **NOT** hot: their fields are sparse-to-absent, so an
+  expression index / generated column there would re-introduce exactly the P-5 dead-weight
+  the schema removed once. **Out of scope** (recorded in the issue + ADR-005).
+
+## 2. Scope — one delta
+
+**Route ONLY the metadata-only `tags`-membership branch through the already-existing,
+already-maintained `pages_fts.tags` FTS index**, as a candidate **narrower**, keeping the
+exact `json_each(...) = ?` predicate as the **confirmer**. "FTS narrows, json_each confirms."
+
+- **Where:** `SQLiteRepository.search_pages`
+  ([sqlite_repository.py:548](../scripts/wiki_index/sqlite_repository.py#L548)),
+  metadata-only branch (`not has_match`) only. The FTS branch (`has_match`, a real query
+  present) is untouched — the issue already calls its `json_extract` on the small MATCH
+  candidate set "a non-issue".
+- **How:** when `not has_match` AND a `where_fields` predicate is on field `tags` AND the
+  value yields ≥1 FTS token (guard: `any(c.isalnum() for c in value)`), build
+  `FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ?` with a
+  **column-filtered phrase** param `'tags : ' + fts_quote(value)` (column name `tags` is a
+  FIXED literal; value is FTS-phrase-quoted, doubling `"`). All existing AND-clauses (vault/
+  type/project/exclude/`where`/`as_of`) — **including the `tags` json_each confirm** — append
+  unchanged. ORDER BY / score / snippet identical to the scan path (`0.0`, `''`,
+  `project,slug,vault_id`).
+- **Correctness invariant (empirically validated):** for any value whose FTS phrase has ≥1
+  token, the FTS column-match set is a **superset** of the exact json_each set (same tokenizer
+  folds both sides; the element's tokens always appear adjacently in that element's FTS text —
+  the match is all-or-nothing *per value*, not per page). The json_each confirm removes FTS
+  extras → **result list byte-identical to today**.
+  - *Evidence:* 40 real tags over the 2493-page vault (hyphenated `AI-Agents`,
+    numeric-leading, transliterated-Cyrillic) → **0 mismatches**; 5 zero-token values
+    (`+`,`-`,`  `,`—`,`::`) → FTS returns 0 without error, all `any-alnum=False`.
+- **Safety net (design-review M2, the load-bearing correctness mechanism):** correctness does
+  NOT rest on the `any(isalnum)` guard (which is only a *perf fast-path* — it can be true while
+  unicode61 yields no token, e.g. `½`/`②`). The net is: **if the FTS-narrowed query returns
+  ZERO rows, re-run the plain scan.** Because the match is all-or-nothing per value, a value
+  that FTS can't tokenize → FTS ∅ → fall back → the scan returns the literal-tag pages → no
+  silent under-match. Belt-and-braces: an `sqlite3.OperationalError` from a degenerate MATCH
+  also falls back (phrase-quoting makes this near-unreachable; kept as defense).
+
+### Out of scope (explicit, recorded in the issue + ADR-005)
+- Scalar `--where`/`--status`/`--severity` expression index or generated column (P-5: fields
+  sparse/absent; `--where` is general so a per-field column doesn't generalize).
+- `--as-of` `valid_from`/`valid_to` generated columns (0 pages author them).
+- Any schema change / `user_version` bump.
+- The other-list-field membership (`concepts`, `participants`, …) — no FTS projection; the
+  optimization is `tags`-specific (the only FTS-indexed list column). Their scan is unchanged.
 
 ## 3. Requirements Traceability Matrix
 
-| ID | Requirement | Acceptance Criteria | Verify |
-|----|-------------|---------------------|--------|
-| **R-1** | `wiki-search --as-of DATE` temporal filter (graph-derived). | A page is "active as of DATE" iff `effective_from = COALESCE(valid_from, pages.date) ≤ DATE` **and** `DATE < effective_to` where `effective_to` = authored `valid_to` (if present) else the earliest superseding/invalidating successor's `date` (else ∞). `--as-of` composes with FTS query, `--where`, `--status`, `--types`; valid alone (relaxed empty-search guard). | `tests/test_wiki_search_as_of.py` |
-| **R-1a** | `--as-of` input validation. | Non-ISO-`YYYY-MM-DD` → `INVALID_FILTER` exit 2, **no value echo** (CWE-209/117). | unit |
-| **R-1b** | Optional explicit overrides. | Authored `valid_from` (future-effective: inactive before it) / `valid_to` (sunset, half-open: inactive on/after it) win over the derived ends; explicit `valid_to` short-circuits the graph walk. | unit |
-| **R-1c** | Back-compat. | Equality `--where`/`--status`/`--severity`/`--tag` result sets **unchanged** (no `as_of` → byte-identical SQL). | regression |
-| **R-2** | Four new inverse-closed typed-edge pairs (schema v6→v7). | `invalidated_by↔invalidates`, `activated_by↔activates`, `uses↔used-by`, `owns↔owned-by` authorable in either direction; inverse auto-derived (global pass), orphan-target-skipped, idempotent. `wiki-graph neighbors/backlinks/chain --kind <new>` traverses them. | `tests/test_event_graph*.py` |
-| **R-2a** | Schema migration. | `PRAGMA user_version = 7`; `ref_type` CHECK admits the 8 new values; a v6 DB rebuilds cleanly via the documented Class-B path. | unit + manual |
-| **R-3** | Six agent-memory page types (config only). | `agent`/`tool`/`workflow`/`capability`/`execution`/`pattern` classify via the `cybos` layout `type_mapping` + `paths` globs; per-type templates; **zero Python**. | `tests/test_layout*.py` + dogfood |
-| **R-4** | Karpathy byte-identity preserved. | No edge keys / no temporal fields / no new types on a Karpathy vault → indexing + search SQL unchanged. | regression |
-| **R-5** | Docs lockstep. | `wiki-search` SKILL.md (+eval) + manuals EN/RU + `cybos.md`/`cybos.yaml` comment + CLAUDE.md narrative + ROADMAP updated; stale cybos "deferred Phase-2" comment fixed. | review |
+| # | Requirement | Acceptance | Verify |
+|---|---|---|---|
+| R-1 | Metadata-only `tags`-membership uses `pages_fts.tags` to narrow | EXPLAIN shows `pages_fts` as the DRIVING table joined by rowid (positive signature, not "absence of SCAN" — M-task-1); `tags` column-name is a hardcoded constant, a non-`tags` field never takes the FTS branch (M-task-2) | `test_*` + EXPLAIN assertion |
+| R-2 | Result list byte-identical to the pre-035 scan, all tag shapes incl. adversarial | parametrized equality over an adversarial corpus (plain / hyphenated / numeric / Cyrillic NFC&NFD / mixed-case / substring-of-another / multi-word / embedded `"` / backslash / interior-whitespace / symbol) (M-arch-1) + `>limit` ORDER-BY-boundary slice (M-plan-4) | equivalence tests |
+| R-3 | Zero-/no-token value falls back to scan; the FTS-empty safety net catches under-match | `--tag '+'`/`'½'` returns the same as the scan (literal-punctuation fixture); a deterministic over-match (`SEV-2` probed `sev`) proves the `json_each` confirm is load-bearing (M-plan-5) | edge tests |
+| R-4 | Composition unchanged | `--tag` + `--as-of`, + `--types`, + `--project`, + a 2nd non-`tags` `--where`, + `--vault all` tie-break all identical to the scan | composition tests |
+| R-5 | Scalar/list-non-tags/temporal branches untouched (regression) | existing `test_wiki_search_metadata_filter` / `_as_of` / `test_search_pages` green | full suite |
+| R-6 | Injection-safe | tag value with FTS-special chars / quotes / `OR`/`*`/column-syntax cannot break out (phrase-quoted) or return wrong rows (confirm) | adversarial test |
+| R-7 | Library-caller defense | DAL re-validates field; CLI dup-guard/echo posture unchanged | DAL test |
+| R-8 | Docs current | issue → MEASURED + membership SHIPPED; ADR-005; ADR index; CLAUDE.md; manuals; SKILL.md | review |
 
-## 4. Design notes (locked)
-
-- **`--as-of` SQL** (DATE bound 3×; `valid_from`/`valid_to` paths fixed — no user field name,
-  no allowlist needed; ref_types are internal constants):
-  ```sql
-  AND COALESCE(json_extract(p.frontmatter_json,'$.valid_from'), p.date) IS NOT NULL
-  AND COALESCE(json_extract(p.frontmatter_json,'$.valid_from'), p.date) <= ?
-  AND ( json_extract(p.frontmatter_json,'$.valid_to') > ?
-        OR ( json_extract(p.frontmatter_json,'$.valid_to') IS NULL
-             AND NOT EXISTS (SELECT 1 FROM page_entity_refs r
-               JOIN pages s ON s.vault_id=r.vault_id AND s.slug=r.entity_slug
-               WHERE r.vault_id=p.vault_id AND r.page_slug=p.slug
-                 AND r.ref_type IN ('superseded-by','invalidated-by')
-                 AND s.date IS NOT NULL AND s.date <= ?) ) )
-  ```
-  Frontmatter dates are stored as ISO strings by
-  [`_json_safe`](../scripts/wiki_index/normalization.py#L41) → text comparison is sound. `p.date`
-  is `.isoformat()` TEXT. Half-open interval `[effective_from, effective_to)`.
-- **Edge set** — extends the plan table to **both authorable directions** per TASK 032 parity
-  (free; `_INVERSE_REF_TYPE` already carries both ways). 8 new authorable keys, 8 new `ref_type`
-  enum values, 4 new inverse pairs. `invalidated-by`/`superseded-by` are what R-1's walk reads.
-- **Migration** — `ref_type` CHECK cannot be ALTER-relaxed on a populated table; DB is Class-B
-  rebuildable: delete `*.db/-wal/-shm` → `wiki-init --register-existing` → `wiki-reindex --full`.
-
-## 5. Risks
-
-- **CHECK-enum drift** between SQL, `_EDGE_KEY_TO_REF_TYPE`, `_INVERSE_REF_TYPE`, `models.py`
-  docstring → a test asserts the three code maps agree with the SQL enum.
-- **`--as-of` perf** — the `NOT EXISTS` correlated subquery per candidate row. Rides
-  `idx_refs_page` + `pages` PK; bounded by the `limit`. Same unindexed-`json_extract` class as
-  the open R-X3-MF-SCAN for the override branch (documented, not a regression).
-- **Date hygiene** — a page with neither `valid_from` nor `date` is **excluded** from `--as-of`
-  (first clause), so non-temporal pages never pollute the result.
+## 4. Non-goals / invariants
+- `mypy --strict scripts/` clean; full `pytest tests/` green; no new dep; no `import anthropic`.
+- No layering inversion: the FTS phrase-quote is inlined in the DAL (the DAL must not import
+  the `wiki_skills._retrieval.fts_quote`; `wiki_skills` depends on `wiki_index`, not vice-versa).
+- Karpathy byte-identity preserved (a vault with no `tags` filter never touches the new path).

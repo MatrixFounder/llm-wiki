@@ -556,7 +556,12 @@ class SQLiteRepository(IndexRepository):
         where_fields: list[tuple[str, str]] | None = None,
         as_of: str | None = None,
         limit: int = 20,
+        _use_fts_narrowing: bool = True,
     ) -> list[PageHit]:
+        # `_use_fts_narrowing` is a PRIVATE test seam (TASK 035) — not in the ABC
+        # contract. Default True = production (FTS-narrow the metadata `tags`
+        # membership path); the equivalence tests pass False to drive the REAL plain
+        # scan over the same input and assert byte-identical results (ADR-005 D2).
         conn = self._connect()
         has_match = bool(query)
         if not has_match and not where_fields and not as_of:
@@ -574,46 +579,29 @@ class SQLiteRepository(IndexRepository):
             "p.tldr, p.date, p.last_modified, p.file_hash, p.frontmatter_json, "
             "p.body_excerpt, p.is_frozen"
         )
-        params: list[Any] = []
-        if has_match:
-            # FTS path (today's behaviour): BM25-ranked.
-            sql_parts: list[str] = [
-                f"SELECT {page_cols}, "
-                "bm25(pages_fts) AS bm25_score, "
-                "snippet(pages_fts, -1, '<b>', '</b>', '...', 16) AS snip "
-                "FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id "
-                "WHERE pages_fts MATCH ?",
-            ]
-            params.append(query)
-        else:
-            # TASK 013 non-FTS path: pure metadata listing, no pages_fts join, no
-            # BM25 ranking. Score reported as 0.0 (PageHit.bm25_score is a float;
-            # there is no relevance score without a MATCH term) and an empty
-            # snippet; ordering is deterministic by the full page identity
-            # (project, slug, vault_id) — vault_id breaks ties for the same
-            # (project, slug) across vaults in an all-vaults listing.
-            sql_parts = [
-                f"SELECT {page_cols}, "
-                "0.0 AS bm25_score, '' AS snip "
-                "FROM pages p WHERE 1=1",
-            ]
+        # TASK 035: the AND-clauses below are IDENTICAL across the FTS-query path, the
+        # metadata scan, and the metadata FTS-narrowed path — built ONCE into
+        # `clause_parts`/`clause_params` (separate from the SELECT prefix) so the three
+        # query shapes can never drift.
+        clause_parts: list[str] = []
+        clause_params: list[Any] = []
         if vaults is not None:
             clause, vals = self._in_clause("p.vault_id", vaults)
-            sql_parts.append(f" AND {clause}")
-            params.extend(vals)
+            clause_parts.append(f" AND {clause}")
+            clause_params.extend(vals)
         if types is not None:
             clause, vals = self._in_clause("p.type", types)
-            sql_parts.append(f" AND {clause}")
-            params.extend(vals)
+            clause_parts.append(f" AND {clause}")
+            clause_params.extend(vals)
         if exclude_types:
             # TASK 007: applied in SQL BEFORE the LIMIT (not post-filtered) so an
             # excluded type cannot consume a top-`limit` slot and evict a real hit.
             placeholders = ",".join("?" * len(exclude_types))
-            sql_parts.append(f" AND p.type NOT IN ({placeholders})")
-            params.extend(exclude_types)
+            clause_parts.append(f" AND p.type NOT IN ({placeholders})")
+            clause_params.extend(exclude_types)
         if project is not None:
-            sql_parts.append(" AND p.project = ?")
-            params.append(project)
+            clause_parts.append(" AND p.project = ?")
+            clause_params.append(project)
         for field, value in where_fields or []:
             # TASK 013 (R-X3-META-FILTER) + TASK 033 (R-1, list membership):
             # library-caller defense — re-validate the field name (CLI validates
@@ -639,16 +627,16 @@ class SQLiteRepository(IndexRepository):
             #   membership branch is text-only — no CAST — so a NUMERIC list member
             #   is not string-coerced; the typed-class `tags[]` use case is all text).
             validate_filter_field(field)
-            sql_parts.append(
+            clause_parts.append(
                 " AND (CAST(json_extract(p.frontmatter_json, ?) AS TEXT) = ?"
                 " OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json, ?)"
                 "            WHERE value = ?))"
             )
             json_path = f"$.{field}"
-            params.append(json_path)
-            params.append(value)
-            params.append(json_path)
-            params.append(value)
+            clause_params.append(json_path)
+            clause_params.append(value)
+            clause_params.append(json_path)
+            clause_params.append(value)
         if as_of is not None:
             # TASK 034 / R-1 — temporal "active as of DATE" filter. A page is active
             # iff its effective_from <= DATE AND DATE < its effective_to, where:
@@ -675,7 +663,7 @@ class SQLiteRepository(IndexRepository):
             # ANOTHER project can never wrongly retire P (vdd-multi logic MED-1; a no-op
             # on single-project vaults where every slug is unique, conservative
             # "stay active when ambiguous" otherwise).
-            sql_parts.append(
+            clause_parts.append(
                 " AND COALESCE(substr(json_extract(p.frontmatter_json, '$.valid_from'), 1, 10),"
                 "              p.date) IS NOT NULL"
                 " AND COALESCE(substr(json_extract(p.frontmatter_json, '$.valid_from'), 1, 10),"
@@ -692,17 +680,87 @@ class SQLiteRepository(IndexRepository):
                 "                    WHERE tc.vault_id = r.vault_id"
                 "                      AND tc.slug = r.entity_slug) = 1)))"
             )
-            params.append(as_of)
-            params.append(as_of)
-            params.append(as_of)
+            clause_params.append(as_of)
+            clause_params.append(as_of)
+            clause_params.append(as_of)
+        clause_sql = "".join(clause_parts)
+
         if has_match:
-            sql_parts.append(" ORDER BY bm25_score ASC LIMIT ?")
+            # FTS path (today's behaviour): BM25-ranked. Untouched by TASK 035 —
+            # the issue notes the json_extract/json_each predicates run only on the
+            # already-small MATCH candidate set here (a non-issue).
+            sql = (
+                f"SELECT {page_cols}, bm25(pages_fts) AS bm25_score, "
+                "snippet(pages_fts, -1, '<b>', '</b>', '...', 16) AS snip "
+                "FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id "
+                "WHERE pages_fts MATCH ?"
+                + clause_sql + " ORDER BY bm25_score ASC LIMIT ?"
+            )
+            rows = conn.execute(sql, [query, *clause_params, limit]).fetchall()
         else:
-            sql_parts.append(" ORDER BY p.project, p.slug, p.vault_id LIMIT ?")
-        params.append(limit)
-        sql = "".join(sql_parts)
+            # TASK 013 metadata path: pure listing, no BM25 (score 0.0, empty
+            # snippet); deterministic (project, slug, vault_id) ordering — vault_id
+            # breaks ties across vaults in an all-vaults listing.
+            meta_cols = f"SELECT {page_cols}, 0.0 AS bm25_score, '' AS snip "
+            meta_tail = clause_sql + " ORDER BY p.project, p.slug, p.vault_id LIMIT ?"
+            scan_sql = meta_cols + "FROM pages p WHERE 1=1" + meta_tail
+            scan_params: list[Any] = [*clause_params, limit]
+
+            # TASK 035 (R-X3-MF-SCAN, ADR-005): when an only-metadata query carries a
+            # `tags` membership predicate, narrow the candidate set through the
+            # ALREADY-EXISTING, already-maintained `pages_fts.tags` index ("FTS
+            # narrows, json_each confirms") instead of scanning the whole partition.
+            # The json_each(...) = ? confirm above stays, so the result is BYTE-
+            # IDENTICAL to the scan: the FTS column-match is a superset (the same
+            # unicode61 tokenizer folds both sides, so an exact array element's
+            # tokens always appear in that element's FTS text — all-or-nothing per
+            # value), and the confirm removes the FTS extras.
+            fts_value: str | None = None
+            if _use_fts_narrowing:
+                for field, value in where_fields or []:
+                    # `isinstance(str)` guards a non-str library-caller value (the CLI
+                    # only ever sends str): an int/float `value` would crash
+                    # `any(c.isalnum() ...)` AND has no FTS-phrase form — skip
+                    # narrowing → the scan binds it into json_each exactly as before
+                    # (vdd-multi critic-logic MED; the scan path never crashed on it).
+                    # `any(isalnum)` is then a PERF fast-path only (skip the FTS probe
+                    # for an obviously-tokenless value) — NOT the correctness gate;
+                    # that is the FTS-empty→scan fallback below (ADR-005 D3).
+                    if (field == "tags" and isinstance(value, str)
+                            and any(c.isalnum() for c in value)):
+                        fts_value = value
+                        break
+            if fts_value is not None:
+                # `tags` is a FIXED literal column name; the value is the single bound
+                # MATCH parameter, FTS-phrase-quoted ('"'-doubled) so any FTS operator
+                # or quote inside it is inert (the SQL text carries only `MATCH ?`).
+                # Mirror of `scripts/wiki_skills/_retrieval.fts_quote`, inlined to
+                # avoid a wiki_index→wiki_skills layering inversion (ADR-005 D5).
+                match_param = 'tags : "' + fts_value.replace('"', '""') + '"'
+                fts_sql = (
+                    meta_cols + "FROM pages_fts JOIN pages p "
+                    "ON pages_fts.rowid = p.id WHERE pages_fts MATCH ?" + meta_tail
+                )
+                try:
+                    rows = conn.execute(
+                        fts_sql, [match_param, *scan_params]).fetchall()
+                except sqlite3.OperationalError:
+                    # Belt-and-braces: a degenerate MATCH (near-unreachable — the
+                    # phrase-quote always emits a valid FTS literal) → fall back.
+                    rows = conn.execute(scan_sql, scan_params).fetchall()
+                else:
+                    # Load-bearing safety net (ADR-005 D3): a value FTS can't tokenize
+                    # (e.g. `½`/`②` — isalnum-true but no unicode61 token) yields ∅,
+                    # which — because the match is all-or-nothing per value — is
+                    # indistinguishable from a genuinely-empty result. Re-run the scan
+                    # so a literal-tag page can never be silently under-matched.
+                    if not rows:
+                        rows = conn.execute(scan_sql, scan_params).fetchall()
+            else:
+                rows = conn.execute(scan_sql, scan_params).fetchall()
+
         hits: list[PageHit] = []
-        for row in conn.execute(sql, params).fetchall():
+        for row in rows:
             page = self._row_to_page(row)
             hits.append(PageHit(
                 page=page,

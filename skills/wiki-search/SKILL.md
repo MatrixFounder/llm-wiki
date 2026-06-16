@@ -68,6 +68,9 @@ listing is returned.
   every typed-class decision page (one clean command). Hyphenated (`SEV-2`) / numeric
   (`priority=1`) scalar values match by string-rep. Omit the query for a pure listing.
   At most one predicate per field (a dup → `INVALID_FILTER`, exit 2, value never echoed).
+  A query-less `--tag`/`tags=` listing now **narrows through the `pages_fts.tags` index**
+  (TASK 035 — ~4× faster at 2.5k pages); behaviour/results are **identical** (it is a
+  transparent optimization, zero schema change).
 - **Temporal filter (TASK 034)** — `--as-of YYYY-MM-DD` returns only pages **active
   on that date**: created on-or-before it (`pages.date`, or an authored `valid_from`
   override) AND **not yet superseded/invalidated by then** — derived from the event

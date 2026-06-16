@@ -571,6 +571,42 @@ RFC-006 `wiki-consolidate`, RFC-003 aggregation; the redundant `wiki-agent`/`wik
 built (compose `wiki-graph`/`wiki-search`). **Zero new deps, no `import anthropic`. 1443 pytest
 (+50), mypy strict (76 files).** See `docs/tasks/task-034-temporal-agent-memory.md`,
 `docs/plans/plan-034-*`, ARCHITECTURE §4 + Q-034-1..4, ADR-004.
+**TASK 035 (FTS-narrowed tag-membership search — `R-X3-MF-SCAN` hot branch; ADR-005)
+COMPLETE / merge-ready 2026-06-16** (uncommitted): closes the one genuinely-hot branch of the
+SEV-3 `R-X3-MF-SCAN` perf issue, chosen by **measuring** the real deployments (operator picked
+"Option 1 — targeted zero-DDL fix" over the v7→v8 consolidation and over record-only). At the
+real **2493-page** `personal` vault the metadata-only `--tag`/`tags=` listing scanned the whole
+partition (1.5–1.9 ms); `tags` is on **2493/2493** pages and used routinely, while
+`status`/`severity`/`valid_from`/`valid_to` are sparse-to-absent (so a scalar expression index
+would be **P-5 dead-weight** — explicitly rejected). Fix: the metadata-only `tags`-membership
+branch in `SQLiteRepository.search_pages` now **narrows through the already-existing,
+already-maintained `pages_fts.tags` index** ("FTS narrows, `json_each` confirms") — `FROM
+pages_fts JOIN pages p ON pages_fts.rowid=p.id WHERE pages_fts MATCH 'tags : "<phrase-quoted
+value>"'`, keeping the exact `json_each(...) = ?` predicate as the confirm. The FTS column-match
+is a superset (same `unicode61` tokenizer folds both sides), the confirm removes the extras →
+**result list byte-identical** (proven: 40 real tags → 0 mismatches; 52-test adversarial
+equivalence suite vs a private `_use_fts_narrowing=False` scan seam). **Load-bearing safety net**
+(ADR-005 D3): an FTS-empty result (or `OperationalError`) re-runs the plain scan, so an
+untokenizable value (`½`/`②`, pure punctuation) can never silently under-match — correctness does
+**not** depend on the `any(isalnum)` perf fast-path. The shared AND-clauses were factored into
+`clause_parts`/`clause_params` (built once → the FTS/scan/FTS-narrowed shapes can't drift). The
+scalar `--where`/`--status`/`--severity` and `--as-of` temporal branches are **left as a scan by
+design** (the issue stays `open` for them, evidence-backed). **Measured: 1.93→0.47 ms (~4.1×) on
+the 2493-page vault**, EXPLAIN driver flips to `SCAN pages_fts VIRTUAL TABLE` + rowid PK join.
+Full VDD pipeline (task/arch/plan reviews APPROVED, findings folded pre-impl) + **`/vdd-multi`
+converged** (Security ✓ bikeshedding-only — bound-param + phrase-quote-doubling + the `json_each`
+confirm close all 5 injection vectors; Performance ✓ — 2 LOW recorded in the issue: empty-result
++3-4 % double-probe, and a high-cardinality near-universal-tag crossover where FTS can be slower
+than the scan [bounded, O(N), not the selective typed-class use case]; Logic ✓ — iter-1 found 1
+MED **empirically reproduced+fixed+re-verified clean-pass**: a non-`str` library-caller value
+crashed the FTS path [`any(c.isalnum() for c in 7)`] where the scan didn't → `isinstance(value,
+str)` guard routes non-str to the scan, equivalence preserved) + **code-review MERGE**. **Zero DDL**
+(`user_version` stays 7), no new dep, no `import anthropic`, no layering inversion (the FTS
+phrase-quote is inlined in the DAL — `wiki_index` must not import `wiki_skills`), Karpathy
+byte-identity preserved. **1504 pytest (+11), mypy strict (76 files).** See
+`docs/tasks/task-035-fts-narrowed-tag-membership.md`, `docs/plans/plan-035-*`,
+`docs/adr/ADR-005-fts-narrowed-membership-filter.md`, ARCHITECTURE Q-035-1/2,
+`docs/issues/r-x3-metadata-filter-unindexed-scan.md` (membership branch SHIPPED).
 
 ## Knowledge lookup priority
 
@@ -618,11 +654,18 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 034
+- `docs/tasks/` + `docs/plans/` — task/plan specs. **Latest: TASK 035
+  `fts-narrowed-tag-membership`** (closes the hot branch of SEV-3 `R-X3-MF-SCAN`; the
+  metadata-only `--tag`/`tags=` listing narrows through the already-existing `pages_fts.tags`
+  index — "FTS narrows, `json_each` confirms" — result byte-identical, ~4.1× faster at 2.5k
+  pages; scalar/temporal branches left as a scan by design per P-5; **zero DDL**, `user_version`
+  stays 7; `docs/TASK.md` + `docs/PLAN.md` live at HEAD; ADR-005; ARCHITECTURE Q-035-1/2; the
+  `R-X3-MF-SCAN` issue marks the membership branch SHIPPED). Preceded by **TASK 034
   `temporal-agent-memory`** (ROADMAP R-14; `wiki-search --as-of DATE` point-in-time querying
   [graph-derived from `pages.date` + the supersede/invalidate graph — zero required new fields],
   four new inverse-closed edge pairs `invalidated_by`/`activated_by`/`uses`/`owns`, six cybos
-  agent-memory page types; schema v6→v7; `docs/TASK.md` + `docs/PLAN.md` live at HEAD; ADR-004;
+  agent-memory page types; schema v6→v7; archived `docs/tasks/task-034-temporal-agent-memory.md`
+  + `docs/plans/plan-034-temporal-agent-memory.md`; ADR-004;
   ARCHITECTURE §4 + Q-034-1..4; DF-034-1 wiki-graph `--kind` drift fixed). Preceded by **TASK 033
   `list-membership-metadata-filter`** (ROADMAP R-13 residual; `wiki-search --where`/`--tag`
   matches a list member of `tags[]` via a scalar-OR-`json_each` predicate; zero DDL,
