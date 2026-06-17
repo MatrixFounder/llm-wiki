@@ -31,7 +31,7 @@ from ._errors import ExtractionParseError
 from ._validation import (
     _sanitize_name,
     _sanitize_definition,
-    _SLUG_RE,
+    _is_valid_slug,
     _SOURCE_SPAN_RE,
 )
 
@@ -98,11 +98,12 @@ def write_concept_page(
     # defense in depth even though `_validate_candidates_schema` also checks);
     # (2) the parent resolves inside vault after we mkdir; (3) the final
     # target's resolved parent must equal the validated concepts_dir.
-    # L-3: use precompiled _SLUG_RE instead of a string literal — same
-    # pattern, avoids the per-call `re` module cache lookup.
-    if not _SLUG_RE.match(slug):
+    # L-3 / TASK 037: `_is_valid_slug` is the shared traversal-safe gate
+    # (lowercase Unicode kebab); admits preserve-unicode concept slugs while
+    # still rejecting `/`, `..`, dots and leading `_`/`-`.
+    if not _is_valid_slug(slug):
         raise PathTraversalError(
-            f"slug {slug!r} fails kebab-case regex; possible path traversal"
+            f"slug {slug!r} fails slug validation; possible path traversal"
         )
     if concepts_dir is None:
         concepts_dir = vault_root / CONCEPTS_SUBDIR

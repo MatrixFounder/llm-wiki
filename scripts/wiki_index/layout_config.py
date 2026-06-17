@@ -1089,7 +1089,15 @@ def derive_project_for_path(path: Path, vault_root: Path) -> str:
         return VAULT_TIER_PROJECT
     config = resolve_layout_config(vault_root)
     for entry in config.paths:
-        if PurePosixPath(rel_posix).full_match(entry.glob):
+        # TASK 037: guard `full_match` exactly as `derive_discovered_page` does — a
+        # malformed glob raises ValueError; skip that entry instead of propagating
+        # an uncaught traceback (this helper is now reached on the extract-concepts
+        # apply path, whose envelope contract only catches ExtractionParseError).
+        try:
+            matched = PurePosixPath(rel_posix).full_match(entry.glob)
+        except ValueError:
+            continue
+        if matched:
             # R-X1-REDOS-RT (TASK 017): thread provenance exactly as `iter_pages`
             # does — an operator `project_pattern` MUST run under the `regex` engine
             # (with the runtime deadline), never unguarded stdlib `re`. Without this

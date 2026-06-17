@@ -1053,11 +1053,14 @@ def test_validate_candidates_schema_rejects_malformed_slug() -> None:
 
     Renamed in 003-v3-11 to match the validator's v3.1 name
     `_validate_candidates_schema` (was the v2-era name in 003-v3-02)."""
-    bad_items = [{"slug": "Hello World",  # space → not kebab
+    bad_items = [{"slug": "Hello World",  # space + uppercase → not a valid slug
                   "name": "X", "definition": "d",
                   "source_quote": "q", "source_span": "L1-L1",
                   "entity_type": "concept"}]
-    with pytest.raises(wec.ExtractionParseError, match="kebab-case"):
+    # TASK 037: message reworded ("kebab-case regex" → "slug validation") when
+    # the ASCII `_SLUG_RE.match` gate became the Unicode-aware `_is_valid_slug`
+    # (lowercase + word-chars/hyphens). The rejection itself is unchanged.
+    with pytest.raises(wec.ExtractionParseError, match="slug fails slug validation"):
         wec._validate_candidates_schema(bad_items)
 
 

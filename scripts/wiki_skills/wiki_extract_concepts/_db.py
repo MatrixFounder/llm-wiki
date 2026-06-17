@@ -87,6 +87,7 @@ def upsert_extracted_entity(
     source_slug: str,
     today: date,
     orchestrator_id: str = "orchestrator",
+    concepts_rel: str = "_concepts",
 ) -> str:
     """Upsert an extracted entity row with defensive downgrade-guard.
 
@@ -121,7 +122,12 @@ def upsert_extracted_entity(
         canonicalized_by=canonicalized_by,
         first_seen=first_seen,
         last_updated=today_iso,
-        file_path=f"_concepts/{candidate['slug']}.md",
+        # TASK 037 / R-5: `concepts_rel` is the vault-relative dir the page was
+        # actually written to (`_concepts` for Karpathy vault-tier — byte-
+        # identical default; `<area>/<sub>/_concepts` for PARA) so the entity's
+        # recorded path matches the on-disk file and `wiki-lint` doesn't flag it
+        # missing-on-disk.
+        file_path=f"{concepts_rel}/{candidate['slug']}.md",
     )
     return "updated" if existing else "created"
 
@@ -221,6 +227,7 @@ def build_manifest(
     mention_list: list[dict[str, Any]],
     log_event: dict[str, Any],
     vault_root: Path,
+    concepts_rel: str = "_concepts",
 ) -> dict[str, Any]:
     """Assemble wiki-ingest v1.1-compatible manifest dict (R-35).
 
@@ -242,7 +249,10 @@ def build_manifest(
         page_action = cand.get("file_write_action", "created")
         written.append({
             "kind": "concept",
-            "path": f"_concepts/{cand['slug']}.md",
+            # TASK 037 / R-5: real vault-relative path (PARA folders own a
+            # nested `_concepts/`); defaults to `_concepts` → byte-identical
+            # manifest for Karpathy vault-tier.
+            "path": f"{concepts_rel}/{cand['slug']}.md",
             "action": page_action,
             "scope": "vault",
             "slug": cand["slug"],

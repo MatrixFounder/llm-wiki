@@ -34,6 +34,15 @@ paths:
   - {glob: "_daily/**/*.md",     type: daily-note, project: "_daily",     default_tags: [daily]}
   - {glob: "_clippings/**/*.md", type: clipping,   project: "_clippings", default_tags: [clipping]}
   - {glob: "_inbox/**/*.md",     type: note,       project: "_inbox",     default_tags: [inbox, draft]}
+  # TASK 037: generated entity pages at the VAULT ROOT. A root-level (`*.md`) or
+  # MOC (`NN - Area.md`) source note's `_concepts/` sibling lands at
+  # `<root>/_concepts/` — which matches no numbered glob and would be silently
+  # dropped at reindex. These rules are ROOT-ANCHORED (no leading `**`) on purpose:
+  # a deeper `_concepts/` (under `NN - Area/Sub/`) already matches the 2-level glob
+  # below with a domain-scoped project, and must keep it. `type` comes from the
+  # page's own frontmatter (`type: concept`) → db_type concept via type_mapping.
+  - {glob: "_concepts/**/*.md", project: "_concepts"}
+  - {glob: "_entities/**/*.md", project: "_entities"}
 
   # --- Numbered top-level: "NN - Area/Sub/.../X.md" → project "Area/Sub" ---
   - glob: "[0-9][0-9] - */*/**/*.md"
@@ -78,8 +87,25 @@ type_mapping:
   video-summary:    {db_type: summary, tag: video}
   podcast-summary:  {db_type: summary, tag: podcast}
   course-summary:   {db_type: summary, tag: course}
+  # TASK 037 / R-6: concept + entity classes (mirror karpathy) so the now
+  # layout-aware `wiki-extract-concepts` can write `_concepts/<slug>.md` pages
+  # INTO a PARA vault (a `<area>/<sub>/_concepts/` sibling of the source note)
+  # and have them index as db_type concept — WITHOUT these a generated concept
+  # page carries `type: concept`, hits UnmappedTypeError, and is silently
+  # dropped at reindex (so the entity wikilinks would never resolve).
+  concept:  {db_type: concept, tag: null}
+  external: {db_type: concept, tag: external}
+  person:   {db_type: concept, tag: person}
+  company:  {db_type: concept, tag: company}
+  product:  {db_type: concept, tag: product}
+  group:    {db_type: concept, tag: group}
 
-path_type_fallback: {}
+# TASK 037: a `_concepts/`/`_entities/` page that somehow lacks a `type:` infers
+# its class from the dir name (defensive — generated pages always stamp
+# `type: concept`, and the numbered-folder glob otherwise supplies `note`).
+path_type_fallback:
+  _concepts: concept
+  _entities: external
 
 # Most Obsidian notes have no frontmatter — title from first H1 ∥ filename stem.
 frontmatter_synthesis:

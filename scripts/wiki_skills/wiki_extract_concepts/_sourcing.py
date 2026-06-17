@@ -1,9 +1,10 @@
 """Source-IO / path-resolution leaf for wiki-extract-concepts (TASK 016).
 
 Dependency rule: imports ONLY stdlib + `._errors` + `._validation`
-(for `_path_is_absolute` and `_SLUG_RE`) + `scripts.wiki_index.layout` +
+(for `_path_is_absolute` and `_is_valid_slug`) + `scripts.wiki_index.layout` +
 `scripts.wiki_index.security`. No import from the facade (`__init__`) or
-any other leaf.
+any other leaf. (TASK 037 adds a LAZY import of `scripts.wiki_index.layout_config`
+inside the PARA branch, mirroring `_derive_source_project` — no new module-load dep.)
 """
 from __future__ import annotations
 
@@ -17,15 +18,24 @@ from typing import Any
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
     COURSE_TIER_DIR,
+    ENTITIES_SUBDIR,
+    QUERIES_SUBDIR,
     SOURCES_SUBDIR,
+    VERIFICATIONS_SUBDIR,
 )
 from scripts.wiki_index.security import (
     PathTraversalError,
     validate_inside_vault,
 )
 from ._errors import ExtractionParseError
-from ._validation import _path_is_absolute, _SLUG_RE
+from ._validation import _path_is_absolute, _is_valid_slug
 
+
+# TASK 037 (vdd-multi perf SEV-2 / R-26): dirs the `_all_concepts_dirs` sweep
+# never descends — VCS/editor/trash + the reserved scratch dirs (`_raw`/`.staging`,
+# matching obsidian-personal.yaml's ignore). None can hold a real `_concepts/`;
+# pruning them bounds the walk on a large vault and skips untrusted/irrelevant trees.
+_WALK_PRUNE_DIRS = frozenset({".git", ".obsidian", ".trash", "_raw", ".staging"})
 
 # M-3 (TASK 003 v3.1): DoS protection on prepare's sha256+read pipeline.
 # Stat-checks st_size BEFORE read_text to bound memory. 10 MiB matches the
@@ -93,29 +103,30 @@ def _derive_source_project(source_path: Path, vault_root: Path) -> str:
 def _all_concepts_dirs(vault_root: Path) -> list[Path]:
     """Enumerate every `_concepts/` directory present in `vault_root`.
 
-    Supports both layouts (per `layout.py::COURSE_TIER_DIR`):
-    - vault-tier:  `<vault_root>/_concepts/`
-    - course-tier: `<vault_root>/Lessons/<Course>/_concepts/`
+    TASK 037: generalised from the Karpathy vault-/course-tier scan to a full
+    recursive sweep, so PARA layouts (obsidian-personal) — where each thematic
+    folder owns a `<folder>/_concepts/` sibling, at arbitrary depth — are covered
+    too. Matches only directories named exactly ``CONCEPTS_SUBDIR``; the previous
+    vault-tier + `Lessons/<Course>/_concepts/` set is a strict subset.
 
-    Returns only directories that actually exist on disk. Order is
-    deterministic (vault-tier first, then course-tier sorted by course
-    name) so callers building a `set[slug]` get reproducible behavior.
+    Uses ``os.walk(followlinks=False)`` (NOT ``Path.rglob``, which descends
+    symlinked dirs) and skips a `_concepts` that is itself a symlink — so a
+    symlink loop cannot hang `prepare` and a symlink pointing outside the vault is
+    never scanned (R-26). PRUNES system/scratch dirs in-place (`dirnames[:]`) so
+    the sweep does not descend `.git`/`.obsidian`/`.trash`/`_raw`/`.staging` — they
+    never hold a real `_concepts/`, and skipping them both bounds the walk cost on
+    a large vault (vdd-multi perf SEV-2) and avoids reading irrelevant/untrusted
+    trees (R-26). Returns existing real dirs, sorted for deterministic
+    `set[slug]` construction by callers.
     """
-    from scripts.wiki_index.layout import COURSE_TIER_DIR
-
     found: list[Path] = []
-    vault_tier = vault_root / CONCEPTS_SUBDIR
-    if vault_tier.is_dir():
-        found.append(vault_tier)
-    course_tier_root = vault_root / COURSE_TIER_DIR
-    if course_tier_root.is_dir():
-        for course_dir in sorted(course_tier_root.iterdir()):
-            if not course_dir.is_dir():
-                continue
-            concepts_dir = course_dir / CONCEPTS_SUBDIR
-            if concepts_dir.is_dir():
-                found.append(concepts_dir)
-    return found
+    for dirpath, dirnames, _files in os.walk(vault_root, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE_DIRS]
+        if CONCEPTS_SUBDIR in dirnames:
+            candidate = Path(dirpath) / CONCEPTS_SUBDIR
+            if not candidate.is_symlink():
+                found.append(candidate)
+    return sorted(found)
 
 
 def _resolve_source_inside_sources(
@@ -136,11 +147,15 @@ def _resolve_source_inside_sources(
     Ambiguous matches (same slug under two different `_sources/`) yield
     `AMBIGUOUS_SOURCE_SLUG` so the operator passes the full path instead.
 
-    Layout invariant: the resolved file MUST live in a directory whose
-    name is exactly `SOURCES_SUBDIR` (closes the
-    `_sources/../_concepts/foo.md` traversal escape — operator cannot
-    drive a `_concepts/` page through extraction by spelling a relative
-    path that resolves inside the vault but outside `_sources/`).
+    TASK 037 — two layout families:
+    - Karpathy (`_sources/`-nesting): the resolved file lives directly under a
+      `_sources/` dir; slug = file stem (byte-identical to pre-037).
+    - PARA (obsidian-personal, etc.): the content note lives in its own folder.
+      It is accepted, BUT (H-1 anti-loop) NEVER from a generated dir
+      (`_concepts/_entities/_queries/_verifications/`) — extraction must not feed
+      its own output back in — and its slug is derived via the vault's LAYOUT
+      slug_strategy (so it equals `pages.slug`, which the `page_entity_refs` FK
+      and inbound `[[Wikilink]]` ref-targets both key on).
     """
     # Slug-form search: try every `_sources/<slug>.md` under the vault.
     # Vault-tier first (deterministic), course-tier glob second.
@@ -185,29 +200,68 @@ def _resolve_source_inside_sources(
                        "the vault root)"),
         }
 
-    # H-1: the resolved file's parent directory MUST be named SOURCES_SUBDIR
-    # (regardless of where in the vault tree that `_sources/` lives —
-    # vault-tier, course-tier, or any other future layout per `layout.py`).
-    # Rejects `_sources/../_concepts/foo.md` traversals that resolve to
-    # `_concepts/`, `_entities/`, or any other non-source directory.
-    if source_path.parent.name != SOURCES_SUBDIR:
+    # Karpathy (and any `_sources/`-nesting layout): unchanged contract — the
+    # resolved file lives directly under a `_sources/` dir; slug = file stem,
+    # validated lowercase kebab (now Unicode-aware via `_is_valid_slug`).
+    # Byte-identical to pre-TASK-037 for ASCII stems.
+    if source_path.parent.name == SOURCES_SUBDIR:
+        source_slug = source_path.stem
+        # max_len=None: the source page already exists on disk; its slug length
+        # is the indexer's business, not a reason to refuse extraction.
+        if not _is_valid_slug(source_slug, max_len=None):
+            return {
+                "error": "INVALID_SOURCE_SLUG",
+                "reason": (f"source-page filename {source_slug!r} does not "
+                           "yield a valid slug (lowercase Unicode word-chars "
+                           "+ hyphens, no dots/seps). Rename the file or pass "
+                           "--source-page with the canonical slug."),
+            }
+        return source_path, source_slug
+
+    # TASK 037 — PARA / non-`_sources/` layouts (e.g. obsidian-personal).
+    # (1) H-1 anti-loop: REFUSE generated pages (`_concepts/_entities/`
+    #     `_queries/_verifications/`) — replaces the old blanket
+    #     `parent != _sources` reject, which also (over-broadly) blocked PARA.
+    # casefold both sides: macOS (APFS) / Windows are case-insensitive, so a
+    # `_Concepts/` dir is the same dir as `_concepts/` to the OS — the anti-loop
+    # guard must not be defeated by non-canonical casing.
+    rel_parts = {p.casefold() for p in source_path.relative_to(vault_root).parts}
+    _generated = {s.casefold() for s in (CONCEPTS_SUBDIR, ENTITIES_SUBDIR,
+                                         QUERIES_SUBDIR, VERIFICATIONS_SUBDIR)}
+    if _generated.intersection(rel_parts):
         return {
             "error": "INVALID_SOURCE_PATH",
-            "reason": (f"source-page {src_page!r} resolves outside "
-                       "a `_sources/` directory (layout invariant: "
-                       "inputs live in _sources/ only)"),
+            "reason": (f"source-page {src_page!r} resolves inside a generated "
+                       "directory (_concepts/_entities/_queries/"
+                       "_verifications); extraction refuses to run on its own "
+                       "output (H-1 anti-loop guard)."),
         }
-
-    source_slug = source_path.stem
-    if not _SLUG_RE.match(source_slug):
+    # (2) layout-derived slug (lazy import mirrors `_derive_source_project`),
+    #     so it equals `pages.slug` → page_entity_refs FK + inbound wikilink
+    #     ref-targets resolve.
+    from scripts.wiki_index.layout_config import (
+        derive_discovered_page,
+        resolve_layout_config,
+    )
+    disc = derive_discovered_page(
+        source_path, vault_root, resolve_layout_config(vault_root),
+    )
+    if disc is None:
+        return {
+            "error": "INVALID_SOURCE_PATH",
+            "reason": (f"source-page {src_page!r} is not an indexable page "
+                       "under the vault's layout (matched no path rule)."),
+        }
+    source_slug = disc.slug
+    # max_len=None: `disc.slug` IS the indexed `pages.slug` (slug_strategy output,
+    # uncapped) — accept whatever the indexer would record so a long-titled PARA
+    # note stays extractable (it must equal pages.slug for the refs FK).
+    if not _is_valid_slug(source_slug, max_len=None):
         return {
             "error": "INVALID_SOURCE_SLUG",
-            "reason": (f"source-page filename {source_slug!r} does not "
-                       "yield a valid kebab-case slug "
-                       "(^[a-z0-9][a-z0-9-]{0,62}$). Rename the file or "
-                       "pass --source-page with the canonical slug."),
+            "reason": (f"layout-derived slug {source_slug!r} is not a valid "
+                       "slug (lowercase Unicode word-chars + hyphens)."),
         }
-
     return source_path, source_slug
 
 

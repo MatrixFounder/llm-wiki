@@ -47,6 +47,30 @@ The prompt + JSON contract for the synthesis step lives in the
 [`concept-extraction`](../../.agent/skills/concept-extraction/SKILL.md)
 skill.
 
+### Layout-awareness (TASK 037)
+
+The skill is **layout-aware** — it works on Karpathy AND PARA (`obsidian-personal`)
+vaults, resolving the source page and the `_concepts/` output dir per the vault's layout
+(same precedent as `wiki-index-upsert`, TASK 024):
+
+- **Karpathy** — the source is a `_sources/<slug>.md` page (slug = stem); concept pages
+  land in the sibling `_concepts/` (`<…>/_sources/x.md` → `<…>/_concepts/`). Byte-identical
+  to pre-037.
+- **PARA / `obsidian-personal`** — pass `--source-page` as the note's **vault-relative
+  path** (a content note in its own folder, NOT under `_sources/`). Its slug is derived
+  via the layout slug_strategy (preserve-unicode → matches `pages.slug`, so the entity
+  refs FK and inbound `[[Wikilink]]` targets resolve), and concept pages land in a
+  `_concepts/` **sibling of that note** (`05 - Материалы/<area>/_concepts/<slug>.md`).
+  Slugs may be Unicode (Cyrillic/CJK). The target layout must map `type: concept`
+  (obsidian-personal does as of TASK 037).
+- **Anti-loop (H-1)**: a source resolving inside a generated dir
+  (`_concepts/_entities/_queries/_verifications/`, case-insensitively) is refused with
+  `INVALID_SOURCE_PATH` — extraction never runs on its own output.
+
+`entities.file_path` and the manifest `written[].path` carry the **real** vault-relative
+concepts path (vault-tier `_concepts/<slug>.md` stays byte-identical; course-tier / PARA
+get their nested path).
+
 ## `prepare` subcommand
 
 ```bash

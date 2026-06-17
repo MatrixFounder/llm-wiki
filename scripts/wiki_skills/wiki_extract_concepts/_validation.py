@@ -22,7 +22,24 @@ from ._errors import ExtractionParseError
 # in source-span line numbers — anchor with re.ASCII so the schema
 # rejects e.g. `L١-L٢` at validation rather than silently coercing.
 _SOURCE_SPAN_RE = re.compile(r"^L\d+-L\d+$", re.ASCII)
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+# TASK 037: the slug CHARSET must admit preserve-unicode slugs (Cyrillic/CJK) so
+# `wiki-extract-concepts` works on PARA layouts (obsidian-personal), whose
+# slug_strategy keeps Unicode. `str` patterns are Unicode by default, so `\w`
+# matches Unicode letters/digits/underscore; `[^\W_]` = a word char that is NOT
+# `_`, forcing the first char to be a letter/digit (never `_`/`-`/`.`/sep).
+# Forbids `/ \ . space` → path-traversal-safe. ASCII kebab (Karpathy) is a strict
+# subset. `\Z` (NOT `$`) anchors the END so a trailing newline cannot smuggle
+# through (`$` matches before a final `\n`). Length is INTENTIONALLY not in the
+# regex — `_is_valid_slug(max_len=...)` enforces it, so an already-indexed SOURCE
+# slug (a `pages.slug` off a long PARA title — unbounded by the indexer) is never
+# length-rejected, while CANDIDATE/concept slugs (which become `<slug>.md`
+# filenames) stay bounded. Lowercase is enforced by `_is_valid_slug` (not
+# charset-expressible for Unicode).
+_SLUG_RE = re.compile(r"^[^\W_][\w-]*\Z", re.UNICODE)
+# Concept/candidate slug length cap (filename safety: ≤120 Unicode chars → ≤240
+# bytes + ".md" stays under the 255-byte filename limit). `None` opts out for the
+# already-on-disk SOURCE page (its slug length is the indexer's business).
+_SLUG_MAX_LEN = 120
 _ALLOWED_ENTITY_TYPES = {
     "concept", "person", "company", "product",
     "group", "event", "work", "external",
@@ -64,6 +81,31 @@ _NAME_ALLOWLIST = re.compile(
 )
 
 _SPAN_REGEX = re.compile(r"^L(\d+)-L(\d+)$", re.ASCII)  # L-2: ASCII-only digits
+
+
+def _is_valid_slug(slug: str, max_len: int | None = _SLUG_MAX_LEN) -> bool:
+    """Traversal-safe, lowercase, Unicode-aware slug check (TASK 037).
+
+    The single gate replacing the bare ``_SLUG_RE.match`` at every call site
+    (candidate-schema validation, ``write_concept_page``, source-page resolution).
+    Accepts Unicode word-chars + hyphens — so preserve-unicode Cyrillic/CJK slugs
+    validate for PARA layouts — while STILL forbidding ``/ \\ . space``, a leading
+    ``_``/``-``, and a trailing newline (``\\Z`` anchor) — path-traversal /
+    name-injection guard — and enforcing lowercase so the slug equals what the
+    layout slug_strategy + the wikilink ref-extractor produce (otherwise a freshly
+    written concept page would not resolve its inbound ``[[Wikilink]]``). ASCII
+    lowercase kebab (Karpathy) is a strict subset, so the pre-037 contract is
+    unchanged for those inputs.
+
+    ``max_len`` bounds CANDIDATE/concept slugs (default 120 → safe ``<slug>.md``
+    filename). Pass ``max_len=None`` for an already-indexed SOURCE-page slug: it is
+    a `pages.slug` the indexer produced with no length cap, is not turned into a
+    NEW filename here, and must not be length-rejected (else a long-titled PARA
+    note would index yet be un-extractable).
+    """
+    if not _SLUG_RE.match(slug) or slug != slug.lower():
+        return False
+    return max_len is None or len(slug) <= max_len
 
 
 def _path_is_absolute(p: Path | str) -> bool:
@@ -240,13 +282,14 @@ def _validate_candidates_schema(
                 )
 
         # Preserved v2 invariants: slug regex, span regex, entity_type whitelist.
-        if not _SLUG_RE.match(item["slug"]):
+        if not _is_valid_slug(item["slug"]):
             raise ExtractionParseError(
-                f"candidate #{idx} slug fails kebab-case regex",
+                f"candidate #{idx} slug fails slug validation",
                 error="EXTRACTION_PARSE_ERROR",
                 field="slug",
-                reason=(f"item #{idx} slug fails regex "
-                        "^[a-z0-9][a-z0-9-]{0,62}$"),
+                reason=(f"item #{idx} slug must be a lowercase Unicode "
+                        "kebab slug (word-chars + hyphens, no dots/seps, "
+                        "≤120 chars; preserve-unicode admits Cyrillic/CJK)"),
             )
         if not _SOURCE_SPAN_RE.match(item["source_span"]):
             raise ExtractionParseError(

@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
+    SOURCES_SUBDIR,
 )
 from scripts.wiki_skills._common import build_repo_config, emit
 from scripts.wiki_skills._common import (  # noqa: F401 — facade re-export for wec._sanitize_markdown_text
@@ -92,6 +93,7 @@ from ._errors import ExtractionParseError, _envelope_from_parse_error  # noqa: E
 from ._validation import (  # noqa: E402
     _SOURCE_SPAN_RE,
     _SLUG_RE,
+    _is_valid_slug,
     _ALLOWED_ENTITY_TYPES,
     _SOURCE_HASH_RE,
     _ORCHESTRATOR_ID_RE,
@@ -792,11 +794,19 @@ def _apply_write(
             "--orchestrator-id <model-id> for an auditable canonicalized_by."
         )
 
-    # Symmetric to the source-side H-1 layout invariant: concept pages land
-    # in the `_concepts/` sibling of the source page's `_sources/`.
+    # TASK 037 — layout-aware concepts dir. Karpathy nests the source under
+    # `_sources/`, so its `_concepts/` sibling is `parent.parent/_concepts`
+    # (byte-identical to pre-037). PARA layouts (obsidian-personal) keep the
+    # source note in its own folder, so concepts live in `<folder>/_concepts/`.
+    # `concepts_rel` (vault-relative POSIX) is threaded into the entity row
+    # `file_path` + manifest so they point at the REAL on-disk page (R-5).
     # `pages.project` is derived from the source path so the page_entity_refs
-    # FK matches the indexer's recorded value.
-    target_concepts_dir = source_path.parent.parent / CONCEPTS_SUBDIR
+    # FK matches the indexer's recorded value (unchanged).
+    if source_path.parent.name == SOURCES_SUBDIR:
+        target_concepts_dir = source_path.parent.parent / CONCEPTS_SUBDIR
+    else:
+        target_concepts_dir = source_path.parent / CONCEPTS_SUBDIR
+    concepts_rel = target_concepts_dir.relative_to(vault_root).as_posix()
     source_project = _derive_source_project(source_path, vault_root)
     try:
         if known_slugs is None:
@@ -813,6 +823,7 @@ def _apply_write(
             cand["entity_action"] = upsert_extracted_entity(
                 repo, vault_id, cand, source_slug, today,
                 orchestrator_id=orchestrator_id,
+                concepts_rel=concepts_rel,
             )
             # Augment the shared set so a later batch entry mentioning this
             # just-created concept classifies it as `mention`, not a dup
@@ -832,6 +843,7 @@ def _apply_write(
         manifest = build_manifest(
             vault_id, source_slug, current_hash,
             create_list, mention_list, log_event, vault_root,
+            concepts_rel=concepts_rel,
         )
     except ExtractionParseError as e:
         # v2 parity: downstream raises (e.g. _parse_source_span on an

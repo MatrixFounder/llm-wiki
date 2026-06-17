@@ -1012,4 +1012,45 @@
   gating assumes a recent `--full`); and the `O(N·rules)` scan cost-shape + a "single CASE/CTE
   pass if a typed partition grows large" tripwire (YAGNI now — `$.type` unindexed by P-5, small
   typed vaults). 1524 pytest, mypy strict.
+- **Q-037-1 (TASK 037 — `wiki-extract-concepts` layout-aware: where do PARA concept pages
+  live?).** The skill was Karpathy-only (`_sources/`→`_concepts/` hard-coded), so a PARA note got
+  no `_concepts/` pages — its `[[Entity]]` wikilinks stayed orphan. Chosen: make it layout-aware
+  (TASK 024 precedent), concept pages in a `_concepts/` **sibling of the source note**
+  (`<area>/<sub>/_concepts/`), NOT a vault-root `_concepts/` (keeps concepts domain-scoped + the
+  2-level glob already gives them the note's project, so the refs FK aligns). Rejected: burying the
+  note under `_sources/` (defeats native Obsidian visibility / `.base`). The source slug is derived
+  via `derive_discovered_page().slug` so it equals `pages.slug`. Zero-DDL (config + code over
+  existing tables).
+- **Q-037-2 (slug charset + length).** preserve-unicode PARA slugs are Cyrillic and long (the
+  pilot's was 73 chars), but the gate was ASCII `^[a-z0-9][a-z0-9-]{0,62}$`. Chosen: `_is_valid_slug`
+  — Unicode word-chars + hyphens, lowercase, `\Z`-anchored (not `$` — closes a trailing-newline
+  name-injection), traversal-safe. Length is decoupled from the charset: concept/candidate slugs
+  are capped (120 → ≤240-byte filename, under the 255 limit) but the **source** slug opts out
+  (`max_len=None`) — it is an already-indexed `pages.slug` (the indexer has no cap), so capping it
+  would make a long-titled PARA note index yet be un-extractable (indexer/extractor must agree).
+- **Q-037-3 (VDD review findings).** critic-security + code-reviewer: NO critical/high. Fixed —
+  MED-1 `$`→`\Z` anchor (trailing-newline slug); MAJOR-1 length-cap decoupling (above); LOW-1
+  case-folded anti-loop (macOS/Windows case-insensitive FS can't defeat the `_concepts/` reject);
+  LOW-2 `_all_concepts_dirs` uses `os.walk(followlinks=False)` + skips symlinked dirs (no
+  symlink-loop DoS / out-of-vault read) instead of `Path.rglob`. The broadened Unicode slug does
+  NOT open path traversal (`\w` admits no separator/dot homoglyph; OS never sees `/`). Karpathy
+  byte-identity preserved (vault-tier `concepts_rel == "_concepts"`; ASCII slugs a strict subset).
+  Real-vault proof: 19 `_concepts/` pages, `wiki-lint` orphan-links −19. 1534 pytest, mypy strict.
+- **Q-037-4 (`/vdd-multi` pass — 3 parallel critics).** Logic ✓ (clean-pass, 2 iters) · Security ✓
+  (bikeshedding-only) · Perf ✓ (clean-pass, 2 iters); verdict PASS. Fixed: **(MED, logic)** a
+  root-level / MOC PARA source note's `_concepts/` lands at `<root>/_concepts/`, which matched no
+  obsidian-personal glob → silent drop at reindex → added ROOT-ANCHORED `_concepts/**/*.md` +
+  `_entities/**/*.md` globs (no leading `**`, so deeper `_concepts/` keep their domain-scoped
+  2-level project). **(SEV-2 perf + R-26 sec, overlap)** `_all_concepts_dirs` `os.walk` now prunes
+  `{.git,.obsidian,.trash,_raw,.staging}` in-place (`dirnames[:]`) — bounds the sweep on a large
+  vault + skips untrusted trees (`Attachments` deliberately NOT pruned: shallow + a false-negative
+  risk; the walk reads no file bodies). **(LOW, logic)** `derive_project_for_path` now guards
+  `full_match` with `try/except ValueError` (mirrors `derive_discovered_page`) — apply-path
+  reachability of a malformed operator glob no longer escapes the envelope. **Accepted residuals
+  (documented, not fixed):** SEV-3 uncached `resolve_layout_config` per source in the PARA branch —
+  bites ONLY `--batch` on PARA (the article-import driver runs one source per invocation, never
+  `--batch`); tripwire: hoist one resolve into `_batch_*` + thread down if PARA batch grows. The
+  `_sources`-named-folder-in-a-PARA-vault edge (takes the Karpathy branch → misplaced `_concepts/`,
+  no data loss) and the exotic-script `str.lower()` vs slugify divergence (theoretical) — both
+  benign-degradation, unusual-vault. 1536 pytest, mypy strict.
 
