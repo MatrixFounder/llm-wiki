@@ -743,6 +743,7 @@ flowchart TD
     O(["Orchestrator / LLM"])
     PP["wiki-import-article<br/>prepare"]
     H[["html2md / pdf<br/>external skills"]]
+    SA[/"summarizing-articles harness<br/>PRE-FLIGHT + self-verify"/]
     AP["wiki-import-article<br/>apply"]
     EC["wiki-extract-concepts<br/>apply"]
     UP["wiki-index-upsert"]
@@ -752,6 +753,7 @@ flowchart TD
     O -->|"URL / file"| PP
     PP -->|"shell-out: fetch+convert<br/>(html2md owns Wikipedia/arXiv)"| H
     PP -->|"envelope: raw_path +<br/>known_concepts + existing_page_slugs"| O
+    SA -.->|"model-agnostic procedure<br/>(the REASON harness)"| O
     KC -.->|"reuse existing names"| O
     O -->|"REASON: translate / summarise<br/>→ note JSON"| AP
     AP -->|"--source-page=note slug<br/>+ FRESH note-body hash"| EC
@@ -764,15 +766,19 @@ flowchart TD
     classDef ext fill:#fdeede,stroke:#e0a050,color:#000;
     classDef disc fill:#fff3cd,stroke:#d4a017,color:#000;
     classDef store fill:#eee,stroke:#999,color:#000;
-    class O llm; class PP,AP,EC,UP cli; class H ext; class KC disc; class FS,DB store;
+    classDef harness fill:#f0e8fe,stroke:#85a,color:#000;
+    class O llm; class PP,AP,EC,UP cli; class H ext; class KC disc; class FS,DB store; class SA harness;
 ```
 
-**Read the divergence:** Karpathy's summary generator is *external* (`summarizing-meetings`,
-invoked by `wiki-ingest`); PARA's is the *orchestrator* (the `prepare`→REASON→`apply`
-loop). Both inject `known_concepts` (orange diamond) — the discipline whose *absence* in
-ad-hoc PARA imports caused the orphan-link / `defi`-evicts-`Defi.md` failures TASK 038 fixes.
-Filing diverges (root vs sibling `_concepts/`); both terminate at the one SQLite index and
-are Class-B-rebuildable from the markdown (`wiki-reindex --full`).
+**Read the divergence:** both paths run a **generation harness** with the same discipline,
+but invoked differently. Karpathy's is the *external* `summarizing-meetings` skill, called by
+`wiki-ingest`; PARA's is `summarizing-articles` (purple), a **model-agnostic** harness
+(PRE-FLIGHT + self-verification) the *orchestrator* follows during the `prepare`→REASON→`apply`
+loop — Decision-17 keeps the generator out of the CLI, the harness keeps the floor high on any
+model. Both inject `known_concepts` (orange diamond) — the discipline whose *absence* in ad-hoc
+PARA imports caused the orphan-link / `defi`-evicts-`Defi.md` failures TASK 038 fixes. Filing
+diverges (root vs sibling `_concepts/`); both terminate at the one SQLite index and are
+Class-B-rebuildable from the markdown (`wiki-reindex --full`).
 
 ---
 

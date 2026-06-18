@@ -63,7 +63,11 @@ def _fm_scalar(value: str) -> str:
 
 
 def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
-    """Return a string guaranteed to be a verbatim substring of `body`."""
+    """Return a verbatim substring of `body` that SUPPORTS `name`, or ``""`` when none
+    exists. Order: (1) the agent's quote if it is an exact substring; (2) a body line that
+    mentions the entity by name. If neither holds, return ``""`` so the caller DROPS the
+    candidate (`no-verbatim-quote`) — we never attach an unrelated/fabricated mention quote.
+    """
     aq = (agent_quote or "").strip()
     if aq and aq in body:
         return aq[:_QUOTE_CAP]
@@ -78,11 +82,7 @@ def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
             line = body[start:end].strip()
             if len(line) >= 20:
                 return line[:_QUOTE_CAP]
-    for ln in body.splitlines():
-        s = ln.strip()
-        if len(s) >= 40 and s[0] not in "#>|-*[" and not s.startswith("---"):
-            return s[:_QUOTE_CAP]
-    return body.strip()[:_QUOTE_CAP]
+    return ""  # no verbatim quote and no name-mention line → caller drops the candidate
 
 
 def _yaml_list(items: list[str]) -> str:

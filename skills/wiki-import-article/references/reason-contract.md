@@ -43,8 +43,10 @@ RU body (strip conversion artifacts), not a re-translation.
    This is the discipline `wiki-ingest` enforces (SKILL.md:34); skipping it is what caused
    the dangling `[[wikilinks]]` + slug collisions in the ad-hoc DAO/#01 imports (TASK 038 §1).
 2. **Verbatim quotes.** Each `entities[].quote` MUST be an exact substring of the Russian
-   text *you* produce (`ru_body` for full/thread; one `summary_bullets` item for summary).
-   `apply` hard-checks this (`FIELD_QUOTE_NOT_IN_BODY`); a non-substring quote drops the candidate.
+   text *you* produce (`ru_body` for full/thread; one `summary_bullets`/`tldr` line for summary).
+   If a quote isn't a verbatim substring, `apply` falls back to a body line that mentions the
+   entity by name; if there's no such line it **drops** the candidate (`no-verbatim-quote`) — it
+   never attaches an unrelated/fabricated quote, so a paraphrase silently costs you that concept page.
 3. **Clean entity names.** No `/`, em-dash `—`, or guillemets `«»` (the `apply` normalizer
    rewrites them, but clean names avoid surprises). 12–15 entities (full), 10–15 (summary),
    5–9 (thread).

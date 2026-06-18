@@ -47,8 +47,11 @@ On an unreachable/empty source it emits `{error:"FETCH_FAILED", upstream:…}` (
 and writes **nothing** — file a `needs-manual` stub by hand.
 
 ### 2. REASON (the orchestrator's job — the one LLM step)
-**Full contract:** [`references/reason-contract.md`](references/reason-contract.md) — the
-canonical schema + depth-by-mode + hard rules (reuse it verbatim; the summary below is the digest).
+**Run this step via the [`summarizing-articles`](../summarizing-articles/SKILL.md) harness** —
+PRE-FLIGHT input-gating + a hard self-verification checklist, **model-agnostic** so the floor
+stays high on any model/harness (the PARA analog of how Karpathy's `wiki-ingest` delegates to
+`summarizing-meetings`). **Full contract:** [`references/reason-contract.md`](references/reason-contract.md) —
+the canonical schema + depth-by-mode + hard rules (reuse it verbatim; the summary below is the digest).
 Read `raw_path`, then produce the structured note:
 ```
 { title_ru, title_orig?, author?, published?, tldr, summary_bullets[],

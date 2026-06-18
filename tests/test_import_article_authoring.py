@@ -18,12 +18,12 @@ def test_verbatim_quote_guarantees_substring():
     body = "## Заголовок\n\nAMM — это автоматический маркет-мейкер для DeFi.\n\nДругое.\n"
     # agent quote verbatim → returned as-is
     assert A.verbatim_quote("AMM — это автоматический маркет-мейкер для DeFi.", "AMM", body) in body
-    # agent quote NOT verbatim → fallback still a substring
+    # agent quote NOT verbatim but entity name IS mentioned → fall back to the name-line (real mention)
     q = A.verbatim_quote("totally invented quote not present", "AMM", body)
-    assert q in body
-    # no name match → first prose line, still a substring
+    assert q in body and "AMM" in q
+    # neither a verbatim quote nor a name-mention line → "" (caller drops; no fabricated quote)
     q2 = A.verbatim_quote(None, "Несуществующее", body)
-    assert q2 in body
+    assert q2 == ""
 
 
 def test_assemble_note_per_mode():
