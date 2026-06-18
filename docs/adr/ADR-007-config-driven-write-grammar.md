@@ -1,0 +1,77 @@
+# ADR-007 — Config-driven write-grammar (Karpathy is a layout config, not a code fork)
+
+**Status:** Proposed (TASK 040) · **Date:** 2026-06-18 · **Supersedes:** none ·
+**Relates:** ADR-002 (Class A/B/C), TASK 012/024/037 (config-driven *read* side), TASK 038/039 (construct path).
+
+## Context
+
+The framework's **read/index side is already config-driven**: `layout_config.py` +
+`layouts/*.yaml` express each layout's grammar (`paths` globs → project/slug, `type_mapping`,
+`slug_strategy`, `ignore`); `iter_pages` / `derive_discovered_page` converge all layouts onto
+one code path (TASK 012/024/037). A new layout is a drop-in YAML, zero Python.
+
+The **write side is NOT**. Where a *new* source note / concept page files — and the source
+filename convention — is hardcoded as **`if karpathy` / `parent.name == SOURCES_SUBDIR` forks**
+in three places:
+
+1. **`wiki-extract-concepts`** — `_sourcing.py` (`_resolve_source_inside_sources`: karpathy
+   searches `_sources/<slug>.md` vault-/course-tier, slug = stem; PARA = vault-rel path) +
+   `__init__.py` (`_apply_write`: `parent.name == SOURCES_SUBDIR ? parent.parent/_concepts :
+   parent/_concepts`).
+2. **`wiki-import`** (TASK 039) — `_note_dir` (`resolve_alias(layout)=="karpathy" → _sources/`
+   else the topic folder) + the karpathy `<slug>.md` vs PARA `<title>.md` filename fork.
+3. **`wiki-init`** — the scaffold dirs come from the hardcoded `SCAFFOLD_DIRS`/`layout.py` karpathy superset
+   (the `_karpathy = is_two_tier_scaffold(...)` gate itself is already config-driven, TASK 031).
+
+So "Karpathy" exists twice: as a YAML (read) AND as scattered `if karpathy` branches (write).
+A new layout that wants karpathy-style filing cannot get it from YAML — it needs Python edits.
+This violates the framework's own "a layout is a drop-in YAML" invariant.
+
+## Decision
+
+**Express the write-grammar in the layout YAML; the construct skills read it. No `if karpathy`.**
+Add a small, additive `write:` block to the layout config (consumed by `LayoutConfig`):
+
+```yaml
+write:
+  source_subdir: "_sources"   # subdir a source note nests in; "" = file directly in the target folder
+  source_filename: "slug"     # "slug" (filename == the page slug) | "title" (human-readable title)
+  # concepts anchor is DERIVED from source_subdir (no separate field needed):
+  #   source_subdir non-empty  → concepts at <container>/_concepts (sibling of the _sources dir)
+  #   source_subdir == ""      → concepts at <note-folder>/_concepts (sibling of the note)
+```
+
+Built-ins:
+- `karpathy.yaml`: `source_subdir: _sources`, `source_filename: slug`.
+- `obsidian-personal.yaml` (+ dev-project/cybos): `source_subdir: ""`, `source_filename: title`.
+
+The fork-sites become ONE parameterized path:
+- extract-concepts: replace the literal `SOURCES_SUBDIR` / `parent.name == SOURCES_SUBDIR` checks
+  with `layout.write.source_subdir` (resolved per vault). For karpathy the value is still
+  `"_sources"` → **byte-identical** behaviour. For PARA `""` → the parent-name check is never
+  true → sibling concepts (unchanged).
+- wiki-import: `note_dir = folder / source_subdir`; filename per `source_filename`. No `resolve_alias=="karpathy"`.
+- wiki-init: scaffold the dirs the layout's write-grammar implies (folds into TASK 031 `init_scaffold`).
+
+## Consequences
+
+**Positive.** One write implementation; Karpathy becomes a pure YAML special-case (matching the
+read side); a new layout gets its filing convention from YAML with zero Python; the three forks
+collapse; the "two implementations of Karpathy/PARA" smell is gone.
+
+**Cost / risk.** Touches the **byte-identity-anchored** karpathy `wiki-extract-concepts` — the
+refactor MUST be behaviour-preserving (the YAML value reproduces the old constant exactly), gated
+by the existing karpathy byte-identity tests + a `wiki-reindex --full` rebuild check. Additive
+schema (no DDL; `user_version` unchanged — this is layout *config*, not the SQLite schema). New
+optional YAML keys default to the karpathy-compatible legacy when absent (back-compat for any
+vault whose `WIKI_SCHEMA.md`/override predates the field).
+
+**Alternatives rejected.** (a) Leave the forks — violates the layout-as-config invariant, and
+keeps re-introducing forks (TASK 037 added one, TASK 039 added two). (b) A separate write-side
+config system — duplicates `LayoutConfig`; the read + write grammar belong in one layout object.
+
+## Verification
+Karpathy byte-identity (golden) unchanged; `wiki-reindex --full` clean on both layouts; the
+TASK 039 e2e (PARA meeting + Karpathy article) reproduces identically with the forks removed;
+`grep -rE 'parent.name == SOURCES_SUBDIR|resolve_alias\(.*\)=="karpathy"' scripts/` → empty in the
+construct skills. `mypy --strict`; the full suite green.

@@ -27,6 +27,12 @@ file_extensions: ['.md']
 # Page slug = verbatim file stem (NO slugify). The only byte-identical strategy.
 slug_strategy: identity
 
+# TASK 040 / ADR-007 — write-side grammar (where NEW pages file). Karpathy nests sources in _sources/ (filename==slug); PARA files in the target folder (human title).
+write:
+  source_subdir: "_sources"
+  source_filename: "slug"
+
+
 paths:
   # --- Root tier: project literal "_vault_" (VAULT_TIER_PROJECT) ------------
   # One entry per PAGE_SUBDIRS member; each glob is rooted at the subdir and

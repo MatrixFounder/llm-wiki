@@ -342,6 +342,10 @@ def scaffold_new(args: argparse.Namespace) -> int:
     # EXISTING tree (docs/, numbered folders), so scaffolding Karpathy dirs into
     # a real repo would be wrong — write WIKI_SCHEMA.md + register only.
     _layout = args.layout or "per-project"
+    # TASK 040 / ADR-007 audit: this is NOT a layout-NAME fork — the gate is the config-driven
+    # `is_two_tier_scaffold` registry flag (TASK 031), and SCAFFOLD_DIRS is the two-tier scaffold's
+    # page-subdir set. Any two-tier-scaffold layout (not only karpathy) qualifies; left as-is
+    # (the grep fork-guard does not flag it). `_karpathy` is a legacy var name for that flag.
     _karpathy = is_two_tier_scaffold(_layout)
     if _karpathy:
         for sub in SCAFFOLD_DIRS:

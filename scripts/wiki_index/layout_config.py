@@ -369,6 +369,47 @@ class DiscoveredPage(NamedTuple):
 
 
 @dataclass(frozen=True)
+class WriteGrammar:
+    """TASK 040 / ADR-007 — the WRITE-side grammar (where a NEW source note + its concept
+    pages file, and the source filename convention). Read by the construct skills
+    (`wiki-import`, `wiki-extract-concepts`, `wiki-init`) so Karpathy is a layout YAML, not a
+    code fork. `source_subdir` non-empty (e.g. `_sources`) → the note nests there + concepts
+    anchor at the container `_concepts/`; empty → the note files directly in the target folder
+    + concepts at the sibling `_concepts/`. `source_filename`: `slug` (filename == page slug,
+    karpathy `identity`) | `title` (human-readable, PARA). Dataclass defaults = PARA-legacy,
+    used ONLY when a YAML omits the `write:` block (built-ins declare it explicitly).
+    NB: `source_subdir` must resolve under a read-side `paths[]` glob, else filed notes are not
+    indexed. Load-gated to a safe single dir segment (see `_make_write_grammar`)."""
+
+    source_subdir: str = ""
+    source_filename: str = "title"
+
+
+# A safe source_subdir is "" OR a SINGLE path segment that is not dot-leading and
+# contains no separator (so it cannot `..`-escape or be absolute when joined to a
+# vault root). TASK 040 / critic-security: source_subdir is operator config (a per-vault
+# `.wiki/layout.yaml` override can set it), so it is gated at LOAD — same posture as the
+# ReDoS gate on operator regexes + the segment cap on operator globs.
+_SAFE_SOURCE_SUBDIR = re.compile(r"^[^/\\.][^/\\]*\Z")
+_VALID_SOURCE_FILENAME = ("slug", "title")
+
+
+def _make_write_grammar(raw: dict[str, Any]) -> WriteGrammar:
+    """Build + LOAD-VALIDATE a WriteGrammar from a layout's `write:` map (exit 6 on a
+    malformed/unsafe value, like the rest of the strict layout-config gate)."""
+    subdir = str(raw.get("source_subdir", ""))
+    if subdir != "" and not _SAFE_SOURCE_SUBDIR.match(subdir):
+        raise LayoutConfigError(
+            f"write.source_subdir {subdir!r} must be empty or a single safe directory "
+            "segment (no '/', '\\', '..', leading dot, or absolute path)")
+    fname = str(raw.get("source_filename", "title"))
+    if fname not in _VALID_SOURCE_FILENAME:
+        raise LayoutConfigError(
+            f"write.source_filename {fname!r} must be one of {_VALID_SOURCE_FILENAME}")
+    return WriteGrammar(source_subdir=subdir, source_filename=fname)
+
+
+@dataclass(frozen=True)
 class LayoutConfig:
     """The merged, validated layout grammar the engine consumes."""
 
@@ -392,6 +433,8 @@ class LayoutConfig:
     # path leaves both False.
     ref_extraction_operator_supplied: bool = False
     paths_operator_supplied: bool = False
+    # TASK 040 / ADR-007 — write-side grammar (where new pages file). Default = PARA-legacy.
+    write: WriteGrammar = field(default_factory=WriteGrammar)
 
 
 # --------------------------------------------------------------------------- #
@@ -502,6 +545,7 @@ def _build(
         coverage_rules=coverage_rules,
         ref_extraction_operator_supplied=ref_extraction_operator_supplied,
         paths_operator_supplied=paths_operator_supplied,
+        write=_make_write_grammar(merged.get("write") or {}),
     )
 
 

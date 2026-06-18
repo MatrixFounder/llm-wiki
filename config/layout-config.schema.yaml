@@ -191,6 +191,26 @@ $defs:
       - {required: [requires_field]}
 
   # ----------------------------------------------------------------------------
+  # WriteGrammar (TASK 040 / ADR-007) — the WRITE-side grammar: where a NEW source
+  # note + its concept pages file, and the source filename convention. Optional;
+  # absent → the engine default (PARA-legacy: "" / title). Makes Karpathy a YAML, not a fork.
+  # ----------------------------------------------------------------------------
+  WriteGrammar:
+    type: object
+    additionalProperties: false
+    properties:
+      source_subdir:
+        type: string
+        pattern: '^([^/\\.][^/\\]*)?$'   # "" or ONE safe segment (no '/' '\\' '..' leading-dot)
+        description: 'subdir a source note nests in ("_sources" for karpathy); "" = file in the target folder'
+        default: ''
+      source_filename:
+        type: string
+        enum: [slug, title]
+        description: 'slug = filename==page-slug (karpathy identity); title = human-readable (PARA)'
+        default: title
+
+  # ----------------------------------------------------------------------------
   # LayoutConfig — the merged grammar the engine consumes.
   # ----------------------------------------------------------------------------
   LayoutConfig:
@@ -209,6 +229,7 @@ $defs:
         items: {type: string}
         default: ['.md']
       slug_strategy: {$ref: '#/$defs/SlugStrategy'}
+      write: {$ref: '#/$defs/WriteGrammar'}
       paths:
         type: array
         minItems: 1

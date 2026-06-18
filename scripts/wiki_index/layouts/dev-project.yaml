@@ -20,6 +20,12 @@ ignore:
 file_extensions: ['.md']
 slug_strategy: transliterate        # cross-platform-safe (ASCII slugs)
 
+# TASK 040 / ADR-007 — write-side grammar (where NEW pages file). Karpathy nests sources in _sources/ (filename==slug); PARA files in the target folder (human title).
+write:
+  source_subdir: ""
+  source_filename: "title"
+
+
 # Globs evaluated in order, first-match-wins (relative to vault_root = docs/). Flat
 # dev-vault → project '_vault_'. `resolved/` is two segments deep so it never
 # collides with the one-level issues/*.md glob; listed first for clarity.

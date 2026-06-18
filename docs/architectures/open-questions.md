@@ -1109,3 +1109,18 @@
   procedure and emitting the reason-contract note JSON (same as `summarizing-articles` works today). The
   upstream upgrade later makes that emission native; TASK 039 does not block on it.
 
+### 11f. TASK 040 — config-driven write-grammar (design rationale; full record in ADR-007)
+
+- **Q-040-1 (concepts-anchor: derive vs explicit field).** RESOLVED → **derive from `source_subdir`**:
+  non-empty (karpathy `_sources`) → concepts at the container `_concepts/`; empty (PARA) → sibling
+  `_concepts/`. The two are coupled in every real layout; one field = less to misconfigure. Mirrors the
+  existing `parent.name == SOURCES_SUBDIR` logic, now reading `layout.write.source_subdir`.
+- **Q-040-2 (course-tier glob).** RESOLVED → keep the `COURSE_TIER_DIR` `*/_sources/<slug>.md` search
+  in extract-concepts but **gate it on `source_subdir != ""`** so a PARA vault never globs `*/_sources/`.
+  Karpathy behaviour unchanged.
+- **Q-040-3 (byte-identity risk).** RESOLVED → the change is a pure constant→config substitution where
+  `karpathy.write.source_subdir == SOURCES_SUBDIR`; PLAN S0 captures the karpathy golden BEFORE refactor,
+  S2–S6 assert byte-identical. The golden is the gate.
+- **Q-040-4 (slug minting).** RESOLVED → `source_filename: slug` reuses TASK 039's `_MINT_SLUG`
+  (preserve-unicode) + keeps the validity gate (a title slugifying to "" → INVALID_SLUG).
+

@@ -15,7 +15,9 @@
 > wrap+index · [002](./adr/ADR-002-multi-vault-bottleneck-corrections.md) multi-vault +
 > Class A/B/C · [003](./adr/ADR-003-typed-knowledge-classes.md) typed knowledge classes ·
 > [004](./adr/ADR-004-event-graph-typed-edges.md) event graph ·
-> [005](./adr/ADR-005-fts-narrowed-membership-filter.md) FTS-narrowed membership.
+> [005](./adr/ADR-005-fts-narrowed-membership-filter.md) FTS-narrowed membership ·
+> [006](./adr/ADR-006-derived-knowledge-health.md) derived knowledge health ·
+> [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML).
 >
 > **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).

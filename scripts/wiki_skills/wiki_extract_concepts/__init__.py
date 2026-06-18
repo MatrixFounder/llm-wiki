@@ -63,7 +63,6 @@ logger = logging.getLogger(__name__)
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
-    SOURCES_SUBDIR,
 )
 from scripts.wiki_skills._common import build_repo_config, emit
 from scripts.wiki_skills._common import (  # noqa: F401 — facade re-export for wec._sanitize_markdown_text
@@ -802,7 +801,12 @@ def _apply_write(
     # `file_path` + manifest so they point at the REAL on-disk page (R-5).
     # `pages.project` is derived from the source path so the page_entity_refs
     # FK matches the indexer's recorded value (unchanged).
-    if source_path.parent.name == SOURCES_SUBDIR:
+    # TASK 040 / ADR-007: concepts-anchor is config (the source-nesting subdir), not a fork.
+    # source_subdir non-empty (karpathy "_sources") → concepts at the container `<parent.parent>/`;
+    # "" (PARA) → sibling `<parent>/`. karpathy value == SOURCES_SUBDIR → byte-identical.
+    from scripts.wiki_index.layout_config import resolve_layout_config as _rlc
+    _src_subdir = _rlc(vault_root).write.source_subdir
+    if _src_subdir and source_path.parent.name == _src_subdir:
         target_concepts_dir = source_path.parent.parent / CONCEPTS_SUBDIR
     else:
         target_concepts_dir = source_path.parent / CONCEPTS_SUBDIR

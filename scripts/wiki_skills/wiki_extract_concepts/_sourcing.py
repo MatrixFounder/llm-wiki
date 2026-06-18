@@ -20,7 +20,6 @@ from scripts.wiki_index.layout import (
     COURSE_TIER_DIR,
     ENTITIES_SUBDIR,
     QUERIES_SUBDIR,
-    SOURCES_SUBDIR,
     VERIFICATIONS_SUBDIR,
 )
 from scripts.wiki_index.security import (
@@ -130,7 +129,7 @@ def _all_concepts_dirs(vault_root: Path) -> list[Path]:
 
 
 def _resolve_source_inside_sources(
-    src_page: str, vault_root: Path,
+    src_page: str, vault_root: Path, source_subdir: str | None = None,
 ) -> dict[str, Any] | tuple[Path, str]:
     """Resolve `--source-page` to a real path inside SOME `_sources/`.
 
@@ -157,29 +156,37 @@ def _resolve_source_inside_sources(
       slug_strategy (so it equals `pages.slug`, which the `page_entity_refs` FK
       and inbound `[[Wikilink]]` ref-targets both key on).
     """
-    # Slug-form search: try every `_sources/<slug>.md` under the vault.
+    # TASK 040 / ADR-007: the source-nesting subdir is LAYOUT CONFIG (karpathy "_sources",
+    # PARA ""), not a hardcoded constant. Resolve lazily (default None) — for karpathy the
+    # value IS SOURCES_SUBDIR ("_sources") → byte-identical; for PARA "" the whole slug-form
+    # search is skipped (it never matched anyway → straight to the verbatim-path branch).
+    if source_subdir is None:
+        from scripts.wiki_index.layout_config import resolve_layout_config
+        source_subdir = resolve_layout_config(vault_root).write.source_subdir
+    # Slug-form search (sources-nesting layouts only): try `<source_subdir>/<slug>.md`.
     # Vault-tier first (deterministic), course-tier glob second.
     candidate_path: Path | None = None
-    vault_tier = vault_root / SOURCES_SUBDIR / f"{src_page}.md"
-    if vault_tier.is_file():
-        candidate_path = vault_tier
-    else:
-        course_tier_root = vault_root / COURSE_TIER_DIR
-        if course_tier_root.is_dir():
-            course_matches = sorted(
-                course_tier_root.glob(f"*/{SOURCES_SUBDIR}/{src_page}.md")
-            )
-            course_matches = [p for p in course_matches if p.is_file()]
-            if len(course_matches) > 1:
-                rels = [str(p.relative_to(vault_root)) for p in course_matches]
-                return {
-                    "error": "AMBIGUOUS_SOURCE_SLUG",
-                    "reason": (f"slug {src_page!r} matches multiple "
-                               f"_sources/ entries: {rels}. Pass the full "
-                               "vault-relative path instead of the slug."),
-                }
-            if course_matches:
-                candidate_path = course_matches[0]
+    if source_subdir:
+        vault_tier = vault_root / source_subdir / f"{src_page}.md"
+        if vault_tier.is_file():
+            candidate_path = vault_tier
+        else:
+            course_tier_root = vault_root / COURSE_TIER_DIR
+            if course_tier_root.is_dir():
+                course_matches = sorted(
+                    course_tier_root.glob(f"*/{source_subdir}/{src_page}.md")
+                )
+                course_matches = [p for p in course_matches if p.is_file()]
+                if len(course_matches) > 1:
+                    rels = [str(p.relative_to(vault_root)) for p in course_matches]
+                    return {
+                        "error": "AMBIGUOUS_SOURCE_SLUG",
+                        "reason": (f"slug {src_page!r} matches multiple "
+                                   f"_sources/ entries: {rels}. Pass the full "
+                                   "vault-relative path instead of the slug."),
+                    }
+                if course_matches:
+                    candidate_path = course_matches[0]
     # Fall back to treating `src_page` as a vault-relative path verbatim.
     if candidate_path is None:
         candidate_path = vault_root / src_page
@@ -204,7 +211,7 @@ def _resolve_source_inside_sources(
     # resolved file lives directly under a `_sources/` dir; slug = file stem,
     # validated lowercase kebab (now Unicode-aware via `_is_valid_slug`).
     # Byte-identical to pre-TASK-037 for ASCII stems.
-    if source_path.parent.name == SOURCES_SUBDIR:
+    if source_subdir and source_path.parent.name == source_subdir:
         source_slug = source_path.stem
         # max_len=None: the source page already exists on disk; its slug length
         # is the indexer's business, not a reason to refuse extraction.

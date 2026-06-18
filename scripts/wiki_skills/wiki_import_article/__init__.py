@@ -39,7 +39,6 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import (
     _apply_slug_strategy,
     derive_project_for_path,
-    resolve_alias,
     resolve_layout_config,
 )
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
@@ -204,10 +203,18 @@ def _note_type(kind: str, layout: Any) -> str:
 
 
 def _note_dir(layout: Any, vault_root: Path, folder_abs: Path) -> Path:
-    """Layout-aware note target: Karpathy files sources under `_sources/`; every other
-    (PARA-family) layout files the note in its topic folder. One code path, config-driven."""
-    if resolve_alias(layout.layout) == "karpathy":
-        d = vault_root / "_sources"
+    """Layout-aware note target — config-driven (TASK 040 / ADR-007), no layout-name fork.
+    `write.source_subdir` non-empty (karpathy `_sources`) → file under `<vault>/<source_subdir>/`;
+    empty (PARA) → file in the given topic folder."""
+    sub = layout.write.source_subdir
+    if sub:
+        d = vault_root / sub
+        # Containment check BEFORE mkdir (defense-in-depth: `write.source_subdir` is operator
+        # config, already load-gated to a safe single segment — but never mkdir outside the
+        # vault even if that gate were bypassed). resolve() normalizes `..` without needing
+        # the dir to exist; validate_inside_vault (strict resolve) re-checks post-mkdir.
+        if not d.resolve().is_relative_to(vault_root.resolve()):
+            raise PathTraversalError(f"write.source_subdir {sub!r} escapes the vault root")
         d.mkdir(parents=True, exist_ok=True)
         return validate_inside_vault(d, vault_root)
     return folder_abs
@@ -294,26 +301,31 @@ def apply(args: argparse.Namespace) -> int:
     san_names = [n for n in (sanitize_name(e.get("name", "")) for e in note["entities"])
                  if name_is_filable(n)]
 
-    # karpathy: filename == slug (identity strategy) → file as <minted-slug>.md, not the human
-    # title; the minted slug MUST be valid (a title that slugifies to "" would yield ".md").
-    is_karpathy = resolve_alias(layout.layout) == "karpathy"
-    karp_fname = None
-    if is_karpathy:
-        karp_slug = _apply_slug_strategy(note["title_ru"], _MINT_SLUG)
-        if not _is_valid_slug(karp_slug, max_len=None):
+    # config-driven filename (TASK 040): `source_filename: slug` (karpathy `identity` → filename ==
+    # the page slug) files as <minted-slug>.md (the minted slug MUST be valid — a title that
+    # slugifies to "" would yield ".md"); `title` (PARA) → assemble_note derives from the title.
+    slug_fname = None
+    if layout.write.source_filename == "slug":
+        _s = _apply_slug_strategy(note["title_ru"], _MINT_SLUG)
+        if not _is_valid_slug(_s, max_len=None):
             return emit({"error": "INVALID_SLUG",
                          "message": f"title {note['title_ru']!r} does not slugify to a valid "
-                                    "karpathy source filename; rename it or use a PARA layout"},
+                                    "slug-filename for this layout; rename it"},
                         exit_code=EXIT_BAD_ARG)
-        karp_fname = f"{karp_slug}.md"
+        slug_fname = f"{_s}.md"
 
     fname, note_text = assemble_note(
         note, mode=args.mode, raw_rel_basename=raw_rel,
         source_url=args.source_url or str(note.get("URL", "")),
         source_lang=args.source_lang, today=today, note_type=note_type,
-        folder_kind=_folder_kind(args.folder), san_names=san_names, fname=karp_fname)
+        folder_kind=_folder_kind(args.folder), san_names=san_names, fname=slug_fname)
 
-    note_path = _note_dir(layout, vault_root, folder_abs) / fname
+    try:
+        note_path = _note_dir(layout, vault_root, folder_abs) / fname
+    except PathTraversalError:  # the layout's write.source_subdir escapes the vault → clean envelope
+        return emit({"error": "INVALID_FOLDER",
+                     "message": "the layout's write.source_subdir escapes the vault root"},
+                    exit_code=EXIT_BAD_ARG)
     if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)
         return emit({"error": "REFUSED_SYMLINK",
                      "message": f"{fname!r} is a symlink; refusing to write through it"},

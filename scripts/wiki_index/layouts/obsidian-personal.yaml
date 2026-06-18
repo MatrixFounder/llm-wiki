@@ -26,6 +26,12 @@ ignore:
 file_extensions: ['.md']
 slug_strategy: preserve-unicode     # Cyrillic/CJK survive (single-OS workflows)
 
+# TASK 040 / ADR-007 — write-side grammar (where NEW pages file). Karpathy nests sources in _sources/ (filename==slug); PARA files in the target folder (human title).
+write:
+  source_subdir: ""
+  source_filename: "title"
+
+
 # Order matters — most specific glob first; first-match-wins. project derived
 # from the numbered-folder path via regex + ${name} template (no shell ternaries:
 # the two-component vs single-component cases are separate entries).
