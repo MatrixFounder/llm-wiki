@@ -47,6 +47,8 @@ On an unreachable/empty source it emits `{error:"FETCH_FAILED", upstream:…}` (
 and writes **nothing** — file a `needs-manual` stub by hand.
 
 ### 2. REASON (the orchestrator's job — the one LLM step)
+**Full contract:** [`references/reason-contract.md`](references/reason-contract.md) — the
+canonical schema + depth-by-mode + hard rules (reuse it verbatim; the summary below is the digest).
 Read `raw_path`, then produce the structured note:
 ```
 { title_ru, title_orig?, author?, published?, tldr, summary_bullets[],
@@ -104,5 +106,6 @@ write contention).
   fail-fast if absent) — not Python deps.
 
 ## Related
+- [`references/reason-contract.md`](references/reason-contract.md) — the canonical REASON-step contract (schema + depth + hard rules)
 - [`docs/tasks/task-038-wiki-import-article-para-ingest.md`](../../docs/tasks/) · ARCHITECTURE §2.3 · open-questions §11d
 - `wiki-enrich` (Karpathy analog) · `wiki-extract-concepts` (concept filing) · `wiki-index-upsert`
