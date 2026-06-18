@@ -82,11 +82,11 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 **Other handy ones**
 ```bash
 wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index a raw source
-# PARA import of an external URL/PDF/thread (2-step; the REASON step between is the orchestrator's):
-wiki-import-article prepare --vault personal --vault-root . \
+# import an external URL/PDF/thread/transcript (any layout; the REASON step between is the orchestrator's):
+wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
 #   …translate/summarise reusing the emitted known_concepts, then pipe the note JSON to:
-wiki-import-article apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" \
+wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \
     --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
     --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin
 wiki-index-render --vault personal --auto-indexes                  # (re)generate index/ledger pages
@@ -125,7 +125,8 @@ Then, for example:
 - *"File this meeting summary as a note in `04 - Work projects/<Client>/` and index it."*
 
 Slash commands also exist for the common verbs: `/wiki-search`, `/wiki-query`,
-`/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-enrich`. The agent keeps you in
+`/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-import` (unified
+external-source on-ramp, any layout), `/wiki-enrich` (legacy Karpathy-raw). The agent keeps you in
 the loop on anything that writes (summaries, new notes) and is safe to re-run
 (per-file idempotency).
 

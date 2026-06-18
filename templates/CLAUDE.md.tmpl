@@ -18,7 +18,8 @@ Claude is launched at the vault root. All paths below are relative to it.
 > before concluding it's empty).
 > - **Vault has relevant pages** → ground the answer in them and **cite** the `[^src-<slug>]`.
 > - **Vault has nothing** → say so explicitly ("the wiki has no page on X") *before* any
->   general-knowledge answer, label it **NOT from the vault**, and offer `/wiki-enrich`.
+>   general-knowledge answer, label it **NOT from the vault**, and offer `/wiki-import`
+>   to capture a real external source (`/wiki-enrich` for a local Karpathy raw file).
 >
 > Answering a domain question from training **without searching first** — or presenting
 > training knowledge as if it came from the vault — defeats the entire point of a
@@ -93,8 +94,14 @@ Two layers of tooling, complementary:
 - **Index layer (`/wiki-*` from obsidian-llm-wiki)** — fast read paths:
   FTS5 search across vaults, SQL-level lint, rebuildable cache. **Reads
   what the file layer writes.**
-- **Bridge (`/wiki-enrich`)** — composes both: invoke `wiki-ingest` on a raw
-  source, then index the manifest into the SQLite DB in one shot.
+- **Construct on-ramp (`/wiki-import`)** — the unified path to import an EXTERNAL
+  source (URL / PDF / X-thread / meeting transcript / finished summary) into ANY
+  layout: deterministic fetch+convert → REASON (the `summarizing-meetings` harness,
+  fed the vault's `known_concepts`) → a summary note + `_concepts/` filed per the
+  resolved layout (config-driven, ADR-007). `--kind` auto-detects content-type.
+- **Karpathy raw bridge (`/wiki-enrich`)** — composes the file + index layers:
+  invoke `wiki-ingest` on a raw source, then index the manifest into the SQLite
+  DB in one shot. (Karpathy `_sources/` scaffold; `/wiki-import` is the general path.)
 
 ### Lookup priority
 
@@ -110,8 +117,20 @@ not raw transcripts.
 
 ### 1. Ingest a new source
 
-End-to-end (recommended): use `/wiki-enrich` — runs wiki-ingest then indexes
-the manifest atomically.
+**An external source (a URL / PDF / X-thread / meeting transcript)** — use
+`/wiki-import`: it fetches + converts deterministically, hands you the cleaned
+text + the vault's `known_concepts` for the REASON step, then files a summary note
+and its `_concepts/` per this vault's layout.
+
+```bash
+/wiki-import prepare --vault ${vault_id} --vault-root . --kind auto \
+             --source "https://example.com/article"
+#   …summarise reusing the emitted known_concepts, then:
+/wiki-import apply   --vault ${vault_id} --vault-root . --kind "<prepare.kind>" --note-stdin
+```
+
+**A local raw file already in the tree (Karpathy)** — use `/wiki-enrich`: runs
+wiki-ingest then indexes the manifest atomically.
 
 ```bash
 /wiki-enrich --vault ${vault_id} \
@@ -284,10 +303,12 @@ maintained.
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, promotion rules.
 - **`00-Vault-Index/index.md`** — read-only catalog (auto-generated).
 - **`00-Vault-Index/log/`** — monthly append-only journal.
-- **obsidian-llm-wiki** — the index layer (16 CLIs). Search/RAG: `/wiki-search`
+- **obsidian-llm-wiki** — the index layer (18 CLIs). Search/RAG: `/wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `/wiki-query`, `/wiki-verify-multi`.
-  Construction: `/wiki-enrich`, `/wiki-extract-concepts`, `/wiki-sync` (mixed-zone
-  auto-router), `/wiki-append-log`. Entity & event graph: `/wiki-confirm`, `/wiki-alias`,
+  Construction: **`/wiki-import`** (the unified external-source on-ramp — URL/PDF/thread/
+  transcript, any layout via config, ADR-007), `/wiki-enrich` (legacy Karpathy-raw),
+  `/wiki-extract-concepts`, `/wiki-sync` (mixed-zone auto-router), `/wiki-append-log`.
+  Entity & event graph: `/wiki-confirm`, `/wiki-alias`,
   `/wiki-merge`, `/wiki-graph` (typed page-to-page edges — implements/supersedes/causes/
   invalidated_by/uses/owns/…, authored one direction, inverse auto-derived). Lifecycle/health:
   `/wiki-init`, `/wiki-reindex`, `/wiki-index-upsert`, `/wiki-index-render`,

@@ -20,7 +20,8 @@ Claude is launched at the vault root. All paths below are relative to it.
 > - **Vault has relevant pages** → ground the answer in them and **cite the page `slug`**.
 > - **Vault has nothing** → say so explicitly ("the wiki has no page on X") *before* any
 >   general-knowledge answer, label that answer as **NOT from the vault**, and offer
->   `/wiki-enrich` to capture a real source.
+>   `/wiki-import` to capture a real external source (URL/PDF/thread/transcript — any layout;
+>   `/wiki-enrich` is the legacy Karpathy-raw on-ramp).
 >
 > Answering a domain question from training **without searching first** — or presenting
 > training knowledge as if it came from the vault — defeats the entire point of a
@@ -186,10 +187,12 @@ wiki-reindex --full --vault ${vault_id}
 
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, optional `index_db`.
 - **`.wiki/layout.yaml`** / **`.wiki/sync.yaml`** — per-vault index + sync tuning.
-- **obsidian-llm-wiki** — the index layer (17 CLIs). Search/RAG: `wiki-search`
+- **obsidian-llm-wiki** — the index layer (18 CLIs). Search/RAG: `wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `wiki-query`, `wiki-verify-multi`.
-  Event graph: `wiki-graph` (typed page-to-page edges). Construction: `wiki-sync`
-  (mixed-zone auto-router), `wiki-index-upsert`, `wiki-enrich`, `wiki-extract-concepts`.
+  Event graph: `wiki-graph` (typed page-to-page edges). Construction: **`wiki-import`**
+  (the unified external-source on-ramp — URL/PDF/thread/transcript, any layout via config,
+  ADR-007), `wiki-sync` (mixed-zone auto-router), `wiki-index-upsert`, `wiki-extract-concepts`,
+  `wiki-enrich` (legacy Karpathy-raw).
   Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint` (+ lifecycle-drift, gates
   `--strict`), `wiki-health` (coverage gaps; R-15), `wiki-index-render`. Install
   per its `README.md`; ensure its `bin/` is on `PATH`.

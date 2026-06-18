@@ -83,11 +83,11 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 **Прочие полезные**
 ```bash
 wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index сырого источника
-# PARA-импорт внешнего URL/PDF/треда (2 шага; шаг REASON между ними — работа оркестратора):
-wiki-import-article prepare --vault personal --vault-root . \
+# импорт внешнего URL/PDF/треда/транскрипта (любой layout; шаг REASON между — работа оркестратора):
+wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
 #   …перевести/суммаризировать, переиспользуя отданные known_concepts, затем подать note JSON в:
-wiki-import-article apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" \
+wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \
     --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
     --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin
 wiki-index-render --vault personal --auto-indexes                  # (re)generate index/ledger pages
@@ -126,7 +126,8 @@ claude        # or your Claude Code launcher
 - *«Разложи этот meeting-summary как заметку в `04 - Work projects/<Client>/` и проиндексируй.»*
 
 Для частых действий есть и слэш-команды: `/wiki-search`, `/wiki-query`, `/wiki-sync`,
-`/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-enrich`. Агент держит вас в курсе всего, что пишет
+`/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-import` (единый on-ramp для внешних
+источников, любой layout), `/wiki-enrich` (legacy Karpathy-raw). Агент держит вас в курсе всего, что пишет
 (саммари, новые заметки), и безопасен к повторному запуску (идемпотентность по файлам).
 
 ---

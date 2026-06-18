@@ -14,9 +14,13 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**17 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**18 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
 
-- *Construct* — `wiki-enrich` (raw source → summary via the vendored `wiki-ingest`),
+- *Construct* — `wiki-import` (the unified external-source on-ramp — URL/PDF/thread/
+  transcript → REASON via `summarizing-meetings` → note + `_concepts/` filed per the
+  resolved layout's write-grammar, config-driven, ADR-007; content-type via `--kind`,
+  layout via config — the two are orthogonal; `wiki-import-article` is a back-compat alias),
+  `wiki-enrich` (legacy Karpathy raw source → summary via the vendored `wiki-ingest`),
   `wiki-extract-concepts` (densify an indexed source), `wiki-index-upsert` (index one
   file), `wiki-sync` (zone-level format/tag dispatcher), `wiki-append-log`.
 - *Search / retrieve* — `wiki-search` (FTS5 BM25 + alias expansion; metadata
