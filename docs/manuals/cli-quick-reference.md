@@ -81,7 +81,14 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 
 **Other handy ones**
 ```bash
-wiki-enrich --vault personal --vault-root . --source "./raw.md"   # ingest+index a raw source
+wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index a raw source
+# PARA import of an external URL/PDF/thread (2-step; the REASON step between is the orchestrator's):
+wiki-import-article prepare --vault personal --vault-root . \
+    --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
+#   …translate/summarise reusing the emitted known_concepts, then pipe the note JSON to:
+wiki-import-article apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" \
+    --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
+    --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin
 wiki-index-render --vault personal --auto-indexes                  # (re)generate index/ledger pages
 wiki-init --register-existing --vault .                            # one-time: register this vault
 ```

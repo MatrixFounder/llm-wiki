@@ -1,35 +1,99 @@
-# PLAN 037 — `wiki-extract-concepts` layout-aware (PARA `_concepts/` support)
+# PLAN 038 — `wiki-import-article`: PARA construct path
 
-Stub-light modification of an existing, well-tested skill (TASK 024 pattern). Green
-throughout; `mypy --strict`; zero-DDL; Karpathy byte-identity. All steps SHIPPED.
+New **Decision-17** CLI (package, mirroring the `wiki_extract_concepts` decomposition) +
+skill/command/workflow triple. **Stub-first**: signatures + failing tests → green → logic.
+Green throughout; `mypy --strict scripts/`; **zero-DDL** (`user_version` 7); **zero new
+deps**; **no `import anthropic`**. Composition only — shells out to `html2md`/`pdf`, calls
+`wiki-extract-concepts`/`wiki-index-upsert` (NF-2). Karpathy & `wiki-enrich` untouched.
 
-## Atomic checklist
+## Module layout (target)
 
-- [x] **P-1 (R-7) Unicode slug gate** — `_validation.py`: `_SLUG_RE` → charset-only
-  `^[^\W_][\w-]*\Z` (Unicode, `\Z`-anchored, no length); add `_SLUG_MAX_LEN=120` +
-  `_is_valid_slug(slug, max_len=120)` (charset ∧ lowercase ∧ optional length). Switch
-  the candidate-schema check to `_is_valid_slug`.
-- [x] **P-2 (R-7) rollout** — `_pages.py write_concept_page` + `_sourcing.py` use
-  `_is_valid_slug`; facade re-export in `__init__.py`. (Karpathy ASCII slugs are a subset.)
-- [x] **P-3 (R-1/R-2) source resolution** — `_sourcing._resolve_source_inside_sources`:
-  keep the `_sources/` branch (slug = stem, `max_len=None`); add a PARA branch that
-  (a) refuses generated dirs via a case-folded `parts` membership check, (b) derives the
-  slug from `derive_discovered_page(...).slug` (lazy import), `max_len=None`.
-- [x] **P-4 (R-4) drift sweep** — `_all_concepts_dirs` → `os.walk(followlinks=False)`
-  collecting non-symlink `_concepts` dirs (symlink-loop / out-of-vault safe).
-- [x] **P-5 (R-3/R-5) concepts dir + paths** — `__init__._apply_write`: branch
-  `parent.name == _sources ? parent.parent/_concepts : parent/_concepts`; compute
-  `concepts_rel = rel(vault_root).as_posix()`; thread into `upsert_extracted_entity`
-  (`file_path`) + `build_manifest` (`written[].path`) — both keyword-default `"_concepts"`
-  (back-compat; vault-tier byte-identical).
-- [x] **P-6 (R-6) layout** — `obsidian-personal.yaml`: `type_mapping` += concept/entity
-  classes (mirror karpathy) + `path_type_fallback {_concepts: concept, _entities: external}`.
-- [x] **P-7 tests** — `tests/test_extract_concepts_layout_aware.py` (10 cases: R-1..R-7,
-  Karpathy anchor, course-tier, long-slug, anti-loop case-fold, trailing-newline);
-  update 1 message assertion in `tests/test_wiki_extract_concepts.py`.
-- [x] **P-8 review** — code-reviewer + critic-security; resolve MED-1/MAJOR-1/LOW-1/LOW-2.
-- [x] **P-9 docs** — SKILL.md layout-aware note; Q-037; this PLAN + TASK; archive 036.
+```
+scripts/wiki_skills/wiki_import_article/
+  __init__.py     # facade: prepare / apply / main + argparse (+ the lock surface if any)
+  __main__.py     # `python -m …` entry (bin wrapper + subprocess test depend on it)
+  _fetch.py       # fetch dispatch: shell out html2md|pdf, bin-resolve+fail-fast,
+                  #   never-empty-_raw, propagate typed exits (FetchFailed/EmptyExtraction/arxiv_no_html)
+  _context.py     # known_concepts (reuse extract-concepts) + existing_page_slugs (DB∪_concepts∪stems)
+  _authoring.py   # per-mode note assembly, name sanitization, verbatim-quote guarantee, collision guard
+  _errors.py      # envelopes + stable exit codes
+bin/wiki-import-article            # PATH wrapper (source venv + PYTHONPATH, no cd — TASK 027 pattern)
+skills/wiki-import-article/SKILL.md
+commands/wiki-import-article.md
+workflows/wiki-import-article.md   # single-article + batch (Workflow-tool recipe)
+tests/test_import_article_*.py
+```
 
-## Verification (all green)
-`pytest tests/` → 1534 passed, 5 skipped · `mypy --strict scripts/` → clean (77 files) ·
-real-vault end-to-end: 19 `_concepts/` pages, reindex→concept, lint orphan −19, search/graph.
+## Atomic checklist (stub-first, Red→Green per step)
+
+- **S0 — Scaffold + branch.** Branch `task-038-…`. Create the package with stubbed
+  signatures (`raise NotImplementedError`), `__main__.py`, `bin/` wrapper, the 3 doc files
+  as headers, symlinks into `.claude/`+`.agent/`. **Skill-creation gate (`[BYPASS]`,
+  recorded):** `wiki-import-article` is a *product* `wiki-*` skill following the established
+  repo-root hand-authored convention (same as `wiki-enrich`/`wiki-alias`/`wiki-extract-concepts`
+  — none were created via `init_skill.py`); the framework's `init_skill.py` gate is for
+  `.agent/skills/` *meta-skills*, so it is intentionally bypassed here, with symlinks done by
+  the existing `bin/link-{skill,command,workflow}.sh`. (If a reviewer prefers the template,
+  `init_skill.py skills/wiki-import-article --tier 2` can seed it instead.) Add
+  `tests/test_import_article_*.py` skeleton (all `xfail`/red). `mypy --strict` passes on stubs.
+  *Gate:* tests collected, red.
+- **S1 — `_fetch.py` (R-1, R-3).** Tests first (mock `subprocess` for html2md/pdf):
+  URL→html2md; `*.pdf`→pdf skill; html2md `arxiv_no_html`→pdf fallback; `FetchFailed`/
+  `EmptyExtraction`(exit 11)→**no `_raw/` written** + typed envelope; non-empty→`_raw/<slug>.md`
+  written. Bin paths configurable (`--html2md-bin`/`--pdf-extract-bin`) + fail-fast if absent.
+  Then implement. *Gate:* S1 tests green.
+- **S2 — `_context.py` (R-2).** Tests: `known_concepts` from the extract-concepts machinery for
+  a target project; `existing_page_slugs` = `pages.slug` ∪ `_concepts/` slugs ∪ note-stems. Then
+  implement (read-only DB/FS; no DDL). *Gate:* S2 tests green.
+- **S3 — `prepare` facade (R-1+R-2+R-3).** Wire `_fetch`+`_context` → envelope
+  `{raw_path,title,author,date,source_hash,mode,known_concepts[],existing_page_slugs[]}`.
+  `source_hash = sha256(_raw bytes)` — **for wiki-import-article's own import idempotency
+  (R-7) ONLY**; it is NOT threaded into `wiki-extract-concepts apply` (different byte stream
+  — see S5). Tests: envelope schema + the failure pass-through. *Gate:* S3 green.
+- **S4 — `_authoring.py` (R-4, R-5).** Tests per concern: per-mode body (full/summary/thread);
+  name sanitization — a **normalizer** (rewrite `/`, em-dash, guillemets, `&` → safe) that
+  **feeds** the existing `_validation._sanitize_name` reject-gate and **reuses its
+  `_NAME_ALLOWLIST`** (no duplicate allowlist, NF-2); verbatim-quote guarantee
+  (agent quote ⊂ body, else line-around-name fallback — must end verbatim); **collision guard**
+  (skip slug == note's own slug; skip slug ∈ `existing_page_slugs`; skipped→reported). Then
+  port/implement from the `/tmp/g01_{author,fix_quotes}.py` logic. *Gate:* S4 green.
+- **S5 — `apply` facade (R-4, R-5, R-7).** Inputs: structured note + `mode` + target folder +
+  **`existing_page_slugs[]`** (round-tripped from prepare via `--existing-page-slugs`, so the
+  S4 collision guard fires end-to-end, not just in the unit). Flow: assemble note → write PARA
+  note → `wiki-index-upsert` (layout-aware) → `wiki-extract-concepts apply --candidates-stdin
+  --source-page <the note's own slug> --source-hash <FRESH sha256 of the just-written note
+  body>` (NOT `prepare.source_hash` — apply re-hashes the *filed note* and rejects a mismatch as
+  `SOURCE_CHANGED_DURING_EXTRACTION`; `--source-page` is required for single-page apply) →
+  combined manifest. Idempotency: unchanged source (by `prepare.source_hash`) → `action:"unchanged"`.
+  All writes via `validate_inside_vault` (R-26). Tests + e2e round-trip on a tmp PARA fixture vault
+  (incl. an end-to-end collision-guard assertion). *Gate:* S5 + round-trip green.
+- **S6 — Skill/command/workflow (R-6, R-8).** `SKILL.md` documents the prepare→reason→apply loop
+  and the **hard rule: inject `prepare.known_concepts` into the orchestrator's translation/summary
+  prompt** (mirror wiki-ingest SKILL.md:34) + per-mode depth. `workflows/…` = single-article steps
+  **and** the batch Workflow-tool recipe (parallel translate under a schema → serialized `apply`).
+  `commands/…` thin wrapper. Symlinks verified. Eval set under `skills/wiki-import-article/evals/`.
+- **S7 — Real-vault e2e + gates (DoD 2-4).** Re-import ONE #01 source via `/wiki-import-article`
+  on `ObsidianNotes-Test`: PARA note in the right folder, concepts reuse existing names (no new
+  collision), `wiki-reindex --full` collisions==0, `wiki-lint` orphan-link delta≈0 for that note.
+  `mypy --strict scripts/`; `grep -r "import anthropic" scripts/wiki_skills/wiki_import_article`
+  empty; full `pytest`. *Gate:* all green; cleanup any scratch in the test vault after.
+- **S8 — VDD + verificator (DoD 5).** `skill-self-improvement-verificator` on THIS plan
+  (pre-dev gate — **done at design time**, this run); after S7, `/vdd-multi` (code-reviewer +
+  critic-security per TASK §0/DoD 5, **+ critic-logic** as an intentional superset) →
+  fix findings → re-green. Commit only on user request.
+
+## Invariants / guards (carry through every step)
+- **NF-2 (no reinvention):** never duplicate fetch/concept/index logic — shell out / call the
+  existing surfaces. A test asserts `_fetch` calls the html2md/pdf bins (not an inline fetcher).
+- **Decision-17:** grep-guard `import anthropic` absent; one JSON envelope + stable exit codes.
+- **Collision guard is the headline fix** — the `defi`-evicts-`Defi.md` and `усреднение-стоимости`
+  self-dup cases from #01 become regression tests (S4).
+- **Never-empty-`_raw/`** — the SSRN/researchgate empty-file bug becomes a regression test (S1).
+- **Zero-DDL / Class-B-rebuildable** — `wiki-reindex --full` after import is clean (S7).
+- **Rollback** — the work is an isolated branch + a **net-new package** (no edits to existing
+  modules), so revert = drop the branch/package; zero-DDL means no DB migration to unwind
+  (`wiki-reindex --full` rebuilds Class B from markdown).
+
+## Out of plan
+- Editing `html2md`/`pdf`/`wiki-ingest`/`summarizing-meetings` (external/already-fixed).
+- Any schema bump, new dependency, or a `--batch` CLI mode (Q-038-4: Workflow recipe instead).

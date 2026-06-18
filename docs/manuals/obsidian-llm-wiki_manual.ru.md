@@ -204,6 +204,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 |---|---|
 | **`wiki-sync`** | **Диспетчер уровня зоны** (вход для множества файлов). `scan <zone>` классифицирует *каждый* файл по расширению + тегу `#wiki/*` + форме содержимого и выдаёт детерминированный **план** (convert / ingest / upsert / skip); [workflow `wiki-sync`](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) исполняет его идемпотентно (office/PDF→md, **OCR отсканированных PDF**, удаление таймстампов из `.vtt`, summarise→enrich→extract, upsert готовых заметок, пропуск sidecar-представлений). Обращайтесь к ней вместо ручной маршрутизации папки разнородных вбросов файл за файлом. Детерминированное ядро, без LLM; `wiki-sync record` — это per-file маркер фиксации. |
 | **`wiki-enrich`** | Вход для **сырого материала** (один файл). Передайте ей сырой файл-источник; она вызывает (встроенный) слой синтеза `wiki-ingest` (который **суммирует источник с помощью LLM**), затем зеркалит полученный манифест в index. ⚠️ `wiki-enrich` **всегда трактует `--source` как сырой** — режима «пропустить summary» нет. Если у вас *уже есть готовый summary*, **не** используйте `wiki-enrich`; вместо этого используйте [рецепт готового summary](#registering-a-pre-made-summary-not-raw). (`wiki-sync` под капотом компонует `wiki-enrich` для файлов, маршрутизированных на `ingest`.) |
+| **`wiki-import-article`** | **PARA-вход** — PARA-аналог `wiki-enrich` (TASK 038). Импорт внешнего **URL / PDF / X-треда** в тематическую папку PARA: `prepare` забирает+конвертирует (через `html2md`/`pdf`, которые сами владеют Wikipedia/arXiv-нюансами) и отдаёт `known_concepts` проекта; вы (оркестратор) переводите/суммаризируете, **переиспользуя эти имена** (дисциплина, которая не даёт повиснуть `[[вики-ссылкам]]`); `apply` кладёт заметку `article-summary` в тематическую папку + соседние `_concepts/` + индексирует, с **защитой от коллизий** (общий концепт `defi` не выбьет заметку владельца `Defi.md`). Режимы `full` / `summary` / `thread`. Для **PARA**-хранилищ — для **Karpathy** используйте `wiki-enrich`. (Схемы вызовов — `docs/architectures/functional-architecture.md` §2.3.) |
 | **`wiki-extract-concepts`** | *Ретроспективный* вход. Для страницы-источника, уже находящейся в index, она извлекает концепты/сущности, которые та упоминает, но для которых ещё нет страницы, — превращая неявное знание в явные, связываемые страницы. Двухпроходный навык `prepare`/`apply` (см. [ниже](#the-prepare--apply-contract-decision-17)). Используйте её, чтобы *уплотнить* существующий корпус, или после импорта множества источников разом — **независимо от того, как страница-источник попала в index** (сырой ingest или ручная регистрация). |
 | **`wiki-index-upsert`** | Примитив для одного файла. Индексирует один markdown-файл идемпотентно (совпадение file-hash — это no-op). Используйте её, когда вы написали вручную, отредактировали вручную **или подложили готовый summary из другого места** и хотите, чтобы index отразил это немедленно, без полного reindex — **без LLM, без обработки сырого материала**. |
 | **`wiki-append-log`** | Пишет структурированное событие в `log.md` *и* зеркалит его в таблицу `log_events` атомарно (flock + fsync, двунаправленный контракт M-2). Лог — это удобная для grep хронологическая память для будущих сессий агента: git diff — для людей, лог — для следующего LLM. |
@@ -415,16 +416,26 @@ vault как страницу-источник, чтобы позже извле
 ```mermaid
 flowchart TD
     Q{"What do you have?"}
-    Q -->|"raw material<br/>(transcript, article, notes)<br/>— needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"raw material in a KARPATHY vault<br/>(transcript, notes) — needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"an EXTERNAL URL / PDF / X-thread<br/>→ a PARA topic folder"| IMP["wiki-import-article: prepare → REASON → apply<br/>= fetch+convert, translate/summary (fed known_concepts),<br/>→ topic-folder note + sibling _concepts/ → index"]
     Q -->|"a FINISHED summary<br/>(already distilled elsewhere)"| REG["1. place it at _sources/&lt;slug&gt;.md (with frontmatter)<br/>2. wiki-index-upsert --source &lt;abs path&gt;<br/>= indexed verbatim, NO LLM, NOT raw"]
     ENR --> IDX["source page is now indexed (type=summary)"]
+    IMP --> IDX
     REG --> IDX
     IDX -->|"optional: densify"| EXT["wiki-extract-concepts prepare/apply<br/>--source-page &lt;slug&gt;<br/>→ concept/entity pages"]
     classDef raw fill:#fdeede,stroke:#e0a050;
     classDef premade fill:#eef7ee,stroke:#5a5;
+    classDef para fill:#e8f0fe,stroke:#5a7;
     class ENR raw;
     class REG premade;
+    class IMP para;
 ```
+
+> **Karpathy vs PARA:** `wiki-enrich` кладёт в Karpathy-`_sources/` + `_concepts/` в корне
+> хранилища; `wiki-import-article` кладёт заметку в её **тематическую папку** PARA +
+> **соседний** `_concepts/`. Оба передают шагу суммаризации `known_concepts` хранилища,
+> чтобы вики-ссылки резолвились. Схемы вызовов навыков —
+> в `docs/architectures/functional-architecture.md` §2.3.
 
 `wiki-enrich` — **только** для raw-материала — он всегда вызывает `wiki-ingest`,
 чтобы *саммаризировать*. Для готового саммари полностью пропустите его и

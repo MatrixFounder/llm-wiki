@@ -204,6 +204,7 @@ These turn raw material into compounding pages.
 |---|---|
 | **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp). `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (convert / ingest / upsert / skip); the [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes it idempotently (office/PDF→md, **scanned-PDF OCR**, `.vtt` de-timestamp, summarise→enrich→extract, ready-note upsert, view-sidecar skip). Reach for it instead of hand-routing a folder of heterogeneous drops file-by-file. Deterministic core, no LLM; `wiki-sync record` is the per-file commit-marker. |
 | **`wiki-enrich`** | The **raw-material** on-ramp (single file). Hand it a raw source file; it invokes the (vendored) `wiki-ingest` synthesis layer (which **LLM-summarises** the source), then mirrors the produced manifest into the index. ⚠️ `wiki-enrich` **always treats `--source` as raw** — there is no "skip the summary" mode. If you *already have a finished summary*, do **not** use `wiki-enrich`; use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead. (`wiki-sync` composes `wiki-enrich` under the hood for `ingest`-routed files.) |
+| **`wiki-import-article`** | The **PARA on-ramp** — the PARA analog of `wiki-enrich` (TASK 038). Import an external **URL / PDF / X-thread** into a PARA topic folder: `prepare` fetches+converts (shells out to `html2md`/`pdf`, which own the Wikipedia/arXiv quirks) and emits the project's **`known_concepts`**; you (the orchestrator) translate/summarise **reusing those names** (the discipline that stops dangling `[[wikilinks]]`); `apply` files the `article-summary` note in the topic folder + sibling `_concepts/` pages + indexes, with a **collision guard** so a generic concept (`defi`) never evicts an owner note (`Defi.md`). Per-mode `full` / `summary` / `thread`. Use it for **PARA** vaults — for **Karpathy** vaults use `wiki-enrich`. (Skill-call diagrams: `docs/architectures/functional-architecture.md` §2.3.) |
 | **`wiki-extract-concepts`** | The *retroactive* on-ramp. Given a source page already in the index, it extracts the concepts/entities it mentions but that have no page yet — turning implicit knowledge into explicit, linkable pages. A two-pass `prepare`/`apply` skill (see [below](#the-prepare--apply-contract-decision-17)). Use it to *densify* an existing corpus, or after importing many sources at once — **regardless of how the source page got indexed** (raw-ingested or hand-registered). |
 | **`wiki-index-upsert`** | The single-file primitive. Indexes one markdown file idempotently (a file-hash match is a no-op). Use it when you've hand-written, hand-edited, **or dropped in a finished summary from elsewhere** and want the index to reflect it immediately without a full reindex — **no LLM, no raw processing**. |
 | **`wiki-append-log`** | Writes a structured event to `log.md` *and* mirrors it to the `log_events` table atomically (flock + fsync, bi-directional M-2 contract). The log is grep-friendly chronological memory for future agent sessions — git diff is for humans, the log is for the next LLM. |
@@ -412,16 +413,26 @@ explicitly:
 ```mermaid
 flowchart TD
     Q{"What do you have?"}
-    Q -->|"raw material<br/>(transcript, article, notes)<br/>— needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"raw material in a KARPATHY vault<br/>(transcript, notes) — needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"an EXTERNAL URL / PDF / X-thread<br/>→ a PARA topic folder"| IMP["wiki-import-article: prepare → REASON → apply<br/>= fetch+convert, translate/summary (fed known_concepts),<br/>→ topic-folder note + sibling _concepts/ → index"]
     Q -->|"a FINISHED summary<br/>(already distilled elsewhere)"| REG["1. place it at _sources/&lt;slug&gt;.md (with frontmatter)<br/>2. wiki-index-upsert --source &lt;abs path&gt;<br/>= indexed verbatim, NO LLM, NOT raw"]
     ENR --> IDX["source page is now indexed (type=summary)"]
+    IMP --> IDX
     REG --> IDX
     IDX -->|"optional: densify"| EXT["wiki-extract-concepts prepare/apply<br/>--source-page &lt;slug&gt;<br/>→ concept/entity pages"]
     classDef raw fill:#fdeede,stroke:#e0a050;
     classDef premade fill:#eef7ee,stroke:#5a5;
+    classDef para fill:#e8f0fe,stroke:#5a7;
     class ENR raw;
     class REG premade;
+    class IMP para;
 ```
+
+> **Karpathy vs PARA:** `wiki-enrich` files into the Karpathy `_sources/` + vault-root
+> `_concepts/`; `wiki-import-article` files a note into its PARA **topic folder** + a
+> **sibling** `_concepts/`. Both feed the summary step the vault's `known_concepts` so
+> wikilinks resolve. The two skill-call flows are diagrammed in
+> `docs/architectures/functional-architecture.md` §2.3.
 
 `wiki-enrich` is **only** for raw material — it always invokes `wiki-ingest` to
 *summarise*. For a finished summary, skip it entirely and register the page

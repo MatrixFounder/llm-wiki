@@ -694,6 +694,88 @@ graph TB
 
 ---
 
+### 2.3. Construct paths — skill-call flow (Karpathy vs PARA)
+
+The two **construct on-ramps** turn a raw source into a *compounding* node (summary
+page + concept/entity pages + index). They share one load-bearing discipline —
+**the summary generator is fed the `known_concepts` list** so `[[wikilinks]]` reuse
+existing names and never dangle/collide — but differ in *who generates* and *where it
+files*. (Decision-17 throughout: the CLIs are deterministic plumbing; the **one
+reasoning step is the LLM's**, never inside a CLI.)
+
+**Karpathy — `wiki-enrich` → external `wiki-ingest` → `summarizing-meetings`** (ADR-001).
+The generator is an external skill; pages land in `_sources/` + **vault-root**
+`_concepts/_entities/`.
+
+```mermaid
+flowchart TD
+    O(["Orchestrator / LLM"])
+    WE["wiki-enrich<br/>(this repo)"]
+    WI[["wiki-ingest<br/>external skill"]]
+    SM[["summarizing-meetings<br/>external skill"]]
+    KC{{"known_concepts<br/>injected"}}
+    FS[/"_sources/&lt;slug&gt;.md<br/>+ ROOT _concepts/ _entities/"/]
+    DB[("SQLite index")]
+    O -->|"raw source file"| WE
+    WE -->|"shell-out + version-gate"| WI
+    WI -->|"Phase 2: delegate summary"| SM
+    KC -.->|"reuse existing names"| SM
+    SM -->|"summary .md + [[wikilinks]]"| WI
+    WI -->|"+ concept/entity wiring → JSON manifest"| WE
+    WI --> FS
+    WE -->|"mirror manifest → index"| DB
+    classDef llm fill:#eef,stroke:#88a,color:#000;
+    classDef cli fill:#eef7ee,stroke:#5a5,color:#000;
+    classDef ext fill:#fdeede,stroke:#e0a050,color:#000;
+    classDef disc fill:#fff3cd,stroke:#d4a017,color:#000;
+    classDef store fill:#eee,stroke:#999,color:#000;
+    class O llm; class WE cli; class WI,SM ext; class KC disc; class FS,DB store;
+```
+
+**PARA — `wiki-import-article` `prepare` → LLM REASON → `apply`** (TASK 038; see
+ARCHITECTURE §2.3). The generator is the **orchestrator itself** (no external summary
+skill); the note lands in its **topic folder** with a **sibling** `_concepts/`. `prepare`
+emits the `known_concepts` so the reasoning step can honour the discipline; `apply`
+delegates concept filing to `wiki-extract-concepts` and indexing to `wiki-index-upsert`.
+
+```mermaid
+flowchart TD
+    O(["Orchestrator / LLM"])
+    PP["wiki-import-article<br/>prepare"]
+    H[["html2md / pdf<br/>external skills"]]
+    AP["wiki-import-article<br/>apply"]
+    EC["wiki-extract-concepts<br/>apply"]
+    UP["wiki-index-upsert"]
+    KC{{"known_concepts<br/>injected"}}
+    FS[/"&lt;topic-folder&gt;/&lt;note&gt;.md<br/>+ SIBLING _concepts/"/]
+    DB[("SQLite index")]
+    O -->|"URL / file"| PP
+    PP -->|"shell-out: fetch+convert<br/>(html2md owns Wikipedia/arXiv)"| H
+    PP -->|"envelope: raw_path +<br/>known_concepts + existing_page_slugs"| O
+    KC -.->|"reuse existing names"| O
+    O -->|"REASON: translate / summarise<br/>→ note JSON"| AP
+    AP -->|"--source-page=note slug<br/>+ FRESH note-body hash"| EC
+    AP -->|"index the note"| UP
+    EC --> FS
+    UP --> DB
+    EC --> DB
+    classDef llm fill:#eef,stroke:#88a,color:#000;
+    classDef cli fill:#eef7ee,stroke:#5a5,color:#000;
+    classDef ext fill:#fdeede,stroke:#e0a050,color:#000;
+    classDef disc fill:#fff3cd,stroke:#d4a017,color:#000;
+    classDef store fill:#eee,stroke:#999,color:#000;
+    class O llm; class PP,AP,EC,UP cli; class H ext; class KC disc; class FS,DB store;
+```
+
+**Read the divergence:** Karpathy's summary generator is *external* (`summarizing-meetings`,
+invoked by `wiki-ingest`); PARA's is the *orchestrator* (the `prepare`→REASON→`apply`
+loop). Both inject `known_concepts` (orange diamond) — the discipline whose *absence* in
+ad-hoc PARA imports caused the orphan-link / `defi`-evicts-`Defi.md` failures TASK 038 fixes.
+Filing diverges (root vs sibling `_concepts/`); both terminate at the one SQLite index and
+are Class-B-rebuildable from the markdown (`wiki-reindex --full`).
+
+---
+
 
 ## Sync Dispatcher — `wiki-sync` (TASK 018 / R-11)
 

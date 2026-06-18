@@ -1054,3 +1054,33 @@
   no data loss) and the exotic-script `str.lower()` vs slugify divergence (theoretical) — both
   benign-degradation, unusual-vault. 1536 pytest, mypy strict.
 
+### 11d. TASK 038 — `wiki-import-article` PARA construct path (design rationale)
+
+- **Q-038-1 (thin CLI vs. workflow-only orchestration of existing CLIs).** RESOLVED → **thin
+  Decision-17 CLI** (`prepare`/`apply`) for the *plumbing* (fetch-dispatch, known-concepts
+  emit, authoring glue, collision guard); reasoning stays in the SKILL/workflow. Why not
+  workflow-only: the DAO/#01 batches proved the glue (name sanitization, verbatim-quote
+  guarantee, self/existing-slug collision guard, never-empty-`_raw/`) is real, bug-prone logic
+  that needs a *tested home* — leaving it in prose re-grows the same defects each batch
+  (orphan-links, `defi` evicting `Defi.md`). Why not a heavy CLI that also does the fetch:
+  NF-2 — `html2md`/`pdf` already own fetch+convert (and html2md now owns the Wikipedia/arXiv
+  rewrites), so the CLI *shells out* (wiki-enrich → wiki-ingest precedent) and never duplicates.
+- **Q-038-2 (source of `known_concepts` + `existing_page_slugs`).** RESOLVED → reuse the
+  **existing `wiki-extract-concepts` machinery**: its `prepare` already emits `known_concepts`
+  (+ `missing_concept_files`). `existing_page_slugs` (the collision-guard set) = the target
+  project's `pages.slug` ∪ `_concepts/` slugs ∪ note-stem slugs, read from the DB/FS — no new
+  store, zero-DDL. The CLI assembles the envelope from these; it does not invent a parallel index.
+- **Q-038-3 (fetch dispatch to global skills).** RESOLVED → **shell out with configurable bin
+  paths** (`--html2md-bin`, `--pdf-extract-bin`, defaulting to the canonical
+  `~/.claude/skills/.../*.py`), **fail-fast** if absent (wiki-enrich `--wiki-ingest-bin` +
+  version-gate precedent). Dispatch rule: `http(s)` non-PDF → html2md; `*.pdf`/`arxiv_no_html`
+  fallback → pdf skill. html2md's typed exits (`FetchFailed`, `EmptyExtraction` 11,
+  `arxiv_no_html`) propagate into `prepare`'s envelope; on any of them **no `_raw/` is written**.
+- **Q-038-4 (batch path — CLI `--batch` vs. documented Workflow recipe).** RESOLVED → **documented
+  Workflow-tool recipe** in `workflows/wiki-import-article.md` (the proven DAO/#01 shape: parallel
+  translation agents under a schema, then serialized `apply` to avoid SQLite WAL write contention).
+  The CLI stays **per-article** (one `prepare`+`apply` per source) — keeps it composable and
+  idempotent; a `--batch` mode would re-implement the orchestrator's fan-out inside Python for no
+  gain and would serialize the expensive reasoning step. Accepted residual: the per-invocation
+  `resolve_layout_config` cost (same as Q-037-4's PARA note path — one source per call, no `--batch`).
+

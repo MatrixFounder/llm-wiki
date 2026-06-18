@@ -176,6 +176,51 @@ TASK 009 pattern — Q-029-1). Verified-surface snapshot:
 `samples/obsidian-cli-recon/` (scratch) → durable fixture lands under
 `skills/obsidian-cli/evals/` when the reference is authored (TASK 029 A-4).
 
+**§2.3 PARA construct path `wiki-import-article` (TASK 038 / R-038 — the PARA analog of
+wiki-enrich).** The framework's Karpathy construct path is `wiki-enrich` → external
+`wiki-ingest` → (Phase 2) `summarizing-meetings` → concept/entity wiring → index, whose
+load-bearing discipline is *passing the known-concepts list to the summary generator* so
+`[[wiki-links]]` reuse existing names and never dangle/collide. **PARA had no packaged
+equivalent** — `wiki-ingest` writes Karpathy `_sources/` + root `_concepts/_entities/`,
+wrong for PARA (TASK 024 finding #2). This component packages the PARA path as a new
+**Decision-17** CLI (no `import anthropic`; `prepare`/`apply`) plus a skill/command/workflow
+triple. It is **composition, not reinvention** (NF-2): `prepare` shells out to the global
+`html2md` (URL/HTML — which post-2026-06-18 itself owns the Wikipedia-REST-HTML and
+arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html`) and the `pdf` skill
+(PDF), writes `_raw/<slug>.md` **only on a non-empty fetch**, and emits an envelope adding
+`known_concepts[]` + `existing_page_slugs[]` (sourced from the existing
+`wiki-extract-concepts` machinery). The orchestrator (LLM) owns translation/summary,
+**fed the known_concepts** (R-6, the core fix). `apply` is the authoring glue the DAO/#01
+batches did by hand — per-mode note assembly (full/summary/thread), `_NAME_ALLOWLIST` name
+sanitization, verbatim-`source_quote` guarantee, and the **collision guard** (skip a
+candidate whose slug == the source note's own slug, or collides with an
+`existing_page_slugs` entry — so a generic `defi` concept never evicts the owner's
+`Defi.md`) — then delegates concept filing to `wiki-extract-concepts apply` and indexing to
+`wiki-index-upsert`/`wiki-reindex`. **Two distinct hashes (do not conflate):**
+`prepare.source_hash = sha256(_raw bytes)` is for wiki-import-article's own import idempotency
+(R-7) only; the `--source-hash` fed to `wiki-extract-concepts apply` is a **fresh
+`sha256` of the just-written PARA note body** (apply re-resolves + re-hashes the *filed
+note* and rejects a mismatch as `SOURCE_CHANGED_DURING_EXTRACTION`), with the note's own slug
+as that call's `--source-page`. The name sanitizer is a **pre-normalizer that feeds** the
+existing `_validation._sanitize_name` reject-gate (rewrite `/`/em-dash/guillemets → safe so
+the candidate then passes that gate; reuses its `_NAME_ALLOWLIST`, no duplicate). All write
+surfaces (`_raw/`, note, concept pages) route through `validate_inside_vault` (R-26) +
+`_is_valid_slug` (a hostile fetched title cannot traverse), and the assembled note body —
+YAML frontmatter scalars (title/URL/author/published/tldr) are newline/control-stripped and
+quoted (H-6 frontmatter-injection guard); the note BODY is orchestrator-authored markdown,
+kept structural (escaping a translation's headings/lists would defeat the purpose — same
+trust posture as `wiki-ingest`/`summarizing-meetings` summaries), while the generated
+**concept pages** are markdown-sanitized by extract-concepts' `write_concept_page`
+(`_sanitize_markdown_text`). The `html2md`/`pdf` shell-outs are external
+skill **binaries** (configurable `--*-bin`, fail-fast if absent) — NOT Python runtime
+dependencies, so NF-1 "zero new deps" holds. Zero impact on §4 Data Model (no DDL — rides
+`pages`/`entities`/`page_entity_refs`), §6 Stack (no deps). §5 Interfaces gains ONE new CLI
+surface (`wiki-import-article prepare|apply` + envelopes). Batch import (the DAO/#01 pattern)
+stays a documented **Workflow-tool recipe** in `workflows/wiki-import-article.md` (parallel
+translation; serialized DB writes), not a CLI mode. **Skill-call flow diagrams (Karpathy vs PARA,
+mermaid)** are in [functional-architecture §2.3](./architectures/functional-architecture.md).
+Design rationale: open-questions Q-038-*.
+
 ---
 
 ## 3. System Architecture
