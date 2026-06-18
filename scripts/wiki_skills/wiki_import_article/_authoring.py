@@ -99,6 +99,8 @@ def assemble_note(
     today: str,
     folder_kind: str,
     san_names: list[str],
+    note_type: str = "article-summary",
+    fname: str | None = None,
 ) -> tuple[str, str]:
     """Build (filename, full note text) for the given mode. `san_names` are the
     already-sanitized entity names used for the `## Ключевые сущности` wikilinks."""
@@ -108,7 +110,9 @@ def assemble_note(
     # markdown (same trust posture as wiki-ingest/summarizing-meetings summaries) and is
     # NOT escaped — escaping would mangle a legitimate translation's headings/lists.
     title = _fm_scalar(note.get("title_ru") or "untitled")
-    fname = fname_sanitize(title) + ".md"
+    # PARA files under the human title; karpathy passes an explicit slug-based fname
+    # (its `identity` strategy makes filename == slug, which must be a valid lowercase slug).
+    fname = fname or (fname_sanitize(title) + ".md")
     tldr = _fm_scalar((note.get("tldr") or "").replace('"', "'"))[:300]
     author = _fm_scalar(note.get("author") or "")
     published = _fm_scalar(note.get("published") or "")
@@ -133,7 +137,7 @@ def assemble_note(
 
     fm = (
         "---\n"
-        "type: article-summary\n"
+        f"type: {note_type}\n"
         f'title: "{title.replace(chr(34), chr(39))}"\n'
         f'URL: "{url.replace(chr(34), chr(39))}"\n'
         + (f'author: "{author.replace(chr(34), chr(39))}"\n' if author else "")

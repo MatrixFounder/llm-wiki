@@ -1,8 +1,12 @@
-"""`wiki-import-article` — the PARA construct path (TASK 038).
+"""`wiki-import` — the unified construct path (TASK 039; generalizes TASK 038's
+`wiki-import-article`, kept as a back-compat alias).
 
-The PARA analog of `wiki-enrich`: a Decision-17 CLI (no `import anthropic`; the
-orchestrator owns translation/summary) that packages the deterministic plumbing
-for importing an external article/paper/thread into a PARA Obsidian vault.
+A Decision-17 CLI (no `import anthropic`; the orchestrator owns the REASON step) that
+imports an external article / paper / thread / meeting transcript / finished summary
+into ANY layout's vault, along two orthogonal axes: **content-type → which REASON harness**
+(`prepare` detects `--kind` → the universal `summarizing-meetings` harness, or none) and
+**layout (config) → where it files** (Karpathy `_sources/`+root `_concepts/` vs PARA
+topic-folder+sibling `_concepts/`, via `resolve_layout_config` — one code path).
 
 Two subcommands:
   * ``prepare`` — deterministically fetch+convert a source to ``_raw/<slug>.md``
@@ -35,6 +39,7 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import (
     _apply_slug_strategy,
     derive_project_for_path,
+    resolve_alias,
     resolve_layout_config,
 )
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
@@ -48,14 +53,27 @@ from ._authoring import (
     name_is_filable,
     sanitize_name,
 )
+from ._detect import KINDS, detect_kind, harness_for
 from ._errors import EXIT_BAD_ARG, EXIT_DEP_MISSING, EXIT_FETCH_FAILED, ImportArticleError
-from ._fetch import dispatch_fetch
+from ._fetch import _parse_frontmatter, dispatch_fetch
+
+# kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
+_KIND_NOTE_TYPE = {
+    "meeting": "meeting-summary", "article": "article-summary",
+    "paper": "article-summary", "thread": "article-summary", "summary": "summary",
+}
 
 __version__ = "1.0"
 
 _DEFAULT_HTML2MD = "~/.claude/skills/html2md/scripts/html2md.py"
 _DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
+# MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
+# lowercase-kebab slug, decoupled from the vault's layout `slug_strategy` (karpathy's
+# `identity` preserves source-FILENAME case — it is NOT for minting new concept slugs).
+# Round-trips under both layouts: the concept file is named `<slug>.md`, so identity reads
+# back the lowercase stem unchanged and preserve-unicode lowercases an already-lowercase stem.
+_MINT_SLUG = "preserve-unicode"
 
 
 def _derive_slug(title: str | None, source: str, slug_strategy: str) -> str:
@@ -102,8 +120,9 @@ def prepare(args: argparse.Namespace) -> int:
             "hint": "source unreachable/empty — file a needs-manual stub by hand.",
         }, exit_code=EXIT_FETCH_FAILED)
 
-    # 2. slug + raw path (containment + slug validity — R-26)
-    slug = args.slug or _derive_slug(result.title, args.source, slug_strategy)
+    # 2. slug + raw path (containment + slug validity — R-26). Mint via _MINT_SLUG so a
+    # capitalized title under karpathy's `identity` strategy still yields a valid slug.
+    slug = args.slug or _derive_slug(result.title, args.source, _MINT_SLUG)
     if not _is_valid_slug(slug, max_len=None):
         return emit({"error": "INVALID_SLUG",
                      "message": f"derived slug {slug!r} is not a valid page slug; pass --slug",
@@ -138,6 +157,13 @@ def prepare(args: argparse.Namespace) -> int:
     existing = _context.existing_page_slugs(
         db_path, args.vault, project, folder_abs, slug_strategy=slug_strategy)
 
+    # content-type → REASON harness (R-2). `auto` detects; an explicit --kind overrides.
+    if args.kind == "auto":
+        fm = _parse_frontmatter(result.raw_text or "")
+        kind, kind_conf = detect_kind(result.raw_text, args.source, fm)
+    else:
+        kind, kind_conf = args.kind, "explicit"
+
     return emit({
         "action": "prepared",
         "vault_id": args.vault,
@@ -146,6 +172,9 @@ def prepare(args: argparse.Namespace) -> int:
         "slug": slug,
         "project": project,
         "mode": args.mode,
+        "kind": kind,
+        "reason_harness": harness_for(kind),
+        "kind_confidence": kind_conf,
         "title": result.title,
         "author": result.author,
         "date": result.date,
@@ -166,6 +195,24 @@ def _folder_kind(folder: str) -> str:
     return "invest" if any(h in low for h in _INVEST_HINTS) else "crypto"
 
 
+def _note_type(kind: str, layout: Any) -> str:
+    """Per-kind note `type:`, layout-safe: fall back to `summary` (mapped by every
+    layout) when the preferred type isn't in this layout's type_mapping (e.g. karpathy
+    has no `article-summary`)."""
+    pref = _KIND_NOTE_TYPE.get(kind, "article-summary")
+    return pref if pref in layout.type_mapping else "summary"
+
+
+def _note_dir(layout: Any, vault_root: Path, folder_abs: Path) -> Path:
+    """Layout-aware note target: Karpathy files sources under `_sources/`; every other
+    (PARA-family) layout files the note in its topic folder. One code path, config-driven."""
+    if resolve_alias(layout.layout) == "karpathy":
+        d = vault_root / "_sources"
+        d.mkdir(parents=True, exist_ok=True)
+        return validate_inside_vault(d, vault_root)
+    return folder_abs
+
+
 def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
     if args.note_stdin:
         raw = sys.stdin.read()
@@ -179,9 +226,12 @@ def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
     except json.JSONDecodeError as e:
         raise ImportArticleError("BAD_NOTE_JSON", f"note JSON is invalid: {e}",
                                  exit_code=EXIT_BAD_ARG) from e
-    if not isinstance(note, dict) or "title_ru" not in note or "entities" not in note:
+    if (not isinstance(note, dict)
+            or not isinstance(note.get("title_ru"), str) or not note["title_ru"].strip()
+            or not isinstance(note.get("entities"), list)):
         raise ImportArticleError(
-            "BAD_NOTE_JSON", "note must be an object with title_ru + entities",
+            "BAD_NOTE_JSON",
+            "note must be an object with a non-empty string title_ru + a list entities",
             exit_code=EXIT_BAD_ARG)
     return note
 
@@ -216,7 +266,7 @@ def _file_concepts(vault: str, vault_root: Path, db_path: str | None, source_pag
                    ) -> tuple[int, dict[str, Any]]:
     argv = ["apply", "--vault", vault, "--vault-root", str(vault_root),
             "--source-page", source_page, "--source-hash", source_hash,
-            "--candidates-stdin", "--ingest", "--orchestrator-id", "wiki-import-article"]
+            "--candidates-stdin", "--ingest", "--orchestrator-id", "wiki-import"]
     if db_path:
         argv += ["--db-path", db_path]
     return _run_module("scripts.wiki_skills.wiki_extract_concepts", argv,
@@ -227,7 +277,8 @@ def apply(args: argparse.Namespace) -> int:
     vault_root = args.vault_root.resolve(strict=True)
     cfg = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     db_path = cfg.get("db_path")
-    slug_strategy = resolve_layout_config(vault_root).slug_strategy
+    layout = resolve_layout_config(vault_root)
+    slug_strategy = layout.slug_strategy
 
     try:
         folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
@@ -238,17 +289,31 @@ def apply(args: argparse.Namespace) -> int:
 
     note = _load_note_json(args)
     today = args.today or datetime.date.today().isoformat()
+    note_type = _note_type(args.kind, layout)
     raw_rel = args.raw_rel  # required (see parser) — always prepare's real raw_path, never re-slugified
     san_names = [n for n in (sanitize_name(e.get("name", "")) for e in note["entities"])
                  if name_is_filable(n)]
 
+    # karpathy: filename == slug (identity strategy) → file as <minted-slug>.md, not the human
+    # title; the minted slug MUST be valid (a title that slugifies to "" would yield ".md").
+    is_karpathy = resolve_alias(layout.layout) == "karpathy"
+    karp_fname = None
+    if is_karpathy:
+        karp_slug = _apply_slug_strategy(note["title_ru"], _MINT_SLUG)
+        if not _is_valid_slug(karp_slug, max_len=None):
+            return emit({"error": "INVALID_SLUG",
+                         "message": f"title {note['title_ru']!r} does not slugify to a valid "
+                                    "karpathy source filename; rename it or use a PARA layout"},
+                        exit_code=EXIT_BAD_ARG)
+        karp_fname = f"{karp_slug}.md"
+
     fname, note_text = assemble_note(
         note, mode=args.mode, raw_rel_basename=raw_rel,
         source_url=args.source_url or str(note.get("URL", "")),
-        source_lang=args.source_lang, today=today,
-        folder_kind=_folder_kind(args.folder), san_names=san_names)
+        source_lang=args.source_lang, today=today, note_type=note_type,
+        folder_kind=_folder_kind(args.folder), san_names=san_names, fname=karp_fname)
 
-    note_path = folder_abs / fname
+    note_path = _note_dir(layout, vault_root, folder_abs) / fname
     if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)
         return emit({"error": "REFUSED_SYMLINK",
                      "message": f"{fname!r} is a symlink; refusing to write through it"},
@@ -256,7 +321,10 @@ def apply(args: argparse.Namespace) -> int:
     atomic_write_text(note_path, note_text)  # os.replace → does not follow a symlink
     note_path = validate_inside_vault(note_path, vault_root)
     note_rel = str(note_path.relative_to(vault_root))
-    note_slug = _apply_slug_strategy(note_path.stem, slug_strategy)
+    # minted slug (lowercase-kebab) — used only for the self-collision check + manifest;
+    # extract-concepts gets the note's REL PATH as --source-page, so the indexed page slug
+    # (layout strategy) is resolved downstream, not here.
+    note_slug = _apply_slug_strategy(note_path.stem, _MINT_SLUG)
     # hash the ON-DISK bytes so the two-hash contract is newline-translation-proof
     note_hash = hashlib.sha256(note_path.read_bytes()).hexdigest()
 
@@ -275,7 +343,7 @@ def apply(args: argparse.Namespace) -> int:
             db_path, args.vault, project, folder_abs, slug_strategy=slug_strategy)
 
     candidates, skipped = derive_candidates(
-        note["entities"], note_text, slug_strategy=slug_strategy,
+        note["entities"], note_text, slug_strategy=_MINT_SLUG,
         note_slug=note_slug, existing_page_slugs=existing)
 
     # the source note must be indexed BEFORE concept refs can attach to it
@@ -312,8 +380,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="wiki-import-article",
-        description="PARA construct path: fetch+convert (prepare) → author+file (apply).")
+        prog="wiki-import",
+        description="Unified construct path: fetch+convert (prepare) → REASON → author+file (apply); content-type + layout from config.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     pp = sub.add_parser("prepare", help="Fetch+convert a source; emit known_concepts context.")
@@ -322,6 +390,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--folder", required=True,
                     help="Target PARA folder, vault-relative (e.g. '05 - Материалы/Криптовалюты')")
     pp.add_argument("--mode", choices=("full", "summary", "thread"), default="full")
+    pp.add_argument("--kind", choices=KINDS, default="auto",
+                    help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
     pp.add_argument("--html2md-bin", default=_DEFAULT_HTML2MD)
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
@@ -331,6 +401,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common(ap)
     ap.add_argument("--folder", required=True, help="Target PARA folder (as in prepare)")
     ap.add_argument("--mode", choices=("full", "summary", "thread"), default="full")
+    ap.add_argument("--kind", choices=[k for k in KINDS if k != "auto"], default="article",
+                    help="content-type from prepare; sets the note `type:` (layout-safe)")
     ap.add_argument("--note-file", default=None,
                     help="Path to the orchestrator's note JSON (mutex with --note-stdin)")
     ap.add_argument("--note-stdin", action="store_true",

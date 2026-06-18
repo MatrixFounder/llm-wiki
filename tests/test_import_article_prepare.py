@@ -45,6 +45,9 @@ def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     assert out["project"] == "Материалы/Криптовалюты"
     assert out["known_concepts"] == [{"slug": "amm", "name": "AMM"}]
     assert out["existing_page_slugs"] == ["defi", "uniswap"]
+    # R-2: content-type detection fields present in the envelope (auto-detected → article)
+    assert out["kind"] == "article" and out["reason_harness"] == "summarizing-meetings"
+    assert out["kind_confidence"] == "low"
     assert len(out["source_hash"]) == 64
     raw = vault / out["raw_path"]
     assert raw.exists() and raw.read_text() == "# Guide\n\nbody\n"

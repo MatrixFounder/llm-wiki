@@ -694,91 +694,63 @@ graph TB
 
 ---
 
-### 2.3. Construct paths — skill-call flow (Karpathy vs PARA)
+### 2.3. The construct path — one pipeline, two orthogonal axes (TASK 039)
 
-The two **construct on-ramps** turn a raw source into a *compounding* node (summary
-page + concept/entity pages + index). They share one load-bearing discipline —
-**the summary generator is fed the `known_concepts` list** so `[[wikilinks]]` reuse
-existing names and never dangle/collide — but differ in *who generates* and *where it
-files*. (Decision-17 throughout: the CLIs are deterministic plumbing; the **one
-reasoning step is the LLM's**, never inside a CLI.)
+Knowledge enters the wiki through **one** config-driven construct path, **`wiki-import`**
+(`wiki-import-article` is a back-compat alias). It is **not** forked per layout; it has two
+**orthogonal** concerns:
 
-**Karpathy — `wiki-enrich` → external `wiki-ingest` → `summarizing-meetings`** (ADR-001).
-The generator is an external skill; pages land in `_sources/` + **vault-root**
-`_concepts/_entities/`.
+- **content-type → WHICH REASON harness** (the generation step — the orchestrator's one LLM step,
+  Decision-17): **all content-types run the ONE universal `summarizing-meetings` harness** (it
+  auto-detects + handles meetings AND articles/papers/threads); finished `summary` → no REASON
+  (register directly). `prepare --kind auto` detects the kind (for the note `type:` + reporting); `--kind` overrides.
+- **layout (CONFIG) → WHERE it files**: `resolve_layout_config` decides Karpathy (`_sources/` + **root**
+  `_concepts/`) vs PARA (topic-folder + **sibling** `_concepts/`) — the SAME code path already used by
+  `wiki-index-upsert` (TASK 024) and `wiki-extract-concepts` (TASK 037).
 
-```mermaid
-flowchart TD
-    O(["Orchestrator / LLM"])
-    WE["wiki-enrich<br/>(this repo)"]
-    WI[["wiki-ingest<br/>external skill"]]
-    SM[["summarizing-meetings<br/>external skill"]]
-    KC{{"known_concepts<br/>injected"}}
-    FS[/"_sources/&lt;slug&gt;.md<br/>+ ROOT _concepts/ _entities/"/]
-    DB[("SQLite index")]
-    O -->|"raw source file"| WE
-    WE -->|"shell-out + version-gate"| WI
-    WI -->|"Phase 2: delegate summary"| SM
-    KC -.->|"reuse existing names"| SM
-    SM -->|"summary .md + [[wikilinks]]"| WI
-    WI -->|"+ concept/entity wiring → JSON manifest"| WE
-    WI --> FS
-    WE -->|"mirror manifest → index"| DB
-    classDef llm fill:#eef,stroke:#88a,color:#000;
-    classDef cli fill:#eef7ee,stroke:#5a5,color:#000;
-    classDef ext fill:#fdeede,stroke:#e0a050,color:#000;
-    classDef disc fill:#fff3cd,stroke:#d4a017,color:#000;
-    classDef store fill:#eee,stroke:#999,color:#000;
-    class O llm; class WE cli; class WI,SM ext; class KC disc; class FS,DB store;
-```
-
-**PARA — `wiki-import-article` `prepare` → LLM REASON → `apply`** (TASK 038; see
-ARCHITECTURE §2.3). The generator is the **orchestrator itself** (no external summary
-skill); the note lands in its **topic folder** with a **sibling** `_concepts/`. `prepare`
-emits the `known_concepts` so the reasoning step can honour the discipline; `apply`
-delegates concept filing to `wiki-extract-concepts` and indexing to `wiki-index-upsert`.
+The two axes are independent, so `{meeting, article, paper, thread, summary} × {Karpathy, PARA, …}`
+all flow through this one path; the load-bearing discipline — **the REASON harness is fed
+`known_concepts`** so `[[wikilinks]]` reuse existing names and never dangle/collide — holds for every cell.
 
 ```mermaid
-flowchart TD
-    O(["Orchestrator / LLM"])
-    PP["wiki-import-article<br/>prepare"]
-    H[["html2md / pdf<br/>external skills"]]
-    SA[/"summarizing-articles harness<br/>PRE-FLIGHT + self-verify"/]
-    AP["wiki-import-article<br/>apply"]
-    EC["wiki-extract-concepts<br/>apply"]
-    UP["wiki-index-upsert"]
-    KC{{"known_concepts<br/>injected"}}
-    FS[/"&lt;topic-folder&gt;/&lt;note&gt;.md<br/>+ SIBLING _concepts/"/]
-    DB[("SQLite index")]
-    O -->|"URL / file"| PP
-    PP -->|"shell-out: fetch+convert<br/>(html2md owns Wikipedia/arXiv)"| H
-    PP -->|"envelope: raw_path +<br/>known_concepts + existing_page_slugs"| O
-    SA -.->|"model-agnostic procedure<br/>(the REASON harness)"| O
-    KC -.->|"reuse existing names"| O
-    O -->|"REASON: translate / summarise<br/>→ note JSON"| AP
-    AP -->|"--source-page=note slug<br/>+ FRESH note-body hash"| EC
-    AP -->|"index the note"| UP
-    EC --> FS
-    UP --> DB
-    EC --> DB
-    classDef llm fill:#eef,stroke:#88a,color:#000;
+flowchart LR
+    SRC[/"source<br/>URL · PDF · dropped file"/] --> PREP["wiki-import<br/>prepare"]
+    PREP -->|acquire| ACQ[["html2md / pdf<br/>(external)"]]
+    PREP --> KIND{{"detect content-type<br/>(--kind auto)"}}
+    KIND -->|meeting| R
+    KIND -->|article · paper · thread| R
+    KIND -->|finished summary| FILE
+    KC{{"known_concepts<br/>injected"}} -.->|reuse names| R
+    subgraph REASON["REASON — orchestrator's one LLM step; harness by content-type"]
+      R(["summarizing-meetings<br/>(universal content harness)"])
+    end
+    R -->|note JSON| FILE["wiki-import<br/>apply"]
+    FILE --> LAY{{"layout<br/>(resolve_layout_config)"}}
+    LAY -->|karpathy| KP[/"_sources/&lt;slug&gt;.md<br/>+ ROOT _concepts/"/]
+    LAY -->|para| PA[/"&lt;topic-folder&gt;/&lt;note&gt;.md<br/>+ SIBLING _concepts/"/]
+    FILE --> IDX["wiki-extract-concepts<br/>+ wiki-index-upsert"] --> DB[("SQLite index")]
     classDef cli fill:#eef7ee,stroke:#5a5,color:#000;
     classDef ext fill:#fdeede,stroke:#e0a050,color:#000;
     classDef disc fill:#fff3cd,stroke:#d4a017,color:#000;
     classDef store fill:#eee,stroke:#999,color:#000;
     classDef harness fill:#f0e8fe,stroke:#85a,color:#000;
-    class O llm; class PP,AP,EC,UP cli; class H ext; class KC disc; class FS,DB store; class SA harness;
+    class PREP,FILE,IDX cli; class ACQ ext; class KIND,LAY,KC disc; class SRC,KP,PA,DB store; class R harness;
 ```
 
-**Read the divergence:** both paths run a **generation harness** with the same discipline,
-but invoked differently. Karpathy's is the *external* `summarizing-meetings` skill, called by
-`wiki-ingest`; PARA's is `summarizing-articles` (purple), a **model-agnostic** harness
-(PRE-FLIGHT + self-verification) the *orchestrator* follows during the `prepare`→REASON→`apply`
-loop — Decision-17 keeps the generator out of the CLI, the harness keeps the floor high on any
-model. Both inject `known_concepts` (orange diamond) — the discipline whose *absence* in ad-hoc
-PARA imports caused the orphan-link / `defi`-evicts-`Defi.md` failures TASK 038 fixes. Filing
-diverges (root vs sibling `_concepts/`); both terminate at the one SQLite index and are
-Class-B-rebuildable from the markdown (`wiki-reindex --full`).
+**Orthogonality (every cell = the same path):**
+
+| content-type \ layout | Karpathy (`_sources/`+root) | PARA (folder+sibling) |
+|---|---|---|
+| **meeting** → `summarizing-meetings` | ✓ | ✓ (closes the TASK 038 hole) |
+| **article/paper/thread** → `summarizing-meetings` (same universal harness) | ✓ | ✓ (TASK 038) |
+| **finished summary** → register directly | ✓ | ✓ |
+
+**Legacy / coexisting:** the original Karpathy-raw on-ramp `wiki-enrich` → external `wiki-ingest`
+→ (Phase 2) `summarizing-meetings` stays as-is (external, Karpathy-hardwired filing); it overlaps
+the top-left cells. A future task may route `wiki-sync ingest` → `wiki-import` to retire the overlap.
+Decision-17 throughout: every CLI is deterministic plumbing; the single reasoning step is the
+harness-guided LLM, never inside a CLI. Skill-call detail + the `summarizing-meetings` note-JSON
+alignment: TASK 039 + the `summarizing-meetings` postanovka.
 
 ---
 

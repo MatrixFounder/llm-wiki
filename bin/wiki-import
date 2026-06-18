@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$REPO/.venv/bin/activate"
+export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONSAFEPATH=1
+exec python -m scripts.wiki_skills.wiki_import_article "$@"

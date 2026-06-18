@@ -1084,3 +1084,28 @@
   gain and would serialize the expensive reasoning step. Accepted residual: the per-invocation
   `resolve_layout_config` cost (same as Q-037-4's PARA note path — one source per call, no `--batch`).
 
+### 11e. TASK 039 — unified construct path (design rationale)
+
+- **Q-039-1 (rename strategy).** RESOLVED → **keep the module dir** `scripts/wiki_skills/wiki_import_article/`
+  (avoid churn / preserve the committed import history); add **`wiki-import`** as the primary
+  bin/skill/command/workflow names, and keep **`wiki-import-article` as a back-compat alias** (bin
+  symlink + an alias skill/command pointing at the same module). The CLI prog name becomes
+  `wiki-import`; the package internal name is cosmetic. Why not a hard rename: the #01/#04 docs +
+  TASK 038 commit reference `wiki-import-article` — aliasing keeps them valid (R-6).
+- **Q-039-2 (content-type detection).** RESOLVED → `--kind {meeting,article,paper,thread,summary,auto}`,
+  `auto` = heuristic PRE-FLIGHT (speaker-turn / timestamp markers → meeting; `concepts:`+`related:` or
+  `type: *-summary` frontmatter → finished-summary; arXiv/PDF-dense → paper; X/thread host → thread;
+  else article). `auto` REPORTS its guess + confidence in the envelope so the operator can correct via
+  explicit `--kind`; low confidence is surfaced, never silently guessed. Detection is advisory — the
+  REASON harness is chosen by the orchestrator from the reported kind (Decision-17: no LLM in the CLI).
+- **Q-039-3 (layout-aware filing in `apply`).** RESOLVED → `apply` derives BOTH the note target and the
+  concepts dir from `resolve_layout_config`, one code path: Karpathy → note `_sources/<slug>.md` + root
+  `_concepts/`; PARA → note `<folder>/<slug>.md` + sibling `_concepts/`. Concept filing already rides
+  the layout-aware `wiki-extract-concepts` (TASK 037); the new work is the **note** target + per-kind
+  `type:` (`meeting-summary`/`article-summary`/`summary`) by layout+kind, not hard-coded `article-summary`.
+- **Q-039-4 (dependency on the external `summarizing-meetings` upgrade).** RESOLVED → **no hard
+  dependency.** Until `summarizing-meetings` ships its opt-in note-JSON mode (separate postanovka), the
+  meeting REASON harness is the orchestrator *following* `summarizing-meetings`' PRE-FLIGHT/self-verify
+  procedure and emitting the reason-contract note JSON (same as `summarizing-articles` works today). The
+  upstream upgrade later makes that emission native; TASK 039 does not block on it.
+

@@ -1,107 +1,93 @@
-# TASK 038 — `wiki-import-article`: PARA construct path (the PARA analog of wiki-enrich/wiki-ingest)
+# TASK 039 — unify the construct path: content-type-dispatched REASON + layout-aware filing
 
 ## 0. Meta
-- **Task ID:** 038 · **Slug:** `task-038-wiki-import-article-para-ingest`
-- **Mode:** VDD (code-reviewer + critic-security + self-improvement-verificator on the
-  plan). Code task (`scripts/`, `tests/`, `skills/`, `commands/`, `workflows/`, `docs/`),
-  green-throughout, `mypy --strict scripts/`. **Zero DDL** (`user_version` stays **7**),
-  **zero new runtime deps**, **no `import anthropic`** (Decision-17). Karpathy paths
-  untouched.
-- **Branch:** `task-038-wiki-import-article-para-ingest`.
+- **Task ID:** 039 · **Slug:** `task-039-unified-construct-path`
+- **Mode:** VDD (code-reviewer + critic-security + critic-logic + self-improvement-verificator
+  on the plan). Code task (`scripts/`, `tests/`, `skills/`, `commands/`, `workflows/`, `docs/`),
+  green-throughout, `mypy --strict scripts/`. **Zero DDL** (`user_version` 7), **zero new deps**,
+  **no `import anthropic`** (Decision-17). Back-compat: TASK 038's surface keeps working (alias).
+- **Branch:** `task-039-unified-construct-path`.
 
 ## 1. Problem / motivation
 
-The framework has a polished, packaged **construct path for Karpathy**:
-`wiki-enrich` → external `wiki-ingest` → (Phase 2) `summarizing-meetings`
-→ concept/entity wiring → SQLite index. The key discipline there is that
-`wiki-ingest` **passes the known-concepts list to the summary generator** so the
-summary's `[[wiki-links]]` reuse existing concept names and don't dangle or collide
-(wiki-ingest SKILL.md:34 "always pass known-concepts").
+TASK 038 split the construct on-ramp along the **wrong axis — by layout**: `wiki-enrich`
+(Karpathy) vs `wiki-import-article` (PARA). That contradicts the framework's own
+config-driven-layout principle (a layout is a drop-in YAML; skills are layout-aware via
+`resolve_layout_config`, not forked per layout — exactly how `wiki-index-upsert` (TASK 024)
+and `wiki-extract-concepts` (TASK 037) already work).
 
-For **PARA** vaults (the user's personal vault, `obsidian-personal` layout) there is
-**no packaged equivalent**. `wiki-ingest` is Karpathy-only — it writes summaries to
-`_sources/` and concept/entity pages to the **vault-root** `_concepts/_entities/`, which
-is wrong for PARA (TASK 024 finding #2: PARA files a summary as a *note* in its topic
-folder + sibling `_concepts/`). So every PARA article import is improvised ad-hoc.
+The fork has a concrete hole: **a meeting transcript dropped into a PARA vault has no clean
+path.** `wiki-import-article` is article-shaped (REASON harness was article-only);
+`wiki-enrich`→`wiki-ingest`→`summarizing-meetings` files Karpathy layout (wrong for PARA,
+TASK 024 finding #2); the user's meetings went through an ad-hoc
+`/generate-detailed-meeting-summary`+`wiki-index-upsert`. Three inconsistent entry points.
 
-The DAO + #01 import batches proved the cost of improvising: the ad-hoc Workflow
-**skipped the known-concepts injection** and re-hit exactly the failures the Karpathy
-chain prevents — ~12 orphan `[[wikilinks]]`, a self-collision (`усреднение-стоимости`),
-and a generic-name collision where a new `defi` concept page **evicted the owner's
-existing `Defi.md` note from the index**. Each batch also re-derived the same glue by
-hand (`/tmp/g01_author.py`, `g01_fix_quotes.py`): name sanitization, verbatim-quote
-guarantee, per-mode note assembly, and the empty-raw-on-FetchFailed bug.
+**The construct pipeline has TWO orthogonal concerns, and they must be decoupled:**
+- **Layout (CONFIG) → WHERE it files.** Derived from `resolve_layout_config`; one code path
+  files Karpathy (`_sources/` + root `_concepts/`) OR PARA (topic-folder + sibling `_concepts/`).
+- **Content-type (DETECT/flag) → the note `type:` + what the harness emphasizes.** All
+  content-types run the ONE universal `summarizing-meetings` harness; finished-summary → no REASON.
 
-**This task packages the PARA construct path** — the PARA analog of `wiki-enrich` — so it
-is repeatable, idempotent, and **reuses the known-concepts discipline by design** instead
-of re-discovering its absence each batch.
+This task generalizes TASK 038's `wiki-import-article` into ONE content-type-dispatched,
+layout-aware **`wiki-import`** so `{meeting, article, paper, thread, summary} × {Karpathy, PARA, …}`
+all flow through the same path, layout chosen by config — the universal approach.
 
 ## 2. Scope
 
 ### In scope
-- A new **Decision-17** CLI `wiki-import-article` (`prepare`/`apply` contract; no LLM in
-  Python) that packages the deterministic plumbing the batches did by hand.
-- A `skills/wiki-import-article/SKILL.md` + `commands/wiki-import-article.md` +
-  `workflows/wiki-import-article.md` (+ vendor symlinks) describing the orchestrator-driven
-  loop (the LLM owns translation/summary; the CLI owns fetch-dispatch + filing).
-- The `workflows/` doc covers **BOTH** the single-article steps **and** the batch
-  (DAO/#01) recipe — parallel translation via the Workflow tool, then serialized `apply`;
-  the **CLI itself stays per-article** (no `--batch` mode — Q-038-4).
-- Reuse of existing pieces — **no reinvention**: fetch via the `html2md` / `pdf` skills;
-  known-concepts + concept filing via `wiki-extract-concepts` (`prepare` already emits
-  `known_concepts`); note indexing via `wiki-index-upsert` / `wiki-reindex`.
-- The lessons baked in as tested code: name sanitization (`_NAME_ALLOWLIST`-safe),
-  verbatim-quote guarantee, self-slug + existing-note/page slug collision guard,
-  per-mode note assembly (full / summary / thread), **never write an empty `_raw/`** on a
-  failed/empty fetch. (The Wikipedia REST-HTML + arXiv `/html/` fetch quirks are NO LONGER
-  ours — html2md now owns them; we just call html2md.)
+- **Rename / generalize** `wiki-import-article` → `wiki-import` (content-neutral): the package
+  `scripts/wiki_skills/wiki_import_article/` → `wiki_import` (or keep module, add a content-neutral
+  CLI name), `bin/wiki-import-article` → `bin/wiki-import`, skill/command/workflow renamed. **Keep
+  a back-compat alias** `wiki-import-article` (bin + skill) → `wiki-import` (TASK 038 callers + the
+  committed #01/#04 docs still work).
+- **`--kind {meeting,article,paper,thread,summary,auto}`** on `prepare` + **content-type detection**
+  (PRE-FLIGHT heuristics: transcript markers / speaker turns → meeting; prose/headings → article;
+  arxiv/PDF dense → paper; X/thread → thread; `concepts:`+`related:` or `type: *-summary` frontmatter
+  → finished-summary). `auto` is the default; explicit `--kind` overrides.
+- **REASON dispatch** documented in SKILL/workflow: kind → harness — the ONE universal `summarizing-meetings` harness for all content-types
+  (a separate `summarizing-articles` would be redundant), `none` for finished summaries. The CLI stays Decision-17 (the harness is the orchestrator's
+  reasoning step); `prepare` only DETECTS + reports the kind + the recommended harness.
+- **Layout-aware filing in `apply` for BOTH Karpathy and PARA**, one code path via
+  `resolve_layout_config`: Karpathy note → `_sources/<slug>.md`, concepts → root `_concepts/`;
+  PARA note → `<folder>/<slug>.md`, concepts → sibling `_concepts/`. Per-kind note `type:`
+  (`meeting-summary` / `article-summary` / `summary`), not hard-coded `article-summary`.
+- **Update the architecture** to ONE unified construct path (the §2.3 diagrams collapse the
+  two-path split into one path with the two orthogonal axes; `wiki-enrich`/`wiki-ingest` documented
+  as the legacy/external Karpathy-raw path). Manuals/quick-ref updated.
+- A companion **postanovka for `summarizing-meetings`** (external, Universal-skills) — already
+  written (`IMPROVEMENTS-postanovka-wiki-harness.md`): make it a drop-in note-JSON REASON harness.
 
 ### Out of scope (explicit non-goals)
-- Changing `wiki-ingest` / `summarizing-meetings` (external skills) — not ours to edit.
-- Karpathy behaviour (untouched; `wiki-enrich` stays the Karpathy path).
-- The `html2md` fetch quirks — **already fixed upstream 2026-06-18** (Wikipedia REST-HTML
-  rewrite, arXiv `/html/` rewrite, `EmptyExtraction` exit 11). We consume the fixed behaviour;
-  we do not touch html2md.
-- Schema/DDL changes (zero-DDL; rides existing `pages`/`entities`/`page_entity_refs`).
-- Doing the LLM translation inside Python (forbidden by Decision-17).
+- Editing the external `wiki-ingest` / `summarizing-meetings` skills (separate postanovka).
+- Folding `wiki-enrich` away — it stays as the legacy Karpathy-raw path (alias/coexist; a future
+  task may route `wiki-sync ingest` → `wiki-import`).
+- Schema/DDL changes; new deps; LLM inside any CLI.
+- RU translation of meetings (meetings stay source-language; only articles `full`-translate).
 
 ## 3. Requirements (RTM)
 
 | ID | Requirement | Verify |
 |----|-------------|--------|
-| **R-1** | `wiki-import-article prepare` deterministically fetches a source (URL or local raw) to `_raw/<slug>.md` inside the target PARA folder by **dispatching to the existing skills only**: HTML/URL → `html2md`; PDF → `pdf` skill. **html2md (post-2026-06-18 fix) now itself auto-rewrites Wikipedia→REST-HTML and arXiv `/abs\|/pdf`→`/html`** and emits typed `arxiv_no_html` when only a PDF exists → `prepare` then falls back to the `pdf` skill. The CLI must NOT re-encode those fetch quirks (NF-2); it dispatches on the html2md **exit code** (the authoritative html2md exit-code table is the contract), not stderr text. | unit: URL→html2md; `*.pdf`→pdf; html2md `arxiv_no_html`→pdf fallback invoked; + e2e on fixtures |
-| **R-2** | `prepare` emits an envelope with `{raw_path, title, author, date, source_hash, mode, known_concepts[], existing_page_slugs[]}`. `source_hash = sha256(_raw bytes)` — **for import idempotency only** (R-7), NOT the hash fed to extract-concepts (see R-4). `known_concepts` = the target project's existing concept names (reuse `wiki-extract-concepts` machinery); `existing_page_slugs` = note+concept slugs in the project (for the collision guard). | unit: envelope schema |
-| **R-3** | **Never persist an empty `_raw/`** — `prepare` propagates html2md's typed exits (`FetchFailed`, `EmptyExtraction` exit 11, `arxiv_no_html`) into its own envelope and writes **no** raw file on failure; the `needs-manual` stub is the orchestrator's call. (The empty-body case is now html2md's typed `EmptyExtraction`, not a silent exit 0 — so the guard is a clean exit-code check.) | unit: FetchFailed/EmptyExtraction → no file |
-| **R-4** | `wiki-import-article apply` takes the orchestrator's structured note (`title_ru/tldr/summary_bullets/ru_body?/entities[]`) + `mode` + target folder + `existing_page_slugs[]` (round-tripped from `prepare`), and: assembles the PARA note (per-mode body), **sanitizes entity names** (rewrite `/`, em-dash, guillemets → safe — a *normalizer that FEEDS* the existing `wiki-extract-concepts` `_sanitize_name` reject-gate, reusing its `_NAME_ALLOWLIST`, NOT a re-implementation), **guarantees every `source_quote` is verbatim** in the note, writes the note, then files concept pages via `wiki-extract-concepts apply --source-page <the note's own slug> --source-hash <sha256 of the just-written note body>` (NOT `prepare.source_hash` — those are different byte streams; see Design), indexes the note, emits a combined manifest. All write paths (`_raw/`, note, concepts) route through `validate_inside_vault` (R-26) + `_is_valid_slug` + a target-symlink refusal; YAML frontmatter scalars are newline/control-stripped + quoted (H-6 frontmatter-injection guard) while the note body stays orchestrator-authored markdown (concept pages are sanitized by extract-concepts). | unit + e2e round-trip |
-| **R-5** | **Collision guard**: `apply` skips any candidate whose slug == the source note's own slug (self-dup) OR collides with an `existing_page_slugs` entry (generic names like `defi` must NOT evict an owner note). Skipped candidates are reported, not silently dropped. | unit: both collision cases + S5 facade e2e |
-| **R-6** | **Known-concepts discipline (the core fix)**: the SKILL/workflow MUST pass `prepare.known_concepts` into the orchestrator's reasoning prompt so proposed entity names reuse existing concept names; documented as a hard rule (mirror `wiki-ingest` SKILL.md:34). | SKILL.md review + e2e: a known concept reused, not duplicated |
-| **R-7** | Idempotent + Class-B-clean: re-running `apply` on an unchanged source is a no-op/`unchanged` (keyed on `prepare.source_hash` = the `_raw` hash); a `wiki-reindex --full` after import yields **0 new slug_collisions** introduced by the import. | e2e: re-run + reindex --full collisions==0 |
-| **R-8** | Skill/command/workflow triple + symlinks (`.claude/`, `.agent/`), consistent with the repo convention; `workflows/wiki-import-article.md` documents BOTH single-article and the **batch** path (parallel translation via the Workflow tool, the DAO/#01 pattern). | file existence + lint |
-| **NF-1** | Decision-17: **no `import anthropic`** in the new module (grep-guarded). One JSON envelope + stable exit codes per subcommand. `mypy --strict scripts/` clean. Zero-DDL, zero new runtime deps. | grep + mypy + test |
-| **NF-2** | Reuse, not reinvention: the new CLI **shells out** to `html2md`/`pdf` (configurable `--*-bin`, like `wiki-enrich --wiki-ingest-bin`) and **calls** `wiki-extract-concepts`/`wiki-index-upsert` internals — it does not duplicate fetch/concept/index logic. | code review |
+| **R-1** | `wiki-import` is the content-neutral CLI (prepare/apply); `wiki-import-article` remains a working **alias** (bin + skill + command). | alias invocation works; tests |
+| **R-2** | `prepare --kind {meeting,article,paper,thread,summary,auto}` + `auto` detection (PRE-FLIGHT heuristics). Envelope carries the resolved `kind` + the recommended REASON harness name. | unit: each kind detected; envelope has kind+harness |
+| **R-3** | **Layout-aware filing (one code path)**: `apply` files note + concepts per `resolve_layout_config` — Karpathy (`_sources/`+root `_concepts/`) AND PARA (folder+sibling `_concepts/`). Per-kind note `type:`. | e2e: a Karpathy vault AND a PARA vault each round-trip; reindex --full collisions==0 |
+| **R-4** | **REASON dispatch by content-type** is documented (SKILL/workflow): all content-types → the ONE universal `summarizing-meetings` harness, summary→register directly. The known_concepts-injection rule holds. | SKILL review; e2e meeting + article |
+| **R-5** | A **meeting transcript in a PARA vault** flows end-to-end: detect meeting → summarizing-meetings REASON → PARA filing (note `type: meeting-summary` + sibling `_concepts/`) → index, with the collision guard + known_concepts discipline. (The TASK 038 hole, now closed.) | e2e (the headline proof) |
+| **R-6** | Back-compat: TASK 038 behaviour (PARA article import) unchanged through the new `wiki-import` (and the alias); the committed #01/#04 notes/flows still valid. Karpathy `wiki-enrich` untouched. | existing import-article tests pass under the rename |
+| **NF-1** | Decision-17 (no `import anthropic`; one JSON envelope + stable codes); `mypy --strict scripts/` clean; zero-DDL; zero new deps. | grep + mypy + tests |
+| **NF-2** | Reuse, not reinvention: filing via `resolve_layout_config`/`wiki-extract-concepts`/`wiki-index-upsert`; the REASON harness is the existing universal `summarizing-meetings` (no redundant `summarizing-articles`). | code review |
 
 ## 4. Acceptance / definition of done
-1. `pytest tests/` green incl. new `tests/test_import_article_*.py`; existing suite unchanged.
-2. `mypy --strict scripts/` clean; `grep -r "import anthropic" scripts/wiki_skills/wiki_import_article` → empty.
-3. **e2e (the proof)** on a **`samples/`-rooted PARA fixture vault** (per the CLAUDE.md
-   "testing & dogfooding vaults under `samples/`" rule; scratch cleaned after): import a
-   source via `/wiki-import-article` end-to-end → PARA note in the right folder + concept
-   pages reusing existing concept names (no new collision), `wiki-reindex --full`
-   collisions==0, `wiki-lint` orphan-link delta ≈ 0 for that note (wikilinks resolve because
-   known-concepts were injected). Optional live proof: one real-source re-import on the
-   working copy `ObsidianNotes-Test`.
-4. Anti-regression: `wiki-enrich` (Karpathy) untouched; Karpathy byte-identity intact.
-5. VDD: code-reviewer + critic-security APPROVE; `skill-self-improvement-verificator` validates the PLAN.
+1. `pytest tests/` green (renamed/extended import tests + the rest); `mypy --strict scripts/` clean; no `import anthropic`.
+2. **e2e on a `samples/` fixture, BOTH layouts:** (a) PARA article (TASK 038 parity), (b) **PARA meeting transcript** (the new proof), (c) Karpathy article/summary — each → correct filing, reindex --full collisions==0, lint orphan-delta≈0.
+3. Back-compat: `wiki-import-article` alias works; committed #01/#04 unaffected.
+4. VDD: code-reviewer + critic-security + critic-logic APPROVE; self-improvement-verificator validates the PLAN.
+5. Companion `summarizing-meetings` postanovka filed (done).
 
 ## 5. Risks / open questions
-- **Q-038-1** New CLI vs. orchestrate-existing-CLIs-from-the-workflow-only? (Heavy vs light.)
-  Lean: a thin CLI for the *plumbing* (fetch-dispatch + authoring glue + collision guard)
-  so the lessons are tested code with a home; the *reasoning* stays in the SKILL/workflow.
-- **Q-038-2** Where do `known_concepts` + `existing_page_slugs` come from — extend
-  `wiki-extract-concepts prepare` (already emits `known_concepts`) or a dedicated scan?
-- **Q-038-3** Fetch dispatch: shell out to the global `html2md`/`pdf` skills (paths vary per
-  machine) — make bin paths configurable + fail-fast if absent (wiki-enrich precedent).
-- **Q-038-4** Batch path: keep it as a documented Workflow recipe in the workflow doc, or
-  add a `--batch` manifest mode to the CLI? (Lean: document the Workflow recipe; CLI stays per-article.)
+- **Q-039-1** Rename strategy: physically rename the package vs keep `wiki_import_article` module + add a `wiki-import` entry + alias? (Lean: keep the module dir to minimize churn; add `wiki-import` bin/skill/command/workflow as the primary, `wiki-import-article` as alias symlinks/wrappers.)
+- **Q-039-2** Content-type detection confidence — heuristics can misfire; `--kind` override + `auto` reporting its guess (operator can correct). PRE-FLIGHT surfaces low-confidence.
+- **Q-039-3** Karpathy filing in `apply`: does `apply` already file correctly when `--folder=_sources` + extract-concepts (layout-aware)? Validate; generalize note `type:` + target by layout.
+- **Q-039-4** `summarizing-meetings` note-JSON contract is opt-in upstream (postanovka) — until it ships, the meeting REASON harness produces the note JSON via the orchestrator following `summarizing-meetings`' procedure + the reason-contract (the harness guides; the orchestrator emits the JSON). No hard dependency on the external change.
 
-(Design rationale resolved in `docs/architectures/open-questions.md` Q-038-*.)
+(Design rationale → `docs/architectures/open-questions.md` Q-039-*.)

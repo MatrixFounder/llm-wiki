@@ -1,10 +1,10 @@
 # REASON-step contract (the orchestrator's one reasoning step)
 
-Reusable contract for the **REASON** step of a PARA construct import — the single
-LLM step between `wiki-import-article prepare` and `apply` (Decision-17: the CLIs are
-deterministic plumbing; *this* is the only reasoning). It is referenced by
-`skills/wiki-import-article/SKILL.md` and intended to be the shared source of truth if a
-future Karpathy-article generation mode wants the same contract (so the two never drift).
+Reusable contract for the **REASON** step of a construct import — the single LLM step
+between `wiki-import prepare` and `apply`, run via the **`summarizing-meetings`** universal
+content harness (it handles meetings AND articles/papers/threads). Decision-17: the CLIs are
+deterministic plumbing; *this* is the only reasoning. Referenced by `skills/wiki-import/SKILL.md`
+and `summarizing-meetings` — the shared note-JSON source of truth so the two never drift.
 
 ## Inputs (from `prepare`'s envelope)
 - `raw_path` — the fetched+converted original (read it in full).

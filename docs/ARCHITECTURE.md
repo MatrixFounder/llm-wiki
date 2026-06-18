@@ -176,8 +176,18 @@ TASK 009 pattern — Q-029-1). Verified-surface snapshot:
 `samples/obsidian-cli-recon/` (scratch) → durable fixture lands under
 `skills/obsidian-cli/evals/` when the reference is authored (TASK 029 A-4).
 
-**§2.3 PARA construct path `wiki-import-article` (TASK 038 / R-038 — the PARA analog of
-wiki-enrich).** The framework's Karpathy construct path is `wiki-enrich` → external
+**§2.3 The unified construct path `wiki-import` (TASK 039; generalizes TASK 038's
+`wiki-import-article`, now a back-compat alias).** Knowledge enters through ONE config-driven
+path with two **orthogonal** axes — **content-type → which REASON harness**
+(all content-types → the ONE universal `summarizing-meetings` harness — it handles meetings
+AND articles/papers/threads; finished `summary`→register), and **layout (config) → where it files** (Karpathy `_sources/`+root
+`_concepts/` vs PARA topic-folder+sibling `_concepts/`, via `resolve_layout_config` — same code
+path as `wiki-index-upsert`/`wiki-extract-concepts`). This replaces the TASK 038 *layout-fork*
+(which left a PARA meeting transcript with no clean path); the single diagram + orthogonality
+matrix are in [functional-architecture §2.3](./architectures/functional-architecture.md). The
+original (now-legacy) PARA-import design below is preserved for history.
+
+**(TASK 038 — legacy framing, retained)** The framework's Karpathy construct path is `wiki-enrich` → external
 `wiki-ingest` → (Phase 2) `summarizing-meetings` → concept/entity wiring → index, whose
 load-bearing discipline is *passing the known-concepts list to the summary generator* so
 `[[wiki-links]]` reuse existing names and never dangle/collide. **PARA had no packaged

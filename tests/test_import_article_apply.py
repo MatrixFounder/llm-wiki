@@ -53,6 +53,35 @@ def _run(vault, note_file, db, extra=None, existing='["defi"]'):
     return wia.main(argv + (extra or []))
 
 
+def test_apply_meeting_kind_sets_meeting_summary_type(vault, tmp_path, capsys, _stub_subprocs):
+    rc = _run(vault, _note(tmp_path), vault / "index.db", extra=["--kind", "meeting"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert "type: meeting-summary" in (vault / out["note"]).read_text()
+
+
+def test_apply_karpathy_files_note_to_sources(tmp_path, capsys, _stub_subprocs):
+    # a karpathy vault → note lands in _sources/, type falls back to `summary`
+    # (karpathy.yaml has no `article-summary` mapping)
+    (tmp_path / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: kv\nlayout: karpathy\n---\n", encoding="utf-8")
+    (tmp_path / "_sources").mkdir()
+    nf = tmp_path / "note.json"
+    nf.write_text(json.dumps({
+        "title_ru": "Kp Article", "tldr": "t", "summary_bullets": ["b"],
+        "ru_body": "AMM body.", "entities": [
+            {"name": "AMM", "definition": "d", "quote": "AMM body.", "type": "concept"}]},
+        ensure_ascii=False), encoding="utf-8")
+    rc = wia.main([
+        "apply", "--vault", "kv", "--vault-root", str(tmp_path), "--db-path", str(tmp_path / "i.db"),
+        "--folder", "_sources", "--mode", "full", "--kind", "article", "--note-file", str(nf),
+        "--raw-rel", "_sources/_raw/x.md", "--source-url", "https://e.com/x", "--today", "2026-06-18"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["note"].startswith("_sources/")          # filed under _sources/ (karpathy)
+    assert "type: summary" in (tmp_path / out["note"]).read_text()  # layout-safe fallback
+
+
 def test_apply_writes_note_and_files_concepts(vault, tmp_path, capsys, _stub_subprocs):
     rc = _run(vault, _note(tmp_path), vault / "index.db")
     out = json.loads(capsys.readouterr().out)
