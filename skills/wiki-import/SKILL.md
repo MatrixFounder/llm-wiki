@@ -47,12 +47,23 @@ Dispatches to `html2md` (URL/HTML — it already owns the Wikipedia-REST-HTML an
 arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits) or the `pdf`
 skill (PDF), writes `_raw/<slug>.md` **only on a non-empty fetch**, **detects the
 content-type** (`--kind auto`; override with `--kind`), and emits:
+> **Reader-first:** the html2md path prefers the **reader extraction** (clean main
+> content — no nav/"Skip to main content"/"Edit page" chrome) and falls back to the
+> whole page only when reader is missing/over-stripped; only reader-referenced images
+> are kept in `_attachments/` (chrome/avatar images dropped). Less junk in `_raw`.
 ```
 { action, raw_path, folder, slug, project, mode,
   kind, reason_harness, kind_confidence,            # ← content-type → which harness
-  title, author, date, source_hash,
+  title, author, date, source_hash, images,         # images = count filed to _raw/_attachments/
   known_concepts: [{slug,name}…], existing_page_slugs: […] }
 ```
+**The `_raw` is a self-contained capture (invariants):** it always carries a `source:`
+frontmatter link to the original (injected for PDFs/text dumps that lack one), and — when
+**image import is ON** — its images are downloaded into a sibling `_raw/_attachments/`
+(relative `![](_attachments/<sha>.ext)` links). Image import is **config-driven, default ON**:
+set `import_images: false` in `<vault>/.wiki/layout.yaml` to keep remote image URLs instead
+(PDFs are text-only → no images either way). The filed note links to **both** the `_raw`
+capture (`[\`_raw/<slug>\`](…)`) and the original URL (the `Источник`/`Source` line).
 On an unreachable/empty source it emits `{error:"FETCH_FAILED", upstream:…}` (exit 10)
 and writes **nothing** — file a `needs-manual` stub by hand.
 

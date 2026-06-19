@@ -43,6 +43,15 @@ def test_per_vault_override_is_honored_zero_python():
     assert w.source_subdir == "_inbox" and w.source_filename == "slug"
 
 
+def test_import_images_default_on_and_overridable():
+    # wiki-import image-import config: ON by default for every built-in layout …
+    for layout in ("karpathy", "obsidian-personal", "dev-project", "cybos"):
+        assert resolve_layout_config(_vault(layout)).import_images is True
+    # … and turn-off-able per-vault via .wiki/layout.yaml (zero Python)
+    off = resolve_layout_config(_vault("obsidian-personal", "import_images: false\n"))
+    assert off.import_images is False
+
+
 @pytest.mark.parametrize("bad_subdir", ["../../etc", "..", "a/b", "/abs", ".hidden"])
 def test_malicious_source_subdir_rejected_at_load(bad_subdir):
     # critic-security MAJOR: source_subdir is operator config (per-vault override) → it MUST be

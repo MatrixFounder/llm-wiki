@@ -435,6 +435,10 @@ class LayoutConfig:
     paths_operator_supplied: bool = False
     # TASK 040 / ADR-007 — write-side grammar (where new pages file). Default = PARA-legacy.
     write: WriteGrammar = field(default_factory=WriteGrammar)
+    # Import-side: download images into the `_raw/_attachments/` of an imported source
+    # (wiki-import). Default ON → `_raw` is a self-contained capture. Override per-vault
+    # in `.wiki/layout.yaml` (`import_images: false`) to keep remote image URLs instead.
+    import_images: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -546,6 +550,7 @@ def _build(
         ref_extraction_operator_supplied=ref_extraction_operator_supplied,
         paths_operator_supplied=paths_operator_supplied,
         write=_make_write_grammar(merged.get("write") or {}),
+        import_images=bool(merged.get("import_images", True)),
     )
 
 

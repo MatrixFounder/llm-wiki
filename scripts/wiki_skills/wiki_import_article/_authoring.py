@@ -24,8 +24,12 @@ from scripts.wiki_skills.wiki_extract_concepts._validation import (
 
 _FNAME_BAD = re.compile(r'[/\\:*?"<>|#^\[\]]')
 _ALLOWED_CHAR = re.compile(r"[\w\s\-.,:;()'\"!?]", re.UNICODE)
-_MAX_CANDIDATES = 15
+_MAX_CANDIDATES = 25  # was 15 — full articles legitimately carry 15–18 entities
 _QUOTE_CAP = 480
+# Obsidian image-embeds to fetched attachments: html2md runs with --no-download-images,
+# so `![[Attachments/<hash>.png]]` (often wrapped as `[![[…]]](url)`) never resolves in the
+# target vault → it renders as a broken embed + counts as a dangling link. Strip the line.
+_IMG_EMBED_LINE = re.compile(r"^[^\n]*\[\[Attachments/[^\n]*$\n?", re.MULTILINE)
 _TAGS_BASE = {
     "crypto": ["article", "defi", "crypto"],
     "invest": ["article", "investing", "finance"],
@@ -85,6 +89,12 @@ def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
     return ""  # no verbatim quote and no name-mention line → caller drops the candidate
 
 
+def _strip_image_embeds(text: str) -> str:
+    """Drop `[[Attachments/…]]` image-embed lines (never resolve — html2md fetched with
+    --no-download-images) and collapse the gap, so they don't leak into the note body."""
+    return re.sub(r"\n{3,}", "\n\n", _IMG_EMBED_LINE.sub("", text or ""))
+
+
 def _yaml_list(items: list[str]) -> str:
     return "[" + ", ".join(items) + "]"
 
@@ -119,6 +129,7 @@ def assemble_note(
     url = _fm_scalar(source_url)
     title_orig = _fm_scalar(note.get("title_orig") or title)
     bullets = "\n".join(f"- {b.strip()}" for b in note.get("summary_bullets", []))
+    body_text = _strip_image_embeds(note.get("ru_body") or "").strip()
     wikilinks = " · ".join(f"[[{n}]]" for n in san_names)
     tags = _TAGS_BASE.get(folder_kind, ["article"]) + _EXTRA_TAGS.get(mode, [])
 
@@ -148,12 +159,14 @@ def assemble_note(
         f'tldr: "{tldr}"\n'
         "---\n"
     )
+    _raw_base = raw_rel_basename.rsplit('/', 1)[-1]
     head = (f"\n# {title}\n\n{src_line}\n"
-            f"> **Оригинал (raw):** `_raw/{raw_rel_basename.rsplit('/', 1)[-1]}`\n\n")
+            # clickable relative link to the _raw capture (sibling `_raw/` of the note)
+            f"> **Оригинал (raw):** [`_raw/{_raw_base}`](_raw/{_raw_base})\n\n")
     if mode == "full":
         body = (head + f"## Саммари\n\n{bullets}\n\n"
                 + f"## Ключевые сущности\n\n{wikilinks}\n\n"
-                + f"## Полный текст (перевод)\n\n{(note.get('ru_body') or '').strip()}\n")
+                + f"## Полный текст (перевод)\n\n{body_text}\n")
     elif mode == "summary":
         body = (head + (f"## Кратко\n\n{tldr}\n\n" if tldr else "")
                 + f"## Ключевые выводы\n\n{bullets}\n\n"
@@ -163,7 +176,7 @@ def assemble_note(
         body = (head + (f"## Кратко\n\n{tldr}\n\n" if tldr else "")
                 + f"## Основные тезисы\n\n{bullets}\n\n"
                 + f"## Ключевые сущности\n\n{wikilinks}\n\n"
-                + f"## Конспект\n\n{(note.get('ru_body') or '').strip()}\n")
+                + f"## Конспект\n\n{body_text}\n")
     return fname, fm + body
 
 
@@ -218,4 +231,8 @@ def derive_candidates(
             "source_quote": q, "source_span": f"L{line}-L{line}",
             "entity_type": e.get("type", "concept"),
         })
+    # Report (never silently drop) the overflow past the cap — otherwise the tail
+    # would become dangling `[[wikilinks]]` in the note footer with no manifest trace.
+    for e in out[_MAX_CANDIDATES:]:
+        skipped.append({"name": e["name"], "reason": "max-candidates"})
     return out[:_MAX_CANDIDATES], skipped

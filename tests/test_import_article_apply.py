@@ -110,6 +110,50 @@ def test_apply_no_candidates_skips_concept_filing(vault, tmp_path, capsys, _stub
     assert _stub_subprocs["concepts"] == []
 
 
+def test_footer_omits_unresolvable_entities(vault, tmp_path, capsys, _stub_subprocs):
+    # P3-8: the `## Ключевые сущности` footer must list ONLY entities that resolve to a page.
+    # _note has AMM (filed), DeFi (collides EXISTING → page exists → linked), and
+    # "DeFi гайд" (self-collision → no page) → the last must NOT be a dangling [[wikilink]].
+    rc = _run(vault, _note(tmp_path), vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    body = (vault / out["note"]).read_text()
+    assert "[[AMM]]" in body
+    assert "[[DeFi]]" in body            # collides-existing → the existing page resolves it
+    assert "[[DeFi гайд]]" not in body   # self-collision → dropped from the footer (no dangling)
+
+
+def test_overflow_entities_reported_not_silently_dropped(vault, tmp_path, capsys, _stub_subprocs):
+    # P3-8: entities past the candidate cap are reported in skipped[] (reason max-candidates),
+    # never silently dropped (which would leave dangling footer links).
+    ents = [{"name": f"Концепт{i}", "definition": "d",
+             "quote": f"Концепт{i} это нечто важное и описанное.", "type": "concept"}
+            for i in range(30)]
+    body = " ".join(e["quote"] for e in ents)
+    nf = _note(tmp_path, ru_body=body, entities=ents)
+    rc = _run(vault, nf, vault / "index.db", existing="[]")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["candidates"] == 25  # the raised cap
+    assert sum(1 for s in out["skipped"] if s["reason"] == "max-candidates") == 5
+
+
+def test_full_mode_strips_dangling_image_embeds(vault, tmp_path, capsys, _stub_subprocs):
+    # P3-7: `![[Attachments/<hash>]]` embeds (html2md --no-download-images) must not leak
+    # into the body — they never resolve in the vault and would be dangling links.
+    body = ("[![[Attachments/abc123_MD5.png]]](https://cdn/x.png)\n\n"
+            "Реальный абзац перевода со смыслом.\n\n"
+            "# [![[Attachments/def456_MD5.jpg]]](/)\n")
+    nf = _note(tmp_path, ru_body=body,
+               entities=[{"name": "AMM", "definition": "d", "quote": "AMM",
+                          "type": "concept"}])
+    rc = _run(vault, nf, vault / "index.db", extra=["--mode", "full"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    text = (vault / out["note"]).read_text()
+    assert "[[Attachments/" not in text                 # all embeds stripped
+    assert "Реальный абзац перевода со смыслом." in text  # real prose kept
+
+
 def test_apply_partial_on_index_failure(vault, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(wia, "_index_note", lambda *a: (6, {"error": "UPSERT_FAILED"}))
     monkeypatch.setattr(wia, "_file_concepts", lambda *a: (0, {"created": 1}))

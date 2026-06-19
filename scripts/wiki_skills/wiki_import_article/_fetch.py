@@ -13,6 +13,7 @@ is `ok` with a non-empty body — so a failed/empty fetch never persists an empt
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -29,6 +30,18 @@ _ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([\w.\-/]+?)(?:v\d+)?(?:\.p
 _MAX_PDF_BYTES = 64 * 1024 * 1024  # 64 MiB cap on a downloaded PDF (DoS guard)
 _HTML2MD_TIMEOUT = 180
 _PDF_TIMEOUT = 240
+# Browser-like UA: many PDF hosts (CDNs, hubfs, journal sites) reject non-browser
+# agents with 403. Operator-supplied URL — this fetches a document the operator asked
+# for (not detection-evasion); mirrors what the html2md skill's fetch already sends.
+_PDF_FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# X/Twitter served logged-out: html2md's lite fetch returns only the login chrome (no post
+# text). Detect it (scoped to these hosts) so we surface a needs-manual signal instead of
+# writing a junk _raw. Conservative threshold — a captured first tweet (~300+ prose chars)
+# is NOT flagged; only the bare login wall (<220 prose chars) is.
+_X_HOSTS = ("x.com", "twitter.com")
+_X_LOGIN_MARKERS = ("Log in", "Sign up", "onboarding/web?mode=login", "/i/flow/login")
+_X_PROSE_FLOOR = 220
 
 
 @dataclass
@@ -40,6 +53,26 @@ class FetchResult:
     date: str | None = None
     engine: str = ""                     # provenance of the fetch (html2md / pdf / local-md)
     error: dict[str, Any] | None = None  # html2md/pdf typed error envelope on failure
+    attachments_dir: Path | None = None  # downloaded images (image-import ON) → caller files them
+
+
+def _fm_safe(value: str) -> str:
+    """Frontmatter-scalar-safe: strip control/newlines + quotes so an injected source
+    value cannot break the YAML or inject a key (H-6)."""
+    return re.sub(r'[\x00-\x1f\x7f"]+', " ", str(value or "")).strip()
+
+
+def ensure_source_frontmatter(raw_text: str, source: str) -> str:
+    """Guarantee the `_raw` markdown carries a link to the original in its frontmatter.
+    PDFs (text dump, no FM) get a fresh block; an existing FM without `source:`/`url:`
+    gets one injected; a FM that already cites the source is left untouched."""
+    fm = _parse_frontmatter(raw_text)
+    if fm.get("source") or fm.get("url"):
+        return raw_text
+    src = _fm_safe(source)
+    if _FM_RE.match(raw_text):                       # existing FM at the very start
+        return re.sub(r"\A---\n", f'---\nsource: "{src}"\n', raw_text, count=1)
+    return f'---\nsource: "{src}"\n---\n\n{raw_text}'
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -78,30 +111,116 @@ def _pdf_python(script_path: str) -> str:
     return str(venv_py) if venv_py.exists() else "python3"
 
 
+def _skill_env() -> dict[str, str]:
+    """Env for an external skill subprocess.
+
+    Drops our own bin-wrapper's ``PYTHONSAFEPATH`` / ``PYTHONPATH`` so the child
+    skill resolves its OWN script-dir sibling imports. The ``wiki-import`` wrapper
+    exports ``PYTHONSAFEPATH=1`` (+ ``PYTHONPATH=<repo>``); inherited by e.g.
+    ``pdf_extract.py`` it suppresses the script-dir entry on ``sys.path`` and breaks
+    its ``from _errors import …`` (the failure surfaced as a spurious FETCH_FAILED).
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONSAFEPATH", None)
+    env.pop("PYTHONPATH", None)
+    return env
+
+
 def _arxiv_pdf_url(url: str) -> str | None:
     m = _ARXIV_RE.search(url)
     return f"https://arxiv.org/pdf/{m.group(1)}" if m else None
 
 
+def _is_x_login_wall(md: str, target: str) -> bool:
+    """True iff `target` is an x.com/twitter URL whose html2md output is just the
+    logged-out login chrome (no post text) — so the caller fails instead of writing
+    a junk `_raw`. Conservative: requires a login marker AND <`_X_PROSE_FLOOR` chars
+    of real prose, so a captured first tweet still passes through."""
+    host = target.split("/", 3)[2].lower() if "://" in target else ""
+    if not any(host == h or host.endswith("." + h) for h in _X_HOSTS):
+        return False
+    if not any(mark in md for mark in _X_LOGIN_MARKERS):
+        return False
+    body = _FM_RE.sub("", md)                                   # drop frontmatter
+    body = re.sub(r"!?\[[^\]]*\]\([^)]*\)", " ", body)          # drop [..](..) / ![..](..)
+    prose = re.sub(r"\s+", " ", re.sub(r"[#>*`_|\[\]()\-]", " ", body)).strip()
+    return len(prose) < _X_PROSE_FLOOR
+
+
 # ---- fetch strategies ------------------------------------------------------
 
-def _fetch_html(html2md_bin: str, target: str) -> FetchResult:
-    """URL or local HTML → markdown via html2md (handles Wikipedia/arXiv/empty itself)."""
+def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False) -> FetchResult:
+    """URL/local HTML → markdown via html2md, OUTPUT-DIR mode (the only mode that yields
+    html2md's dual output). **Prefers the reader extraction** (`<slug>.reader.md` — main
+    content, no nav/chrome) and falls back to the whole page only when reader is missing
+    or over-stripped. With ``download_images`` it keeps just the images the chosen text
+    references in a sibling ``_attachments/``; else remote URLs are kept verbatim. (html2md
+    owns the Wikipedia-REST-HTML / arXiv rewrites + its own SSRF + ``--max-images`` bound.)"""
     bin_path = require_bin(html2md_bin, "html2md")
-    proc = subprocess.run(
-        ["python3", bin_path, target, "--stdout", "--no-reader",
-         "--no-download-images", "--json-errors", "--engine", "auto"],
-        capture_output=True, text=True, timeout=_HTML2MD_TIMEOUT)
-    if proc.returncode == 0 and len((proc.stdout or "").strip()) > 0:
-        md = proc.stdout
-        fm = _parse_frontmatter(md)
-        return FetchResult(
-            ok=True, raw_text=md, engine="html2md",
-            title=fm.get("title") or None,
-            author=fm.get("author") or None,
-            date=(fm.get("date") or fm.get("published") or None))
-    err = _parse_skill_error(proc.stderr, proc.returncode)
-    return FetchResult(ok=False, engine="html2md", error=err)
+    tmpdir = tempfile.mkdtemp(prefix="wiki-import-fetch-")
+
+    def _cleanup() -> None:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _fail(kind: str, code: int = 1) -> FetchResult:
+        _cleanup()
+        return FetchResult(ok=False, engine="html2md", error={
+            "error": "FetchFailed", "type": "FetchFailed", "exit_code": code,
+            "details": {"url": target, "kind": kind}})
+
+    img_flag = "--download-images" if download_images else "--no-download-images"
+    argv = ["python3", bin_path, target, tmpdir, img_flag,
+            "--json-errors", "--engine", "auto"]
+    proc = subprocess.run(argv, capture_output=True, text=True,
+                          timeout=_HTML2MD_TIMEOUT, env=_skill_env())
+    if proc.returncode != 0:
+        _cleanup()
+        return FetchResult(ok=False, engine="html2md",
+                           error=_parse_skill_error(proc.stderr, proc.returncode))
+
+    out = Path(tmpdir)
+    reader = sorted(out.glob("*.reader.md"))
+    whole = [p for p in out.glob("*.md") if not p.name.endswith(".reader.md")]
+    reader_txt = reader[0].read_text(encoding="utf-8") if reader else ""
+    whole_txt = whole[0].read_text(encoding="utf-8") if whole else ""
+    # Reader-first: take the reader extraction when it has a substantial body; fall back to
+    # the whole page when reader is over-stripped (thin) AND a whole page exists; if reader
+    # is the only output, use it even when thin.
+    if reader_txt and len(_FM_RE.sub("", reader_txt).strip()) >= 200:
+        md = reader_txt
+    elif whole_txt:
+        md = whole_txt
+    else:
+        md = reader_txt
+    if not md.strip():
+        return _fail("no_output")
+    if _is_x_login_wall(md, target):  # logged-out X chrome only → no post text
+        _cleanup()
+        return FetchResult(ok=False, engine="html2md", error={
+            "error": "x.com returned only the logged-out login wall (no post text "
+                     "captured); save the thread/article as a .webarchive while logged "
+                     "in and import that file instead.",
+            "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+            "details": {"url": target, "kind": "login_wall"}})
+
+    # Keep only the images the CHOSEN text references (drops nav/chrome images html2md
+    # downloaded for the whole page) — less junk in `_attachments/`.
+    attach: Path | None = None
+    adir = out / "_attachments"
+    if download_images and adir.is_dir():
+        referenced = set(re.findall(r"_attachments/([^\s)\]]+)", md))
+        for f in list(adir.iterdir()):
+            if f.is_file() and f.name not in referenced:
+                f.unlink()
+        attach = adir if any(adir.iterdir()) else None
+    if attach is None:  # nothing to file → drop the temp dir now
+        _cleanup()
+    fm = _parse_frontmatter(md)
+    return FetchResult(
+        ok=True, raw_text=md, engine="html2md", attachments_dir=attach,
+        title=fm.get("title") or None,
+        author=fm.get("author") or None,
+        date=(fm.get("date") or fm.get("published") or None))
 
 
 def _parse_skill_error(stderr: str, returncode: int) -> dict[str, Any]:
@@ -125,7 +244,8 @@ def _download_pdf(url: str) -> Path:
     SSRF surface is the operator's — documented residual. NOTE: urllib follows 30x
     redirects, so the residual includes a redirect to a private/link-local host; run
     untrusted imports in an egress-restricted sandbox.)"""
-    req = urllib.request.Request(url, headers={"User-Agent": "wiki-import-article/1.0"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": _PDF_FETCH_UA, "Accept": "application/pdf,*/*"})
     tmp = Path(tempfile.mkstemp(suffix=".pdf")[1])
     with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
         total = 0
@@ -147,7 +267,7 @@ def _pdf_to_text(pdf_extract_bin: str, pdf_path: Path) -> FetchResult:
     bin_path = require_bin(pdf_extract_bin, "pdf_extract")
     proc = subprocess.run(
         [_pdf_python(bin_path), bin_path, str(pdf_path), "--json-errors"],
-        capture_output=True, text=True, timeout=_PDF_TIMEOUT)
+        capture_output=True, text=True, timeout=_PDF_TIMEOUT, env=_skill_env())
     if proc.returncode != 0:
         return FetchResult(
             ok=False, engine="pdf",
@@ -173,16 +293,19 @@ def _fetch_pdf_url(pdf_extract_bin: str, url: str) -> FetchResult:
 
 # ---- public dispatch -------------------------------------------------------
 
-def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str) -> FetchResult:
+def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str,
+                   download_images: bool = False) -> FetchResult:
     """Route `source` (URL or local file) to html2md / pdf and return a FetchResult.
 
+    `download_images` (config-driven; default ON at the prepare layer) makes the html2md
+    path download images into a sibling `_attachments/`. PDFs are text-only — no images.
     Never writes anything — the caller persists `_raw/` only on a non-empty `ok` result.
     """
     is_url = source.startswith(("http://", "https://"))
     bare = source.split("?", 1)[0].lower()
 
     if is_url and not bare.endswith(".pdf"):
-        res = _fetch_html(html2md_bin, source)
+        res = _fetch_html(html2md_bin, source, download_images=download_images)
         if res.ok:
             return res
         # html2md says "HTML-only article has no HTML, use the PDF" → fall back.
@@ -191,6 +314,11 @@ def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str) -> Fe
             pdf_url = _arxiv_pdf_url(source)
             if pdf_url:
                 return _fetch_pdf_url(pdf_extract_bin, pdf_url)
+        # The URL serves a PDF despite no `.pdf` suffix (e.g. dl.acm.org/doi/pdf/…,
+        # CDN/hubfs links): html2md reports details.kind=="pdf". Download + extract via
+        # the pdf skill rather than failing. (A real paywall still surfaces as FETCH_FAILED.)
+        if kind == "pdf":
+            return _fetch_pdf_url(pdf_extract_bin, source)
         return res
 
     if is_url and bare.endswith(".pdf"):
@@ -208,4 +336,4 @@ def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str) -> Fe
             title=fm.get("title") or None, author=fm.get("author") or None,
             date=(fm.get("date") or fm.get("published") or None))
     # any other local file → let html2md try (it handles .html/.htm/.mhtml/.webarchive)
-    return _fetch_html(html2md_bin, str(p))
+    return _fetch_html(html2md_bin, str(p), download_images=download_images)

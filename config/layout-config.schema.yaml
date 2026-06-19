@@ -230,6 +230,12 @@ $defs:
         default: ['.md']
       slug_strategy: {$ref: '#/$defs/SlugStrategy'}
       write: {$ref: '#/$defs/WriteGrammar'}
+      import_images:
+        type: boolean
+        default: true
+        description: >-
+          wiki-import: download images of an imported source into its
+          `_raw/_attachments/` (self-contained capture). false → keep remote URLs.
       paths:
         type: array
         minItems: 1

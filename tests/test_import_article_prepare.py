@@ -50,8 +50,30 @@ def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     assert out["kind_confidence"] == "low"
     assert len(out["source_hash"]) == 64
     raw = vault / out["raw_path"]
-    assert raw.exists() and raw.read_text() == "# Guide\n\nbody\n"
-    assert raw.parent.name == "_raw"
+    raw_text = raw.read_text()
+    assert raw.exists() and raw.parent.name == "_raw"
+    # invariant: _raw always carries a link to the original (injected when the fetch body
+    # lacks a `source:`) plus the fetched body verbatim
+    assert 'source: "https://example.com/defi-guide"' in raw_text
+    assert raw_text.endswith("# Guide\n\nbody\n")
+
+
+def test_prepare_files_downloaded_images(vault, monkeypatch, capsys, tmp_path):
+    # image-import ON: prepare copies the fetched _attachments into _raw/_attachments,
+    # reports the count, and cleans the html2md temp dir.
+    att = tmp_path / "tmproot" / "_attachments"
+    att.mkdir(parents=True)
+    (att / "h.png").write_bytes(b"PNG")
+    fr = FetchResult(
+        ok=True, engine="html2md", title="Img",
+        raw_text='---\nsource: "u"\n---\n\n# T\n\n![a](_attachments/h.png)\n',
+        attachments_dir=att)
+    rc = _run(vault, monkeypatch, fr)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["images"] == 1
+    raw = vault / out["raw_path"]
+    assert (raw.parent / "_attachments" / "h.png").exists()   # image filed next to _raw
+    assert not att.exists()                                    # temp dir cleaned
 
 
 def test_prepare_fetch_failed_writes_no_raw(vault, monkeypatch, capsys):

@@ -30,6 +30,7 @@ import datetime
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -54,7 +55,7 @@ from ._authoring import (
 )
 from ._detect import KINDS, detect_kind, harness_for
 from ._errors import EXIT_BAD_ARG, EXIT_DEP_MISSING, EXIT_FETCH_FAILED, ImportArticleError
-from ._fetch import _parse_frontmatter, dispatch_fetch
+from ._fetch import _parse_frontmatter, dispatch_fetch, ensure_source_frontmatter
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
 _KIND_NOTE_TYPE = {
@@ -105,6 +106,7 @@ def prepare(args: argparse.Namespace) -> int:
             args.source,
             html2md_bin=args.html2md_bin,
             pdf_extract_bin=args.pdf_extract_bin,
+            download_images=layout.import_images,   # config-driven, default ON
         )
     except ImportArticleError as e:
         return emit(e.envelope(), exit_code=e.exit_code)
@@ -142,9 +144,23 @@ def prepare(args: argparse.Namespace) -> int:
         return emit({"error": "REFUSED_SYMLINK",
                      "message": f"_raw/{slug}.md is a symlink; refusing to write through it"},
                     exit_code=EXIT_BAD_ARG)
-    raw_bytes = result.raw_text.encode("utf-8")
+    # Guarantee the _raw carries a link to the original (PDFs/text dumps lack a frontmatter;
+    # some captures lack `source:`) — inject `source:` from the import source if missing.
+    raw_md = ensure_source_frontmatter(result.raw_text, args.source)
+    raw_bytes = raw_md.encode("utf-8")
     raw_path.write_bytes(raw_bytes)
     source_hash = hashlib.sha256(raw_bytes).hexdigest()  # _raw hash → import idempotency ONLY
+    # File downloaded images (image-import ON) into _raw/_attachments/ so the md's relative
+    # `_attachments/<sha>` links resolve; then drop the html2md temp dir.
+    n_images = 0
+    if result.attachments_dir and result.attachments_dir.is_dir():
+        att_dst = raw_dir / "_attachments"
+        att_dst.mkdir(exist_ok=True)
+        for img in result.attachments_dir.iterdir():
+            if img.is_file() and not (att_dst / img.name).is_symlink():
+                shutil.copy2(img, att_dst / img.name)
+                n_images += 1
+        shutil.rmtree(result.attachments_dir.parent, ignore_errors=True)
 
     # 3. project + context (known_concepts + existing_page_slugs)
     project = derive_project_for_path(folder_abs / f"{slug}.md", vault_root)
@@ -179,6 +195,7 @@ def prepare(args: argparse.Namespace) -> int:
         "date": result.date,
         "engine": result.engine,
         "source_hash": source_hash,
+        "images": n_images,
         "known_concepts": known,
         "existing_page_slugs": existing,
     })
@@ -314,31 +331,20 @@ def apply(args: argparse.Namespace) -> int:
                         exit_code=EXIT_BAD_ARG)
         slug_fname = f"{_s}.md"
 
-    fname, note_text = assemble_note(
-        note, mode=args.mode, raw_rel_basename=raw_rel,
-        source_url=args.source_url or str(note.get("URL", "")),
-        source_lang=args.source_lang, today=today, note_type=note_type,
-        folder_kind=_folder_kind(args.folder), san_names=san_names, fname=slug_fname)
+    def _assemble(names: list[str]) -> tuple[str, str]:
+        return assemble_note(
+            note, mode=args.mode, raw_rel_basename=raw_rel,
+            source_url=args.source_url or str(note.get("URL", "")),
+            source_lang=args.source_lang, today=today, note_type=note_type,
+            folder_kind=_folder_kind(args.folder), san_names=names, fname=slug_fname)
 
-    try:
-        note_path = _note_dir(layout, vault_root, folder_abs) / fname
-    except PathTraversalError:  # the layout's write.source_subdir escapes the vault → clean envelope
-        return emit({"error": "INVALID_FOLDER",
-                     "message": "the layout's write.source_subdir escapes the vault root"},
-                    exit_code=EXIT_BAD_ARG)
-    if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)
-        return emit({"error": "REFUSED_SYMLINK",
-                     "message": f"{fname!r} is a symlink; refusing to write through it"},
-                    exit_code=EXIT_BAD_ARG)
-    atomic_write_text(note_path, note_text)  # os.replace → does not follow a symlink
-    note_path = validate_inside_vault(note_path, vault_root)
-    note_rel = str(note_path.relative_to(vault_root))
-    # minted slug (lowercase-kebab) — used only for the self-collision check + manifest;
-    # extract-concepts gets the note's REL PATH as --source-page, so the indexed page slug
-    # (layout strategy) is resolved downstream, not here.
-    note_slug = _apply_slug_strategy(note_path.stem, _MINT_SLUG)
-    # hash the ON-DISK bytes so the two-hash contract is newline-translation-proof
-    note_hash = hashlib.sha256(note_path.read_bytes()).hexdigest()
+    # Build the note once (footer = every filable entity), then reconcile that footer
+    # with what concept-filing will actually materialize (below).
+    fname, note_text = _assemble(san_names)
+    # minted slug (lowercase-kebab) — self-collision check + manifest; extract-concepts gets
+    # the note's REL PATH as --source-page, so the indexed page slug is resolved downstream.
+    # Stable across re-assembly: the filename derives from the title, not the entity set.
+    note_slug = _apply_slug_strategy(Path(fname).stem, _MINT_SLUG)
 
     # collision-guard input: round-tripped from prepare, else re-derived (always fresh)
     if args.existing_page_slugs:
@@ -357,6 +363,36 @@ def apply(args: argparse.Namespace) -> int:
     candidates, skipped = derive_candidates(
         note["entities"], note_text, slug_strategy=_MINT_SLUG,
         note_slug=note_slug, existing_page_slugs=existing)
+
+    # Footer reconciliation (P3-8): the `## Ключевые сущности` index must list ONLY entities
+    # that resolve to a page — those filed now (candidates) plus those whose slug collides
+    # with an EXISTING page (the link still resolves). Drop the rest (no-verbatim-quote / dup /
+    # self-collision / over-cap) so the footer never carries a dangling `[[wikilink]]`. Rebuild
+    # + re-derive only when the set actually shrank (clean notes stay byte-identical).
+    # `candidates`/`skipped` from the derive above are AUTHORITATIVE — only the displayed
+    # footer is rebuilt (NOT re-derived): re-deriving against the shrunk note_text would be
+    # circular (an entity whose only support was the footer wikilink line would then drop).
+    resolvable = {c["name"] for c in candidates} | {
+        s["name"] for s in skipped if s.get("reason") == "collides-existing-page"}
+    footer_names = [n for n in san_names if n in resolvable]
+    if footer_names != san_names:
+        fname, note_text = _assemble(footer_names)
+
+    try:
+        note_path = _note_dir(layout, vault_root, folder_abs) / fname
+    except PathTraversalError:  # the layout's write.source_subdir escapes the vault → clean envelope
+        return emit({"error": "INVALID_FOLDER",
+                     "message": "the layout's write.source_subdir escapes the vault root"},
+                    exit_code=EXIT_BAD_ARG)
+    if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)
+        return emit({"error": "REFUSED_SYMLINK",
+                     "message": f"{fname!r} is a symlink; refusing to write through it"},
+                    exit_code=EXIT_BAD_ARG)
+    atomic_write_text(note_path, note_text)  # os.replace → does not follow a symlink
+    note_path = validate_inside_vault(note_path, vault_root)
+    note_rel = str(note_path.relative_to(vault_root))
+    # hash the ON-DISK bytes so the two-hash contract is newline-translation-proof
+    note_hash = hashlib.sha256(note_path.read_bytes()).hexdigest()
 
     # the source note must be indexed BEFORE concept refs can attach to it
     idx_rc, idx_env = _index_note(args.vault, vault_root, db_path, note_path)
