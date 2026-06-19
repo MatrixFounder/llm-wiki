@@ -19,9 +19,13 @@ init_scaffold: two-tier
 
 # Karpathy walks only the named subdirs — root SUBTREES outside them are never
 # entered (TASK 030: the alive-set descent predicate guarantees this BY
-# CONSTRUCTION, instrumented; the walk lists the root dir itself once) — so no
-# ignore[] is needed; see the per-subdir globs below.
-ignore: []
+# CONSTRUCTION, instrumented; the walk lists the root dir itself once) — see the
+# per-subdir globs below. The one exclusion: `_raw/` (wiki-import's untranslated,
+# H-6-untrusted source captures) lands INSIDE the walked `_sources/` subtree, and the
+# RECURSIVE `_sources/**/*.md` glob would otherwise index it as a phantom source page
+# (and can clobber the curated note's row via the shared (vault_id, slug, project)).
+ignore:
+  - "**/_raw/**"                    # raw imports staged under _sources/_raw — never indexed
 file_extensions: ['.md']
 
 # Page slug = verbatim file stem (NO slugify). The only byte-identical strategy.

@@ -458,6 +458,10 @@ def _body_refs(
             out.body_text, ref_rules,
             operator_supplied=ref_extraction_operator_supplied,
         )
+        # A link into a `_raw/` capture (wiki-import's intentionally-unindexed source
+        # original) is NOT a knowledge-graph ref → never record it (else it's a permanent
+        # false orphan-link). Keyed on the pre-slugify target retaining the `_raw/` segment.
+        if not (target.startswith("_raw/") or "/_raw/" in target)
     ]
 
 

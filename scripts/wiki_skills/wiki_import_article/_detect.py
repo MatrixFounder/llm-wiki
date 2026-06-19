@@ -35,11 +35,12 @@ def harness_for(kind: str) -> str:
     return KIND_HARNESS.get(kind, "summarizing-meetings")
 
 
-def _looks_like_transcript(body: str) -> bool:
+def _looks_like_transcript(body: str, low: str | None = None) -> bool:
     head = body[:20000]
     ts = len(_TS_RE.findall(head))
     turns = len(_TURN_RE.findall(head))
-    markers = sum(m in body.lower() for m in
+    low = low if low is not None else body.lower()  # reuse caller's lower() (1× over the body)
+    markers = sum(m in low for m in
                   ("участник", "спикер", "participant", "speaker", "transcript", "стенограмма"))
     return ts >= 4 or turns >= 6 or (markers >= 2 and (ts >= 1 or turns >= 2))
 
@@ -49,6 +50,7 @@ def detect_kind(raw_text: str | None, source: str | None,
     """Return (kind, confidence ∈ {high,medium,low}). `auto`-resolution heuristics."""
     fm = {str(k).lower(): v for k, v in (frontmatter or {}).items()}
     body = raw_text or ""
+    low = body.lower()   # computed ONCE over the (up-to-64 MiB) body, reused below
     src = (source or "").lower()
 
     # 1. already a finished summary (frontmatter signals)
@@ -59,7 +61,7 @@ def detect_kind(raw_text: str | None, source: str | None,
     # 2. social thread
     if any(h in src for h in _THREAD_HOSTS):
         return ("thread", "high")
-    if "## Post" in body or ("replies" in body.lower() and "Read " in body):
+    if "## Post" in body or ("replies" in low and "Read " in body):
         return ("thread", "medium")
 
     # 3. academic paper
@@ -69,7 +71,7 @@ def detect_kind(raw_text: str | None, source: str | None,
         return ("paper", "medium")
 
     # 4. meeting transcript (speaker turns / timestamps / markers)
-    if _looks_like_transcript(body):
+    if _looks_like_transcript(body, low):
         return ("meeting", "medium")
 
     # 5. default: a prose article

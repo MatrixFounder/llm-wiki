@@ -39,6 +39,17 @@ def _load(tmp_path: Path, layout: str = "karpathy", **extra: object) -> LayoutCo
     return load_layout_config(_vault(tmp_path), {"layout": layout, **extra})
 
 
+@pytest.mark.parametrize("layout", ["karpathy", "obsidian-personal", "dev-project", "cybos"])
+def test_every_builtin_layout_maps_summary_for_import(tmp_path: Path, layout: str) -> None:
+    """wiki-import contract (ADR-007): the construct path stamps `type: summary` as its
+    layout-safe fallback, so EVERY built-in layout must map `summary` → db_type summary —
+    else import is always-partial (UnmappedTypeError at index) on that layout."""
+    tm = _load(tmp_path, layout).type_mapping
+    assert "summary" in tm, f"{layout} does not map the `summary` raw_type"
+    db_type = tm["summary"][0]   # (db_type, tag)
+    assert db_type == "summary", f"{layout} maps summary → {db_type!r}, expected 'summary'"
+
+
 # --------------------------------------------------------------------------- #
 # The byte-identity invariant
 # --------------------------------------------------------------------------- #
@@ -286,6 +297,10 @@ def test_cybos_config_loads_and_validates(tmp_path: Path) -> None:
         "event", "task", "adr", "plan",
         # TASK 034 — agent-memory classes
         "agent", "tool", "workflow", "capability", "execution", "pattern",
+        # wiki-import construct path (ADR-007) — imported-source summary family
+        "summary", "article-summary", "meeting-summary",
+        # wiki-import concept/entity pages (TASK-037 pattern)
+        "concept", "external", "person", "company", "product", "group",
     }
     # ref extraction: wiki-link + markdown-link + id-ref (built-in → stdlib re)
     assert {r.kind for r in cfg.ref_extraction} == {"wiki-link", "markdown-link", "id-ref"}

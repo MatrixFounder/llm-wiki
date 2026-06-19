@@ -11,7 +11,7 @@ import scripts.wiki_skills.wiki_import_article as wia
 @pytest.fixture
 def vault(tmp_path):
     (tmp_path / "WIKI_SCHEMA.md").write_text(
-        "---\nvault_id: testv\nlayout: obsidian-personal\n---\n", encoding="utf-8")
+        "---\nvault_id: testv\nlayout: obsidian-personal\nlanguage: ru\n---\n", encoding="utf-8")
     (tmp_path / "05 - Материалы" / "Криптовалюты").mkdir(parents=True)
     return tmp_path
 
@@ -28,8 +28,9 @@ def _stub_subprocs(monkeypatch):
 
 def _note(tmp_path, **over):
     note = {
+        # summary mode renders bullets/tldr (not ru_body) → AMM's quote lives in a bullet
         "title_ru": "DeFi гайд", "tldr": "кратко",
-        "summary_bullets": ["вывод"], "ru_body": "AMM это маркет-мейкер. полный текст.",
+        "summary_bullets": ["AMM это маркет-мейкер."], "ru_body": "AMM это маркет-мейкер. полный текст.",
         "entities": [
             {"name": "AMM", "definition": "автоматический маркет-мейкер",
              "quote": "AMM это маркет-мейкер.", "type": "concept"},
@@ -82,6 +83,28 @@ def test_apply_karpathy_files_note_to_sources(tmp_path, capsys, _stub_subprocs):
     assert "type: summary" in (tmp_path / out["note"]).read_text()  # layout-safe fallback
 
 
+def test_apply_karpathy_neutral_title_no_keyerror(tmp_path, capsys, _stub_subprocs):
+    # round-12 HIGH: karpathy is the only source_filename:slug layout → apply mints the FILENAME
+    # from the title. A contract-conformant NEUTRAL {title} note (no legacy title_ru) must NOT
+    # KeyError in that branch — it files cleanly under _sources/<slug>.md.
+    (tmp_path / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: kv\nlayout: karpathy\n---\n", encoding="utf-8")
+    (tmp_path / "_sources").mkdir()
+    nf = tmp_path / "note.json"
+    nf.write_text(json.dumps({
+        "title": "Neutral Karpathy Title", "tldr": "t", "summary_bullets": ["b"],
+        "body": "AMM body.", "entities": [
+            {"name": "AMM", "definition": "d", "quote": "AMM body.", "type": "concept"}]},
+        ensure_ascii=False), encoding="utf-8")
+    rc = wia.main([
+        "apply", "--vault", "kv", "--vault-root", str(tmp_path), "--db-path", str(tmp_path / "i.db"),
+        "--folder", "_sources", "--mode", "full", "--kind", "article", "--note-file", str(nf),
+        "--raw-rel", "_sources/_raw/x.md", "--source-url", "https://e.com/x", "--today", "2026-06-18"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and "error" not in out                 # no KeyError → INTERNAL_ERROR
+    assert out["note"] == "_sources/neutral-karpathy-title.md"   # filename minted from `title`
+
+
 def test_apply_writes_note_and_files_concepts(vault, tmp_path, capsys, _stub_subprocs):
     rc = _run(vault, _note(tmp_path), vault / "index.db")
     out = json.loads(capsys.readouterr().out)
@@ -117,9 +140,11 @@ def test_footer_omits_unresolvable_entities(vault, tmp_path, capsys, _stub_subpr
     rc = _run(vault, _note(tmp_path), vault / "index.db")
     out = json.loads(capsys.readouterr().out)
     body = (vault / out["note"]).read_text()
-    assert "[[AMM]]" in body
-    assert "[[DeFi]]" in body            # collides-existing → the existing page resolves it
-    assert "[[DeFi гайд]]" not in body   # self-collision → dropped from the footer (no dangling)
+    # footer links target the MINTED slug (alias-displaying the name) so they resolve under
+    # every layout (incl. karpathy/identity, where a verbatim [[Name]] would orphan).
+    assert "[[amm|AMM]]" in body
+    assert "[[defi|DeFi]]" in body       # collides-existing → the existing page resolves it
+    assert "[[defi-гайд" not in body     # self-collision → dropped from the footer (no dangling)
 
 
 def test_overflow_entities_reported_not_silently_dropped(vault, tmp_path, capsys, _stub_subprocs):
@@ -130,7 +155,7 @@ def test_overflow_entities_reported_not_silently_dropped(vault, tmp_path, capsys
             for i in range(30)]
     body = " ".join(e["quote"] for e in ents)
     nf = _note(tmp_path, ru_body=body, entities=ents)
-    rc = _run(vault, nf, vault / "index.db", existing="[]")
+    rc = _run(vault, nf, vault / "index.db", existing="[]", extra=["--mode", "full"])
     out = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert out["candidates"] == 25  # the raised cap
@@ -155,11 +180,26 @@ def test_full_mode_strips_dangling_image_embeds(vault, tmp_path, capsys, _stub_s
 
 
 def test_apply_partial_on_index_failure(vault, tmp_path, capsys, monkeypatch):
+    # a failed source-note index must SKIP concept-filing (refs can't attach to a missing
+    # pages row) — no orphan _concepts/ pages, report partial.
+    filed = []
     monkeypatch.setattr(wia, "_index_note", lambda *a: (6, {"error": "UPSERT_FAILED"}))
-    monkeypatch.setattr(wia, "_file_concepts", lambda *a: (0, {"created": 1}))
+    monkeypatch.setattr(wia, "_file_concepts", lambda *a: (filed.append(a) or (0, {"created": 1})))
     rc = _run(vault, _note(tmp_path), vault / "index.db")
     out = json.loads(capsys.readouterr().out)
     assert rc == 6 and out["action"] == "partial"
+    assert filed == []                                   # concept-filing was skipped
+    assert "skipped" in out["concepts"]["note"]
+
+
+def test_apply_non_string_quote_rejected_clean_envelope(vault, tmp_path, capsys, _stub_subprocs):
+    # CWE-209: an entity `quote` that is a truthy non-string (e.g. a list) must yield a clean
+    # BAD_NOTE_JSON envelope, NOT a raw .strip()/find() traceback (Decision-17 one-envelope).
+    nf = _note(tmp_path, entities=[
+        {"name": "AMM", "definition": "d", "quote": ["not", "a", "string"], "type": "concept"}])
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0 and out.get("error") == "BAD_NOTE_JSON"
 
 
 def test_apply_frontmatter_injection_is_neutralized(vault, tmp_path, capsys, _stub_subprocs):
@@ -190,3 +230,97 @@ def test_apply_existing_slugs_scalar_does_not_crash(vault, tmp_path, capsys, _st
     # but the note's own-slug self-collision still fires
     reasons = {s["reason"] for s in out["skipped"]}
     assert "self-collision" in reasons
+
+
+def test_tags_come_from_note_content_not_folder(vault, tmp_path, capsys, _stub_subprocs):
+    # tags are a CONTENT property from the REASON step — sanitized, used verbatim
+    nf = _note(tmp_path, tags=["AI", "LLM", "cost optimization"])
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    fm = (vault / out["note"]).read_text().split("---")[1]
+    assert "tags: [ai, llm, cost-optimization]" in fm
+
+
+def test_tags_default_minimal_no_folder_heuristic(vault, tmp_path, capsys, _stub_subprocs):
+    # no tags in the note + a "Криптовалюты" folder → NO injected defi/crypto tags
+    # (the old folder→tag hardcode is gone); just the generic fallback.
+    rc = _run(vault, _note(tmp_path), vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    fm = (vault / out["note"]).read_text().split("---")[1]
+    assert "tags: [article]" in fm and "crypto" not in fm and "defi" not in fm
+
+
+def test_apply_missing_folder_clean_envelope(vault, tmp_path, capsys, _stub_subprocs):
+    # a non-existent --folder must yield a clean INVALID_FOLDER envelope, not a FileNotFoundError
+    # traceback (validate_inside_vault resolve(strict=True) on a folder that isn't on disk).
+    argv = ["apply", "--vault", "testv", "--vault-root", str(vault),
+            "--db-path", str(vault / "index.db"), "--folder", "05 - Материалы/Несуществующая",
+            "--mode", "summary", "--note-file", str(_note(tmp_path)),
+            "--raw-rel", "05 - Материалы/Несуществующая/_raw/x.md",
+            "--source-url", "https://e.com/x", "--today", "2026-06-18",
+            "--existing-page-slugs", "[]"]
+    rc = wia.main(argv)
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0 and out.get("error") == "INVALID_FOLDER"
+
+
+@pytest.mark.parametrize("layout,folder,expected", [
+    ("karpathy", "_sources", True),                    # _concepts/**/*.md glob + concept mapping
+    ("obsidian-personal", "05 - Материалы/Крипто", True),
+    ("cybos", "decisions", True),                       # round-10: recursive globs + concept mapping
+    ("dev-project", "tasks", False),                    # single-level globs can't reach _concepts
+])
+def test_layout_indexes_concepts_gate(tmp_path, layout, folder, expected):
+    # the concept-filing gate: only concept-graph-capable layouts (can index a _concepts page)
+    # get concept extraction; dev-project (structured-doc, single-level globs) cleanly skips it.
+    from scripts.wiki_index.layout_config import resolve_layout_config
+    (tmp_path / "WIKI_SCHEMA.md").write_text(
+        f"---\nvault_id: gatev\nlayout: {layout}\n---\n", encoding="utf-8")
+    lc = resolve_layout_config(tmp_path)
+    note_dir = wia._note_dir(lc, tmp_path, tmp_path / folder)
+    assert wia._layout_indexes_concepts(lc, tmp_path, note_dir) is expected
+
+
+def test_mint_strategy_matches_indexer_keyspace():
+    # the collision-guard mint keyspace MUST equal the indexer's for every lowercase strategy
+    # (else a minted slug is compared against a differently-keyed pages.slug → missed collision
+    # → owner-page eviction). Only `identity` (case-preserving) falls back to preserve-unicode.
+    assert wia._mint_strategy("transliterate") == "transliterate"
+    assert wia._mint_strategy("preserve-unicode") == "preserve-unicode"
+    assert wia._mint_strategy("ascii-only") == "ascii-only"     # the round-5 gap, now closed
+    assert wia._mint_strategy("identity") == "preserve-unicode"  # case-preserving → mint-valid
+
+
+def test_apply_accepts_neutral_field_names(vault, tmp_path, capsys, _stub_subprocs):
+    # international contract: neutral `title`/`body` work (legacy `title_ru`/`ru_body` still do)
+    nf = tmp_path / "neutral.json"
+    nf.write_text(json.dumps({"title": "Neutral Title", "tldr": "t",
+        "summary_bullets": ["a bullet"], "body": "full body", "entities": []},
+        ensure_ascii=False), encoding="utf-8")
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert 'title: "Neutral Title"' in (vault / out["note"]).read_text()
+
+
+def test_non_list_tags_rejected_clean_envelope(vault, tmp_path, capsys, _stub_subprocs):
+    # a bare-string `tags` would iterate per-CHAR into garbage `tags: [c, r, y, p, t, o]`;
+    # the type gate must reject it with a clean BAD_NOTE_JSON (consistency with the other
+    # consumed fields), not silently leak corrupt frontmatter into the filed note.
+    nf = _note(tmp_path, tags="crypto")
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0 and out.get("error") == "BAD_NOTE_JSON"
+
+
+def test_non_dict_entity_rejected_clean_envelope(vault, tmp_path, capsys, _stub_subprocs):
+    # CWE-209: a malformed entities[] (non-dict element) yields a clean BAD_NOTE_JSON
+    # envelope, NOT an uncaught AttributeError stack trace.
+    nf = tmp_path / "bad.json"
+    nf.write_text(json.dumps({"title_ru": "T", "tldr": "t", "summary_bullets": ["b"],
+                              "ru_body": "x", "entities": ["not-a-dict", 123]}), encoding="utf-8")
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0 and out.get("error") == "BAD_NOTE_JSON"

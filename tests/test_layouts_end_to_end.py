@@ -192,6 +192,77 @@ def test_obsidian_personal_ignores_raw_and_staging(tmp_path: Path) -> None:
         repo.close()
 
 
+def test_karpathy_ignores_sources_raw_no_phantom_or_clobber(tmp_path: Path) -> None:
+    """Round-9 HIGH: wiki-import stages its untranslated capture at `_sources/_raw/<slug>.md`.
+    Karpathy's RECURSIVE `_sources/**/*.md` glob would otherwise index that as a phantom source
+    page — and since the raw and the curated note can share the same title-derived slug, the
+    `(vault_id, slug, project)` upsert would non-deterministically clobber the real note's row.
+    The `**/_raw/**` ignore must keep `_sources/_raw/` out of the index entirely."""
+    vault = tmp_path / "kv"
+    _wiki_schema(vault, "kvault", "karpathy")
+    # all carry `type: summary` (karpathy _sources needs an explicit type) — so the _raw
+    # captures would index + clobber IF they weren't excluded; the ignore is what stops them.
+    fm = "---\ntype: summary\n---\n"
+    files = {
+        "_sources/real-note.md": fm + "# Real note\n\nthe curated, translated summary\n",
+        "_sources/_raw/real-note.md": fm + "# Raw original\n\nuntranslated H-6 capture\n",
+        "Lessons/C/_sources/lesson.md": fm + "# Lesson\n\ncourse-tier curated note\n",
+        "Lessons/C/_sources/_raw/lesson.md": fm + "# Raw\n\ncourse-tier untranslated capture\n",
+    }
+    for rel, body in files.items():
+        p = vault / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    repo = SQLiteRepository(tmp_path / "k.db")
+    repo.apply_schema()
+    _register(repo, "kvault", vault)
+    try:
+        reindex_full(repo, "kvault")
+        rows = repo._connect().execute(
+            "SELECT slug, file_path FROM pages WHERE vault_id='kvault'").fetchall()
+        paths = {r["file_path"] for r in rows}
+        # the curated notes ARE indexed; NEITHER _raw capture leaked in (no phantom, no clobber)
+        assert not any("_raw" in p for p in paths), f"_sources/_raw leaked into the index: {paths}"
+        assert "_sources/real-note.md" in paths
+        assert "Lessons/C/_sources/lesson.md" in paths
+    finally:
+        repo.close()
+
+
+def test_cybos_indexes_wiki_import_concept_pages(tmp_path: Path) -> None:
+    """Round-10 HIGH: wiki-import files `<folder>/_concepts/<slug>.md` (type: concept). cybos's
+    recursive per-folder globs DISCOVER it; with the added `concept` type_mapping it must INDEX
+    as db_type concept (rebuildable by `wiki-reindex --full`) instead of UnmappedTypeError-skip —
+    else the Class A concept markdown is not DB-rebuildable (Class A/B invariant breach)."""
+    vault = tmp_path / "cv"
+    _wiki_schema(vault, "cybvault", "cybos")
+    files = {
+        "decisions/some-decision.md": "---\ntype: decision\n---\n# D\n\nrationale\n",
+        "decisions/_concepts/bonding-curve.md":
+            "---\ntype: concept\n---\n# Bonding curve\n\nan AMM pricing curve\n",
+    }
+    for rel, body in files.items():
+        p = vault / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+    repo = SQLiteRepository(tmp_path / "c.db")
+    repo.apply_schema()
+    _register(repo, "cybvault", vault)
+    try:
+        reindex_full(repo, "cybvault")
+        by_slug = {r["slug"]: r["type"] for r in repo._connect().execute(
+            "SELECT slug, type FROM pages WHERE vault_id='cybvault'").fetchall()}
+        assert by_slug.get("bonding-curve") == "concept", \
+            f"wiki-import concept page not indexed/rebuilt on cybos: {by_slug}"
+        assert "some-decision" in by_slug
+        # and the entity row is rebuilt too (the entity-graph half of the construct path)
+        ents = {r["slug"] for r in repo._connect().execute(
+            "SELECT slug FROM entities WHERE vault_id='cybvault'").fetchall()}
+        assert "bonding-curve" in ents, f"concept entity row not rebuilt on cybos: {ents}"
+    finally:
+        repo.close()
+
+
 def test_obsidian_personal_indexes_without_collision(tmp_path: Path) -> None:
     vault = tmp_path / "ov"
     _build_obsidian_vault(vault)

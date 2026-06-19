@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scripts.wiki_index.config_loader import load_root_config
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import (
     _apply_slug_strategy,
@@ -76,6 +77,19 @@ _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 _MINT_SLUG = "preserve-unicode"
 
 
+def _mint_strategy(slug_strategy: str) -> str:
+    """The keyspace to mint NEW slugs / re-slugify FS stems in for the collision guard.
+
+    It MUST equal the indexer's keyspace (the layout's own `slug_strategy`) for every strategy
+    that yields a valid lowercase-kebab slug (`transliterate`, `preserve-unicode`, `ascii-only`,
+    + any future lowercase strategy) — else the guard compares a minted slug against a
+    differently-keyed `pages.slug` and misses a real owner-page collision (eviction at reindex).
+    Only `identity` preserves source-FILENAME case and so is NOT mint-valid; mint via `_MINT_SLUG`
+    (preserve-unicode), which round-trips the already-lowercase `<slug>.md` stems wiki-import
+    writes (karpathy byte-identity). A FUTURE case-preserving strategy must be added here too."""
+    return _MINT_SLUG if slug_strategy == "identity" else slug_strategy
+
+
 def _derive_slug(title: str | None, source: str, slug_strategy: str) -> str:
     base = (title or "").strip()
     if not base:
@@ -86,18 +100,42 @@ def _derive_slug(title: str | None, source: str, slug_strategy: str) -> str:
 
 # --------------------------------------------------------------------------- prepare
 
+def _resolve_vault_root(args: argparse.Namespace) -> Path:
+    """Resolve --vault-root, emitting a clean INVALID_VAULT_ROOT envelope (via main's handler)
+    instead of a raw `resolve(strict=True)` FileNotFoundError traceback (Decision-17)."""
+    try:
+        return Path(args.vault_root).resolve(strict=True)
+    except FileNotFoundError:
+        raise ImportArticleError(
+            "INVALID_VAULT_ROOT",
+            f"--vault-root {str(args.vault_root)!r} does not exist",
+            exit_code=EXIT_BAD_ARG) from None
+
+
 def prepare(args: argparse.Namespace) -> int:
-    vault_root = args.vault_root.resolve(strict=True)
+    vault_root = _resolve_vault_root(args)
     cfg = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     db_path = cfg.get("db_path")
     layout = resolve_layout_config(vault_root)
     slug_strategy = layout.slug_strategy
+    # the REASON step must summarise INTO the vault's language (international — not hardcoded
+    # RU); emitted in the envelope so the orchestrator knows the target language. en fallback.
+    note_lang = str(load_root_config(vault_root).get("language") or "en").lower()
 
     try:
         folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
     except PathTraversalError:
         return emit({"error": "INVALID_FOLDER",
                      "message": f"--folder {args.folder!r} escapes the vault root"},
+                    exit_code=EXIT_BAD_ARG)
+    except FileNotFoundError:
+        # validate_inside_vault resolve(strict=True) → FileNotFoundError for a missing folder.
+        # Refuse with a clean envelope (Decision-17), never a raw traceback. We auto-create our
+        # OWN machinery subdirs (_raw/_sources/_concepts) but not the operator's topic folder —
+        # so a typo can't silently spawn junk folders in a curated vault.
+        return emit({"error": "INVALID_FOLDER",
+                     "message": f"--folder {args.folder!r} does not exist in the vault; "
+                                "create the target topic folder first"},
                     exit_code=EXIT_BAD_ARG)
 
     # 1. deterministic fetch (NO raw written on failure — R-3)
@@ -121,29 +159,47 @@ def prepare(args: argparse.Namespace) -> int:
             "hint": "source unreachable/empty — file a needs-manual stub by hand.",
         }, exit_code=EXIT_FETCH_FAILED)
 
+    # A successful image-bearing fetch leaves html2md's temp dir alive (its `_attachments/`
+    # is filed below); reclaim it on EVERY exit path, including the validation early-returns.
+    _imgtmp = result.attachments_dir.parent if result.attachments_dir else None
+
+    def _bad(env: dict[str, Any], code: int) -> int:
+        if _imgtmp:
+            shutil.rmtree(_imgtmp, ignore_errors=True)
+        return emit(env, exit_code=code)
+
     # 2. slug + raw path (containment + slug validity — R-26). Mint via _MINT_SLUG so a
     # capitalized title under karpathy's `identity` strategy still yields a valid slug.
     slug = args.slug or _derive_slug(result.title, args.source, _MINT_SLUG)
     if not _is_valid_slug(slug, max_len=None):
-        return emit({"error": "INVALID_SLUG",
+        return _bad({"error": "INVALID_SLUG",
                      "message": f"derived slug {slug!r} is not a valid page slug; pass --slug",
-                     "source": args.source}, exit_code=EXIT_BAD_ARG)
-    # _is_valid_slug already forbids separators / leading dot, so `<slug>.md` cannot
-    # traverse; we still route the (now-existing) _raw dir through R-26 for defense.
-    raw_dir = folder_abs / "_raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+                     "source": args.source}, EXIT_BAD_ARG)
+    # _raw lives under the source-subdir tier for source_subdir layouts (course-tier karpathy
+    # → Lessons/<Course>/_sources/_raw, matching where `apply` files the note); PARA → folder.
     try:
+        note_dir = _note_dir(layout, vault_root, folder_abs)
+        raw_dir = note_dir / "_raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
         raw_dir = validate_inside_vault(raw_dir, vault_root)
     except PathTraversalError:
-        return emit({"error": "INVALID_FOLDER",
+        return _bad({"error": "INVALID_FOLDER",
                      "message": f"_raw under {args.folder!r} resolves outside the vault"},
-                    exit_code=EXIT_BAD_ARG)
+                    EXIT_BAD_ARG)
 
     raw_path = raw_dir / f"{slug}.md"
     if raw_path.is_symlink():  # refuse a swapped-in symlink target (R-26 write posture)
-        return emit({"error": "REFUSED_SYMLINK",
+        return _bad({"error": "REFUSED_SYMLINK",
                      "message": f"_raw/{slug}.md is a symlink; refusing to write through it"},
-                    exit_code=EXIT_BAD_ARG)
+                    EXIT_BAD_ARG)
+    # R-26: refuse a swapped-in `_attachments` DIR symlink BEFORE writing the raw, so a refused
+    # import leaves NO partial artifact on disk; this guard covers both the image copy and the
+    # GC below (either of which would otherwise write/unlink THROUGH the symlink).
+    att_dst = raw_dir / "_attachments"
+    if att_dst.is_symlink():
+        return _bad({"error": "REFUSED_SYMLINK",
+                     "message": "_raw/_attachments is a symlink; refusing to write through it"},
+                    EXIT_BAD_ARG)
     # Guarantee the _raw carries a link to the original (PDFs/text dumps lack a frontmatter;
     # some captures lack `source:`) — inject `source:` from the import source if missing.
     raw_md = ensure_source_frontmatter(result.raw_text, args.source)
@@ -154,23 +210,30 @@ def prepare(args: argparse.Namespace) -> int:
     # `_attachments/<sha>` links resolve; then drop the html2md temp dir.
     n_images = 0
     if result.attachments_dir and result.attachments_dir.is_dir():
-        att_dst = raw_dir / "_attachments"
         att_dst.mkdir(exist_ok=True)
         for img in result.attachments_dir.iterdir():
             if img.is_file() and not (att_dst / img.name).is_symlink():
                 shutil.copy2(img, att_dst / img.name)
                 n_images += 1
         shutil.rmtree(result.attachments_dir.parent, ignore_errors=True)
+    # Reclaim re-import orphans (folder-wide; safe) whenever the dir exists — including a
+    # no-image re-import (import_images:false / no images this run) that must still GC stale
+    # files left by a PRIOR image-bearing import.
+    if att_dst.is_dir():
+        _gc_attachments(raw_dir, att_dst)
 
-    # 3. project + context (known_concepts + existing_page_slugs)
-    project = derive_project_for_path(folder_abs / f"{slug}.md", vault_root)
+    # 3. project + context (known_concepts + existing_page_slugs) — keyed to the dir the note
+    # actually writes to (note_dir) and the candidate keyspace (mint), matching apply's guard.
+    mint = _mint_strategy(slug_strategy)
+    project = derive_project_for_path(note_dir / f"{slug}.md", vault_root)
     repo = make_repo(cfg)
     try:
         known = _context.known_concepts(repo, args.vault, vault_root)
     finally:
         repo.close()
     existing = _context.existing_page_slugs(
-        db_path, args.vault, project, folder_abs, slug_strategy=slug_strategy)
+        db_path, args.vault, project, note_dir, slug_strategy=mint,
+        source_subdir=layout.write.source_subdir)
 
     # content-type → REASON harness (R-2). `auto` detects; an explicit --kind overrides.
     if args.kind == "auto":
@@ -187,6 +250,7 @@ def prepare(args: argparse.Namespace) -> int:
         "slug": slug,
         "project": project,
         "mode": args.mode,
+        "language": note_lang,   # target language for the REASON summary (vault `language`)
         "kind": kind,
         "reason_harness": harness_for(kind),
         "kind_confidence": kind_conf,
@@ -203,18 +267,14 @@ def prepare(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------------------- apply
 
-_INVEST_HINTS = ("инвест", "финанс", "invest", "financ")
-
-
-def _folder_kind(folder: str) -> str:
-    low = folder.lower()
-    return "invest" if any(h in low for h in _INVEST_HINTS) else "crypto"
 
 
 def _note_type(kind: str, layout: Any) -> str:
-    """Per-kind note `type:`, layout-safe: fall back to `summary` (mapped by every
-    layout) when the preferred type isn't in this layout's type_mapping (e.g. karpathy
-    has no `article-summary`)."""
+    """Per-kind note `type:`, layout-safe: fall back to `summary` when the preferred type
+    isn't in this layout's type_mapping (e.g. karpathy has no `article-summary`). All FOUR
+    built-in layouts map `summary` → db_type summary, so import lands cleanly on each; a
+    CUSTOM layout that maps neither the preferred type nor `summary` yields a loud `partial`
+    at index time (UnmappedTypeError → exit 6), never a silent mis-tag."""
     pref = _KIND_NOTE_TYPE.get(kind, "article-summary")
     return pref if pref in layout.type_mapping else "summary"
 
@@ -225,7 +285,11 @@ def _note_dir(layout: Any, vault_root: Path, folder_abs: Path) -> Path:
     empty (PARA) → file in the given topic folder."""
     sub = layout.write.source_subdir
     if sub:
-        d = vault_root / sub
+        # Nest `source_subdir` UNDER the operator's --folder so course-tier karpathy
+        # (`Lessons/<Course>/_sources/`) is addressable — but when --folder already IS that
+        # subdir (vault tier: `--folder _sources`) don't double it (`_sources/_sources`).
+        # Byte-identity for vault-tier karpathy is preserved (folder_abs == vault_root/_sources).
+        d = folder_abs if folder_abs.name == sub else folder_abs / sub
         # Containment check BEFORE mkdir (defense-in-depth: `write.source_subdir` is operator
         # config, already load-gated to a safe single segment — but never mkdir outside the
         # vault even if that gate were bypassed). resolve() normalizes `..` without needing
@@ -237,11 +301,72 @@ def _note_dir(layout: Any, vault_root: Path, folder_abs: Path) -> Path:
     return folder_abs
 
 
+def _layout_indexes_concepts(layout: Any, vault_root: Path, note_dir: Path) -> bool:
+    """True iff a `_concepts/<slug>.md` page filed for a note in `note_dir` would be INDEXED
+    (discovered by a path glob AND type-mappable) by this layout.
+
+    The construct path files concept pages via wiki-extract-concepts; if the resolved layout
+    can't index them, `wiki-reindex --full` can't rebuild that Class-A markdown (a Class A/B
+    invariant breach → orphaned pages + dangling footer wikilinks). So a layout whose globs
+    don't reach the sibling `_concepts/` (e.g. dev-project's single-level `tasks/*.md`) or that
+    lacks a `concept` type_mapping (→ UnmappedTypeError, silently dropped at reindex) returns
+    False here, and the caller files the summary note WITHOUT concept pages. Concept-capable
+    layouts (karpathy, obsidian-personal, cybos) return True. Robust to future drop-in YAMLs."""
+    from scripts.wiki_index.layout import CONCEPTS_SUBDIR
+    from scripts.wiki_index.layout_config import derive_discovered_page
+    if "concept" not in layout.type_mapping:
+        return False
+    sub = layout.write.source_subdir  # concepts dir mirrors wiki_extract_concepts._apply_write
+    concepts_dir = (note_dir.parent if sub and note_dir.name == sub else note_dir) / CONCEPTS_SUBDIR
+    probe = concepts_dir / "concept-probe.md"   # hypothetical (never written) — glob check only
+    return derive_discovered_page(probe, vault_root, layout) is not None
+
+
+_GC_MD_MAX_BYTES = 64 * 1024 * 1024  # per-_raw read ceiling (matches the fetch size cap)
+
+
+def _gc_attachments(raw_dir: Path, att_dst: Path) -> None:
+    """Drop `_attachments/` images referenced by NO `_raw/*.md` in this folder.
+
+    `_attachments/` is shared per `_raw/` dir, so a re-import (changed/removed images) leaves
+    orphans that grow unbounded. GC is FOLDER-WIDE (scan every `_raw/*.md`, not just the note
+    just written) so a sibling note's referenced images are preserved. Same reference regex as
+    `_fetch`'s prune (`_attachments/<basename>`). Best-effort: never raises into the caller.
+
+    Memory is bounded — files are read ONE at a time (peak = one file), and a `_raw/*.md` over
+    `_GC_MD_MAX_BYTES` ABORTS the GC entirely (we'd rather keep orphans than delete an image a
+    too-large note might reference but we never fully read — correctness over reclamation)."""
+    try:
+        referenced: set[str] = set()
+        for md in raw_dir.glob("*.md"):
+            if md.is_file() and not md.is_symlink():
+                if md.stat().st_size > _GC_MD_MAX_BYTES:
+                    return  # can't safely reason about references → keep everything
+                referenced.update(re.findall(r"_attachments/([^\s)\]]+)",
+                                             md.read_text(encoding="utf-8", errors="replace")))
+        for f in att_dst.iterdir():
+            if f.is_file() and not f.is_symlink() and f.name not in referenced:
+                f.unlink()
+    except OSError:
+        pass
+
+
+_MAX_NOTE_BYTES = 32 * 1024 * 1024  # bounded read (a full translation > the 1 MiB candidates cap)
+
+
 def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
     if args.note_stdin:
-        raw = sys.stdin.read()
+        data = sys.stdin.buffer.read(_MAX_NOTE_BYTES + 1)  # bounded — don't slurp unboundedly
+        if len(data) > _MAX_NOTE_BYTES:
+            raise ImportArticleError("NOTE_TOO_LARGE",
+                f"note JSON exceeds {_MAX_NOTE_BYTES >> 20} MiB", exit_code=EXIT_BAD_ARG)
+        raw = data.decode("utf-8", errors="replace")
     elif args.note_file:
-        raw = Path(args.note_file).read_text(encoding="utf-8")
+        nf = Path(args.note_file)
+        if nf.is_file() and nf.stat().st_size > _MAX_NOTE_BYTES:
+            raise ImportArticleError("NOTE_TOO_LARGE",
+                f"note file exceeds {_MAX_NOTE_BYTES >> 20} MiB", exit_code=EXIT_BAD_ARG)
+        raw = nf.read_text(encoding="utf-8")
     else:
         raise ImportArticleError(
             "MISSING_NOTE", "pass --note-file or --note-stdin", exit_code=EXIT_BAD_ARG)
@@ -250,12 +375,36 @@ def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
     except json.JSONDecodeError as e:
         raise ImportArticleError("BAD_NOTE_JSON", f"note JSON is invalid: {e}",
                                  exit_code=EXIT_BAD_ARG) from e
+    ents = note.get("entities") if isinstance(note, dict) else None
+    bullets = note.get("summary_bullets") if isinstance(note, dict) else None
+    # neutral field names (international): `title`/`body`; `title_ru`/`ru_body` accepted as
+    # legacy back-compat (prefer the neutral name when both are present).
+    _title = note.get("title") or note.get("title_ru") if isinstance(note, dict) else None
+    _body = (note.get("body") if (isinstance(note, dict) and note.get("body") is not None)
+             else (note.get("ru_body") if isinstance(note, dict) else None))
     if (not isinstance(note, dict)
-            or not isinstance(note.get("title_ru"), str) or not note["title_ru"].strip()
-            or not isinstance(note.get("entities"), list)):
+            or not isinstance(_title, str) or not _title.strip()
+            or not isinstance(ents, list)
+            or not all(isinstance(e, dict) for e in ents)
+            # consumed scalar/list field TYPES (else assemble/sanitize/strip crash with a raw
+            # traceback, bypassing the one-JSON-envelope contract — Decision-17):
+            or not all(isinstance(e.get("name", ""), str) for e in ents)
+            or not all(e.get("quote") is None or isinstance(e.get("quote"), str) for e in ents)
+            or (_body is not None and not isinstance(_body, str))
+            or not isinstance(note.get("tldr", ""), str)
+            or (bullets is not None
+                and (not isinstance(bullets, list)
+                     or not all(isinstance(b, str) for b in bullets)))
+            # `tags` (also consumed by assemble_note) — a bare string would iterate per-CHAR
+            # into garbage `tags: [c, r, y, p, t, o]`; require a list of strings:
+            or (note.get("tags") is not None
+                and (not isinstance(note.get("tags"), list)
+                     or not all(isinstance(t, str) for t in note["tags"])))):
         raise ImportArticleError(
             "BAD_NOTE_JSON",
-            "note must be an object with a non-empty string title_ru + a list entities",
+            "note needs a non-empty string title (or legacy title_ru), a list of object "
+            "entities with string names + string-or-null quotes, string body/tldr (or legacy "
+            "ru_body), string summary_bullets items, and a list-of-strings tags",
             exit_code=EXIT_BAD_ARG)
     return note
 
@@ -263,9 +412,14 @@ def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
 def _run_module(module: str, argv: list[str], *, stdin: str | None = None,
                 ) -> tuple[int, dict[str, Any]]:
     """Invoke a sibling wiki-* CLI in-repo and capture its JSON envelope."""
-    proc = subprocess.run(
-        [sys.executable, "-m", module, *argv],
-        capture_output=True, text=True, input=stdin, timeout=300)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", module, *argv],
+            capture_output=True, text=True, input=stdin, timeout=300)
+    except subprocess.TimeoutExpired:
+        # a hung child must NOT crash apply() with a raw traceback — surface a clean
+        # non-zero rc so the caller reports a `partial` JSON envelope (Decision-17).
+        return 6, {"error": "SUBPROCESS_TIMEOUT", "module": module}
     env: dict[str, Any] = {}
     if proc.stdout.strip():
         try:
@@ -298,11 +452,20 @@ def _file_concepts(vault: str, vault_root: Path, db_path: str | None, source_pag
 
 
 def apply(args: argparse.Namespace) -> int:
-    vault_root = args.vault_root.resolve(strict=True)
+    vault_root = _resolve_vault_root(args)
     cfg = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
     db_path = cfg.get("db_path")
     layout = resolve_layout_config(vault_root)
     slug_strategy = layout.slug_strategy
+    # rendered note language = the vault's `language` (WIKI_SCHEMA), English fallback — the
+    # project is international, so section headings/labels are NOT hardcoded to one locale.
+    note_lang = str(load_root_config(vault_root).get("language") or "en").lower()
+    # Mint slugs in the SAME keyspace the indexer will record from the filename, so the
+    # collision guards (self-collision / collides-existing-page) compare like-for-like.
+    # mint in the layout's OWN keyspace (see _mint_strategy): a `transliterate`/`ascii-only`
+    # layout MUST NOT mint preserve-unicode, else the guard compares the wrong keyspace and
+    # evicts an owner page at reindex.
+    mint = _mint_strategy(slug_strategy)
 
     try:
         folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
@@ -310,23 +473,44 @@ def apply(args: argparse.Namespace) -> int:
         return emit({"error": "INVALID_FOLDER",
                      "message": f"--folder {args.folder!r} escapes the vault root"},
                     exit_code=EXIT_BAD_ARG)
+    except FileNotFoundError:  # missing folder → clean envelope, never a raw traceback (D-17)
+        return emit({"error": "INVALID_FOLDER",
+                     "message": f"--folder {args.folder!r} does not exist in the vault; "
+                                "run prepare first / create the target topic folder"},
+                    exit_code=EXIT_BAD_ARG)
 
     note = _load_note_json(args)
     today = args.today or datetime.date.today().isoformat()
     note_type = _note_type(args.kind, layout)
     raw_rel = args.raw_rel  # required (see parser) — always prepare's real raw_path, never re-slugified
-    san_names = [n for n in (sanitize_name(e.get("name", "")) for e in note["entities"])
-                 if name_is_filable(n)]
+    # dedup (order-preserving): two entities with the same name must not double the footer link
+    san_names = list(dict.fromkeys(
+        n for n in (sanitize_name(e.get("name", "")) for e in note["entities"])
+        if name_is_filable(n)))
+
+    # Resolve the note's target dir ONCE (source_subdir layouts file under the subdir tier;
+    # course-tier karpathy → Lessons/<Course>/_sources) — drives the collision-guard project +
+    # FS scan AND the write path together, so they can never query a different partition.
+    try:
+        note_dir = _note_dir(layout, vault_root, folder_abs)
+    except PathTraversalError:
+        return emit({"error": "INVALID_FOLDER",
+                     "message": "the layout's write.source_subdir escapes the vault root"},
+                    exit_code=EXIT_BAD_ARG)
 
     # config-driven filename (TASK 040): `source_filename: slug` (karpathy `identity` → filename ==
     # the page slug) files as <minted-slug>.md (the minted slug MUST be valid — a title that
     # slugifies to "" would yield ".md"); `title` (PARA) → assemble_note derives from the title.
     slug_fname = None
     if layout.write.source_filename == "slug":
-        _s = _apply_slug_strategy(note["title_ru"], _MINT_SLUG)
+        # neutral-or-legacy title (same resolution as _load_note_json/assemble_note) — a
+        # contract-conformant {title} note has NO title_ru, so a bare note["title_ru"] would
+        # KeyError on karpathy (the only source_filename:slug layout). Already validated non-empty.
+        _title = note.get("title") or note.get("title_ru") or ""
+        _s = _apply_slug_strategy(_title, mint)
         if not _is_valid_slug(_s, max_len=None):
             return emit({"error": "INVALID_SLUG",
-                         "message": f"title {note['title_ru']!r} does not slugify to a valid "
+                         "message": f"title {_title!r} does not slugify to a valid "
                                     "slug-filename for this layout; rename it"},
                         exit_code=EXIT_BAD_ARG)
         slug_fname = f"{_s}.md"
@@ -336,7 +520,7 @@ def apply(args: argparse.Namespace) -> int:
             note, mode=args.mode, raw_rel_basename=raw_rel,
             source_url=args.source_url or str(note.get("URL", "")),
             source_lang=args.source_lang, today=today, note_type=note_type,
-            folder_kind=_folder_kind(args.folder), san_names=names, fname=slug_fname)
+            san_names=names, fname=slug_fname, mint_strategy=mint, lang=note_lang)
 
     # Build the note once (footer = every filable entity), then reconcile that footer
     # with what concept-filing will actually materialize (below).
@@ -344,7 +528,7 @@ def apply(args: argparse.Namespace) -> int:
     # minted slug (lowercase-kebab) — self-collision check + manifest; extract-concepts gets
     # the note's REL PATH as --source-page, so the indexed page slug is resolved downstream.
     # Stable across re-assembly: the filename derives from the title, not the entity set.
-    note_slug = _apply_slug_strategy(Path(fname).stem, _MINT_SLUG)
+    note_slug = _apply_slug_strategy(Path(fname).stem, mint)
 
     # collision-guard input: round-tripped from prepare, else re-derived (always fresh)
     if args.existing_page_slugs:
@@ -356,15 +540,27 @@ def apply(args: argparse.Namespace) -> int:
         existing = ([s for s in parsed if isinstance(s, str)]
                     if isinstance(parsed, list) else [])
     else:
-        project = derive_project_for_path(folder_abs / f"{note_slug}.md", vault_root)
+        # query the partition the note ACTUALLY writes to (note_dir), in the candidate keyspace
+        project = derive_project_for_path(note_dir / f"{note_slug}.md", vault_root)
         existing = _context.existing_page_slugs(
-            db_path, args.vault, project, folder_abs, slug_strategy=slug_strategy)
+            db_path, args.vault, project, note_dir, slug_strategy=mint,
+            source_subdir=layout.write.source_subdir)
 
-    candidates, skipped = derive_candidates(
-        note["entities"], note_text, slug_strategy=_MINT_SLUG,
-        note_slug=note_slug, existing_page_slugs=existing)
+    # Concept-filing GATE: only extract concept pages on a layout that can actually INDEX a
+    # `_concepts/<slug>.md` page (else wiki-reindex --full can't rebuild them → orphaned pages
+    # + dangling footer wikilinks, a Class A/B breach). A structured-doc layout like dev-project
+    # files the summary note WITHOUT concepts; concept-graph layouts (karpathy/obsidian/cybos) do.
+    concepts_indexable = _layout_indexes_concepts(layout, vault_root, note_dir)
+    if concepts_indexable:
+        candidates, skipped = derive_candidates(
+            note["entities"], note_text, slug_strategy=mint,
+            note_slug=note_slug, existing_page_slugs=existing)
+    else:
+        candidates = []
+        skipped = [{"name": str(e.get("name", "")), "reason": "layout-no-concepts"}
+                   for e in note["entities"] if isinstance(e, dict)]
 
-    # Footer reconciliation (P3-8): the `## Ключевые сущности` index must list ONLY entities
+    # Footer reconciliation (P3-8): the entity-index section must list ONLY entities
     # that resolve to a page — those filed now (candidates) plus those whose slug collides
     # with an EXISTING page (the link still resolves). Drop the rest (no-verbatim-quote / dup /
     # self-collision / over-cap) so the footer never carries a dangling `[[wikilink]]`. Rebuild
@@ -378,12 +574,7 @@ def apply(args: argparse.Namespace) -> int:
     if footer_names != san_names:
         fname, note_text = _assemble(footer_names)
 
-    try:
-        note_path = _note_dir(layout, vault_root, folder_abs) / fname
-    except PathTraversalError:  # the layout's write.source_subdir escapes the vault → clean envelope
-        return emit({"error": "INVALID_FOLDER",
-                     "message": "the layout's write.source_subdir escapes the vault root"},
-                    exit_code=EXIT_BAD_ARG)
+    note_path = note_dir / fname   # note_dir resolved + validated above
     if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)
         return emit({"error": "REFUSED_SYMLINK",
                      "message": f"{fname!r} is a symlink; refusing to write through it"},
@@ -397,10 +588,17 @@ def apply(args: argparse.Namespace) -> int:
     # the source note must be indexed BEFORE concept refs can attach to it
     idx_rc, idx_env = _index_note(args.vault, vault_root, db_path, note_path)
     cc_rc, cc_env = (0, {"created": 0, "note": "no candidates"})
-    if candidates:
+    if candidates and idx_rc == 0:
         # --source-hash = FRESH hash of the just-written note body (NOT prepare's _raw hash)
         cc_rc, cc_env = _file_concepts(
             args.vault, vault_root, db_path, note_rel, note_hash, candidates)
+    elif candidates:
+        # indexing failed → the source note has no pages row, so concept refs can't
+        # attach. Skip filing (avoid orphan _concepts/ pages) and report partial.
+        cc_env = {"created": 0, "note": "skipped: source note indexing failed"}
+    elif not concepts_indexable and note["entities"]:
+        # intentional (not a failure): this layout can't index _concepts pages → note only.
+        cc_env = {"created": 0, "note": "skipped: layout does not index _concepts pages"}
 
     ok = idx_rc == 0 and cc_rc == 0
     return emit({
@@ -436,7 +634,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common(pp)
     pp.add_argument("--source", required=True, help="A http(s) URL or a local file path")
     pp.add_argument("--folder", required=True,
-                    help="Target PARA folder, vault-relative (e.g. '05 - Материалы/Криптовалюты')")
+                    help="Target folder, vault-relative (e.g. '05 - Materials/Crypto')")
     pp.add_argument("--mode", choices=("full", "summary", "thread"), default="full")
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
@@ -451,10 +649,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--mode", choices=("full", "summary", "thread"), default="full")
     ap.add_argument("--kind", choices=[k for k in KINDS if k != "auto"], default="article",
                     help="content-type from prepare; sets the note `type:` (layout-safe)")
-    ap.add_argument("--note-file", default=None,
-                    help="Path to the orchestrator's note JSON (mutex with --note-stdin)")
-    ap.add_argument("--note-stdin", action="store_true",
-                    help="Read the orchestrator's note JSON from stdin")
+    note_src = ap.add_mutually_exclusive_group()  # enforce the documented mutex
+    note_src.add_argument("--note-file", default=None,
+                          help="Path to the orchestrator's note JSON (mutex with --note-stdin)")
+    note_src.add_argument("--note-stdin", action="store_true",
+                          help="Read the orchestrator's note JSON from stdin")
     ap.add_argument("--existing-page-slugs", default=None,
                     help="JSON array of existing slugs (from prepare) for the collision guard")
     ap.add_argument("--source-url", default=None, help="Original source URL (for provenance)")
@@ -473,6 +672,13 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except ImportArticleError as e:
         return emit(e.envelope(), exit_code=e.exit_code)
+    except Exception as e:  # noqa: BLE001 — Decision-17 backstop: every CLI emits ONE JSON
+        # envelope + a stable exit code, NEVER a raw traceback (e.g. make_repo on a malformed
+        # --vault, or any unforeseen deep fault). Emit only the exception TYPE — never str(e),
+        # which can leak resolved filesystem paths (CWE-209).
+        return emit({"error": "INTERNAL_ERROR", "type": type(e).__name__,
+                     "message": "unexpected internal error — check --vault / --vault-root / "
+                                "--folder / --source"}, exit_code=EXIT_BAD_ARG)
 
 
 if __name__ == "__main__":

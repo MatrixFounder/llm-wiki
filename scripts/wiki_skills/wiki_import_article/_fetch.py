@@ -40,7 +40,13 @@ _PDF_FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 # writing a junk _raw. Conservative threshold — a captured first tweet (~300+ prose chars)
 # is NOT flagged; only the bare login wall (<220 prose chars) is.
 _X_HOSTS = ("x.com", "twitter.com")
-_X_LOGIN_MARKERS = ("Log in", "Sign up", "onboarding/web?mode=login", "/i/flow/login")
+# Login-wall markers, split by robustness. URL markers are LOCALE-INDEPENDENT (X serves these
+# login-flow paths regardless of UI language) → the primary signal. The text markers are
+# English-only best-effort secondary coverage; a non-English wall is still caught by the URL
+# markers (they're OR-ed together below) + the <_X_PROSE_FLOOR prose gate.
+_X_LOGIN_URL_MARKERS = ("/i/flow/login", "onboarding/web?mode=login", "mode=login", "/login?")
+_X_LOGIN_TEXT_MARKERS = ("Log in", "Sign up")
+_X_LOGIN_MARKERS = _X_LOGIN_URL_MARKERS + _X_LOGIN_TEXT_MARKERS
 _X_PROSE_FLOOR = 220
 
 
@@ -57,9 +63,9 @@ class FetchResult:
 
 
 def _fm_safe(value: str) -> str:
-    """Frontmatter-scalar-safe: strip control/newlines + quotes so an injected source
-    value cannot break the YAML or inject a key (H-6)."""
-    return re.sub(r'[\x00-\x1f\x7f"]+', " ", str(value or "")).strip()
+    """Frontmatter-scalar-safe: strip control/newlines + quotes + backslashes so an injected
+    source value cannot break the YAML, inject a key, or escape the closing quote (H-6)."""
+    return re.sub(r'[\x00-\x1f\x7f"\\]+', " ", str(value or "")).strip()
 
 
 def ensure_source_frontmatter(raw_text: str, source: str) -> str:
@@ -171,8 +177,16 @@ def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False)
     img_flag = "--download-images" if download_images else "--no-download-images"
     argv = ["python3", bin_path, target, tmpdir, img_flag,
             "--json-errors", "--engine", "auto"]
-    proc = subprocess.run(argv, capture_output=True, text=True,
-                          timeout=_HTML2MD_TIMEOUT, env=_skill_env())
+    # A hung/over-long fetch (slow/hostile host, huge page — exactly what the timeout exists
+    # for) must NOT escape as a raw traceback that ALSO orphans `tmpdir` (Decision-17 + the
+    # mkdtemp lifecycle). `_fail` cleans the temp dir and returns a typed FETCH_FAILED.
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=_HTML2MD_TIMEOUT, env=_skill_env())
+    except subprocess.TimeoutExpired:
+        return _fail("timeout", code=EXIT_FETCH_FAILED)
+    except (OSError, ValueError):  # spawn failure — clean envelope, never a raw traceback
+        return _fail("spawn_failed", code=EXIT_FETCH_FAILED)
     if proc.returncode != 0:
         _cleanup()
         return FetchResult(ok=False, engine="html2md",
@@ -181,8 +195,8 @@ def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False)
     out = Path(tmpdir)
     reader = sorted(out.glob("*.reader.md"))
     whole = [p for p in out.glob("*.md") if not p.name.endswith(".reader.md")]
-    reader_txt = reader[0].read_text(encoding="utf-8") if reader else ""
-    whole_txt = whole[0].read_text(encoding="utf-8") if whole else ""
+    reader_txt = reader[0].read_text(encoding="utf-8", errors="replace") if reader else ""
+    whole_txt = whole[0].read_text(encoding="utf-8", errors="replace") if whole else ""
     # Reader-first: take the reader extraction when it has a substantial body; fall back to
     # the whole page when reader is over-stripped (thin) AND a whole page exists; if reader
     # is the only output, use it even when thin.
@@ -246,20 +260,26 @@ def _download_pdf(url: str) -> Path:
     untrusted imports in an egress-restricted sandbox.)"""
     req = urllib.request.Request(
         url, headers={"User-Agent": _PDF_FETCH_UA, "Accept": "application/pdf,*/*"})
-    tmp = Path(tempfile.mkstemp(suffix=".pdf")[1])
-    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
-        total = 0
-        with tmp.open("wb") as fh:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_PDF_BYTES:
-                    raise ImportArticleError(
-                        "FETCH_FAILED", f"PDF exceeds {_MAX_PDF_BYTES}-byte cap",
-                        exit_code=EXIT_FETCH_FAILED, details={"url": url})
-                fh.write(chunk)
+    fd, name = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)            # close the mkstemp fd — we re-open by path below (no fd leak)
+    tmp = Path(name)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
+            total = 0
+            with tmp.open("wb") as fh:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_PDF_BYTES:
+                        raise ImportArticleError(
+                            "FETCH_FAILED", f"PDF exceeds {_MAX_PDF_BYTES}-byte cap",
+                            exit_code=EXIT_FETCH_FAILED, details={"url": url})
+                    fh.write(chunk)
+    except BaseException:   # never leak the temp file on any error/abort path
+        tmp.unlink(missing_ok=True)
+        raise
     return tmp
 
 

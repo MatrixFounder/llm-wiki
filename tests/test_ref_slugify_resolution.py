@@ -44,6 +44,15 @@ def test_transliterate_slugifies_target() -> None:
     assert _targets("[[Some Page]]", "transliterate") == ["some-page"]
 
 
+def test_raw_capture_links_are_not_recorded_as_refs() -> None:
+    # wiki-import's clickable `[[_raw/<slug>]]` link to the intentionally-unindexed source
+    # capture must NOT become a (false, permanent) orphan-link ref — _body_refs skips any
+    # target into a `_raw/` dir, while a NORMAL [[wikilink]] beside it is still recorded.
+    body = "[[_raw/how-to-reduce-ai-costs|_raw/how-to-reduce-ai-costs.md]] and [[Real Concept]]"
+    assert _targets(body, "preserve-unicode") == ["real-concept"]
+    assert _targets("[[notes/_raw/x|x]]", "identity") == []   # nested-dir form skipped too
+
+
 def test_preserve_unicode_slugifies_target() -> None:
     # obsidian-personal: [[Идеи]] → 'идеи' (lowercased, unicode kept) — the dogfood bug.
     assert _targets("[[Идеи]]", "preserve-unicode") == ["идеи"]

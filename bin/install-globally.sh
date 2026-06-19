@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Usage: bin/install-globally.sh
 #
-# Make the wiki-* CLIs and Claude Code skills available from any project.
-# Idempotent (ln -sfn).
+# Make the wiki-* CLIs and Claude Code skills/commands available from any project.
+# RUN THIS after adding (or renaming) a `bin/wiki-*`, `skills/wiki-*/`, or `commands/wiki-*.md`
+# — new entries are NOT auto-propagated, so a freshly-added skill/CLI (e.g. wiki-import,
+# wiki-graph, wiki-health) is invisible to the `claude` CLI and the shell until this re-runs.
 #
-#   1. Symlinks `bin/wiki-*` wrappers into `~/.local/bin/` (or $WIKI_INSTALL_BIN).
-#   2. Symlinks `skills/wiki-*/` into `~/.claude/skills/wiki-*/`.
-#   3. Symlinks `commands/wiki-*.md` into `~/.claude/commands/wiki-*.md`.
-#   4. Symlinks `workflows/wiki-enrich.md` into `~/.claude/skills/wiki-enrich/`
-#      reference path (workflow is owned by the skill).
+# Three global surfaces:
+#   ~/.local/bin/<cli>            → repo bin/<cli>            (PATH binaries; $WIKI_INSTALL_BIN)
+#   ~/.claude/skills/<name>       → repo skills/<name>/       (Skill tool)
+#   ~/.claude/commands/<name>.md  → repo commands/<name>.md   (slash commands)
 #
-# Prereqs: this repo's venv is set up (`python3 -m venv .venv && pip install -r requirements.txt`).
+# Safe + idempotent: creates a MISSING link, REPAIRS a stale link that already points into
+# THIS repo, and SKIPS (never clobbers) a real file/dir or a link owned by another tool
+# (e.g. ~/.claude/skills/wiki-ingest → the Universal-skills repo). Never deletes data.
 #
-# After running: ensure `~/.local/bin` is on PATH, then `/wiki-*` slash commands
-# work from any Claude Code project, and `wiki-search "x"` etc. work from any shell.
+# Prereqs: this repo's venv (`python3 -m venv .venv && pip install -r requirements.txt`).
+# After running: ensure `~/.local/bin` is on PATH; then `/wiki-*` + `wiki-* ` work anywhere.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
@@ -28,54 +31,49 @@ CLAUDE_COMMANDS="$HOME/.claude/commands"
 
 mkdir -p "$BIN_DIR" "$CLAUDE_SKILLS" "$CLAUDE_COMMANDS"
 
-# 1. wrappers → ~/.local/bin/
-count_bin=0
-for wrapper in "$REPO"/bin/wiki-*; do
-  [[ -f "$wrapper" && -x "$wrapper" ]] || continue
-  name="$(basename "$wrapper")"
-  ln -sfn "$wrapper" "$BIN_DIR/$name"
-  count_bin=$((count_bin + 1))
-done
+n_new=0; n_repaired=0; n_ok=0; n_skip=0
+# safe_link <target> <linkpath>: install/repair links into THIS repo; never clobber foreign ones.
+safe_link() {
+  local target="$1" lp="$2" name; name="$(basename "$lp")"
+  if [[ -L "$lp" ]]; then
+    local cur; cur="$(readlink "$lp")"
+    if [[ "$cur" == "$target" ]]; then n_ok=$((n_ok+1)); return; fi
+    case "$cur" in
+      "$REPO"/*) ln -sfn "$target" "$lp"; echo "  repaired $name"; n_repaired=$((n_repaired+1));;
+      *)         echo "  SKIP    $name → $cur (owned by another tool)"; n_skip=$((n_skip+1));;
+    esac
+  elif [[ -e "$lp" ]]; then
+    echo "  SKIP    $name (a real file/dir exists)"; n_skip=$((n_skip+1))
+  else
+    ln -s "$target" "$lp"; echo "  linked  $name"; n_new=$((n_new+1))
+  fi
+}
 
-# 2. skills → ~/.claude/skills/
-count_skills=0
+echo "CLIs → $BIN_DIR"
+for wrapper in "$REPO"/bin/wiki-*; do                 # executable wrappers only (skip *.sh helpers)
+  [[ -f "$wrapper" && -x "$wrapper" ]] || continue
+  safe_link "$wrapper" "$BIN_DIR/$(basename "$wrapper")"
+done
+echo "skills → $CLAUDE_SKILLS"
 for src in "$REPO"/skills/wiki-*/; do
   [[ -d "$src" ]] || continue
-  name="$(basename "$src")"
-  ln -sfn "$src" "$CLAUDE_SKILLS/$name"
-  count_skills=$((count_skills + 1))
+  safe_link "${src%/}" "$CLAUDE_SKILLS/$(basename "$src")"
 done
-
-# 3. commands → ~/.claude/commands/
-count_commands=0
+echo "commands → $CLAUDE_COMMANDS"
 for src in "$REPO"/commands/wiki-*.md; do
   [[ -f "$src" ]] || continue
-  name="$(basename "$src")"
-  ln -sfn "$src" "$CLAUDE_COMMANDS/$name"
-  count_commands=$((count_commands + 1))
+  safe_link "$src" "$CLAUDE_COMMANDS/$(basename "$src")"
 done
 
-echo "Installed globally:"
-echo "  wrappers     → $BIN_DIR             ($count_bin)"
-echo "  skills       → $CLAUDE_SKILLS       ($count_skills)"
-echo "  commands     → $CLAUDE_COMMANDS     ($count_commands)"
+echo ""
+echo "global install: ${n_new} new, ${n_repaired} repaired, ${n_ok} already-ok, ${n_skip} skipped"
 
 # PATH check
 case ":$PATH:" in
-  *":$BIN_DIR:"*)
-    echo ""
-    echo "✓ $BIN_DIR is on PATH"
-    ;;
-  *)
-    echo ""
-    echo "⚠ $BIN_DIR is NOT on PATH. Add this line to your shell rc:"
-    echo "    export PATH=\"$BIN_DIR:\$PATH\""
-    ;;
+  *":$BIN_DIR:"*) echo "✓ $BIN_DIR is on PATH" ;;
+  *) echo "⚠ $BIN_DIR is NOT on PATH — add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 
-# wiki-ingest reminder
-if ! command -v wiki-ingest >/dev/null 2>&1; then
-  echo ""
-  echo "⚠ \`wiki-ingest\` not on PATH — \`/wiki-enrich\` requires it (v1.1+)."
-  echo "  Install the wiki-ingest skill separately; see docs/WIKI-INGEST-V1.1-CONTRACT.md."
-fi
+# wiki-ingest is a SEPARATE skill (not in this repo) that /wiki-enrich needs.
+command -v wiki-ingest >/dev/null 2>&1 || \
+  echo "⚠ \`wiki-ingest\` not on PATH — \`/wiki-enrich\` needs it; see docs/WIKI-INGEST-V1.1-CONTRACT.md."

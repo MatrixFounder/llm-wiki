@@ -18,16 +18,20 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from scripts.wiki_index.layout import CONCEPTS_SUBDIR
 from scripts.wiki_index.layout_config import _apply_slug_strategy
 
 
 def known_concepts(repo: Any, vault_id: str, vault_root: Path) -> list[dict[str, str]]:
-    """Existing concept {slug, name} pairs for the vault (reuses extract-concepts)."""
-    from scripts.wiki_skills.wiki_extract_concepts import _load_known_and_drift
+    """Existing concept {slug, name} pairs for the vault — a single indexed query.
 
-    known_out, _missing = _load_known_and_drift(repo, vault_id, vault_root, "full")
+    Uses `load_known_entities` (one SQL read) rather than the drift-computing
+    `_load_known_and_drift(..., "full")`, which walks the ENTIRE vault on disk only to
+    discard the drift result here — needless O(vault) work on every `prepare`."""
+    from scripts.wiki_skills.wiki_extract_concepts._db import load_known_entities
+
     out: list[dict[str, str]] = []
-    for k in known_out:
+    for k in load_known_entities(repo, vault_id):
         if isinstance(k, dict):
             slug = str(k.get("slug") or "")
             out.append({"slug": slug, "name": str(k.get("name") or slug)})
@@ -43,8 +47,15 @@ def existing_page_slugs(
     target_folder: Path,
     *,
     slug_strategy: str = "preserve-unicode",
+    source_subdir: str = "",
 ) -> list[str]:
-    """The collision-guard slug set for `project`: indexed page slugs ∪ on-disk stems."""
+    """The collision-guard slug set for `project`: indexed page slugs ∪ on-disk stems.
+
+    `source_subdir` mirrors the layout's write-grammar so the on-disk `_concepts/` scan
+    matches where `wiki_extract_concepts._apply_write` actually files concept pages: for a
+    source_subdir layout (karpathy: note in `…/_sources/`) the concepts live in the SIBLING
+    `…/_concepts/` (`target_folder.parent`), not `target_folder/_concepts/`. Empty (PARA) →
+    concepts are a sibling of the note, i.e. `target_folder/_concepts/` (unchanged)."""
     slugs: set[str] = set()
 
     if db_path and Path(db_path).exists():
@@ -66,7 +77,12 @@ def existing_page_slugs(
     if folder.is_dir():
         for md in folder.glob("*.md"):
             slugs.add(_apply_slug_strategy(md.stem, slug_strategy))
-        cdir = folder / "_concepts"
+        # layout-aware concepts dir: source_subdir layouts file concepts in the SIBLING
+        # _concepts/ (parent), not target_folder/_concepts/ (matches _apply_write). Use the
+        # canonical CONCEPTS_SUBDIR constant — never a literal — so a rename can't silently
+        # desync this scan from where _apply_write actually files concept pages.
+        cdir = (folder.parent if source_subdir and folder.name == source_subdir
+                else folder) / CONCEPTS_SUBDIR
         if cdir.is_dir():
             for md in cdir.glob("*.md"):
                 slugs.add(_apply_slug_strategy(md.stem, slug_strategy))

@@ -35,6 +35,27 @@ def test_existing_page_slugs_union_db_and_fs(tmp_path):
     assert "амм" in slugs                  # on-disk concept stem
 
 
+def test_existing_page_slugs_karpathy_scans_parent_concepts(tmp_path):
+    # source_subdir layout (karpathy): the note writes to <course>/_sources/, but concept pages
+    # live in the SIBLING <course>/_concepts/ (where _apply_write files them). The collision
+    # guard must scan THAT dir, not _sources/_concepts (which doesn't exist) — else an unindexed
+    # concept page is invisible to the guard and gets evicted at reindex.
+    course = tmp_path / "Lessons" / "Quantum"
+    sources = course / "_sources"
+    (course / "_concepts").mkdir(parents=True)
+    sources.mkdir(parents=True)
+    (sources / "Lecture 1.md").write_text("x", encoding="utf-8")        # a note in _sources
+    (course / "_concepts" / "shor.md").write_text("x", encoding="utf-8")  # sibling concept page
+    (sources / "_concepts").mkdir()                                      # decoy — must be IGNORED
+    (sources / "_concepts" / "decoy.md").write_text("x", encoding="utf-8")
+
+    slugs = _context.existing_page_slugs(
+        None, "v", "Lessons/Quantum", sources, source_subdir="_sources")
+    assert "lecture-1" in slugs   # _sources note stem
+    assert "shor" in slugs        # SIBLING _concepts/ stem is caught
+    assert "decoy" not in slugs   # _sources/_concepts is NOT where concepts live → ignored
+
+
 def test_existing_page_slugs_no_db_ok(tmp_path):
     folder = tmp_path / "F"
     folder.mkdir()
@@ -45,13 +66,14 @@ def test_existing_page_slugs_no_db_ok(tmp_path):
 
 
 def test_known_concepts_normalizes(monkeypatch):
-    import scripts.wiki_skills.wiki_extract_concepts as wec
+    # known_concepts uses the cheap single-query loader (not the full-vault drift walk)
+    from scripts.wiki_skills.wiki_extract_concepts import _db
     monkeypatch.setattr(
-        wec, "_load_known_and_drift",
-        lambda repo, v, root, fmt: (
-            [{"slug": "постквантовая-криптография", "name": "Постквантовая криптография"},
-             {"slug": "amm", "name": "AMM"}], []),
+        _db, "load_known_entities",
+        lambda repo, v: [
+            {"slug": "постквантовая-криптография", "name": "Постквантовая криптография"},
+            {"slug": "amm", "name": "AMM"}],
     )
-    out = _context.known_concepts(object(), "personal", tmp := __import__("pathlib").Path("/x"))
+    out = _context.known_concepts(object(), "personal", __import__("pathlib").Path("/x"))
     assert {"slug": "amm", "name": "AMM"} in out
     assert any(c["name"] == "Постквантовая криптография" for c in out)

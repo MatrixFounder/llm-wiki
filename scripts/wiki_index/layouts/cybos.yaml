@@ -25,7 +25,7 @@ ignore:
   - ".wiki/**"                      # operational state (db / render-state) — Class C
   - "**/.DS_Store"
   - "**/__pycache__/**"
-  - "_raw/**"                       # un-summarised raw captures stay out of the index
+  - "**/_raw/**"                    # un-summarised raw captures (any depth, incl. <folder>/_raw) stay out of the index
   - ".staging/**"
 file_extensions: ['.md']
 slug_strategy: transliterate        # cross-platform-safe ASCII slugs
@@ -83,6 +83,22 @@ type_mapping:
   capability:  {db_type: concept,  tag: capability}   # an atomic skill an agent can perform (e.g. ocr)
   execution:   {db_type: summary,  tag: execution}    # a timestamped run record (RFC-003 operational memory)
   pattern:     {db_type: research, tag: pattern}      # a consolidated second-order finding (RFC-006)
+  # --- imported-source summaries (wiki-import construct path, ADR-007) ---
+  # an external article/paper/thread/transcript filed as agent reference material.
+  # Additive (zero-DDL); without these `wiki-import` is always-partial here.
+  summary:         {db_type: summary, tag: null}      # generic imported-source summary
+  article-summary: {db_type: summary, tag: article}
+  meeting-summary: {db_type: summary, tag: meeting}
+  # wiki-import concept/entity pages (TASK 037 pattern, mirror obsidian-personal): the
+  # construct path files `<folder>/_concepts/<slug>.md` with `type: concept` (or person/…).
+  # cybos's recursive per-folder globs DISCOVER them; these mappings let them INDEX (else
+  # `type: concept` → UnmappedTypeError → silently dropped, breaking Class A/B rebuildability).
+  concept:  {db_type: concept, tag: null}
+  external: {db_type: concept, tag: external}
+  person:   {db_type: concept, tag: person}
+  company:  {db_type: concept, tag: company}
+  product:  {db_type: concept, tag: product}
+  group:    {db_type: concept, tag: group}
 
 path_type_fallback: {}              # cybos types come from paths[].type
 

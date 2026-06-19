@@ -17,6 +17,7 @@ ignore:
   - "**/.pytest_cache/**"
   - "**/.migration-report.md"        # PW-G operator-review report — not an issue page
   - ".wiki/**"                        # operational state (db / render-state) — Class C
+  - "**/_raw/**"                      # wiki-import untranslated source captures — never indexed
 file_extensions: ['.md']
 slug_strategy: transliterate        # cross-platform-safe (ASCII slugs)
 
@@ -68,6 +69,13 @@ type_mapping:
   hypothesis:   {db_type: research, tag: hypothesis}
   fact:         {db_type: concept,  tag: fact}
   event:        {db_type: summary,  tag: event}
+  # Imported-source summaries (wiki-import construct path, ADR-007) — an external
+  # article/paper/thread/transcript filed into a dev-project vault as reference material.
+  # Additive (zero-DDL); without these `wiki-import` is always-partial here. Mirror the
+  # obsidian-personal summary family → db_type summary, tag-distinguished.
+  summary:         {db_type: summary, tag: null}
+  article-summary: {db_type: summary, tag: article}
+  meeting-summary: {db_type: summary, tag: meeting}
 
 path_type_fallback: {}              # dev types come from paths[].type
 

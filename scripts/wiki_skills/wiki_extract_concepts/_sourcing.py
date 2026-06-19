@@ -160,9 +160,11 @@ def _resolve_source_inside_sources(
     # PARA ""), not a hardcoded constant. Resolve lazily (default None) — for karpathy the
     # value IS SOURCES_SUBDIR ("_sources") → byte-identical; for PARA "" the whole slug-form
     # search is skipped (it never matched anyway → straight to the verbatim-path branch).
+    _layout: Any = None  # captured here when resolved → reused for derive_discovered_page below
     if source_subdir is None:
         from scripts.wiki_index.layout_config import resolve_layout_config
-        source_subdir = resolve_layout_config(vault_root).write.source_subdir
+        _layout = resolve_layout_config(vault_root)
+        source_subdir = _layout.write.source_subdir
     # Slug-form search (sources-nesting layouts only): try `<source_subdir>/<slug>.md`.
     # Vault-tier first (deterministic), course-tier glob second.
     candidate_path: Path | None = None
@@ -250,8 +252,10 @@ def _resolve_source_inside_sources(
         derive_discovered_page,
         resolve_layout_config,
     )
+    # reuse the LayoutConfig already resolved above (resolve_layout_config is intentionally
+    # un-memoized — a second call re-reads + re-validates the YAML for no benefit here).
     disc = derive_discovered_page(
-        source_path, vault_root, resolve_layout_config(vault_root),
+        source_path, vault_root, _layout or resolve_layout_config(vault_root),
     )
     if disc is None:
         return {

@@ -63,7 +63,8 @@ frontmatter link to the original (injected for PDFs/text dumps that lack one), a
 (relative `![](_attachments/<sha>.ext)` links). Image import is **config-driven, default ON**:
 set `import_images: false` in `<vault>/.wiki/layout.yaml` to keep remote image URLs instead
 (PDFs are text-only → no images either way). The filed note links to **both** the `_raw`
-capture (`[\`_raw/<slug>\`](…)`) and the original URL (the `Источник`/`Source` line).
+capture (an Obsidian-clickable wikilink `[[_raw/<slug>]]`) and the original URL (the localized
+`Source` line). `sources:` frontmatter keeps the machine-readable `_raw/` path (resummarization).
 On an unreachable/empty source it emits `{error:"FETCH_FAILED", upstream:…}` (exit 10)
 and writes **nothing** — file a `needs-manual` stub by hand.
 
@@ -77,14 +78,17 @@ articles/papers/threads**, emitting the reason-contract note-JSON; a separate
 The harness is model-agnostic (PRE-FLIGHT + self-verification) so the floor stays high on any
 model/harness. **Full contract:** [`references/reason-contract.md`](references/reason-contract.md)
 — the canonical schema + depth-by-mode + hard rules (reuse it verbatim; the digest follows).
-Read `raw_path`, then produce the structured note:
+Read `raw_path`, then produce the structured note **in the target `language`** that `prepare`
+reports (the vault's `language`; English fallback) — the project is international, NOT RU-only:
 ```
-{ title_ru, title_orig?, author?, published?, tldr, summary_bullets[],
-  ru_body?,                       # full RU body (mode=full/thread); null for summary
+{ title, title_orig?, author?, published?, tldr, summary_bullets[],
+  body?,                          # full body in the target language (mode=full/thread); null for summary
+  tags[],                         # 3–6 content topic tags (you read it → you tag it); no folder heuristic
   entities: [{name, definition, quote, type}] }   # type ∈ concept|external|person|company|product|group
 ```
-Depth by mode: **full** = complete RU translation; **summary** = thorough RU digest
-(`ru_body` null, detailed `summary_bullets`); **thread** = tight RU конспект.
+(`title_ru`/`ru_body` are accepted as legacy aliases.) Depth by mode: **full** = complete
+translation into the target language; **summary** = thorough digest (`body` null, detailed
+`summary_bullets`); **thread** = tight synopsis. All prose is in the target `language`.
 
 > ## 🔴 HARD RULE — inject `known_concepts` (R-6, the core fix)
 > You MUST pass `prepare`'s `known_concepts` into your reasoning context and **reuse an
@@ -92,7 +96,7 @@ Depth by mode: **full** = complete RU translation; **summary** = thorough RU dig
 > ("AMM" vs "Автоматический маркет-мейкер"). This is the exact discipline `wiki-ingest`
 > enforces (SKILL.md:34). Skipping it is what produced dangling `[[wikilinks]]` and slug
 > collisions in the ad-hoc DAO/#01 imports. Each `entities[].quote` MUST be copied
-> **verbatim** from the Russian text you produce.
+> **verbatim** from the target-language text you produce.
 
 ### 3. `apply` — author + file + index
 ```bash

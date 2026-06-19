@@ -149,6 +149,22 @@ def _wa_run(content):  # mock html2md output-dir run: write content as the whole
     return fake_run
 
 
+def test_html_fetch_timeout_cleans_tmpdir_and_fails_typed(monkeypatch):
+    # round-11: a hung html2md must NOT escape as a raw TimeoutExpired traceback NOR orphan its
+    # mkdtemp — _fetch_html returns a typed FETCH_FAILED(kind=timeout) and reclaims the temp dir.
+    import tempfile as _tf
+    created: dict[str, str] = {}
+    real = _tf.mkdtemp
+    monkeypatch.setattr(_fetch.tempfile, "mkdtemp",
+                        lambda *a, **k: created.setdefault("dir", real(*a, **k)))
+    def boom(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 180)
+    monkeypatch.setattr(subprocess, "run", boom)
+    r = _fetch.dispatch_fetch("https://example.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    assert not r.ok and r.error["details"]["kind"] == "timeout"
+    assert not Path(created["dir"]).exists()   # temp dir reclaimed, not orphaned
+
+
 def test_x_login_wall_is_not_ok(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _wa_run(_X_WALL))
     r = _fetch.dispatch_fetch("https://x.com/u/status/1", html2md_bin=H2M, pdf_extract_bin=PDFX)
@@ -172,6 +188,15 @@ def test_non_x_login_markers_not_flagged(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _wa_run(_X_WALL))
     r = _fetch.dispatch_fetch("https://example.com/p", html2md_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok
+
+
+def test_x_login_wall_detected_via_url_marker_without_english_text(monkeypatch):
+    # a NON-English login wall (no "Log in"/"Sign up" English chrome) is still caught by the
+    # locale-independent URL marker — the robust primary signal, not the English text markers.
+    wall = ('---\ntitle: "x"\n---\n## Post\n[ログイン](/i/flow/login)\n[新規登録](/x)\n')
+    monkeypatch.setattr(subprocess, "run", _wa_run(wall))
+    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    assert not r.ok and r.error["details"]["kind"] == "login_wall"
 
 
 # --- reader-first + image import (config-driven, default ON at the prepare layer) -----
