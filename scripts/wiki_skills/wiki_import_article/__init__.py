@@ -36,7 +36,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.wiki_index.config_loader import load_root_config
+from scripts.wiki_index.config_loader import (
+    ConfigValidationError,
+    VaultRootNotFoundError,
+    load_root_config,
+)
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import (
     _apply_slug_strategy,
@@ -112,6 +116,17 @@ def _resolve_vault_root(args: argparse.Namespace) -> Path:
             exit_code=EXIT_BAD_ARG) from None
 
 
+def _vault_language(vault_root: Path) -> str:
+    """The rendered note language (WIKI_SCHEMA `language`), 'en' fallback. Guarded the SAME way
+    resolve_layout_config is: a SCHEMALESS vault (pre-R-X1 / byte-identity karpathy, which
+    resolve_layout_config supports by defaulting to karpathy) must NOT crash here — load_root_config
+    raises VaultRootNotFoundError when WIKI_SCHEMA.md is absent, so fall back to 'en'."""
+    try:
+        return str(load_root_config(vault_root).get("language") or "en").lower()
+    except (VaultRootNotFoundError, ConfigValidationError):
+        return "en"
+
+
 def prepare(args: argparse.Namespace) -> int:
     vault_root = _resolve_vault_root(args)
     cfg = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
@@ -120,7 +135,7 @@ def prepare(args: argparse.Namespace) -> int:
     slug_strategy = layout.slug_strategy
     # the REASON step must summarise INTO the vault's language (international — not hardcoded
     # RU); emitted in the envelope so the orchestrator knows the target language. en fallback.
-    note_lang = str(load_root_config(vault_root).get("language") or "en").lower()
+    note_lang = _vault_language(vault_root)
 
     try:
         folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
@@ -204,23 +219,29 @@ def prepare(args: argparse.Namespace) -> int:
     # some captures lack `source:`) — inject `source:` from the import source if missing.
     raw_md = ensure_source_frontmatter(result.raw_text, args.source)
     raw_bytes = raw_md.encode("utf-8")
-    raw_path.write_bytes(raw_bytes)
     source_hash = hashlib.sha256(raw_bytes).hexdigest()  # _raw hash → import idempotency ONLY
-    # File downloaded images (image-import ON) into _raw/_attachments/ so the md's relative
-    # `_attachments/<sha>` links resolve; then drop the html2md temp dir.
     n_images = 0
-    if result.attachments_dir and result.attachments_dir.is_dir():
-        att_dst.mkdir(exist_ok=True)
-        for img in result.attachments_dir.iterdir():
-            if img.is_file() and not (att_dst / img.name).is_symlink():
-                shutil.copy2(img, att_dst / img.name)
-                n_images += 1
-        shutil.rmtree(result.attachments_dir.parent, ignore_errors=True)
-    # Reclaim re-import orphans (folder-wide; safe) whenever the dir exists — including a
-    # no-image re-import (import_images:false / no images this run) that must still GC stale
-    # files left by a PRIOR image-bearing import.
-    if att_dst.is_dir():
-        _gc_attachments(raw_dir, att_dst)
+    # The html2md temp dir (`_imgtmp`) is reclaimed in the `finally` — the SINGLE owner for both
+    # the success path AND any OSError from write_bytes/mkdir/copy2 (read-only vault, ENOSPC,
+    # ENAMETOOLONG), which would otherwise propagate to main()'s catch-all and orphan it.
+    try:
+        raw_path.write_bytes(raw_bytes)
+        # File downloaded images (image-import ON) into _raw/_attachments/ so the md's relative
+        # `_attachments/<sha>` links resolve.
+        if result.attachments_dir and result.attachments_dir.is_dir():
+            att_dst.mkdir(exist_ok=True)
+            for img in result.attachments_dir.iterdir():
+                if img.is_file() and not (att_dst / img.name).is_symlink():
+                    shutil.copy2(img, att_dst / img.name)
+                    n_images += 1
+        # Reclaim re-import orphans (folder-wide; safe) whenever the dir exists — including a
+        # no-image re-import (import_images:false / no images this run) that must still GC stale
+        # files left by a PRIOR image-bearing import.
+        if att_dst.is_dir():
+            _gc_attachments(raw_dir, att_dst)
+    finally:
+        if _imgtmp and _imgtmp.exists():
+            shutil.rmtree(_imgtmp, ignore_errors=True)
 
     # 3. project + context (known_concepts + existing_page_slugs) — keyed to the dir the note
     # actually writes to (note_dir) and the candidate keyspace (mint), matching apply's guard.
@@ -459,7 +480,7 @@ def apply(args: argparse.Namespace) -> int:
     slug_strategy = layout.slug_strategy
     # rendered note language = the vault's `language` (WIKI_SCHEMA), English fallback — the
     # project is international, so section headings/labels are NOT hardcoded to one locale.
-    note_lang = str(load_root_config(vault_root).get("language") or "en").lower()
+    note_lang = _vault_language(vault_root)
     # Mint slugs in the SAME keyspace the indexer will record from the filename, so the
     # collision guards (self-collision / collides-existing-page) compare like-for-like.
     # mint in the layout's OWN keyspace (see _mint_strategy): a `transliterate`/`ascii-only`

@@ -196,16 +196,14 @@ def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False)
     reader = sorted(out.glob("*.reader.md"))
     whole = [p for p in out.glob("*.md") if not p.name.endswith(".reader.md")]
     reader_txt = reader[0].read_text(encoding="utf-8", errors="replace") if reader else ""
-    whole_txt = whole[0].read_text(encoding="utf-8", errors="replace") if whole else ""
-    # Reader-first: take the reader extraction when it has a substantial body; fall back to
-    # the whole page when reader is over-stripped (thin) AND a whole page exists; if reader
-    # is the only output, use it even when thin.
+    # Reader-first: take the reader extraction when it has a substantial body; only read the
+    # (larger, nav/chrome-laden) whole-page output LAZILY when reader is missing/over-stripped
+    # — on the common path this avoids a wasted read+decode + transient ~2× peak memory.
     if reader_txt and len(_FM_RE.sub("", reader_txt).strip()) >= 200:
         md = reader_txt
-    elif whole_txt:
-        md = whole_txt
     else:
-        md = reader_txt
+        whole_txt = whole[0].read_text(encoding="utf-8", errors="replace") if whole else ""
+        md = whole_txt or reader_txt
     if not md.strip():
         return _fail("no_output")
     if _is_x_login_wall(md, target):  # logged-out X chrome only → no post text

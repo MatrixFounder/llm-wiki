@@ -283,6 +283,16 @@ def test_layout_indexes_concepts_gate(tmp_path, layout, folder, expected):
     assert wia._layout_indexes_concepts(lc, tmp_path, note_dir) is expected
 
 
+def test_vault_language_schemaless_falls_back_to_en(tmp_path):
+    # round-13 regression: a SCHEMALESS vault (no WIKI_SCHEMA.md — the byte-identity karpathy
+    # back-compat path resolve_layout_config supports) must NOT crash resolving the note
+    # language; load_root_config raises VaultRootNotFoundError there → guarded → 'en'.
+    assert wia._vault_language(tmp_path) == "en"              # no WIKI_SCHEMA.md present
+    (tmp_path / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: lv\nlayout: obsidian-personal\nlanguage: ru\n---\n", encoding="utf-8")
+    assert wia._vault_language(tmp_path) == "ru"              # schema present → its language
+
+
 def test_mint_strategy_matches_indexer_keyspace():
     # the collision-guard mint keyspace MUST equal the indexer's for every lowercase strategy
     # (else a minted slug is compared against a differently-keyed pages.slug → missed collision
