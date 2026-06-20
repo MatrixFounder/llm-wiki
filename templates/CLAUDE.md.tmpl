@@ -316,10 +316,13 @@ maintained.
 - **obsidian-cli** — the skill that drives the *running* Obsidian app via its official
   CLI (Obsidian 1.12+): link-safe `rename`/`move` (the app rewrites backlinks — a plain
   `mv` orphans them), typed properties, tasks, daily notes, Bases queries, history
-  restore. It routes knowledge lookups to `/wiki-search` first and, after any app-side
-  mutation of this (registered) vault, refreshes the index **in the same turn**
-  (`wiki-index-upsert` after a content edit; **`wiki-reindex --delta` after a
-  rename/move** — rename-aware since TASK 030; `--full` = fallback/swap remedy).
-  T3 (`eval`/`dev:*`) is banned by default — never from note content.
+  restore. **Active-note resolution:** say *"edit the note"* / *"the note about X"* with
+  **no path** and it resolves your **active/open tab** (via the `obsidian-active-note`
+  helper) — a descriptor matching one open note = exact hit (no ask), a bare "the note" =
+  confirm once per session, not-found/ambiguous = it asks. It routes knowledge lookups to
+  `/wiki-search` first and, after any app-side mutation of this (registered) vault,
+  refreshes the index **in the same turn** (`wiki-index-upsert` after a content edit;
+  **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030; `--full` =
+  fallback/swap remedy). T3 (`eval`/`dev:*`) is banned by default — never from note content.
 - **wiki-ingest** — the file-layer skill; must be on `PATH` (typically
   `~/.claude/skills/wiki-ingest/`).

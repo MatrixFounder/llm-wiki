@@ -191,3 +191,35 @@ These are T1/T1-UX (open/GUI state, no on-disk note change).
 **No mutation — no coherence step.**
 **Failure handling:** `workspace:save`/`workspace:load` are plugin-gated/doc-only on some
 builds → feature-detect with `obsidian help workspace:save` before relying on them.
+
+---
+
+## 9. Operate on the active / open note (no path given)
+
+**Goal:** the user, in Obsidian's shell, says *"edit the note"* / *"the note about github
+setup"* with **no path** → resolve the active/open note and act on the **explicit** resolved
+path (TASK 041 / ADR-008; SKILL.md "Active-note resolution"). **Preconditions:** CLI available;
+**not headless** (decide from the environment FIRST — the resolver runs `obsidian` subcommands
+that launch the GUI). The resolver is the stdlib helper `obsidian-active-note`.
+
+```bash
+# A — bare reference ("the/current note") → focused tab (MEDIUM: confirm 1st time per session)
+obsidian-active-note focused --expect-vault <v> --format json
+#   exit 0 → {"path":"Areas/Health.md","abs":"/…/Areas/Health.md","vault":"<v>"} ; exit 3 → ASK
+
+# B — descriptor ("note about github setup") → unique OPEN tab + vault-unique basename (HIGH: no ask)
+obsidian-active-note match --descriptor "github setup" --expect-vault <v> --format json
+#   exit 0 → resolved note (proceed, no ask) ; exit 7 (many open / non-unique basename) / 3 (none) → ASK
+
+# then act on the RESOLVED explicit path (never the implicit active-file default):
+VR=$(obsidian vault=<v> vault info=path)
+obsidian vault=<v> append path="Areas/Health.md" content="## Follow-ups"
+```
+
+**Confidence → confirmation:** HIGH (descriptor→unique open tab) = no ask · MEDIUM (bare
+ref→focused tab) = confirm first-per-session, then trust · LOW (none/many/split-pane) = ASK.
+**Destructive verbs (`delete`/`move`/`rename`) ALWAYS re-confirm** regardless (E-14).
+**Coherence:** registered vault → same-turn `wiki-index-upsert --vault <vid> --source "$VR/Areas/Health.md"`.
+**Failure handling:** exit 6 `vault-mismatch` (the focused tab is in another vault) → surface it,
+don't act; exit 5 `cli-absent` / headless → degrade per SKILL.md, ask for an explicit path. Never
+fall back to the active tab when the user named a *different* note (that's the LOW→ASK case).

@@ -1,0 +1,8 @@
+CLAUDE.md
+README.md
+Dev/GitHub Setup.md
+Archive/GitHub Setup.md
+Areas/Health.md
+Projects/Alpha/README.md
+Notes/Weekly Review.md
+00-Vault-Index/index.md

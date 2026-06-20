@@ -216,6 +216,24 @@ is closed (relevant in headless/CI; see SKILL.md degradation).
 | `random` | Open a random note | `folder=`, `newtab` | — | T1-UX | [plugin:random-note] |
 | `random:read` | Read a random note | `folder=` | — | T1 | [plugin:random-note] |
 
+#### Active-note resolution primitives (TASK 041 / SKILL.md "Active-note resolution")
+
+Pathless "edit the note" resolves the active/open note from these (all T1, read-only). Captured
+1.12.7 output is committed under `evals/fixtures/`; the `obsidian-active-note` helper parses it:
+
+- **`obsidian file`** (no `path=`) → the **active file** info as TSV (`path\t<vault-rel>`,
+  `name`, `extension`, …; `format=json` is **ignored** → TSV). With nothing open it prints
+  `Error: No active file…` — the `no-active-file` signal. This is the **lead** resolver for a
+  bare reference. `file=<name>` resolves a title wikilink-style (same TSV) — the descriptor
+  step-2 path resolve.
+- **`tabs`** → open tabs as `[view-type] Title` (`ids` appends `\t<id>`): **title only, no path,
+  no focus marker.** Use it to enumerate open `[markdown]` notes for **descriptor** matching;
+  resolve the chosen title → path via `file=<title>`.
+- **`recents`** → recently-opened vault-relative **paths** (most-recent first): a **recency
+  heuristic**, NOT the focused tab and NOT the open-tab set — corroboration only.
+- **`vault info=path`** / **`vault info=name`** → vault root (for the absolute path) and vault
+  name (for the `vault-mismatch` check).
+
 ### Plugins, themes, snippets
 
 | Command | Purpose | Params / flags | format= | Tier | Gating |

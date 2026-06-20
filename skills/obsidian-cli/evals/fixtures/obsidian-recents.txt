@@ -1,0 +1,10 @@
+docs/reviews/plan-041-review.md
+docs/PLAN.md
+docs/reviews/arch-041-review.md
+docs/adr/ADR-008-active-note-resolution.md
+docs/reviews/task-041-review.md
+docs/TASK.md
+docs/plans/plan-040-config-driven-write-grammar.md
+docs/tasks/task-040-config-driven-write-grammar.md
+docs/archive/FEEDBACK-2026-06-19-group03-security.md
+docs/archive

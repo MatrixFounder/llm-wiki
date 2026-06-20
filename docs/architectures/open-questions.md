@@ -1124,3 +1124,41 @@
 - **Q-040-4 (slug minting).** RESOLVED → `source_filename: slug` reuses TASK 039's `_MINT_SLUG`
   (preserve-unicode) + keeps the validity gate (a title slugifying to "" → INVALID_SLUG).
 
+### 11g. TASK 041 — active-note resolution (design rationale; full record in ADR-008)
+
+- **Q-041-1 (resolver order).** RESOLVED at S0 against **real 1.12.7 fixtures**
+  (`skills/obsidian-cli/evals/fixtures/`). `obsidian file` (no `path=`) → parseable TSV
+  `path\t<vault-rel>` (the lead resolver; `No active file` = the no-active signal). `obsidian tabs`
+  → **title only** (`[view-type] Title`; no path, no focus marker) → open-tab→path is **two-step**
+  (`tabs` title-match + `file=<title>` → path). `recents` (vault-relative paths, most-recent-first)
+  is a recency heuristic → corroboration only. **Outcome:** descriptor branch ships as a **tempered
+  HIGH** (no-ask only on a unique unambiguous open-tab title match; else LOW→ASK). Split-pane focus
+  stays a live LOW→ask path (no silent hit).
+- **Q-041-2 (wrapper language + location + mypy).** RESOLVED → **Python, skill-local** at
+  `skills/obsidian-cli/scripts/obsidian_active_note.py` (entrypoint `obsidian-active-note`):
+  typed exit-code map + JSON output + CI-mockable unit test; **stdlib-only** (no `import anthropic`).
+  **mypy decision (was open):** kept stdlib-simple and **NOT added to the `mypy --strict scripts/`
+  gate** (it is skill-local, outside that tree) — but it is fully type-hinted and **passes an ad-hoc
+  `mypy` run clean** (verified at S2). Adding `skills/**` to the strict gate is deferred (no other
+  skill ships scripts yet; revisit if that changes).
+- **Q-041-3 (session-trust state).** RESOLVED → conversation state (per-session, not persisted);
+  **fail-safe reset to "confirm again" on context loss**; a later resolved path differing from the
+  confirmed one → echo + proceed for MEDIUM, but re-confirm on ambiguity (LOW) or a destructive verb.
+- **Q-041-4 (wrapper contract).** RESOLVED → typed exit codes `0`/`no-active-file`/`app-not-running`/
+  `cli-absent`/`vault-mismatch`/`ambiguous`/`headless`; `--format json|path|tsv`; **four** modes
+  `focused` / `tabs` (open markdown tabs, **title only**) / `resolve --title` (title→path, two-step) /
+  `match --descriptor` (unique→OK · many→ambiguous · none→no-active-file). Contract-tested
+  (`tests/test_obsidian_active_note.py`) against the committed fixtures.
+- **Q-041-5 (multi-vault).** RESOLVED → act in the **focused** window's vault; a focused tab in a
+  vault ≠ the task's wiki `vault_id` surfaces as the `vault-mismatch` exit code (R-3c/R-5c).
+- **Q-041-6 (ADR warranted?).** RESOLVED → **yes**; ADR-008 amends the inv. 3 F-4 footgun rule.
+- **Q-041-7 (descriptor not among open tabs — broaden or ask?).** RESOLVED → the LOW branch
+  **ASKS, and MAY offer** a `wiki-search`/`obsidian search` to propose a *closed* candidate
+  (propose-then-confirm — lower confidence, never a silent hit). Documented in SKILL.md "Active-note
+  resolution" (LOW bullet) + recipe 9. "Open" stays the exact-hit precondition.
+- **Q-041-8 (vendor parity, NF-1).** RESOLVED (by construction) → the resolver is a plain executable
+  and the protocol is grader-free skill prose; `evals.json` is already vendor-neutral and runnable by
+  any harness. One eval pass + a cross-vendor smoke note suffices; there is no per-vendor code path to
+  diverge (Claude Code / Codex / Gemini / pi / hermes / …). The Claude-specific
+  `templates/vault.claude-settings.json` allowlist is a friction nicety, not a functional dependency.
+

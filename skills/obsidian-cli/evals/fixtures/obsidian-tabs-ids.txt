@@ -1,0 +1,10 @@
+[terminal:documentation] Readme	4d0605ab76e1e572
+[terminal:documentation] Changelog	c001e100f31ab5ad
+[file-explorer] Файловый менеджер	6c059e18c39a551e
+[search] Поиск	b15f655ac394dddd
+[bookmarks] Закладки	5bbbee440916ecfa
+[backlink] Обратные ссылки	3623a60d10d6d60e
+[outgoing-link] Исходящие ссылки	37d187c70fb8f4c5
+[tag] Теги	39695526fa0e7671
+[all-properties] Все свойства	53b06c7f83f270e3
+[outline] Структура	aa3a5ce5f66e35a2

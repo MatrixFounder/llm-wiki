@@ -841,8 +841,12 @@ flowchart TD
 > skill (Obsidian 1.12+ official CLI) lets an agent do the things files+SQLite can't —
 > a **link-safe** `rename`/`move` (the app rewrites backlinks; a plain `mv` would
 > orphan them), set typed properties, toggle tasks, append to the daily note, query a
-> Base as JSON, restore from file history. It routes knowledge lookups to
-> `wiki-search`/`wiki-query` first, carries a 3-tier safety model (read / mutate /
+> Base as JSON, restore from file history. **Active-note resolution (ADR-008):** say
+> *"edit the note"* / *"the note about X"* with no path and it resolves your active/open
+> tab to an explicit path via the `obsidian-active-note` helper — descriptor → unique
+> open tab + vault-unique basename = no ask; bare "the note" = confirm once per session;
+> not-found/ambiguous = ask; destructive verbs always re-confirm. It routes knowledge
+> lookups to `wiki-search`/`wiki-query` first, carries a 3-tier safety model (read / mutate /
 > banned-by-default `eval`+`dev:*`), and after any app-side mutation refreshes the
 > index in the same turn — `wiki-index-upsert` for a content edit, **`wiki-reindex
 > --delta` for a rename/move** (rename-aware since TASK 030 — the moved file's new

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Thin launcher for the obsidian-cli active-note resolver (TASK 041 / ADR-008).
+# The resolver is stdlib-only + vendor-neutral, so it runs under any python3 — no repo
+# venv required (unlike the wiki-* CLIs). NO `cd` — preserves the caller's CWD.
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+exec python3 "$REPO/skills/obsidian-cli/scripts/obsidian_active_note.py" "$@"

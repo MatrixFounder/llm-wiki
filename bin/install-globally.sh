@@ -54,6 +54,8 @@ for wrapper in "$REPO"/bin/wiki-*; do                 # executable wrappers only
   [[ -f "$wrapper" && -x "$wrapper" ]] || continue
   safe_link "$wrapper" "$BIN_DIR/$(basename "$wrapper")"
 done
+# obsidian-active-note: the obsidian-cli skill's active-note resolver (TASK 041) — not a wiki-* CLI.
+[[ -x "$REPO/bin/obsidian-active-note" ]] && safe_link "$REPO/bin/obsidian-active-note" "$BIN_DIR/obsidian-active-note"
 echo "skills → $CLAUDE_SKILLS"
 for src in "$REPO"/skills/wiki-*/; do
   [[ -d "$src" ]] || continue

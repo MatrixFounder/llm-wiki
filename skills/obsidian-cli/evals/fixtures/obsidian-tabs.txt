@@ -1,0 +1,10 @@
+[terminal:documentation] Readme
+[terminal:documentation] Changelog
+[file-explorer] Файловый менеджер
+[search] Поиск
+[bookmarks] Закладки
+[backlink] Обратные ссылки
+[outgoing-link] Исходящие ссылки
+[tag] Теги
+[all-properties] Все свойства
+[outline] Структура

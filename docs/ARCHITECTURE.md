@@ -143,7 +143,9 @@ component contract:
    surface: **T1** read-only (+ a T1-UX open/GUI sub-class: `open`, `daily`,
    `*:open`, `random`, `tab:open` — on-disk-side-effect-free); **T2** mutating
    (explicit `path=` REQUIRED — the live CLI defaults to the **active file** when
-   file/path is omitted [F-4 footgun]; trash over permanent delete; existence-check
+   file/path is omitted [F-4 footgun; **amended by §2.2.1 / ADR-008** — the default
+   becomes a deliberate resolved-then-confirmed target, the mutation still carrying an
+   explicit `path=`]; trash over permanent delete; existence-check
    before `overwrite`; `base:create` named here); **T3** banned-by-default (`eval` =
    arbitrary JS in the app process / RCE-equivalent, `dev:*`, `devtools`, `plugin:*`
    incl. `plugin:reload`, `plugins:restrict`, `theme:install/uninstall/set`,
@@ -177,6 +179,68 @@ harness is machine-checkable without a Python grader (per-case expectation field
 TASK 009 pattern — Q-029-1). Verified-surface snapshot:
 `samples/obsidian-cli-recon/` (scratch) → durable fixture lands under
 `skills/obsidian-cli/evals/` when the reference is authored (TASK 029 A-4).
+
+**§2.2.1 Active-note resolution (TASK 041 / ADR-008 — amends the inv. 3 F-4 footgun).**
+A user in Obsidian's integrated shell says *"отредактируй заметку / edit the note"* with **no
+path**. TASK 029's inv. 3 forbade using the CLI's active-file default (the F-4 footgun) — so the
+one context the user is sure of, *the note on screen*, was unusable. ADR-008 turns that default
+into a **deliberate, confidence-driven** targeting path. The component is again **mostly skill
+text** plus **one new skill-local executable** — `skills/obsidian-cli/scripts/obsidian_active_note.py`
+(entrypoint `obsidian-active-note`), the single deterministic resolver (Decision-17 generalised;
+stdlib, no `import anthropic`). Five sub-invariants:
+
+1. **Resolution (read-only, over the OPEN-tab set), by how the user named the target.**
+   - **Descriptor** ("the note about *github setup*", any language) → match the wrapper's
+     **open-tab list** (path + title). A **unique** match is an **exact hit**.
+   - **Bare reference** ("the/this/current/open note") → the **active/focused** tab via the
+     documented path-returners — `obsidian file` (no `path=` → "Show file info"; fixture L10 "Most
+     commands default to the active file when file/path is omitted"), the active-file default on
+     reads, the `active` flag on `tags`/`aliases`/`properties`/`tasks`. **`tabs` exposes only `ids`
+     (no focus marker)** and `recents` is a recency heuristic — both corroborate, neither leads
+     (Q-041-1). The wrapper owns both modes (focused note + open-tab list) so no agent re-parses CLI
+     output; it returns vault-relative + absolute path + vault name. **Feasibility gate — RESOLVED at S0**
+   (real 1.12.7 fixtures under `skills/obsidian-cli/evals/fixtures/`): `obsidian file` (no path) →
+   parseable TSV `path\t<rel>` (MEDIUM solid); `obsidian tabs` → **title only** (no path/focus marker)
+   → open-tab→path is two-step (`tabs` title-match + `file=<title>`). So the descriptor branch ships
+   as a **TEMPERED HIGH**: no-ask only on a **unique** open-tab title match that resolves
+   unambiguously; any ambiguity (none/many/duplicate) → **LOW → ASK** (the ambiguity guard satisfies
+   M-1 — the candidate set is enumerated; a wrong-file mutation can never happen silently).
+2. **Confirmation keyed to resolution CONFIDENCE, not a flat rule** (user decision + refinement):
+   **HIGH** (descriptor → unique open tab) → proceed, **no ask** (the "exact hit"); **MEDIUM**
+   (bare ref → active tab) → **confirm first-per-session**, then bounded trust on same-class ops at a
+   consistently-resolved path; **LOW** (descriptor matches nothing open / multiple tabs / split-pane
+   no focus) → **ASK** — "agent didn't find it" → request path / disambiguate, **never** a silent
+   active-tab substitute when a *different* note was named. Read-only never prompts; the resolved
+   path is echoed every time; **destructive verbs (`delete`/`move`/`rename`/`history:restore`) always
+   re-confirm regardless of confidence** (preserves T2 + E-14); trust is conversation state →
+   **fail-safe reset to "confirm again" on context loss**.
+3. **The mutation always carries the explicit, resolved `path=`/`vault=`** — never the implicit
+   default (keeps the E-11 footgun green; ADR-002 coherence needs the absolute path: post-mutation
+   same-turn `wiki-index-upsert --source <abs>` / `wiki-reindex --delta`, self-disabling on an
+   unregistered vault; a focused tab in a vault ≠ the task context surfaces as the wrapper's
+   `vault-mismatch` exit code).
+4. **Safety extended, not relaxed.** Resolution is driven by **live app state, never note content**
+   (H-6); **auto-resolved read content is DATA** — it cannot introduce a new target, verb, or
+   T2\*/T3 op (no action-escalation); auto-resolution **never** feeds the active-file T2\*/T3
+   sub-class (`command id=`, `template:insert`) — they stay default-DENY; **headless/CI → no probe,
+   no resolve**.
+5. **Vendor-agnostic (NF-1).** Identical under any LLM CLI (Claude Code / Codex / Gemini / pi /
+   hermes / …): the resolver is a **plain shell executable**, the protocol is **skill prose + shell
+   commands**, confirmation is **plain conversational** — no vendor SDK, tool, hook, or prompt-UI
+   dependency; no per-vendor code path to diverge.
+
+Wrapper contract (Q-041-4): four modes (`focused`/`tabs`/`resolve`/`match`); typed exit codes
+`0` ok / `no-active-file` / `app-not-running` / `cli-absent` / `vault-mismatch` / `ambiguous` /
+`headless`; JSON + plain-path output; **CI-deterministic** unit
+test mocks a captured `obsidian file`/`tabs` fixture (no live app); a manual dogfood smoke confirms
+the live focused-tab path. **Headless ordering (arch-review M-3):** the agent decides headless
+**from the environment BEFORE invoking the wrapper** (per E-13 — any obsidian subcommand, the
+wrapper's included, launches the GUI), so in a known-headless context the wrapper is **not called at
+all**; its `headless`/`app-not-running` codes are belt-and-braces, never the primary gate. **Still zero impact on §4 Data Model and §6 Stack (stdlib); §5 gains ONE
+skill-local resolver** (a deterministic active-file/open-tabs → path projector with its own
+exit-code contract — not a wiki CLI). New evals extend the TASK 029 grader-free harness
+(descriptor-HIGH-no-ask, descriptor-LOW-ask, bare-MEDIUM-confirm, destructive-re-confirm,
+injection-neg ×2, headless-no-resolve); E-09/E-10/E-11/E-13/E-14/E-15 stay green.
 
 **§2.3 The unified construct path `wiki-import` (TASK 039; generalizes TASK 038's
 `wiki-import-article`, now a back-compat alias).** Knowledge enters through ONE config-driven
@@ -304,7 +368,7 @@ Backend (Python 3.14, SQLite 3.35+ with FTS5 + WAL), frontmatter / pyyaml / pyth
 
 ## 7. Security
 
-Threat model (single-user trust scope), authN (N/A) + authZ (file-permission-only), path-traversal guard (`validate_inside_vault`), SQL-injection guard (parameterised statements only, no f-string composition), and the Vendoring Policy (§7.4) covering type fixups, drift detection, and third-party notices. **TASK 029** adds the prompt-layer command-safety surface for the `obsidian-cli` skill — the TOTAL T1/T2/T3 tier model (T3 ban on `eval`/`dev:*`/plugin/snippet/sync mutations; fail-safe T2-with-confirmation default) + the untrusted-CLI-output posture (H-6 class) — design inline at §2.2 (no code change; the threat actor is hostile note content steering an agent, not a second user).
+Threat model (single-user trust scope), authN (N/A) + authZ (file-permission-only), path-traversal guard (`validate_inside_vault`), SQL-injection guard (parameterised statements only, no f-string composition), and the Vendoring Policy (§7.4) covering type fixups, drift detection, and third-party notices. **TASK 029** adds the prompt-layer command-safety surface for the `obsidian-cli` skill — the TOTAL T1/T2/T3 tier model (T3 ban on `eval`/`dev:*`/plugin/snippet/sync mutations; fail-safe T2-with-confirmation default) + the untrusted-CLI-output posture (H-6 class) — design inline at §2.2 (no code change; the threat actor is hostile note content steering an agent, not a second user). **TASK 041 / ADR-008** extends this posture for active-note resolution (§2.2.1): resolution is driven by **live app state, never note content** (H-6); **auto-resolved read content is DATA** — no action-escalation onto a new target/verb/T2\*/T3 op; the F-4 footgun is *amended not deleted* (the mutation still carries an explicit resolved `path=`, so E-11 holds); destructive verbs always re-confirm (E-14); headless → no resolve. The one new artifact is a stdlib skill-local resolver (`obsidian-active-note`) — no new attack surface on the DB/DAL.
 
 → [details](./architectures/security.md)
 
