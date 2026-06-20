@@ -202,6 +202,10 @@
   },
   "active": "c001e100f31ab5ad",
   "lastOpenFiles": [
+    "docs/archive/FEEDBACK-2026-06-19-group03-security.md",
+    "docs/archive",
+    "skills/wiki-import/archive/FEEDBACK-2026-06-19-group03-security.md",
+    "skills/wiki-import/archive",
     "bin/install-global.sh",
     "samples/img-e2e/05 - Материалы/Крипто/_raw/_attachments/f1cd28fbe88951f9b787c035114e92f806e228ce.png",
     "samples/img-e2e/05 - Материалы/Крипто/_raw/_attachments/0e0bcf2283a26cd648a63f96355e8077df7035cf.png",
@@ -222,12 +226,9 @@
     "samples/t040-final/_sources/_raw/amm.md",
     "samples/t040-final/_sources/_raw",
     "samples/t040-final/CLAUDE.md",
-    "samples/t040-final/_sources",
     "samples/t040-final/WIKI_SCHEMA.md",
-    "samples/t040-final",
     "samples/t040-para/05 - Материалы/Встречи/_concepts/миграция-бд.md",
     "samples/t040-para/05 - Материалы/Встречи/_concepts/заморозка-кода.md",
-    "samples/t040-para/05 - Материалы/Встречи/_concepts",
     "samples/t040-para/05 - Материалы/Встречи/Планёрка по релизу — заморозка кода и миграция.md",
     "samples/t040-para/05 - Материалы/Встречи/_raw/uni-transcript.md",
     "samples/t040-para/CLAUDE.md",
@@ -240,7 +241,6 @@
     "samples/t040-karp-verify/_concepts/amm.md",
     "samples/t040-karp-verify/_sources/amm-deep-dive.md",
     "samples/t040-karp-verify/_sources/_raw/amm.md",
-    "samples/t040-karp-verify/CLAUDE.md",
-    "samples/t040-karp-verify/WIKI_SCHEMA.md"
+    "samples/t040-karp-verify/CLAUDE.md"
   ]
 }

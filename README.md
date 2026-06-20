@@ -7,12 +7,15 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 034**
-> (typed knowledge classes + event graph [typed page-to-page edges, `wiki-graph`,
-> graph-aware RAG] + the list-membership `--where`/`--tag` metadata filter + the
-> **temporal `wiki-search --as-of`** point-in-time query and six agent-memory page
-> classes). Schema **v7** (`user_version = 7`). **1443 pytest passed,
-> `mypy --strict` clean on 76 source files.** The repo's own `docs/` is
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 040**
+> (typed knowledge classes + event graph [`wiki-graph`, graph-aware RAG], the
+> list-membership `--where`/`--tag` filter + temporal `wiki-search --as-of`, derived
+> knowledge-health [`wiki-health`], and the **config-driven write-grammar** [ADR-007]
+> that unifies the Karpathy/PARA construct path). The unified on-ramp **`wiki-import`**
+> is hardened across **all four built-in layouts** and **language-agnostic** (output
+> follows the vault's `language`; English fallback) — validated by a 14-round adversarial
+> `/vdd-multi`. Schema **v7** (`user_version = 7`). **1630 pytest passed / 5 skipped,
+> `mypy --strict` clean on 84 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -30,7 +33,7 @@ from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
   - [B. Install for development of this repo](#b-install-for-development-of-this-repo)
 - [Quick start: put a vault under the index](#quick-start-put-a-vault-under-the-index)
 - [The `prepare` / `apply` pattern (agent-driven skills)](#the-prepare--apply-pattern-agent-driven-skills)
-- [CLI reference — all 15 commands](#cli-reference--all-15-commands)
+- [CLI reference — all 18 commands](#cli-reference--all-18-commands)
 - [External dependency: `wiki-ingest`](#external-dependency-wiki-ingest)
 - [Repo layout](#repo-layout)
 - [Development](#development)
@@ -229,15 +232,19 @@ bash bin/install-globally.sh
 # (Optional: install upstream wiki-ingest to enable the subprocess fallback.)
 ```
 
-`bin/install-globally.sh` is idempotent (`ln -sfn`) and links:
+`bin/install-globally.sh` is **safe + idempotent** — it creates what's missing, repairs its own
+stale symlinks, **never clobbers a foreign link** (e.g. a `wiki-ingest` from another repo), and
+prints a per-item report. It links every:
 
-| Source | Target | Count |
-|---|---|---|
-| `bin/wiki-*` | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) | 15 shell wrappers |
-| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` | 17 skill definitions |
-| `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` | 15 slash commands |
+| Source | Target |
+|---|---|
+| `bin/wiki-*` (executable wrappers) | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) |
+| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` |
+| `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` |
 
-Ensure `~/.local/bin` is on your `PATH` (the installer warns if not). Then jump
+**Re-run it after adding a new `bin/wiki-*`, `skills/wiki-*/`, or `commands/wiki-*.md`** — new
+entries are not auto-propagated. Ensure `~/.local/bin` is on your `PATH` (the installer warns
+if not). Then jump
 to [Quick start](#quick-start-put-a-vault-under-the-index).
 
 ### B. Install for development of this repo
@@ -256,8 +263,8 @@ bash /path/to/agentic-development/install.sh install \
 bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
-pytest tests/           # full suite green (~28s; see the status block for the current count)
-mypy --strict scripts/  # clean on 75 source files (vendored package excluded
+pytest tests/           # full suite green (~32s; see the status block for the current count)
+mypy --strict scripts/  # clean on 84 source files (vendored package excluded
                         # via mypy.ini override per Decision-14)
 ```
 
@@ -369,7 +376,7 @@ inside Claude Code, the agent drives all three steps for you.
 
 ---
 
-## CLI reference — all 15 commands
+## CLI reference — all 18 commands
 
 Each command has a `SKILL.md` under [`skills/`](skills/) with the full contract,
 exit codes, and JSON-envelope schema, plus a slash-command wrapper under
@@ -473,9 +480,12 @@ refresh via `bash scripts/sync_wiki_ingest.sh [--dry-run]`. Contract:
 notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, …) are self-contained and
-need no `wiki-ingest`. `wiki-extract-concepts` calls the Anthropic API directly
-(set `ANTHROPIC_API_KEY`); its `--ingest` auto-dispatch uses the neutral
-`_manifest_consumer` module in-process.
+need no `wiki-ingest`. The LLM-shaped skills (`wiki-query`, `wiki-verify-multi`,
+`wiki-extract-concepts`, `wiki-import`, `wiki-sync`) carry **no `import anthropic`**
+(Decision-17): the Python halves are deterministic `prepare`/`apply`, and the **calling
+orchestrator owns the reasoning step** — there is no `ANTHROPIC_API_KEY` to set.
+`wiki-extract-concepts`'s `--ingest` auto-dispatch uses the neutral `_manifest_consumer`
+module in-process.
 
 ---
 
@@ -500,12 +510,12 @@ scripts/
   benchmark.py              synthetic-vault SLO harness
   sync_wiki_ingest.sh       refresh the vendored snapshot
 
-skills/                     18 canonical SKILL.md dirs (17 wiki-* + concept-extraction)
-commands/wiki-*.md          15 slash-command wrappers (Claude Code)
+skills/                     canonical SKILL.md dirs (wiki-* + concept-extraction + obsidian-cli)
+commands/wiki-*.md          slash-command wrappers (Claude Code; one per CLI)
 workflows/wiki-*.md         multi-step orchestration recipes (incl. wiki-sync executor)
-bin/wiki-*                  15 shell wrappers (cd + venv + exec)
-bin/install-globally.sh     global install (path A)
-bin/install-project-symlinks.sh   repo-local symlinks (dev path B)
+bin/wiki-*                  shell wrappers (cd + venv + exec; one per CLI)
+bin/install-globally.sh     global install (path A) — safe/idempotent; re-run after adding a skill
+bin/install-project-symlinks.sh   in-repo .claude/.agent vendor symlinks (dev path B)
 tests/                      pytest suite (full suite green; count in the status block) + fixtures
 samples/                    gitignored scratch tree for dogfooding vaults
 ```
@@ -516,8 +526,8 @@ samples/                    gitignored scratch tree for dogfooding vaults
 
 ```bash
 source .venv/bin/activate
-pytest tests/           # 1310+ passed (see git log for the current count)
-mypy --strict scripts/  # clean on 75 source files (the contract for scripts/)
+pytest tests/           # 1630+ passed (see the status block / git log for the current count)
+mypy --strict scripts/  # clean on 84 source files (the contract for scripts/)
 
 # Performance SLO gate (TASK 030 / Q-030-1) — run before shipping indexer hot-path changes:
 WIKI_BENCH_SLO=1 pytest tests/test_benchmark_slo_gate.py   # n=1000, enforced

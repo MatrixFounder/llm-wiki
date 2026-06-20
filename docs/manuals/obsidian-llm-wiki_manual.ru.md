@@ -436,6 +436,16 @@ flowchart TD
 > `_concepts/` — через `LayoutConfig.write` (без layout-форка; ADR-007). Передаёт REASON-шагу
 > `known_concepts`, чтобы вики-ссылки резолвились. Легаси Karpathy-raw `wiki-enrich` → `wiki-ingest`
 > остаётся. Схемы — `docs/architectures/functional-architecture.md` §2.3.
+>
+> **Универсально + локализовано (харденинг 2026-06).** Саммари пишется **на языке хранилища**
+> (`WIKI_SCHEMA` `language`; фолбэк — английский) — заголовки/подписи локализованы, не
+> зашиты под один язык. Заметка ссылается на оригинал кликабельной вики-ссылкой
+> `[[_raw/<slug>]]` (capture в `_raw/` хранится, но не индексируется). Concept-страницы
+> филятся только на layout, который умеет их индексировать (Karpathy / obsidian-personal /
+> cybos); structured-doc layout вроде `dev-project` кладёт только саммари-заметку (без
+> concept'ов) — ничего неребилдящегося не остаётся. Работает на всех 4 встроенных layout'ах.
+> Плохой ввод → чистый JSON-конверт (`INVALID_FOLDER` / `INVALID_VAULT_ROOT` / `FETCH_FAILED`),
+> а не трейсбек.
 
 `wiki-enrich` — **только** для raw-материала — он всегда вызывает `wiki-ingest`,
 чтобы *саммаризировать*. Для готового саммари полностью пропустите его и

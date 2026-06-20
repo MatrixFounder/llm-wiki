@@ -82,10 +82,12 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 **Other handy ones**
 ```bash
 wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index a raw source
-# import an external URL/PDF/thread/transcript (any layout; the REASON step between is the orchestrator's):
+# import an external URL/PDF/thread/transcript (any layout; the REASON step between is the orchestrator's).
+# prepare emits `language` (the vault's WIKI_SCHEMA language, en fallback) → summarise IN that language:
 wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
-#   …translate/summarise reusing the emitted known_concepts, then pipe the note JSON to:
+#   …translate/summarise IN prepare.language, reusing the emitted known_concepts; note JSON uses
+#   neutral {title, body, summary_bullets, entities[]} (legacy title_ru/ru_body still accepted). Then:
 wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \
     --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
     --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin

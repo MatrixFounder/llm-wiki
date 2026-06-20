@@ -433,6 +433,15 @@ flowchart TD
 > `_concepts/` — via `LayoutConfig.write` (no layout-name fork; ADR-007). It feeds the REASON
 > step the vault's `known_concepts` so wikilinks resolve. Legacy Karpathy-raw `wiki-enrich` →
 > `wiki-ingest` still exists. Diagram: `docs/architectures/functional-architecture.md` §2.3.
+>
+> **Universal + localized (2026-06 hardening).** The summary is written **in the vault's
+> `language`** (`WIKI_SCHEMA`; English fallback) — headings/labels are localized, never
+> hardcoded to one locale. The note links to its original via a clickable `[[_raw/<slug>]]`
+> wikilink (the `_raw/` capture is kept but never indexed). Concept pages are filed only on a
+> concept-capable layout (Karpathy / obsidian-personal / cybos); a structured-doc layout like
+> `dev-project` files just the summary note (no concepts) so nothing is left un-rebuildable.
+> Works on all four built-in layouts. Bad input fails with a clean JSON envelope
+> (`INVALID_FOLDER` / `INVALID_VAULT_ROOT` / `FETCH_FAILED`), never a traceback.
 
 `wiki-enrich` is **only** for raw material — it always invokes `wiki-ingest` to
 *summarise*. For a finished summary, skip it entirely and register the page

@@ -233,6 +233,41 @@ translation; serialized DB writes), not a CLI mode. **Skill-call flow diagrams (
 mermaid)** are in [functional-architecture §2.3](./architectures/functional-architecture.md).
 Design rationale: open-questions Q-038-*.
 
+**§2.3.1 Construct-path hardening (2026-06; dogfooding + a 14-round adversarial `/vdd-multi`).**
+Six properties were added/repaired so the path works **universally across all four built-in
+layouts and any output language**:
+- **Internationalization (no hardcoded locale).** The rendered note's language follows the
+  vault's `language` (`WIKI_SCHEMA`; **English fallback**, via the guarded `_vault_language`).
+  Section headings/labels/origin phrases are localized through a `NOTE_TEMPLATES` registry
+  (en + ru built in; a new language = one dict entry); `prepare` emits `language` so the REASON
+  step produces title/tldr/bullets/body in it. The note-JSON contract uses **neutral
+  `title`/`body`** (legacy `title_ru`/`ru_body` accepted as back-compat aliases).
+- **Clickable `_raw` link.** The filed note links to its source capture with an Obsidian
+  wikilink `[[_raw/<slug>]]` (resolves in any vault), and `reindex._body_refs` **skips
+  `_raw/`-targeted refs** so the link is never a false orphan; `sources:` frontmatter still
+  carries the machine-readable path (resummarization).
+- **Concept-filing gate.** Concept pages are filed only when the resolved layout can actually
+  index a `_concepts/<slug>.md` page (`_layout_indexes_concepts`: a `concept` `type_mapping`
+  **and** a glob reaching the sibling `_concepts/`). Concept-capable = karpathy / obsidian-personal
+  / cybos; a structured-doc layout like dev-project files the summary note **without** concepts
+  (reported, not a failure) — preserving the Class A/B rebuildability invariant (no orphaned,
+  non-`--full`-rebuildable markdown).
+- **Layout `type_mapping` + ignore.** dev-project + cybos gained `summary`/`article-summary`/
+  `meeting-summary` → db_type summary (imported notes index); cybos also gained
+  concept/external/person/company/product/group (its concept pages index). karpathy +
+  dev-project + cybos gained `**/_raw/**` in `ignore` (the `_raw/` capture is never indexed as a
+  phantom page that could clobber the curated note on a shared `(vault_id, slug, project)`).
+- **Decision-17 entry points.** A missing `--folder`/`--vault-root` → clean `INVALID_FOLDER`/
+  `INVALID_VAULT_ROOT`; a schemaless vault → language `en` (no crash); a hung `html2md` →
+  `FETCH_FAILED(timeout)` with the temp dir reclaimed; the note JSON is a **bounded read**
+  (`NOTE_TOO_LARGE` over 32 MiB); and `main()` has a **catch-all backstop** emitting a typed
+  `INTERNAL_ERROR` (exception class only — never `str(e)`, CWE-209) so no path raw-tracebacks.
+- **Global install is reproducible.** `bin/install-globally.sh` (→ `~/.local/bin` + `~/.claude/
+  skills` + `~/.claude/commands`) and `bin/install-project-symlinks.sh` (in-repo `.claude`/
+  `.agent` vendor trees) are safe + idempotent (skip-foreign / repair-repo-owned / per-item
+  report). **Run them after adding a new `bin/wiki-*`, `skills/wiki-*/`, or `commands/wiki-*.md`**
+  — new entries are not auto-propagated.
+
 ---
 
 ## 3. System Architecture
