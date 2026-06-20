@@ -345,6 +345,14 @@ WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 \
 - **`WIKI_SCHEMA.md` — это удостоверение личности vault.** Это discovery-маркер
   для `wiki-init`, и он держит **обязательный** `vault_id`
   (`^[a-z][a-z0-9-]{2,31}$`, без hash-fallback) плюс `layout:` и `language:`.
+  - **`vault_id` — это то, что вы передаёте в `wiki-* --vault`/`--vaults`** — узнать:
+    `grep '^vault_id:' WIKI_SCHEMA.md`, либо список всех воксов
+    `sqlite3 "<index_db>" "SELECT vault_id, root_path FROM vaults;"` (каждая JSON-строка
+    `wiki-*` тоже эхает `"vault_id"`; отдельной `wiki-* --list-vaults` нет).
+  - **Не путайте с *именем* вокса в Obsidian** (имя папки из `obsidian vaults verbose`,
+    используется в `obsidian …` / `obsidian-active-note --vault`). Это независимые
+    пространства имён и они **могут отличаться** (например вики `vault_id: personal` vs
+    имя в Obsidian `ObsidianNotes`).
 
 ### Анатомия страницы и инварианты аудируемости
 

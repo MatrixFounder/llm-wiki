@@ -343,6 +343,14 @@ Key distinctions:
 - **`WIKI_SCHEMA.md` is the vault's identity card.** It is `wiki-init`'s discovery
   marker and holds the **required** `vault_id` (`^[a-z][a-z0-9-]{2,31}$`, no hash
   fallback) plus `layout:` and `language:`.
+  - **The `vault_id` is what you pass to `wiki-* --vault`/`--vaults`** — find it with
+    `grep '^vault_id:' WIKI_SCHEMA.md`, or list all registered vaults with
+    `sqlite3 "<index_db>" "SELECT vault_id, root_path FROM vaults;"` (every `wiki-*` JSON
+    line also echoes `"vault_id"`; there is no `wiki-* --list-vaults`).
+  - **Do not confuse it with the Obsidian vault *NAME*** (the folder name shown by
+    `obsidian vaults verbose`, used by `obsidian …` / `obsidian-active-note --vault`). The
+    two namespaces are independent and **may differ** (e.g. wiki `vault_id: personal` vs
+    Obsidian name `ObsidianNotes`).
 
 ### Page anatomy & the auditability invariants
 

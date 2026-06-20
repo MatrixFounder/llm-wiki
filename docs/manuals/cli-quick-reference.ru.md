@@ -16,6 +16,21 @@
 требует). Для iCloud-vault держите в шелле `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`
 (индексная БД лежит вне синхронизируемого диска).
 
+> **Какое значение `--vault <id>`? (два РАЗНЫХ «vault» — не путайте)**
+> - `wiki-* --vault`/`--vaults <id>` принимают **вики `vault_id`** — он объявлен в
+>   `WIKI_SCHEMA.md` (`vault_id:`), например `personal`. Его выбираете **вы**.
+> - `obsidian …` и `obsidian-active-note --vault <NAME>` принимают **имя вокса в Obsidian**
+>   (имя папки в приложении, например `ObsidianNotes`; см. `obsidian vaults verbose`).
+> - Они **могут отличаться** (например `personal` vs `ObsidianNotes`). Узнать `vault_id`:
+>   ```bash
+>   grep '^vault_id:' WIKI_SCHEMA.md                                   # изнутри вокса (источник истины)
+>   sqlite3 "<index_db>" "SELECT vault_id, root_path FROM vaults;"     # список всех зарегистрированных воксов
+>   #   <index_db> = значение `index_db:` из WIKI_SCHEMA.md, либо глобальный дефолт
+>   #   ~/Library/Application Support/wiki-index/global.db
+>   ```
+>   Каждая JSON-строка `wiki-search`/`wiki-reindex` тоже эхает `"vault_id"`. (Отдельной
+>   `wiki-* --list-vaults` нет — список даёт запрос `sqlite3` выше.)
+
 ---
 
 ## A. Вручную — набираете команды сами

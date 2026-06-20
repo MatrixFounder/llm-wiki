@@ -16,6 +16,21 @@ auto-detected (pass `--vault-root .` only if a command asks). iCloud vaults: kee
 `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` in your shell (the index DB lives off the
 synced drive).
 
+> **Which `--vault <id>` value? (two different "vault" names — don't mix them up)**
+> - `wiki-* --vault`/`--vaults <id>` take the **wiki `vault_id`** — declared in
+>   `WIKI_SCHEMA.md` (`vault_id:`), e.g. `personal`. **You** choose it.
+> - `obsidian …` and `obsidian-active-note --vault <NAME>` take the **Obsidian vault NAME**
+>   (the folder name in the app, e.g. `ObsidianNotes`; see `obsidian vaults verbose`).
+> - They **can differ** (e.g. `personal` vs `ObsidianNotes`). Find your `vault_id`:
+>   ```bash
+>   grep '^vault_id:' WIKI_SCHEMA.md                                   # from inside the vault (source of truth)
+>   sqlite3 "<index_db>" "SELECT vault_id, root_path FROM vaults;"     # list every registered vault
+>   #   <index_db> = the `index_db:` from WIKI_SCHEMA.md, or the global default
+>   #   ~/Library/Application Support/wiki-index/global.db
+>   ```
+>   Every `wiki-search`/`wiki-reindex` JSON line also echoes `"vault_id"`. (There is no
+>   dedicated `wiki-* --list-vaults`; the `sqlite3` query above is the list.)
+
 ---
 
 ## A. Manual — type the commands yourself
