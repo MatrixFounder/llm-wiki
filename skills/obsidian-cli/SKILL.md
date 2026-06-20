@@ -73,12 +73,24 @@ environment FIRST — never probe; any subcommand launches the GUI). Otherwise f
 asking / the degrade ladder.
 
 **Resolve via the wrapper** `obsidian-active-note` (`skills/obsidian-cli/scripts/`,
-stdlib, vendor-neutral — works under any LLM CLI). It owns the parsing; you reason over its JSON:
+stdlib, vendor-neutral — works under any LLM CLI). It owns the parsing; you reason over its JSON.
+**Vault targeting:** run it **bare** — with no `--vault` it **auto-detects the vault from the CWD**
+(the integrated terminal's CWD is the vault root), so it targets the vault you're in, NOT the
+ambient active window. Only pass `--vault <NAME>` when you must target a *different* vault, and
+`--expect-vault <NAME>` when you want a hard guard against a cross-vault mismatch (exit 6). *(Do
+NOT confuse the Obsidian vault **NAME** with the wiki `vault_id` — they can differ; `--vault`
+takes the NAME, e.g. `obsidian vaults verbose`.)*
 
-| The user said | Command | Confidence → action |
+| The user said | Command (run from the vault's terminal) | Confidence → action |
 |---|---|---|
-| a **descriptor** ("note about *github setup*") | `obsidian-active-note match --descriptor "github setup" --expect-vault <v>` | exit 0 (**unique open-tab match, basename-unique in vault**) → **HIGH** · exit 7 (many / non-unique basename) / 3 (none) → **LOW: ASK** |
-| a **bare** "the/current note" | `obsidian-active-note focused --expect-vault <v>` | exit 0 → **MEDIUM** · exit 3 (no active file) → **ASK** |
+| a **descriptor** ("note about *github setup*") | `obsidian-active-note match --descriptor "github setup"` | exit 0 (**unique open-tab match, basename-unique in vault**) → **HIGH** · exit 7 (many / non-unique basename) / 3 (none) → **LOW: ASK** |
+| a **bare** "the/current note" | `obsidian-active-note focused` | exit 0 → **MEDIUM** · exit 3 (nothing open) → **ASK** |
+
+`focused` returns a `source` field: **`active`** = the focused editor's file; **`recent-open`** =
+there was *no* active file (the focused leaf is a non-markdown view — typically the **integrated
+terminal the agent runs in**), so it fell back to the most-recently-opened note that is still an
+open tab (resolved by exact `path=`). `recent-open` is a heuristic → treat as MEDIUM (**always
+show the path**); exit 3 now means *nothing relevant is open at all*.
 
 `match` guards the no-ask path twice: the descriptor must match exactly ONE open `[markdown]`
 tab **and** that title must `file=`-resolve to a **vault-unique basename** (else the wikilink
@@ -87,8 +99,9 @@ happen silently. "Exit 7 → ASK" covers both "many open matches" and "resolved 
 
 **Confirmation — keyed to confidence, NOT a flat rule:**
 - **HIGH** (descriptor → unique open note, guard passed): proceed, **no ask** (echo the resolved path).
-- **MEDIUM** (bare ref → focused tab): **confirm the first time per session**, then trust
-  same-class ops on a consistently-resolved path (still echo the path each time).
+- **MEDIUM** (bare ref → focused tab, or `recent-open` fallback): **confirm the first time per
+  session**, then trust same-class ops on a consistently-resolved path (still echo the path each
+  time). For a `recent-open` result, always show the path — it was inferred, not focused.
 - **LOW** (none / many / split-pane no clear focus): **ASK** — request the path or disambiguate.
   Never silently fall back to the active tab when the user named a *different* note. (Optional:
   offer a `wiki-search`/`obsidian search` to locate a *closed* note → propose-then-confirm.)

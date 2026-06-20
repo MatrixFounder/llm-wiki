@@ -203,12 +203,16 @@ path (TASK 041 / ADR-008; SKILL.md "Active-note resolution"). **Preconditions:**
 that launch the GUI). The resolver is the stdlib helper `obsidian-active-note`.
 
 ```bash
+# Run BARE from the vault's integrated terminal — no --vault needed: the resolver auto-detects
+# the vault from the CWD (the terminal's CWD is the vault root). (Add --vault <NAME> only to
+# target a different vault; --expect-vault <NAME> for a hard cross-vault guard → exit 6.)
+
 # A — bare reference ("the/current note") → focused tab (MEDIUM: confirm 1st time per session)
-obsidian-active-note focused --expect-vault <v> --format json
-#   exit 0 → {"path":"Areas/Health.md","abs":"/…/Areas/Health.md","vault":"<v>"} ; exit 3 → ASK
+obsidian-active-note focused --format json
+#   exit 0 → {"path":"Areas/Health.md","abs":"/…/Areas/Health.md","vault":"<NAME>"} ; exit 3 → ASK
 
 # B — descriptor ("note about github setup") → unique OPEN tab + vault-unique basename (HIGH: no ask)
-obsidian-active-note match --descriptor "github setup" --expect-vault <v> --format json
+obsidian-active-note match --descriptor "github setup" --format json
 #   exit 0 → resolved note (proceed, no ask) ; exit 7 (many open / non-unique basename) / 3 (none) → ASK
 
 # then act on the RESOLVED explicit path (never the implicit active-file default):

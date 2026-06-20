@@ -25,6 +25,12 @@ verifies the resolved file's basename is **unique in the vault** (``obsidian fil
 if another file shares that basename the resolve cannot be proven to be the open tab → it
 **fails to AMBIGUOUS (→ ASK)** rather than mutating a possibly-wrong file silently.
 
+Vault targeting: with no ``--vault``, the resolver auto-detects the vault from the CWD (the
+nearest ancestor containing ``.obsidian/``, mapped to a vault name via ``obsidian vaults
+verbose``) — so a bare ``focused``/``match`` run from Obsidian's integrated terminal targets
+THAT vault, not the ambient active window. Falls back to the ambient vault when the CWD is
+outside any registered vault; ``--no-detect-vault`` forces the ambient behavior.
+
 Headless note (ADR-008 / arch-review M-3): the wrapper NEVER auto-probes for headless — any
 ``obsidian`` subcommand would launch the GUI. The CALLER decides headless from the environment
 *before* invoking the wrapper. ``EXIT_HEADLESS`` fires only as belt-and-braces when the caller
@@ -175,10 +181,52 @@ def _resolve_file(file_arg: Optional[str], vault: Optional[str], *, missing_code
     return _enrich(info, vault)
 
 
+def _recents_md(vault: Optional[str]) -> list[str]:
+    """Recently-opened vault-relative ``.md`` paths, most-recent first."""
+    out = _obs(["recents"], _base(vault)).stdout
+    return [ln.strip() for ln in out.splitlines() if ln.strip().lower().endswith(".md")]
+
+
+def _recent_open_note(vault: Optional[str]) -> Optional[dict[str, str]]:
+    """The most-recently-opened note that is STILL an open tab → {…, source: recent-open}.
+
+    Fallback for when there is no active *file* — e.g. the focused leaf is Obsidian's
+    integrated terminal (where the agent runs), so ``obsidian file`` returns nothing even
+    though notes are open. "The note I have open" = most-recent ``recents`` entry that is
+    also an open markdown tab. Resolved by EXACT ``path=`` (no wikilink ambiguity). It is a
+    heuristic → MEDIUM confidence; the caller should show + confirm it.
+    """
+    open_stems = {t.get("title", "").strip().lower() for t in list_open_notes(vault)}
+    for rel in _recents_md(vault):
+        if Path(rel).stem.strip().lower() not in open_stems:
+            continue
+        info = parse_file_info(_obs(["file", f"path={rel}"], _base(vault)).stdout)
+        if "path" in info:
+            res = _enrich(info, vault)
+            res["source"] = "recent-open"
+            return res
+    return None
+
+
 def resolve_focused(vault: Optional[str] = None) -> dict[str, str]:
-    """Resolve the active/focused note → {path, name, vault, abs}."""
+    """Resolve the active/focused note → {path, name, vault, abs, source}.
+
+    ``source=active`` = the focused editor's file. If there is no active file (the focused
+    leaf is a terminal/non-markdown view — the integrated-shell case), fall back to the
+    most-recently-opened OPEN note (``source=recent-open``, a MEDIUM-confidence heuristic).
+    """
     _require_cli()
-    return _resolve_file(None, vault, missing_code=EXIT_NO_ACTIVE_FILE)
+    try:
+        res = _resolve_file(None, vault, missing_code=EXIT_NO_ACTIVE_FILE)
+        res["source"] = "active"
+        return res
+    except ResolveError as exc:
+        if exc.code != EXIT_NO_ACTIVE_FILE:
+            raise
+        fallback = _recent_open_note(vault)
+        if fallback is None:
+            raise
+        return fallback
 
 
 def resolve_title(title: str, vault: Optional[str] = None) -> dict[str, str]:
@@ -191,6 +239,42 @@ def list_open_notes(vault: Optional[str] = None) -> list[dict[str, str]]:
     """List open markdown tabs (title + view-type)."""
     _require_cli()
     return markdown_tabs(parse_tabs(_obs(["tabs"], _base(vault)).stdout))
+
+
+def _vaults_map() -> dict[str, str]:
+    """vault NAME → realpath, parsed from ``obsidian vaults verbose`` (``name\\tpath``)."""
+    out = _obs(["vaults", "verbose"], []).stdout
+    result: dict[str, str] = {}
+    for line in out.splitlines():
+        if "\t" in line:
+            name, _, path = line.partition("\t")
+            if name.strip() and path.strip():
+                result[name.strip()] = os.path.realpath(path.strip())
+    return result
+
+
+def detect_vault_from_cwd(start: Optional[str] = None) -> Optional[str]:
+    """If the CWD is inside a REGISTERED Obsidian vault, return its vault NAME, else None.
+
+    Walks up from ``start`` (default CWD) to the nearest dir containing ``.obsidian/`` — the
+    vault root — and maps that path to a vault name via ``obsidian vaults verbose``. This is
+    what makes a bare ``obsidian-active-note focused`` target the RIGHT vault when run from
+    Obsidian's integrated terminal (whose CWD is the vault root), instead of the ambient
+    active window. Returns None when the CWD is not inside any registered vault → caller
+    falls back to the ambient active vault.
+    """
+    current = Path(start or os.getcwd()).resolve()
+    root: Optional[str] = None
+    for candidate in [current, *current.parents]:
+        if (candidate / ".obsidian").is_dir():
+            root = os.path.realpath(str(candidate))
+            break
+    if root is None:
+        return None
+    for name, path in _vaults_map().items():
+        if path == root:
+            return name
+    return None
 
 
 def vault_basename_count(stem: str, vault: Optional[str] = None) -> int:
@@ -238,7 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
     # default=SUPPRESS so an option absent before the subcommand is not re-defaulted
     # (clobbered) by the subparser when it appears after it — parents+subparsers gotcha.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--vault", default=argparse.SUPPRESS, help="Obsidian vault NAME (omit → ambient active vault)")
+    common.add_argument("--vault", default=argparse.SUPPRESS, help="Obsidian vault NAME (omit → auto-detect from CWD, else ambient active vault)")
+    common.add_argument("--no-detect-vault", action="store_true", default=argparse.SUPPRESS, help="disable CWD→vault auto-detection (use the ambient active vault)")
     common.add_argument("--expect-vault", default=argparse.SUPPRESS, help="error EXIT_VAULT_MISMATCH if the resolved vault differs")
     common.add_argument("--format", choices=("json", "path", "tsv"), default=argparse.SUPPRESS)
 
@@ -258,9 +343,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     vault = getattr(args, "vault", None)
     expect_vault = getattr(args, "expect_vault", None)
     fmt = getattr(args, "format", "json")
+    no_detect = getattr(args, "no_detect_vault", False)
     try:
         _headless_guard()
         _require_cli()
+        # Run from Obsidian's integrated terminal? The CWD is the vault root → target THAT
+        # vault, not the ambient active window (the bare-`focused` footgun the dogfood hit).
+        if vault is None and not no_detect:
+            vault = detect_vault_from_cwd()
         if args.mode == "focused":
             res = resolve_focused(vault)
             _check_vault(res, expect_vault)

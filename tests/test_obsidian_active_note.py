@@ -105,6 +105,23 @@ def test_match_descriptor_unique_and_none_and_many() -> None:
     assert len(oan.match_descriptor(dup, "notes")) == 2  # → LOW (ask)
 
 
+def test_detect_vault_from_cwd_matches(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    (tmp_path / ".obsidian").mkdir()  # mark tmp_path as a vault root
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", _runner({
+        ("vaults", "verbose"): (f"Other\t/somewhere/else\nMyVault\t{tmp_path}\n", 0),
+    }))
+    assert oan.detect_vault_from_cwd(str(tmp_path)) == "MyVault"
+    # a deeper CWD inside the vault walks UP to the .obsidian root and still matches
+    assert oan.detect_vault_from_cwd(str(tmp_path / "sub" / "deep")) == "MyVault"
+
+
+def test_detect_vault_from_cwd_outside_any_vault(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", _runner({("vaults", "verbose"): ("V\t/elsewhere\n", 0)}))
+    assert oan.detect_vault_from_cwd(str(tmp_path)) is None  # no .obsidian above tmp_path → None
+
+
 def test_vault_basename_count(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch(monkeypatch, {("files", "ext=md"): (_fix("obsidian-files-md.txt"), 0)})
     assert oan.vault_basename_count("GitHub Setup") == 2  # Dev/ + Archive/ → duplicate
@@ -150,6 +167,43 @@ def test_resolve_focused_non_absolute_root(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(oan.ResolveError) as ei:
         oan.resolve_focused()
     assert ei.value.code == oan.EXIT_APP_NOT_RUNNING
+
+
+def test_resolve_focused_recent_open_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No active FILE (focused leaf is the integrated terminal) → fall back to the most-recent
+    # OPEN note (recents ∩ tabs), resolved by exact path=, tagged source=recent-open.
+    rel = "05 - Материалы/Разработка/Версии в GitHub.md"
+    tsv = f"path\t{rel}\nname\tВерсии в GitHub\nextension\tmd\n"
+
+    def fake(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+        if args == ["file"]:  # active file → none (terminal focused)
+            return subprocess.CompletedProcess(args, 0, stdout="Error: No active file.", stderr="")
+        if args[:1] == ["file"] and any(a.startswith("path=") for a in args):
+            return subprocess.CompletedProcess(args, 0, stdout=tsv, stderr="")
+        if args == ["tabs"]:
+            return subprocess.CompletedProcess(args, 0, stdout="[markdown] Версии в GitHub\n", stderr="")
+        if args == ["recents"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{rel}\n05 - Материалы/Разработка.base\n", stderr="")
+        if args == ["vault", "info=path"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_ROOT + "\n", stderr="")
+        if args == ["vault", "info=name"]:
+            return subprocess.CompletedProcess(args, 0, stdout="ObsidianNotes-Test\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", fake)
+    res = oan.resolve_focused()
+    assert res["source"] == "recent-open"
+    assert res["path"] == rel
+    assert res["abs"].endswith(rel)
+
+
+def test_resolve_focused_no_active_and_no_open_recent_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No active file AND no recent note that is also open → still NO_ACTIVE_FILE (no false hit)
+    _patch(monkeypatch, {("file",): (_fix("obsidian-file-no-active.txt"), 0)})  # tabs/recents → "" (empty)
+    with pytest.raises(oan.ResolveError) as ei:
+        oan.resolve_focused()
+    assert ei.value.code == oan.EXIT_NO_ACTIVE_FILE
 
 
 def test_not_found_substring_in_name_is_not_a_false_miss(monkeypatch: pytest.MonkeyPatch) -> None:

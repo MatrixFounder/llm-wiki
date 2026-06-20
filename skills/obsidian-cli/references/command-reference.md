@@ -233,6 +233,9 @@ Pathless "edit the note" resolves the active/open note from these (all T1, read-
   heuristic**, NOT the focused tab and NOT the open-tab set — corroboration only.
 - **`vault info=path`** / **`vault info=name`** → vault root (for the absolute path) and vault
   name (for the `vault-mismatch` check).
+- **`vaults verbose`** (`name\tpath`) → the wrapper maps the terminal's CWD → vault NAME so a
+  **bare** `obsidian-active-note` (no `--vault`) targets the vault you're in, not the ambient
+  active window. (CWD outside any registered vault → falls back to ambient.)
 
 ### Plugins, themes, snippets
 
