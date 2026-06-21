@@ -160,6 +160,37 @@ def test_overflow_entities_reported_not_silently_dropped(vault, tmp_path, capsys
     assert rc == 0
     assert out["candidates"] == 25  # the raised cap
     assert sum(1 for s in out["skipped"] if s["reason"] == "max-candidates") == 5
+    # max-candidates is a lossy drop → it ALSO surfaces loudly in warnings (TASK 042), with a
+    # cap-specific hint (not the quote-correction advice).
+    assert out["warnings"] and out["warnings"][0]["code"] == "CONCEPTS_DROPPED"
+    assert out["warnings"][0]["reason"] == "max-candidates"
+    assert "cap" in out["warnings"][0]["hint"]
+
+
+def test_apply_warns_loudly_on_no_verbatim_quote_drop(vault, tmp_path, capsys, _stub_subprocs):
+    # TASK 042: a concept whose quote is a paraphrase (not in body) AND whose name isn't mentioned
+    # is dropped (no-verbatim-quote) — the drop MUST surface in warnings[], not hide in skipped[]
+    # behind action="imported"/exit 0 (the silent-loss bug from the Elliott-wave import session).
+    nf = _note(tmp_path, summary_bullets=["AMM это маркет-мейкер."],
+               entities=[{"name": "Стейкинг", "definition": "d",
+                          "quote": "выдуманная цитата, которой нет в теле заметки", "type": "concept"}])
+    rc = _run(vault, nf, vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0                                          # the NOTE still imported (exit 0)
+    assert any(s["reason"] == "no-verbatim-quote" for s in out["skipped"])
+    assert len(out["warnings"]) == 1
+    w = out["warnings"][0]
+    assert w["code"] == "CONCEPTS_DROPPED" and "Стейкинг" in w["names"]
+    assert w["reason"] == "no-verbatim-quote" and "quote" in w["hint"]
+
+
+def test_apply_clean_import_has_empty_warnings(vault, tmp_path, capsys, _stub_subprocs):
+    # benign skips (collides-existing / self-collision) are NOT lossy → warnings stays empty,
+    # so a CONCEPTS_DROPPED warning is an unambiguous "you lost a concept you wanted" signal.
+    rc = _run(vault, _note(tmp_path), vault / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["candidates"] == 1
+    assert out["warnings"] == []
 
 
 def test_full_mode_strips_dangling_image_embeds(vault, tmp_path, capsys, _stub_subprocs):

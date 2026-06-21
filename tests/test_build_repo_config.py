@@ -64,6 +64,22 @@ def test_invalid_index_db_emits_envelope_and_exits(tmp_path, capsys):
     assert "INVALID_INDEX_DB" in out and "escape.db" not in out
 
 
+def test_invalid_index_db_envelope_carries_actionable_hint(tmp_path, capsys):
+    """TASK 042: the INVALID_INDEX_DB envelope must be ACTIONABLE — name the env var to set —
+    while still NOT echoing the offending value (CWE-209)."""
+    import json
+    root = tmp_path / "v"
+    root.mkdir()
+    (root / "WIKI_SCHEMA.md").write_text(   # absolute, outside app-data, no env → rejected
+        "---\nvault_id: demo-vault\nindex_db: /etc/passwd-wiki.db\n---\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        build_repo_config("demo-vault", vault_root=root, db_path_flag=None)
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "INVALID_INDEX_DB"
+    assert "WIKI_ALLOW_ABSOLUTE_INDEX_DB" in out["hint"]
+    assert "passwd-wiki" not in json.dumps(out, ensure_ascii=False)  # value not echoed
+
+
 def test_mismatched_vault_id_falls_back_to_global(tmp_path):
     """vdd-multi HIGH-L1: addressing vault-a while vault_root belongs to vault-b → the
     index_db is ignored (no db_path → global), preventing a wrong-DB open."""

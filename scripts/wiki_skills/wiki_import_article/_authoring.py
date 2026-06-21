@@ -33,6 +33,10 @@ _IMG_EMBED_LINE = re.compile(r"^[^\n]*\[\[Attachments/[^\n]*$\n?", re.MULTILINE)
 # the entity-index footer: a `·`-separated run of `[[wikilinks]]` (and nothing
 # else) — not real prose, so it is not a valid source for a verbatim entity quote.
 _INDEX_LINE_RE = re.compile(r"^\[\[[^\]]+\]\]( · \[\[[^\]]+\]\])*$")
+# a trailing parenthetical disambiguator on an entity name, e.g. "Зигзаг (волновой анализ)".
+# `[^()]*` is bounded + non-nested → ReDoS-safe. Stripping it yields the BASE name the
+# body actually prints (the suffix is a slug-collision avoider, not part of the prose).
+_DISAMBIG_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
 def _clean_tag(t: str) -> str:
     """One frontmatter-safe tag: lowercase, hyphenated, no control/special chars.
     Tags are a CONTENT property → they come from the REASON step (which read the
@@ -87,9 +91,17 @@ def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
     # quote would no longer be a substring of the final on-disk note (→ EXTRACTION_PARSE_ERROR).
     if aq and aq in body and not any(_INDEX_LINE_RE.match(ln.strip()) for ln in aq.splitlines()):
         return aq[:_QUOTE_CAP]
-    for probe in (name, name[:14]):
-        if not probe:
+    # Probe order: the two PRE-EXISTING probes first (full name, then a short prefix) so any line
+    # the old code already matched is returned unchanged — then the BASE name with a trailing
+    # `(disambiguator)` stripped (the body prints "Зигзаг (5-3-5)…", never the slug-collision suffix
+    # "Зигзаг (волновой анализ)"). Deduped + last → strictly additive: `base` only fires when the
+    # old two-probe path returned "", so it can ONLY rescue a previously-dropped candidate.
+    base = _DISAMBIG_SUFFIX_RE.sub("", name).strip()
+    seen_probes: set[str] = set()
+    for probe in (name, name[:14], base):
+        if not probe or probe in seen_probes:
             continue
+        seen_probes.add(probe)
         pos = 0
         while (idx := body.find(probe, pos)) != -1:
             start = body.rfind("\n", 0, idx) + 1
@@ -272,8 +284,11 @@ def derive_candidates(
 
     Skips (reported, never silent): empty/unfilable name, dup slug, slug == the
     source note's own slug (self-collision), slug ∈ existing_page_slugs (a generic
-    name that would evict an owner page). Every kept candidate's `source_quote` is
-    a guaranteed-verbatim substring of `note_text`.
+    name that would evict an owner page), over the candidate cap (`max-candidates`),
+    or no verbatim/mention support in the body (`no-verbatim-quote`). The last two are
+    the RECOVERABLE-loss reasons the `apply` envelope surfaces loudly (the literal
+    strings key `_LOSSY_SKIP_REASONS` there — keep them in sync). Every kept
+    candidate's `source_quote` is a guaranteed-verbatim substring of `note_text`.
     """
     existing = set(existing_page_slugs)
     seen: set[str] = set()

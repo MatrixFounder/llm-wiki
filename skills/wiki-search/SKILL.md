@@ -133,6 +133,16 @@ retrieval is genuinely empty, say so plainly — *"no page in the wiki matches `
 unknown term** (e.g. guessing what an acronym "probably" stands for). A fabricated answer
 is worse than "not found": it silently defeats the whole point of a compounding wiki.
 
+**To LOCATE a note's file, use this skill** — the `hits[].file_path` (relative to the
+vault root) is the note's path. Two anti-patterns that waste turns:
+- **No raw SQL against the index DB.** Skills go through the DAL, never `sqlite3`/hand-written
+  SQL (the column is `file_path`, not `source_path`; the schema is `user_version`-gated and
+  may change). `wiki-search` gives you the path; `wiki-graph`/`wiki-query` give you relations.
+- **No `find … | xargs grep` over an iCloud vault** (`…/Mobile Documents/iCloud~…`). iCloud
+  leaves un-downloaded files as `.icloud` placeholders, and spaces + Cyrillic/CJK names break
+  naive `find`/`grep` pipelines — they silently match nothing. Use `wiki-search` (re-`wiki-reindex
+  --delta` first if a known file isn't indexed yet).
+
 ## Exit codes
 
 | Code | Envelope |

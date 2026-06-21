@@ -157,7 +157,9 @@ def validate_index_db_value(val: str, vault_root: Path) -> Path:
 
       * absolute / ``~`` → gated behind ``WIKI_ALLOW_ABSOLUTE_INDEX_DB`` (vdd-multi
         HIGH-S2): ``WIKI_SCHEMA.md`` travels WITH the vault, so it is not the same trust
-        source as a ``--db-path`` typed this session.
+        source as a ``--db-path`` typed this session. TASK 042 carve-out: an absolute path
+        resolving under ``factory.appdata_root()`` (where wiki-init writes; never iCloud) is
+        trusted WITHOUT the env var — the required config for an iCloud-hosted vault.
       * relative → leaf must NOT be a symlink AND the FULL candidate must ``resolve()``
         inside ``vault_root`` (vdd-multi HIGH-S1 — a parent-only check let a symlinked
         leaf escape into an arbitrary-write primitive).
@@ -166,7 +168,22 @@ def validate_index_db_value(val: str, vault_root: Path) -> Path:
         raise ConfigValidationError("index_db contains a NUL byte")
     expanded = Path(os.path.expanduser(val))  # `~` only; NO `$VAR` (env-in-config smell)
     if expanded.is_absolute():
-        if os.environ.get("WIKI_ALLOW_ABSOLUTE_INDEX_DB", "").strip().lower() \
+        # Carve-out (TASK 042): an absolute DB that resolves UNDER the OS app-data root —
+        # where wiki-init itself writes, and which (unlike a vault) is never iCloud — is the
+        # REQUIRED config for an iCloud-hosted vault, whose DB MUST live outside iCloud. Trust
+        # it WITHOUT the env var. Resolve first so a symlink can't hop the real target out of
+        # the trusted root. The factory's iCloud refusal (validate_db_path, at make_repo) and
+        # the env-var opt-in for any OTHER absolute path are both unaffected.
+        from scripts.wiki_index.factory import appdata_root  # lazy: don't pull the DAL at import
+        try:
+            real = expanded.resolve(strict=False)
+        except OSError:
+            raise ConfigValidationError("index_db could not be resolved")
+        try:
+            trusted = real.is_relative_to(appdata_root().resolve())
+        except (OSError, RuntimeError):
+            trusted = False  # can't determine the app-data root → fall back to the env-var gate
+        if not trusted and os.environ.get("WIKI_ALLOW_ABSOLUTE_INDEX_DB", "").strip().lower() \
                 not in {"1", "true", "yes", "on"}:
             raise ConfigValidationError(
                 "absolute index_db requires WIKI_ALLOW_ABSOLUTE_INDEX_DB=1")

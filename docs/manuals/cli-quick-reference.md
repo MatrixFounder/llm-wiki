@@ -12,9 +12,10 @@ for first-time setup on a real vault see
 cache* (ADR-002 §D8). The CLIs keep the search/knowledge layer current — they read
 the markdown, never lock you out of it. `vault_id` (e.g. `personal`) is declared in
 `WIKI_SCHEMA.md`. Run commands **from inside the vault**: the vault root is
-auto-detected (pass `--vault-root .` only if a command asks). iCloud vaults: keep
-`export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` in your shell (the index DB lives off the
-synced drive).
+auto-detected (pass `--vault-root .` only if a command asks). iCloud vaults: the index
+DB lives off the synced drive at an absolute path under the OS app-data dir (e.g.
+`~/Library/Application Support/…`), which is **trusted automatically — no env var needed**.
+(An absolute DB *outside* app-data still needs `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`.)
 
 > **Which `--vault <id>` value? (two different "vault" names — don't mix them up)**
 > - `wiki-* --vault`/`--vaults <id>` take the **wiki `vault_id`** — declared in

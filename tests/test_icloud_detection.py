@@ -72,6 +72,16 @@ def test_unit_04_unknown_platform_raises():
         _resolve_db_path("v", "klingon-os")
 
 
+def test_appdata_root_is_parent_of_wiki_index_dir():
+    """TASK 042: the carve-out's trusted root MUST be exactly the parent of where wiki-init
+    writes the default DB — so `appdata_root` cannot drift from `_resolve_db_path`."""
+    from scripts.wiki_index.factory import appdata_root
+    for plat in ("darwin", "linux"):
+        assert _resolve_db_path("v", plat).parent.parent == appdata_root(plat)
+    with pytest.raises(RuntimeError, match=r"Unsupported platform"):
+        appdata_root("klingon-os")
+
+
 def test_unit_05_parent_dir_created(tmp_path, monkeypatch):
     """_resolve_db_path ensures parent directory exists."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

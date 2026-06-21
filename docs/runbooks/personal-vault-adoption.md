@@ -38,12 +38,12 @@ Resolution (TASK 022):
 - Declare `index_db:` in `WIKI_SCHEMA.md` pointing to an **absolute path outside
   iCloud**, e.g. `/Users/<you>/Library/Application Support/obsidian-llm-wiki/personal.db`
   (use an explicit absolute path; `~` may not be expanded by the resolver).
-- An absolute `index_db` is gated by **`WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`** (the
-  HIGH-S2 safety fix). Export it for every `wiki-*` invocation against this vault
-  (add to `~/.zshrc`, or wrap the CLIs). **Known footgun:** if you pass an absolute
-  `--index-db` to `wiki-init` *without* this env set, the schema is written and the
-  command then fails — set the env first (audit-flagged installer issue, candidate
-  TASK 025).
+- **TASK 042:** an absolute `index_db` that resolves UNDER the OS app-data dir
+  (`~/Library/Application Support`, etc. — exactly the recommended location above) is now
+  **trusted automatically — no env var, no inline prefix**. So for this vault you can run
+  plain `wiki-*` commands. `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` is only needed for an absolute
+  path *outside* app-data; the partial-write footgun (schema written then validation fails)
+  is also closed by the pre-write guard (TASK 025) — validation happens before any write.
 - The DB is **Class-B rebuildable** (ADR-002 §D8): if it ever breaks, delete it
   and re-run `wiki-reindex --full`. Nothing irreplaceable lives there.
 - On the **local copy** (non-synced) a vault-local `index_db: ".wiki/index.db"` is
@@ -84,7 +84,8 @@ index_db: "/Users/<you>/Library/Application Support/obsidian-llm-wiki/personal.d
 description: "Personal PARA vault"
 ---
 ```
-> `vault_id` must be 3–32 chars (CHECK constraint). `index_db` absolute → set
+> `vault_id` must be 3–32 chars (CHECK constraint). `index_db` absolute UNDER the app-data
+> dir → trusted automatically (TASK 042); absolute ELSEWHERE → set
 > `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`. On the copy this was `".wiki/index.db"` (relative,
 > no env needed).
 
@@ -249,7 +250,8 @@ or remove the `curl`/`wget` deny if your flow needs egress.
    wiki-init --register-existing --vault "$HOME/vault-snapshot"
    ```
    Use `--register-existing` (reads the hand-authored `index_db`), NOT `--local`
-   (which WRITES `index_db`). For an absolute `index_db`, `export
+   (which WRITES `index_db`). An absolute `index_db` under the app-data dir is trusted
+   automatically (TASK 042); only an absolute path elsewhere needs `export
    WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` first.
 4. `wiki-reindex --full --vault personal --vault-root "$HOME/vault-snapshot"`
    - **Verified:** 2486 pages, exclusions all 0, FTS full-body works. Findings:
@@ -279,8 +281,9 @@ The copy proved the configs. To go live:
    '*.md' -print0 | xargs -0 cat >/dev/null`.
 2. **Author** `WIKI_SCHEMA.md` (absolute `index_db`, Risk 1) + `.wiki/{layout,sync}.yaml`
    (the validated templates above) into the LIVE vault root.
-3. `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` (add to `~/.zshrc` — it is needed for
-   EVERY `wiki-*` call against this vault).
+3. **TASK 042:** the app-data `index_db` is trusted automatically — `export
+   WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` is NO LONGER required for this vault (plain `wiki-*`
+   calls work). Only set it if you point `index_db` at an absolute path *outside* app-data.
 4. **Register + index:**
    ```bash
    wiki-init --register-existing --vault "$ICLOUD_VAULT"

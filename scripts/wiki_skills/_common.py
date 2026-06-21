@@ -164,7 +164,14 @@ def build_repo_config(
             # is NOT echoed (CWE-209). Centralised here so all CLIs inherit it.
             emit({"error": "INVALID_INDEX_DB", "field": "index_db",
                   "reason": "index_db is unsafe or malformed (escapes the vault, is a "
-                            "symlink, or is absolute without WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                            "symlink, or is an absolute path outside the framework's "
+                            "app-data dir without WIKI_ALLOW_ABSOLUTE_INDEX_DB)",
+                  "hint": "If this vault's index_db is an absolute path (e.g. an iCloud "
+                          "vault whose DB must live outside iCloud), re-run with "
+                          "WIKI_ALLOW_ABSOLUTE_INDEX_DB=1, or set it once in your shell "
+                          "profile / .claude settings `env`. Absolute paths under the OS "
+                          "app-data dir (…/Application Support, …/.local/share, %APPDATA%) "
+                          "are trusted automatically."},
                  exit_code=6)
             raise SystemExit(6)
         if resolved is not None:

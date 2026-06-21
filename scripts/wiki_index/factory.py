@@ -48,6 +48,31 @@ def _is_icloud_path(p: Path) -> bool:
     return bool(_ICLOUD_RE.search(str(p.resolve(strict=False))))
 
 
+def appdata_root(platform: str | None = None) -> Path:
+    """The OS per-user application-data root where the framework places its index DBs
+    (the parent of the default ``wiki-index/`` dir). macOS: ``~/Library/Application
+    Support``; Linux: ``~/.local/share``; Windows: ``%APPDATA%``.
+
+    Single source of truth shared by ``_resolve_db_path`` (the global-DB default) and the
+    ``config_loader`` absolute-``index_db`` carve-out (TASK 042), so the location an
+    absolute DB is TRUSTED at cannot drift from where ``wiki-init`` actually WRITES. This
+    is a user-private, app-managed location and (unlike a vault) never inside iCloud —
+    which is exactly why an absolute DB here is safe without ``WIKI_ALLOW_ABSOLUTE_INDEX_DB``.
+    """
+    if platform is None:
+        platform = sys.platform
+    if platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    if platform == "linux":
+        return Path.home() / ".local" / "share"
+    if platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            raise RuntimeError("APPDATA env var not set on Windows")
+        return Path(appdata)
+    raise RuntimeError(f"Unsupported platform: {platform}")
+
+
 def _resolve_db_path(vault_id: str, platform: str | None = None) -> Path:
     """Platform-default location for the global multi-vault DB.
 
@@ -57,19 +82,7 @@ def _resolve_db_path(vault_id: str, platform: str | None = None) -> Path:
     regardless. Parent directory is created if missing.
     """
     _ = vault_id  # accepted for forward-compat; same global.db for all
-    if platform is None:
-        platform = sys.platform
-    if platform == "darwin":
-        path = Path.home() / "Library" / "Application Support" / "wiki-index" / "global.db"
-    elif platform == "linux":
-        path = Path.home() / ".local" / "share" / "wiki-index" / "global.db"
-    elif platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        if not appdata:
-            raise RuntimeError("APPDATA env var not set on Windows")
-        path = Path(appdata) / "wiki-index" / "global.db"
-    else:
-        raise RuntimeError(f"Unsupported platform: {platform}")
+    path = appdata_root(platform) / "wiki-index" / "global.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

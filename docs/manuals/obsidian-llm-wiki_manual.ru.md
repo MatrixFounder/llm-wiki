@@ -277,14 +277,13 @@ wiki-init --register-existing --vault /path/to/MyVault --local
 #     ...or a custom in-vault path:
 wiki-init --register-existing --vault /path/to/MyVault --index-db db/index.db
 
-# (c) CLOUD-SYNCED vault (iCloud / Dropbox) — SQLite must NOT sit inside the
-#     byte-syncing folder (WAL/shm corruption). Point at an ABSOLUTE path OUTSIDE
-#     the sync root. Because WIKI_SCHEMA.md travels with the vault, an absolute
-#     path needs an explicit opt-in so a synced/cloned config can't silently
-#     redirect writes elsewhere on your disk:
-WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 \
-  wiki-init --register-existing --vault /path/to/MyVault \
-            --index-db ~/wiki-dbs/myvault.db
+# (c) CLOUD-SYNCED vault (iCloud / Dropbox) — SQLite НЕ должен лежать в синхронизируемой
+#     папке (порча WAL/shm). Укажите АБСОЛЮТНЫЙ путь ВНЕ корня синхронизации. Путь под
+#     OS app-data (куда пишет wiki-init, никогда не iCloud) доверяется автоматически —
+#     env-переменная не нужна. Абсолютный путь В ДРУГОМ МЕСТЕ требует
+#     WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 (чтобы синхронизированный/склонированный конфиг не перенаправил запись):
+wiki-init --register-existing --vault /path/to/MyVault \
+          --index-db "~/Library/Application Support/obsidian-llm-wiki/myvault.db"
 ```
 
 `--local` / `--index-db` — это чистое удобство: эквивалентно можно вручную отредактировать

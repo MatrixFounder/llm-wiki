@@ -60,6 +60,48 @@ def test_absolute_allowed_with_env(tmp_path, monkeypatch):
     assert resolve_index_db_path(root) == Path.home() / "wiki-dbs" / "demo.db"
 
 
+def test_absolute_under_appdata_trusted_without_env(tmp_path, monkeypatch):
+    """TASK 042 carve-out: an absolute DB under the OS app-data root (where wiki-init writes;
+    never iCloud) is trusted WITHOUT the env var — the required config for an iCloud vault whose
+    DB must live outside iCloud (this is the exact case that failed in the dogfood session)."""
+    import scripts.wiki_index.factory as factory
+    appdata = tmp_path / "appdata"
+    (appdata / "obsidian-llm-wiki").mkdir(parents=True)
+    monkeypatch.setattr(factory, "appdata_root", lambda platform=None: appdata)
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    db = appdata / "obsidian-llm-wiki" / "personal.db"
+    root = _vault(tmp_path, f"index_db: {db}")
+    assert resolve_index_db_path(root) == db
+
+
+def test_absolute_outside_appdata_still_requires_env(tmp_path, monkeypatch):
+    """The carve-out is NARROW: an absolute path NOT under app-data still needs the env var."""
+    import scripts.wiki_index.factory as factory
+    monkeypatch.setattr(factory, "appdata_root", lambda platform=None: tmp_path / "appdata")
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    root = _vault(tmp_path, "index_db: ~/wiki-dbs/demo.db")  # not under the (patched) app-data
+    with pytest.raises(ConfigValidationError):
+        resolve_index_db_path(root)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+def test_absolute_appdata_symlink_escape_not_trusted(tmp_path, monkeypatch):
+    """The carve-out resolves symlinks FIRST: a symlink located under app-data but pointing
+    OUTSIDE it is NOT trusted, so it can't smuggle an arbitrary-write target past the gate."""
+    import scripts.wiki_index.factory as factory
+    appdata = tmp_path / "appdata"
+    appdata.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = appdata / "sneaky.db"
+    link.symlink_to(outside / "evil.db")
+    monkeypatch.setattr(factory, "appdata_root", lambda platform=None: appdata)
+    monkeypatch.delenv("WIKI_ALLOW_ABSOLUTE_INDEX_DB", raising=False)
+    root = _vault(tmp_path, f"index_db: {link}")
+    with pytest.raises(ConfigValidationError):
+        resolve_index_db_path(root)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
 def test_symlinked_leaf_escape_rejected(tmp_path):
     """vdd-multi HIGH-S1: a symlinked LEAF (`.wiki/index.db → /outside`) — the parent

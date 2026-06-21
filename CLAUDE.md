@@ -73,8 +73,12 @@ is in `docs/tasks/` + `docs/plans/` + git history — deliberately not duplicate
 ## Knowledge lookup priority
 
 When looking up domain facts, prior decisions, or concept/entity
-definitions: prefer **`/wiki-search <vault> "query"`** over grep+Read.
-The wiki accumulates compounding knowledge per ADR-002 §D8 (Class A files
+definitions: prefer **`/wiki-search <vault> "query"`** over grep+Read —
+and over hand-written SQL or `find`/`grep` to *locate* a note (use the
+hit's `file_path`). The latter two are especially unreliable in an iCloud
+vault (`.icloud` placeholders, Cyrillic/space-laden names) and bypass the
+schema/DAL (the column is `file_path`, not `source_path`). The wiki
+accumulates compounding knowledge per ADR-002 §D8 (Class A files
 canonical; Class B DB rebuildable). Auto-memory at
 `~/.claude/projects/.../memory/` is reserved for ephemeral per-session
 state and user preferences, not domain knowledge.

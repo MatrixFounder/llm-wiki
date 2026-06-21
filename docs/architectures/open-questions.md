@@ -437,6 +437,19 @@
     and errors (`INDEX_DB_ALREADY_DECLARED`) on a conflicting prior value. Two adjacent residuals
     noted as out-of-scope follow-ups (pre-existing unwrapped `_split_frontmatter` `safe_load`;
     `--description`/`_sanitize_desc` doesn't strip U+2028/U+2029). 1083 pytest, mypy strict.
+  - **App-data carve-out (TASK 042 — amends HIGH-S2/OQ-5).** Requiring `WIKI_ALLOW_ABSOLUTE_INDEX_DB`
+    for *every* absolute `index_db` made the framework's OWN recommended config painful: an iCloud
+    vault's DB MUST live outside iCloud (an absolute path), so every CLI call needed the env prefix
+    (which also defeated permission allow-listing). `validate_index_db_value` now TRUSTS an absolute
+    path that `resolve()`-s under `factory.appdata_root()` (the OS app-data root where `wiki-init`
+    writes — macOS `~/Library/Application Support`, Linux `~/.local/share`, Win `%APPDATA%`; never
+    iCloud) WITHOUT the env var; any other absolute path still requires it. Symlink-resolved before
+    the `is_relative_to` containment check (a symlink under app-data pointing out is NOT trusted);
+    fails CLOSED to the env-var gate if the root can't be computed; the `make_repo` iCloud refusal is
+    unchanged. The `INVALID_INDEX_DB` envelope gained an actionable `hint` (still value-free, CWE-209).
+    Residual (accepted, LOW — security-audit PASS): trust spans the whole app-data tree, not just
+    `…/wiki-index/`, so a hand-opened malicious vault could target another of the user's app DBs — but
+    that is strictly narrower than the pre-existing env-var escape. 1668 pytest, mypy strict.
 - **Q-024-1 (TASK 024 / R-1 — `wiki-index-upsert` layout-awareness; corrects an
   implementation gap vs the Q-018-10(e)/W-1 claim).** The architecture has asserted since
   Q-018-9/10 that `wiki-index-upsert` resolves frontmatter "against the same

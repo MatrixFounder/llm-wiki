@@ -54,9 +54,10 @@ Two per-vault override files (both optional; the built-in `${layout}` grammar is
   `zones`, `exclude`, `transcript_dedup`, and the `resummarize` re-summarization gate.
 
 - **`index_db`** (in `WIKI_SCHEMA.md` frontmatter) — by default this vault shares the
-  global DB; set `index_db: .wiki/index.db` to make the index travel WITH the vault
-  (an **absolute** path needs `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` — e.g. for an iCloud vault
-  whose DB must live off the synced drive).
+  global DB; set `index_db: .wiki/index.db` to make the index travel WITH the vault. An
+  **absolute** path under the OS app-data dir (e.g. `~/Library/Application Support/…` — for
+  an iCloud vault whose DB must live off the synced drive) is trusted automatically; any
+  other absolute path needs `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`.
 
 ---
 

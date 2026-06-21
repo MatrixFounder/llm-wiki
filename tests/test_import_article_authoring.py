@@ -144,3 +144,47 @@ def test_verbatim_quote_fast_path_rejects_footer_line_quote():
     q = A.verbatim_quote(footer_quote, "AMM", body)
     assert q != footer_quote                                # NOT returned from the fast path
     assert "[[" not in q                                    # resolved to real prose (or "")
+
+
+def test_verbatim_quote_matches_base_name_ignoring_disambiguator():
+    # TASK 042: a slug-collision disambiguator suffix "(волновой анализ)" is NOT printed in the
+    # body — the body says "Зигзаг (5-3-5) …". The name-mention fallback must probe the BASE name
+    # so a paraphrased agent quote still resolves to a real body line (was dropped before).
+    body = ("Вступление.\n\nЗигзаг (5-3-5) — быстрый откат против тренда; на медвежьем "
+            "рынке формируется в обратном направлении.\n")
+    q = A.verbatim_quote("Зигзаг — простая модель из трёх волн A–B–C",   # paraphrase, not in body
+                         "Зигзаг (волновой анализ)", body)
+    assert q and q in body and "Зигзаг (5-3-5)" in q       # rescued via the base-name probe
+    # a base name that appears NOWHERE still drops (no fabricated quote)
+    assert A.verbatim_quote(None, "Несуществующее (волновой анализ)", body) == ""
+
+
+def test_verbatim_quote_prefix_probe_precedes_base_probe():
+    # TASK 042 additivity lock: the base-name probe must NOT override a line the pre-existing
+    # name[:14] probe already matched (else an EXISTING candidate's quote could change). Probe
+    # order is (name, name[:14], base) — name[:14]="Зигзаг (волнов" wins over the earlier bare
+    # "Зигзаг" line. (The wrong order (name, base, name[:14]) would return line_base instead.)
+    line_base = "Зигзаг — это коррекционная модель волнового анализа подробно."
+    line_prefix = "Зигзаг (волновой) тип описан здесь в деталях достаточно."
+    body = f"{line_base}\n\n{line_prefix}\n"
+    assert A.verbatim_quote(None, "Зигзаг (волновой анализ)", body) == line_prefix
+
+
+def test_derive_candidates_keeps_disambiguated_entity():
+    # TASK 042 integration: the exact shape that silently dropped "Зигзаг"/"Плоскость" — a
+    # disambiguated name + a quote paraphrased from the raw source — is now KEPT (base name is
+    # in the body), and its stored source_quote is a verbatim substring.
+    body = ("Зигзаг (5-3-5) — быстрый откат против тренда.\n\n"
+            "Плоскость (3-3-5) — консолидация перед продолжением тренда.\n")
+    ents = [
+        {"name": "Зигзаг (волновой анализ)", "definition": "d",
+         "quote": "Зигзаг (5-3-5) — простая модель из трёх волн", "type": "concept"},   # paraphrase
+        {"name": "Плоскость (волновой анализ)", "definition": "d",
+         "quote": "Плоскость (3-3-5) — структура консолидации", "type": "concept"},     # paraphrase
+    ]
+    cands, skipped = A.derive_candidates(
+        ents, body, slug_strategy="preserve-unicode",
+        note_slug="volny-elliotta", existing_page_slugs=[])
+    assert skipped == []                                   # nothing dropped
+    assert len(cands) == 2
+    assert all(c["source_quote"] in body for c in cands)   # verbatim substrings of the note body

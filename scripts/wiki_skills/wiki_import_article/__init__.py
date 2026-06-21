@@ -53,6 +53,7 @@ from scripts.wiki_skills.wiki_extract_concepts._validation import _is_valid_slug
 
 from . import _context
 from ._authoring import (
+    _MAX_CANDIDATES,
     assemble_note,
     derive_candidates,
     name_is_filable,
@@ -67,6 +68,22 @@ _KIND_NOTE_TYPE = {
     "meeting": "meeting-summary", "article": "article-summary",
     "paper": "article-summary", "thread": "article-summary", "summary": "summary",
 }
+
+# `skipped` reasons that mean a concept page the orchestrator INTENDED was lost and is
+# RECOVERABLE (vs benign dedup/collision/layout skips). Surfaced LOUDLY in the apply
+# envelope's `warnings` — one entry PER reason, each with reason-specific recovery advice —
+# so a paraphrased/mis-sourced quote (or an over-cap tail) can't hide behind
+# action="imported"/exit 0 (the TASK 042 silent-drop fix). Keys mirror the `skipped` reasons
+# in `_authoring.derive_candidates` (keep in sync).
+_LOSSY_DROP_HINTS = {
+    "no-verbatim-quote": "each entity `quote` MUST be an exact substring of the authored "
+                         "`body` — copy quotes FROM the body you write, not the raw source. "
+                         "Re-run apply with corrected quotes to file them.",
+    "max-candidates": f"the per-note concept cap ({_MAX_CANDIDATES}) was reached, so the tail "
+                      "was dropped — re-running with the same entities drops the same tail; "
+                      "trim the entity list or split the import to file them.",
+}
+_LOSSY_SKIP_REASONS = frozenset(_LOSSY_DROP_HINTS)
 
 __version__ = "1.0"
 
@@ -622,6 +639,18 @@ def apply(args: argparse.Namespace) -> int:
         cc_env = {"created": 0, "note": "skipped: layout does not index _concepts pages"}
 
     ok = idx_rc == 0 and cc_rc == 0
+    # Surface RECOVERABLE concept losses loudly (the note still imported, so exit stays 0 —
+    # non-fatal-metadata precedent: wiki_merge `aliases_skipped` + wiki_init `hint`). A benign
+    # dedup/collision skip stays quiet; only the _LOSSY_SKIP_REASONS warn — one entry PER reason
+    # (homogeneous names + reason-specific recovery advice), so the hint never misdirects.
+    warnings: list[dict[str, Any]] = []
+    for reason in sorted({s["reason"] for s in skipped if s.get("reason") in _LOSSY_SKIP_REASONS}):
+        warnings.append({
+            "code": "CONCEPTS_DROPPED",
+            "reason": reason,
+            "names": [s["name"] for s in skipped if s.get("reason") == reason],
+            "hint": f"Concept pages were NOT written ({reason}): {_LOSSY_DROP_HINTS[reason]}",
+        })
     return emit({
         "action": "imported" if ok else "partial",
         "vault_id": args.vault,
@@ -631,6 +660,7 @@ def apply(args: argparse.Namespace) -> int:
         "note_hash": note_hash,
         "candidates": len(candidates),
         "skipped": skipped,
+        "warnings": warnings,
         "index": idx_env,
         "concepts": cc_env,
     }, exit_code=0 if ok else EXIT_DEP_MISSING)

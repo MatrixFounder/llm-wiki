@@ -161,9 +161,11 @@ Support/wiki-index/global.db`), partitioned by `vault_id`. A vault may instead d
 `index_db: .wiki/index.db` in `WIKI_SCHEMA.md` (or `wiki-init … --local`) to own a portable,
 in-vault DB. Precedence: `--db-path` > `index_db` > global; relative paths are vault-root-relative
 (contained — a symlink/`..` escape is rejected). For an iCloud/Dropbox vault, point `index_db` at an
-**absolute** non-synced path — but because `WIKI_SCHEMA.md` travels with the vault (a cloned/synced
-vault is attacker-shippable), an absolute `index_db` is **gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`**
-(and the iCloud WAL-corruption guard still applies). A local-DB vault is an **island** — `--vault all`
+**absolute** non-synced path: one *under the OS app-data dir* (`~/Library/Application Support`,
+`~/.local/share`, `%APPDATA%` — where `wiki-init` writes, never iCloud) is **trusted automatically**;
+any *other* absolute path is **gated behind `WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`** (because `WIKI_SCHEMA.md`
+travels with the vault, a cloned/synced config is attacker-shippable). The iCloud WAL-corruption guard
+still applies. A local-DB vault is an **island** — `--vault all`
 spans only the connected DB.
 
 ---
@@ -332,12 +334,12 @@ wiki-init --register-existing --vault /path/to/MyVault --local
 wiki-init --register-existing --vault /path/to/MyVault --index-db db/index.db
 
 # (c) CLOUD-SYNCED vault (iCloud/Dropbox) — SQLite must NOT sit in the byte-syncing
-#     folder (WAL/shm corruption), so point at an ABSOLUTE path outside the sync
-#     root. Absolute paths require an explicit opt-in (the schema file travels with
-#     the vault, so a synced/cloned config could otherwise redirect writes):
-WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 \
-  wiki-init --register-existing --vault /path/to/MyVault \
-            --index-db ~/wiki-dbs/myvault.db
+#     folder (WAL/shm corruption), so point at an ABSOLUTE path outside the sync root.
+#     A path under the OS app-data dir (where wiki-init writes, never iCloud) is trusted
+#     automatically — no env var. (An absolute path ELSEWHERE needs
+#     WIKI_ALLOW_ABSOLUTE_INDEX_DB=1, since a synced/cloned config could redirect writes.)
+wiki-init --register-existing --vault /path/to/MyVault \
+          --index-db "~/Library/Application Support/obsidian-llm-wiki/myvault.db"
 ```
 
 `--local`/`--index-db` are just a convenience — you can equally hand-edit

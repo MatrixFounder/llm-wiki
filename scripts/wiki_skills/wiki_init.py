@@ -385,8 +385,13 @@ def scaffold_new(args: argparse.Namespace) -> int:
         except ConfigValidationError:
             return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
                           "reason": "index_db is unsafe or malformed (escapes the vault, "
-                                    "is a symlink, or is absolute without "
-                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                                    "is a symlink, or is an absolute path outside the "
+                                    "framework's app-data dir without "
+                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)",
+                          "hint": "An absolute index_db under the OS app-data dir "
+                                  "(…/Application Support, …/.local/share, %APPDATA%) is "
+                                  "trusted automatically; any other absolute path requires "
+                                  "WIKI_ALLOW_ABSOLUTE_INDEX_DB=1."},
                          exit_code=6)
         if _ensure_index_db(schema_path, _idx) == "conflict":
             return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index_db",
@@ -491,8 +496,13 @@ def register_existing(args: argparse.Namespace) -> int:
         except ConfigValidationError:
             return _emit({"error": "INVALID_INDEX_DB", "field": "index_db",
                           "reason": "index_db is unsafe or malformed (escapes the vault, "
-                                    "is a symlink, or is absolute without "
-                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)"},
+                                    "is a symlink, or is an absolute path outside the "
+                                    "framework's app-data dir without "
+                                    "WIKI_ALLOW_ABSOLUTE_INDEX_DB)",
+                          "hint": "An absolute index_db under the OS app-data dir "
+                                  "(…/Application Support, …/.local/share, %APPDATA%) is "
+                                  "trusted automatically; any other absolute path requires "
+                                  "WIKI_ALLOW_ABSOLUTE_INDEX_DB=1."},
                          exit_code=6)
         if _ensure_index_db(schema_path, _idx) == "conflict":
             return _emit({"error": "INDEX_DB_ALREADY_DECLARED", "field": "index_db",
