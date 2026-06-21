@@ -900,10 +900,10 @@ def test_sync_config_rejects_parent_symlink(tmp_path: Path) -> None:
 
 
 def test_classify_system_files_skip(tmp_path: Path) -> None:
-    """Vault system files — per-vendor agent instructions (CLAUDE.md/GEMINI.md),
+    """Vault system files — per-vendor agent instructions (CLAUDE.md/GEMINI.md/AGENTS.md),
     the schema, and projections (index.md/log.md) — are skipped by wiki-sync,
     consistent with the indexer (so a `scan .` never upserts them)."""
-    for name in ("CLAUDE.md", "GEMINI.md", "WIKI_SCHEMA.md", "index.md", "log.md"):
+    for name in ("CLAUDE.md", "GEMINI.md", "AGENTS.md", "WIKI_SCHEMA.md", "index.md", "log.md"):
         f = _md(tmp_path / name, "type: lesson-summary", "real body content here")
         d = _classify(f, vault_root=tmp_path)
         assert d.action == "skip" and d.reason == "system-file", name

@@ -1,0 +1,26 @@
+{
+  "mode": "fullAuto",
+  "dangerousPatterns": [
+    { "pattern": "rm -rf", "description": "recursive force delete" },
+    { "pattern": "rm -fr", "description": "recursive force delete" },
+    { "pattern": "sudo ", "description": "privilege escalation" },
+    { "pattern": "git reset --hard", "description": "discards uncommitted work" },
+    { "pattern": "git clean -fd", "description": "deletes untracked files" },
+    { "pattern": "git push", "description": "publishes to a remote" },
+    { "pattern": "curl ", "description": "network egress / fetch" },
+    { "pattern": "wget ", "description": "network egress / fetch" },
+    { "pattern": "nc ", "description": "raw network connection" },
+    { "pattern": "pip install", "description": "must use the .venv, never global" },
+    { "pattern": "id_rsa", "description": "reads an SSH private key" },
+    { "pattern": "obsidian eval", "description": "arbitrary code in the Obsidian app (T3)" },
+    { "pattern": "obsidian command", "description": "runs an arbitrary Obsidian command by ID (T3)" },
+    { "pattern": "template:insert", "description": "eval-equivalent via a scripting plugin" },
+    { "pattern": "obsidian delete", "description": "deletes a vault note (T2, data loss)" },
+    { "pattern": "obsidian plugin:", "description": "install/enable/disable plugins (T3)" },
+    { "pattern": "obsidian dev:", "description": "Obsidian developer commands (T3)" }
+  ],
+  "catastrophicPatterns": [
+    { "pattern": "sudo rm -rf /", "description": "destroys the system" }
+  ],
+  "protectedPaths": ["~/.ssh", "~/.aws"]
+}

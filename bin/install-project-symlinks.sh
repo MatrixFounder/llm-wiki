@@ -7,9 +7,10 @@
 # skills/<name>/, commands/<name>.md, or workflows/<name>.md (NOT auto-propagated).
 #
 # Vendor mapping (targets are repo-RELATIVE, so the tree stays portable):
-#   .claude/skills/<name>     + .agent/skills/<name>     → ../../skills/<name>
-#   .claude/commands/<name>.md                           → ../../commands/<name>.md
-#   .agent/workflows/<name>.md                           → ../../workflows/<name>.md
+#   .claude/skills/<name> + .agent/skills/<name> + .pi/skills/<name> → ../../skills/<name>
+#   .claude/commands/<name>.md                                       → ../../commands/<name>.md
+#   .agent/workflows/<name>.md                                       → ../../workflows/<name>.md
+# (.pi/skills is pi's project skill-discovery dir — TASK 043; pi also reads ~/.pi/skills globally.)
 #
 # Safe + idempotent: creates a MISSING link, REPAIRS a stale repo-relative link, and SKIPS
 # (never clobbers/nests-into) a REAL file/dir or a link pointing outside the repo tree.
@@ -39,12 +40,13 @@ safe_link() {
 }
 
 if [[ -d skills ]]; then
-  mkdir -p .claude/skills .agent/skills
+  mkdir -p .claude/skills .agent/skills .pi/skills
   for src in skills/*/; do
     [[ -d "$src" ]] || continue
     name="$(basename "$src")"
     safe_link "../../skills/$name" ".claude/skills/$name"
     safe_link "../../skills/$name" ".agent/skills/$name"
+    safe_link "../../skills/$name" ".pi/skills/$name"      # TASK 043: pi discovery
   done
 fi
 if [[ -d commands ]]; then

@@ -125,16 +125,92 @@ def test_register_existing_vendor_gemini(tmp_path):
 
 
 def test_register_existing_vendor_all(tmp_path):
-    """`--vendor all` (or `claude,gemini`) writes both; GEMINI == CLAUDE for now."""
+    """`--vendor all` writes every vendor's file; the instruction bodies are identical
+    (all reuse CLAUDE.md.tmpl for now). TASK 043: also AGENTS.md (cross-vendor, written
+    ONCE despite both `agents` and `pi` selecting it) + pi's permissions.json."""
     vault = _schema(tmp_path / "both-x", "both-x")
     code, out = _run([
         "--register-existing", "--vault", str(vault),
         "--vendor", "all", "--db-path", str(tmp_path / "g.db"),
     ])
     assert code == 0
-    assert out["agent_files"] == {"CLAUDE.md": "written", "GEMINI.md": "written",
-                                   ".claude/settings.json": "written"}  # TASK 026 (claude)
+    assert out["agent_files"] == {
+        "CLAUDE.md": "written", "GEMINI.md": "written", "AGENTS.md": "written",
+        ".claude/settings.json": "written",            # TASK 026 (claude)
+        ".pi/extensions/permissions.json": "written",  # TASK 043 (pi)
+    }
     assert (vault / "GEMINI.md").read_text() == (vault / "CLAUDE.md").read_text()
+    assert (vault / "AGENTS.md").read_text() == (vault / "CLAUDE.md").read_text()
+
+
+def test_register_existing_vendor_agents(tmp_path):
+    """TASK 043: `--vendor agents` writes ONLY the cross-vendor AGENTS.md (no settings)."""
+    vault = _schema(tmp_path / "ag-x", "ag-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "agents", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"] == {"AGENTS.md": "written"}
+    assert (vault / "AGENTS.md").exists()
+    assert not (vault / "CLAUDE.md").exists() and not (vault / ".pi").exists()
+
+
+def test_register_existing_vendor_pi(tmp_path):
+    """TASK 043: `--vendor pi` writes AGENTS.md + a valid `.pi/extensions/permissions.json`
+    (parent dirs created, vault-contained, no allow-list — mode + danger patterns)."""
+    vault = _schema(tmp_path / "pi-x", "pi-x")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "pi", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"] == {"AGENTS.md": "written",
+                                  ".pi/extensions/permissions.json": "written"}
+    perms = vault / ".pi" / "extensions" / "permissions.json"
+    assert perms.is_file()                                     # nested parents created
+    cfg = json.loads(perms.read_text(encoding="utf-8"))        # valid JSON
+    assert cfg["mode"] in {"default", "acceptEdits", "fullAuto", "bypassPermissions"}
+    pats = {p["pattern"] for p in cfg["dangerousPatterns"]}
+    assert "rm -rf" in pats
+    # security backstop (TASK 043 audit): fullAuto auto-runs safe bash, so the destructive /
+    # eval-adjacent obsidian surfaces the obsidian-cli skill flags T2/T3 MUST be gated here.
+    assert {"obsidian eval", "obsidian command", "obsidian delete"} <= pats
+    # VERBATIM copy of the shipped template (JSON, not Template-substituted)
+    tmpl = Path(__file__).resolve().parent.parent / "templates" / "vault.pi-permissions.json"
+    assert perms.read_text(encoding="utf-8") == tmpl.read_text(encoding="utf-8")
+
+
+def test_register_existing_pi_dedup_second_pass(tmp_path):
+    """TASK 043 dedup: `--vendor pi` on a vault that ALREADY has AGENTS.md (e.g. a prior
+    `--vendor agents` run) must NOT re-render it (→ "exists") yet STILL write pi's own
+    settings — the `if filename in out` branch must not skip the settings block."""
+    vault = _schema(tmp_path / "pi-2nd", "pi-2nd")
+    (vault / "AGENTS.md").write_text("# operator's own AGENTS\n", encoding="utf-8")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "pi", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0
+    assert out["agent_files"] == {"AGENTS.md": "exists",
+                                  ".pi/extensions/permissions.json": "written"}
+    assert (vault / "AGENTS.md").read_text() == "# operator's own AGENTS\n"  # not clobbered
+    assert (vault / ".pi" / "extensions" / "permissions.json").is_file()      # settings still landed
+
+
+def test_register_existing_pi_preserves_operator_permissions(tmp_path):
+    """TASK 043: a pre-existing `.pi/extensions/permissions.json` is NEVER clobbered
+    without --force (mirrors the .claude/settings.json non-destructive contract)."""
+    vault = _schema(tmp_path / "pi-keep", "pi-keep")
+    pdir = vault / ".pi" / "extensions"
+    pdir.mkdir(parents=True)
+    (pdir / "permissions.json").write_text('{"mode": "default"}\n', encoding="utf-8")
+    code, out = _run([
+        "--register-existing", "--vault", str(vault),
+        "--vendor", "pi", "--db-path", str(tmp_path / "g.db"),
+    ])
+    assert code == 0 and out["agent_files"][".pi/extensions/permissions.json"] == "exists"
+    assert (pdir / "permissions.json").read_text() == '{"mode": "default"}\n'  # untouched
 
 
 def test_register_existing_invalid_vendor(tmp_path):

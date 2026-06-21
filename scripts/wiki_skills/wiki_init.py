@@ -174,7 +174,13 @@ def _write_agent_files(
         if not is_two_tier_scaffold(placeholders.get("layout") or ""):
             template_name = "CLAUDE.layout.md.tmpl"
         target = vault_root / filename
-        if target.exists() and not force:
+        if filename in out:
+            # TASK 043: two selected vendors share a filename (e.g. `agents` + `pi` both
+            # write AGENTS.md under `--vendor all`). The first already rendered it this run —
+            # don't re-render (it would downgrade the status to "exists"); fall through to the
+            # settings block so a same-file vendor's settings (pi's permissions.json) still land.
+            pass
+        elif target.exists() and not force:
             out[filename] = "exists"
         else:
             # Per-vendor resilience: a missing/misconfigured template (or a stray `$`

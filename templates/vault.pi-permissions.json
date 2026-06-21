@@ -1,0 +1,37 @@
+{
+  "mode": "fullAuto",
+  "dangerousPatterns": [
+    { "pattern": "rm -rf", "description": "recursive force delete" },
+    { "pattern": "rm -fr", "description": "recursive force delete" },
+    { "pattern": "sudo ", "description": "privilege escalation" },
+    { "pattern": "git reset --hard", "description": "discards uncommitted work" },
+    { "pattern": "git clean -fd", "description": "deletes untracked files" },
+    { "pattern": "curl ", "description": "network egress / fetch" },
+    { "pattern": "wget ", "description": "network egress / fetch" },
+    { "pattern": "nc ", "description": "raw network connection" },
+    { "pattern": "id_rsa", "description": "reads an SSH private key" },
+    { "pattern": "obsidian eval", "description": "arbitrary code in the Obsidian app (T3)" },
+    { "pattern": "obsidian command", "description": "runs an arbitrary Obsidian command by ID — reaches plugin/eval surfaces (T3)" },
+    { "pattern": "template:insert", "description": "eval-equivalent if a scripting plugin (Templater) is enabled" },
+    { "pattern": "create template=", "description": "eval-equivalent template instantiation" },
+    { "pattern": "obsidian delete", "description": "deletes a vault note (T2, data loss)" },
+    { "pattern": "obsidian move", "description": "moves a vault note (T2)" },
+    { "pattern": "obsidian rename", "description": "renames a vault note (T2)" },
+    { "pattern": "obsidian history:restore", "description": "overwrites a note from history (T2)" },
+    { "pattern": "obsidian sync:restore", "description": "restores from Obsidian Sync (T2)" },
+    { "pattern": "obsidian dev:", "description": "Obsidian developer commands (T3)" },
+    { "pattern": "obsidian devtools", "description": "opens the Obsidian devtools (T3)" },
+    { "pattern": "obsidian plugin:", "description": "install/enable/disable plugins (T3)" },
+    { "pattern": "obsidian plugins:restrict", "description": "alters plugin trust policy (T3)" },
+    { "pattern": "obsidian sync on", "description": "toggles Obsidian Sync (T3)" },
+    { "pattern": "obsidian sync off", "description": "toggles Obsidian Sync (T3)" },
+    { "pattern": "obsidian restart", "description": "restarts the Obsidian app (T3)" },
+    { "pattern": "obsidian reload", "description": "reloads the Obsidian app (T3)" },
+    { "pattern": "obsidian theme:", "description": "install/set themes (T3)" },
+    { "pattern": "obsidian snippet:", "description": "enable/disable CSS snippets (T3)" }
+  ],
+  "catastrophicPatterns": [
+    { "pattern": "sudo rm -rf /", "description": "destroys the system" }
+  ],
+  "protectedPaths": ["~/.ssh", "~/.aws", ".pi", ".claude", ".git"]
+}

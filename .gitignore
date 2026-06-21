@@ -75,6 +75,9 @@ samples
 /.claude/hooks
 /.claude/settings.json
 /.claude/settings.local.json
+# pi (TASK 043): the generated skill symlinks are ignored like .claude/.agent; the committed
+# subset is un-ignored below, and .pi/extensions/permissions.json (dev config) stays tracked.
+/.pi/skills/*
 
 # Claude bridge files (gitignored — they import the framework).
 /CLAUDE.agentic.md
@@ -109,6 +112,14 @@ samples
 !/.claude/skills/wiki-lint
 !/.claude/skills/wiki-reindex
 !/.claude/skills/wiki-search
+!/.pi/skills/wiki-append-log
+!/.pi/skills/wiki-enrich
+!/.pi/skills/wiki-index-render
+!/.pi/skills/wiki-index-upsert
+!/.pi/skills/wiki-init
+!/.pi/skills/wiki-lint
+!/.pi/skills/wiki-reindex
+!/.pi/skills/wiki-search
 # <<< end agentic-development framework <<<
 
 # TASK 012 / R-X2: dev-vault operational state (SQLite cache + render-state) — Class C

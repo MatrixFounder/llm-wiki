@@ -8,21 +8,24 @@
 # clobbered without `--force`).
 #
 # Selection (the `--vendor` flag): omit → `default_vendors` (CLAUDE.md only);
-# `--vendor gemini` → GEMINI.md only; `--vendor claude,gemini` (or `--vendor all`)
-# → both. By default exactly ONE file is written.
+# `--vendor gemini` → GEMINI.md only; `--vendor pi` → AGENTS.md + pi permissions;
+# `--vendor claude,gemini` → those two; `--vendor all` → every configured vendor's file(s)
+# (a filename shared by two vendors — AGENTS.md for `agents`+`pi` — is written ONCE).
 #
 # All vendor filenames MUST also be in `scripts/wiki_index/layout.py`
 # SYSTEM_FILES so the indexer (reindex) and `wiki-sync` skip them — they are
 # operating instructions, not vault knowledge.
 #
-# For now Gemini reuses the Claude template VERBATIM (an exact copy). When
-# vendor-specific guidance diverges, add a `GEMINI.md.tmpl` and point `gemini`
-# at it — no other code change needed.
+# For now Gemini / AGENTS.md / pi reuse the Claude template VERBATIM (an exact copy). The
+# body is vendor-neutral (the wiki-* CLI surface + structure); only cosmetic "Claude" flavour
+# ("you are here → CLAUDE.md") differs. When vendor-specific guidance diverges, add a
+# `<VENDOR>.md.tmpl` and point that vendor at it — no other code change needed (TASK 043).
 
 schema_version: "1.0"
 
 # Vendor(s) written when --vendor is omitted (order = render order). Default:
-# Claude Code only — one file. Set to e.g. [claude, gemini] to write both by default.
+# Claude Code only — one file. Set to e.g. [claude, agents] to make EVERY vault
+# cross-vendor (CLAUDE.md for Claude + AGENTS.md for pi/codex/hermes/any AGENTS.md tool).
 default_vendors: [claude]
 
 vendors:
@@ -40,3 +43,14 @@ vendors:
     filename: GEMINI.md        # Gemini CLI
     template: CLAUDE.md.tmpl   # exact copy of the Claude base for now
     # (no settings_file — Gemini's settings format differs; add when it diverges)
+  agents:
+    filename: AGENTS.md        # TASK 043: the cross-vendor instruction file (pi, Codex,
+    template: CLAUDE.md.tmpl   # hermes, any AGENTS.md-aware CLI). No settings — pi's
+    # permissions live under the `pi` vendor below; other AGENTS.md tools bring their own.
+  pi:
+    filename: AGENTS.md        # TASK 043: pi (pi.dev) reads AGENTS.md natively. Same file
+    template: CLAUDE.md.tmpl   # as `agents` (deduped if both are selected) + pi's permissions.
+    # pi has NO allow-list — permissions.json is mode + danger/protected patterns (a semantic
+    # translation of the Claude deny-list). `.pi/extensions/permissions.json` is pi's native path.
+    settings_file: .pi/extensions/permissions.json
+    settings_template: vault.pi-permissions.json

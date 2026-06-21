@@ -1174,4 +1174,15 @@
   any harness. One eval pass + a cross-vendor smoke note suffices; there is no per-vendor code path to
   diverge (Claude Code / Codex / Gemini / pi / hermes / …). The Claude-specific
   `templates/vault.claude-settings.json` allowlist is a friction nicety, not a functional dependency.
+- **Q-043-1 (first-class `pi`, NF-1 realised).** TASK 043 wired pi.dev to parity: pi reads
+  `AGENTS.md` (new `agents`/`pi` vendors in `agent-files.yaml`, reusing the vendor-neutral
+  `CLAUDE.md.tmpl`; `AGENTS.md` ∈ `SYSTEM_FILES`), the skills are pi-native `SKILL.md`s discovered
+  from `~/.pi/skills/` (install-globally) + `.pi/skills/` (install-project-symlinks) and
+  surface as `/skill:<name>`, and pi's permissions land at `.pi/extensions/permissions.json`.
+  **Key asymmetry (security):** pi has **no allow-list** — its `permissions.json` is a `mode`
+  (`fullAuto` = auto-approve safe bash + confirm dangerous) + `dangerousPatterns`/
+  `catastrophicPatterns`/`protectedPaths`, a SEMANTIC translation of the Claude deny-list (broader
+  than the curated Claude allow-list; documented + security-audited). **Non-goal:** pi's TS/JS
+  code-workflows — this framework's markdown workflow *recipes* are skill-referenced prose, not
+  ported. 1671 pytest, mypy strict, zero DDL.
 

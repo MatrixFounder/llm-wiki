@@ -307,10 +307,14 @@ wiki-search --tag decision --as-of 2026-04-15 --vaults my-vault   # TEMPORAL (TA
 For a brand-new vault, use `wiki-init --scaffold-new --vault /path --layout karpathy`.
 Both `--scaffold-new` and `--register-existing` write an **agent-instructions file**
 into the vault root so an agent launched there has the wiki operating instructions —
-**`CLAUDE.md` by default**; pass `--vendor gemini` for `GEMINI.md` (Gemini CLI), or
-`--vendor claude,gemini` / `--vendor all` for both. Vendors are configured in
+**`CLAUDE.md` by default**; pass `--vendor gemini` for `GEMINI.md` (Gemini CLI),
+`--vendor agents` for `AGENTS.md` (the cross-vendor file Codex/hermes read), or
+`--vendor pi` for `AGENTS.md` **+ `.pi/extensions/permissions.json`** ([pi](https://pi.dev)).
+`--vendor all` (or a comma-list) writes every selected vendor's file. Vendors are configured in
 [`templates/agent-files.yaml`](templates/agent-files.yaml); existing files are never
-clobbered.
+clobbered. **pi parity (TASK 043):** the skills are pi-native `SKILL.md`s — run
+`bin/install-globally.sh` once to populate `~/.pi/skills/` (and get `/skill:wiki-search`
+with `enableSkillCommands`); the on-PATH `wiki-*`/`obsidian` binaries work from pi unchanged.
 
 ### Choosing where the index lives: global (default) vs vault-local
 
@@ -397,8 +401,8 @@ binaries.
 
 | Command | What it does |
 |---|---|
-| `wiki-init --register-existing --vault <path> [--vendor <list>]` | Register a pre-existing vault in the index (one-time, per vault). Also writes the agent file if absent (`CLAUDE.md` by default; `--vendor gemini`/`all`), so the vault is agent-workable. |
-| `wiki-init --scaffold-new --vault <path> [--layout <name>] [--vendor <list>]` | Scaffold a brand-new vault layout + an agent file (`CLAUDE.md` by default; `--vendor` picks Gemini/both). `--layout` ∈ `karpathy` · `dev-project` · `obsidian-personal` (+ custom). |
+| `wiki-init --register-existing --vault <path> [--vendor <list>]` | Register a pre-existing vault in the index (one-time, per vault). Also writes the agent file if absent (`CLAUDE.md` by default; `--vendor gemini`/`agents`/`pi`/`all`), so the vault is agent-workable. |
+| `wiki-init --scaffold-new --vault <path> [--layout <name>] [--vendor <list>]` | Scaffold a brand-new vault layout + an agent file (`CLAUDE.md` by default; `--vendor` picks Gemini / AGENTS.md / pi / all). `--layout` ∈ `karpathy` · `dev-project` · `obsidian-personal` (+ custom). |
 | `wiki-init --reconcile --vault <path>` | Rename / re-point a registered vault. |
 | `wiki-reindex --full --vault <vid>` | Wipe + rebuild the DB from markdown (the Class A→B gate; rare, authoritative). |
 | `wiki-reindex --delta --vault <vid>` | Incremental mtime/hash-based reindex after manual edits. |
@@ -499,7 +503,7 @@ docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, pla
   KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
 config/                     layout-config / wiki-config / sync-config schema.yaml (the 3 config systems)
 sql/wiki-index-v2.sql       the SQLite DDL (user_version = 7)
-templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md)
+templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md/AGENTS.md) + pi/claude settings
                             mapped in agent-files.yaml — for new/registered vaults
 
 scripts/

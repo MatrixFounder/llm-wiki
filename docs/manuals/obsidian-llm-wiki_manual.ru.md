@@ -171,14 +171,23 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 их контракта `prepare`/`apply` находится шаг рассуждения LLM, которым владеет orchestrator (см.
 [контракт `prepare`/`apply`](#the-prepare--apply-contract-decision-17)). Вы
 *можете* запускать их детерминированные половины вручную, но тогда вам придётся
-делать синтез/критику самостоятельно. Другие поставщики (Gemini CLI и т. п.) управляют теми же
+делать синтез/критику самостоятельно. Другие поставщики (Gemini CLI, **pi** и т. п.) управляют теми же
 вендоро-нейтральными бинарниками — раздел `## Fallback` каждого workflow объясняет
 путь не для Claude Code (встроить навык-контракт в системный контекст вместо
 `Skill({…})`).
 
+> **pi (pi.dev) — first-class (TASK 043).** pi читает `AGENTS.md` (создаётся
+> `wiki-init --vendor pi`, который также кладёт `.pi/extensions/permissions.json`). Навыки —
+> это нативные для pi `SKILL.md`: `bin/install-globally.sh` линкует их в `~/.pi/skills/`,
+> и с `enableSkillCommands` они доступны как `/skill:wiki-search` и т. п. Бинарники
+> `wiki-*`/`obsidian` на PATH работают без изменений. У pi нет allow-list — права это `mode`
+> (`fullAuto` = авто-одобрение безопасного bash, подтверждение опасного) + danger/protected
+> паттерны (перевод claude deny-list). Оговорка про iCloud: процессу-хосту pi нужен Full Disk
+> Access для чтения/записи iCloud-vault (как и Claude/VS Code).
+
 ### Какая поверхность для какой команды
 
-| Команда | Обычный терминал / плагин `Terminal` Obsidian | `/wiki-*` Claude Code | Gemini / другие агенты |
+| Команда | Обычный терминал / плагин `Terminal` Obsidian | `/wiki-*` Claude Code | Gemini / pi / другие агенты |
 |---|---|---|---|
 | `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` · `sync scan` · `sync record` | ✅ запуск напрямую | ✅ | ✅ |
 | `query` · `verify-multi` · `extract-concepts` · `enrich` · `sync` *(исполнитель)* *(нужен шаг LLM)* | ⚠️ только детерминированные половины — рассуждение LLM придётся подавать вручную | ✅ **рекомендуется** | ✅ через `## Fallback` каждого workflow |

@@ -6,10 +6,14 @@
 # — new entries are NOT auto-propagated, so a freshly-added skill/CLI (e.g. wiki-import,
 # wiki-graph, wiki-health) is invisible to the `claude` CLI and the shell until this re-runs.
 #
-# Three global surfaces:
+# Global surfaces:
 #   ~/.local/bin/<cli>            → repo bin/<cli>            (PATH binaries; $WIKI_INSTALL_BIN)
-#   ~/.claude/skills/<name>       → repo skills/<name>/       (Skill tool)
-#   ~/.claude/commands/<name>.md  → repo commands/<name>.md   (slash commands)
+#   ~/.claude/skills/<name>       → repo skills/<name>/       (Claude Code Skill tool)
+#   ~/.claude/commands/<name>.md  → repo commands/<name>.md   (Claude slash commands)
+#   ~/.pi/skills/<name>           → repo skills/<name>/       (pi skills — TASK 043; pi
+#                                                              auto-exposes /skill:<name>)
+# The PATH binaries are shared (vendor-neutral); each agent gets the same wiki-* + obsidian-cli
+# skills. (`obsidian-cli` is now installed too — previously only the wiki-* skills were.)
 #
 # Safe + idempotent: creates a MISSING link, REPAIRS a stale link that already points into
 # THIS repo, and SKIPS (never clobbers) a real file/dir or a link owned by another tool
@@ -23,13 +27,14 @@ REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,s
 BIN_DIR="${WIKI_INSTALL_BIN:-$HOME/.local/bin}"
 CLAUDE_SKILLS="$HOME/.claude/skills"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
+PI_SKILLS="$HOME/.pi/skills"           # TASK 043: pi's global skill discovery dir
 
 [[ -d "$REPO/.venv" ]] || {
   echo "error: $REPO/.venv not found. Run python3 -m venv .venv && pip install -r requirements.txt first." >&2
   exit 1
 }
 
-mkdir -p "$BIN_DIR" "$CLAUDE_SKILLS" "$CLAUDE_COMMANDS"
+mkdir -p "$BIN_DIR" "$CLAUDE_SKILLS" "$CLAUDE_COMMANDS" "$PI_SKILLS"
 
 n_new=0; n_repaired=0; n_ok=0; n_skip=0
 # safe_link <target> <linkpath>: install/repair links into THIS repo; never clobber foreign ones.
@@ -56,11 +61,18 @@ for wrapper in "$REPO"/bin/wiki-*; do                 # executable wrappers only
 done
 # obsidian-active-note: the obsidian-cli skill's active-note resolver (TASK 041) — not a wiki-* CLI.
 [[ -x "$REPO/bin/obsidian-active-note" ]] && safe_link "$REPO/bin/obsidian-active-note" "$BIN_DIR/obsidian-active-note"
+# link the wiki-* skills + obsidian-cli into a vendor's global skills dir (same set per vendor).
+link_skills_into() {
+  local dest="$1" src
+  for src in "$REPO"/skills/wiki-*/ "$REPO"/skills/obsidian-cli/; do
+    [[ -d "$src" ]] || continue
+    safe_link "${src%/}" "$dest/$(basename "$src")"
+  done
+}
 echo "skills → $CLAUDE_SKILLS"
-for src in "$REPO"/skills/wiki-*/; do
-  [[ -d "$src" ]] || continue
-  safe_link "${src%/}" "$CLAUDE_SKILLS/$(basename "$src")"
-done
+link_skills_into "$CLAUDE_SKILLS"
+echo "skills → $PI_SKILLS"           # TASK 043
+link_skills_into "$PI_SKILLS"
 echo "commands → $CLAUDE_COMMANDS"
 for src in "$REPO"/commands/wiki-*.md; do
   [[ -f "$src" ]] || continue

@@ -171,14 +171,23 @@ SKILL.md triggers. For `wiki-query` / `wiki-verify-multi` / `wiki-extract-concep
 their `prepare`/`apply` contract is an LLM reasoning step the orchestrator owns (see
 [the `prepare`/`apply` contract](#the-prepare--apply-contract-decision-17)). You
 *can* run their deterministic halves by hand, but then you must do the
-synthesis/critique yourself. Other vendors (Gemini CLI, etc.) drive the same
+synthesis/critique yourself. Other vendors (Gemini CLI, **pi**, etc.) drive the same
 vendor-neutral binaries — each workflow's `## Fallback` section explains the
 non-Claude-Code path (inline the contract skill into the system context instead of
 `Skill({…})`).
 
+> **pi (pi.dev) — first-class (TASK 043).** pi reads `AGENTS.md` (write it with
+> `wiki-init --vendor pi`, which also drops `.pi/extensions/permissions.json`). The skills
+> are pi-native `SKILL.md`s: `bin/install-globally.sh` links them into `~/.pi/skills/`,
+> and with `enableSkillCommands` they surface as `/skill:wiki-search` etc. The on-PATH
+> `wiki-*`/`obsidian` binaries work unchanged. pi has no allow-list — its permissions are a
+> `mode` (`fullAuto` = auto-approve safe bash, confirm dangerous) + danger/protected patterns
+> (a translation of the Claude deny-list). iCloud caveat: pi's host process needs Full Disk
+> Access to read/write an iCloud vault (same as Claude/VS Code).
+
 ### Which surface for which command
 
-| Command | Plain terminal / Obsidian `Terminal` plugin | Claude Code `/wiki-*` | Gemini / other agents |
+| Command | Plain terminal / Obsidian `Terminal` plugin | Claude Code `/wiki-*` | Gemini / pi / other agents |
 |---|---|---|---|
 | `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` · `sync scan` · `sync record` | ✅ run directly | ✅ | ✅ |
 | `query` · `verify-multi` · `extract-concepts` · `enrich` · `sync` *(executor)* *(need an LLM step)* | ⚠️ deterministic halves only — you'd supply the LLM reasoning by hand | ✅ **recommended** | ✅ via each workflow's `## Fallback` |
