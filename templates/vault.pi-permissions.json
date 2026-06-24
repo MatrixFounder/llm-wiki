@@ -28,7 +28,8 @@
     { "pattern": "obsidian restart", "description": "restarts the Obsidian app (T3)" },
     { "pattern": "obsidian reload", "description": "reloads the Obsidian app (T3)" },
     { "pattern": "obsidian theme:", "description": "install/set themes (T3)" },
-    { "pattern": "obsidian snippet:", "description": "enable/disable CSS snippets (T3)" }
+    { "pattern": "obsidian snippet:", "description": "enable/disable CSS snippets (T3)" },
+    { "pattern": "obsidian publish:", "description": "publishes vault content to Obsidian Publish — external egress (T2)" }
   ],
   "catastrophicPatterns": [
     { "pattern": "sudo rm -rf /", "description": "destroys the system" }
