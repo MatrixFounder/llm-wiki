@@ -10,7 +10,7 @@ topic-folder+sibling `_concepts/`, via `resolve_layout_config` — one code path
 
 Two subcommands:
   * ``prepare`` — deterministically fetch+convert a source to ``_raw/<slug>.md``
-    (dispatch to the html2md / pdf skills) and emit an envelope with the target
+    (dispatch to the html / pdf skills) and emit an envelope with the target
     project's ``known_concepts`` + ``existing_page_slugs`` so the orchestrator's
     translation/summary reuses existing concept names (the known-concepts
     discipline — the core fix vs. ad-hoc imports).
@@ -19,7 +19,7 @@ Two subcommands:
     collision guard, file concept pages via ``wiki-extract-concepts apply``, index
     the note, and emit a combined manifest.
 
-Composition, not reinvention (NF-2): fetch via the external ``html2md``/``pdf``
+Composition, not reinvention (NF-2): fetch via the external ``html``/``pdf``
 skill binaries (shell-out); concept filing + indexing via the existing
 ``wiki-extract-concepts`` / ``wiki-index-upsert`` surfaces.
 """
@@ -87,7 +87,7 @@ _LOSSY_SKIP_REASONS = frozenset(_LOSSY_DROP_HINTS)
 
 __version__ = "1.0"
 
-_DEFAULT_HTML2MD = "~/.claude/skills/html2md/scripts/html2md.py"
+_DEFAULT_HTML = "~/.claude/skills/html/scripts/html2md.py"  # `html` skill; html2md.py is the combined URL→md command
 _DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 # MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
@@ -174,7 +174,7 @@ def prepare(args: argparse.Namespace) -> int:
     try:
         result = dispatch_fetch(
             args.source,
-            html2md_bin=args.html2md_bin,
+            html_bin=args.html_bin,
             pdf_extract_bin=args.pdf_extract_bin,
             download_images=layout.import_images,   # config-driven, default ON
         )
@@ -191,7 +191,7 @@ def prepare(args: argparse.Namespace) -> int:
             "hint": "source unreachable/empty — file a needs-manual stub by hand.",
         }, exit_code=EXIT_FETCH_FAILED)
 
-    # A successful image-bearing fetch leaves html2md's temp dir alive (its `_attachments/`
+    # A successful image-bearing fetch leaves the html skill's temp dir alive (its `_attachments/`
     # is filed below); reclaim it on EVERY exit path, including the validation early-returns.
     _imgtmp = result.attachments_dir.parent if result.attachments_dir else None
 
@@ -238,7 +238,7 @@ def prepare(args: argparse.Namespace) -> int:
     raw_bytes = raw_md.encode("utf-8")
     source_hash = hashlib.sha256(raw_bytes).hexdigest()  # _raw hash → import idempotency ONLY
     n_images = 0
-    # The html2md temp dir (`_imgtmp`) is reclaimed in the `finally` — the SINGLE owner for both
+    # The html skill temp dir (`_imgtmp`) is reclaimed in the `finally` — the SINGLE owner for both
     # the success path AND any OSError from write_bytes/mkdir/copy2 (read-only vault, ENOSPC,
     # ENAMETOOLONG), which would otherwise propagate to main()'s catch-all and orphan it.
     try:
@@ -690,7 +690,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
-    pp.add_argument("--html2md-bin", default=_DEFAULT_HTML2MD)
+    pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
+                    help="path to the `html` skill combined command (default: the deployed symlink)")
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
     pp.set_defaults(func=prepare)
 

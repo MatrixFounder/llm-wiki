@@ -715,7 +715,7 @@ all flow through this one path; the load-bearing discipline — **the REASON har
 ```mermaid
 flowchart LR
     SRC[/"source<br/>URL · PDF · dropped file"/] --> PREP["wiki-import<br/>prepare"]
-    PREP -->|acquire| ACQ[["html2md / pdf<br/>(external)"]]
+    PREP -->|acquire| ACQ[["html / pdf<br/>(external)"]]
     PREP --> KIND{{"detect content-type<br/>(--kind auto)"}}
     KIND -->|meeting| R
     KIND -->|article · paper · thread| R

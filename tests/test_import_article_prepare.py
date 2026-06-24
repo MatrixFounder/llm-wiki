@@ -37,7 +37,7 @@ def _run(vault, monkeypatch, fetch_result, extra=None):
 
 def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="DeFi Guide",
-                     author="A", date="2025-01-01", engine="html2md")
+                     author="A", date="2025-01-01", engine="html")
     rc = _run(vault, monkeypatch, fr)
     out = json.loads(capsys.readouterr().out)
     assert rc == 0 and out["action"] == "prepared"
@@ -60,12 +60,12 @@ def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
 
 def test_prepare_files_downloaded_images(vault, monkeypatch, capsys, tmp_path):
     # image-import ON: prepare copies the fetched _attachments into _raw/_attachments,
-    # reports the count, and cleans the html2md temp dir.
+    # reports the count, and cleans the html temp dir.
     att = tmp_path / "tmproot" / "_attachments"
     att.mkdir(parents=True)
     (att / "h.png").write_bytes(b"PNG")
     fr = FetchResult(
-        ok=True, engine="html2md", title="Img",
+        ok=True, engine="html", title="Img",
         raw_text='---\nsource: "u"\n---\n\n# T\n\n![a](_attachments/h.png)\n',
         attachments_dir=att)
     rc = _run(vault, monkeypatch, fr)
@@ -87,14 +87,14 @@ def test_prepare_refuses_attachments_dir_symlink(vault, monkeypatch, capsys, tmp
     att = tmp_path / "tmproot" / "_attachments"
     att.mkdir(parents=True)
     (att / "h.png").write_bytes(b"PNG")
-    fr = FetchResult(ok=True, engine="html2md", title="Img",
+    fr = FetchResult(ok=True, engine="html", title="Img",
                      raw_text='---\nsource: "u"\n---\n\n![a](_attachments/h.png)\n',
                      attachments_dir=att)
     rc = _run(vault, monkeypatch, fr)
     out = json.loads(capsys.readouterr().out)
     assert rc != 0 and out.get("error") == "REFUSED_SYMLINK"
     assert not any(outside.iterdir())   # nothing written through the symlink
-    assert not att.exists()             # html2md temp dir still reclaimed on the early-return
+    assert not att.exists()             # html temp dir still reclaimed on the early-return
     # the guard fires BEFORE the raw write → no partial _raw/<slug>.md artifact left behind
     assert not (raw_dir / "img.md").exists()
 
@@ -107,7 +107,7 @@ def test_prepare_gc_runs_on_no_image_reimport(vault, monkeypatch, capsys):
     dest_att.mkdir(parents=True)
     (dest_att / "orphan.png").write_bytes(b"OLD")     # referenced by no _raw/*.md
     fr = FetchResult(ok=True, raw_text="# Guide\n\nno images\n", title="Img",
-                     engine="html2md", attachments_dir=None)   # no images this run
+                     engine="html", attachments_dir=None)   # no images this run
     rc = _run(vault, monkeypatch, fr)
     assert rc == 0
     assert not (dest_att / "orphan.png").exists()     # reclaimed despite no fetch images
@@ -125,7 +125,7 @@ def test_prepare_gc_aborts_on_oversized_raw_keeps_images(vault, monkeypatch, cap
     att = tmp_path / "tmproot" / "_attachments"
     att.mkdir(parents=True)
     (att / "new.png").write_bytes(b"NEW")
-    fr = FetchResult(ok=True, engine="html2md", title="Img",
+    fr = FetchResult(ok=True, engine="html", title="Img",
                      raw_text='---\nsource: "u"\n---\n\n![a](_attachments/new.png)\n',
                      attachments_dir=att)
     rc = _run(vault, monkeypatch, fr)
@@ -146,7 +146,7 @@ def test_prepare_gc_reclaims_reimport_orphans_keeps_siblings(vault, monkeypatch,
     att = tmp_path / "tmproot" / "_attachments"
     att.mkdir(parents=True)
     (att / "new.png").write_bytes(b"NEW")
-    fr = FetchResult(ok=True, engine="html2md", title="Img",
+    fr = FetchResult(ok=True, engine="html", title="Img",
                      raw_text='---\nsource: "u"\n---\n\n![a](_attachments/new.png)\n',
                      attachments_dir=att)
     rc = _run(vault, monkeypatch, fr)
@@ -159,7 +159,7 @@ def test_prepare_gc_reclaims_reimport_orphans_keeps_siblings(vault, monkeypatch,
 
 def test_prepare_emits_target_language(vault, monkeypatch, capsys):
     # the orchestrator must summarise into the vault's language (international) — prepare emits it
-    fr = FetchResult(ok=True, raw_text="# G\n\nbody\n", title="T", engine="html2md")
+    fr = FetchResult(ok=True, raw_text="# G\n\nbody\n", title="T", engine="html")
     rc = _run(vault, monkeypatch, fr)
     out = json.loads(capsys.readouterr().out)
     assert rc == 0 and out["language"] == "ru"   # vault WIKI_SCHEMA language: ru
@@ -168,7 +168,7 @@ def test_prepare_emits_target_language(vault, monkeypatch, capsys):
 def test_prepare_missing_folder_clean_envelope(vault, monkeypatch, capsys):
     # a non-existent --folder must yield a clean INVALID_FOLDER envelope (Decision-17), NOT an
     # uncaught FileNotFoundError traceback (validate_inside_vault does resolve(strict=True)).
-    fr = FetchResult(ok=True, raw_text="x\n", title="t", engine="html2md")
+    fr = FetchResult(ok=True, raw_text="x\n", title="t", engine="html")
     monkeypatch.setattr(wia, "dispatch_fetch", lambda *a, **k: fr)
     argv = ["prepare", "--vault", "testv", "--vault-root", str(vault),
             "--db-path", str(vault / "index.db"), "--source", "https://e.com/x",
@@ -191,7 +191,7 @@ def test_prepare_missing_vault_root_clean_envelope(tmp_path, capsys):
 
 
 def test_prepare_fetch_failed_writes_no_raw(vault, monkeypatch, capsys):
-    fr = FetchResult(ok=False, engine="html2md",
+    fr = FetchResult(ok=False, engine="html",
                      error={"type": "FetchFailed", "details": {"status": 403}})
     rc = _run(vault, monkeypatch, fr)
     out = json.loads(capsys.readouterr().out)
@@ -202,7 +202,7 @@ def test_prepare_fetch_failed_writes_no_raw(vault, monkeypatch, capsys):
 
 
 def test_prepare_explicit_slug_override(vault, monkeypatch, capsys):
-    fr = FetchResult(ok=True, raw_text="x\n", title="ignored", engine="html2md")
+    fr = FetchResult(ok=True, raw_text="x\n", title="ignored", engine="html")
     rc = _run(vault, monkeypatch, fr, extra=["--slug", "custom-slug"])
     out = json.loads(capsys.readouterr().out)
     assert rc == 0 and out["slug"] == "custom-slug"

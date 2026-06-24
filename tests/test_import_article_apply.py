@@ -194,7 +194,7 @@ def test_apply_clean_import_has_empty_warnings(vault, tmp_path, capsys, _stub_su
 
 
 def test_full_mode_strips_dangling_image_embeds(vault, tmp_path, capsys, _stub_subprocs):
-    # P3-7: `![[Attachments/<hash>]]` embeds (html2md --no-download-images) must not leak
+    # P3-7: `![[Attachments/<hash>]]` embeds (html --no-download-images) must not leak
     # into the body — they never resolve in the vault and would be dangling links.
     body = ("[![[Attachments/abc123_MD5.png]]](https://cdn/x.png)\n\n"
             "Реальный абзац перевода со смыслом.\n\n"

@@ -9,7 +9,7 @@ translated/summarized note → its `_concepts/` entity pages → indexed rows. T
 axes: **content-type** (`--kind`, auto-detected) sets the note type + what the REASON harness
 emphasizes; **layout (config)** decides where it files — Karpathy (`_sources/` + root
 `_concepts/`) vs PARA (topic folder + sibling `_concepts/`), via `resolve_layout_config`.
-Composes the external `html2md`/`pdf` skills (fetch) with this framework's
+Composes the external `html`/`pdf` skills (fetch) with this framework's
 `wiki-extract-concepts` + `wiki-index-upsert` (file/index).
 
 **Decision-17:** the CLI is deterministic plumbing; the ONE reasoning step (the
@@ -19,8 +19,8 @@ content harness) is yours, the orchestrator. **No `import anthropic`.**
 - Vault registered (`/wiki-init --register-existing`). **Any layout** — the filing target is
   read from config; you do not choose Karpathy-vs-PARA here. (Legacy Karpathy-raw `wiki-enrich`
   still exists but `wiki-import` is the config-driven successor.)
-- `html2md` + `pdf` skills installed (`~/.claude/skills/{html2md,pdf}/scripts/…`); override
-  with `--html2md-bin` / `--pdf-extract-bin`.
+- `html` + `pdf` skills installed (`~/.claude/skills/{html,pdf}/scripts/…`); override
+  with `--html-bin` / `--pdf-extract-bin`.
 
 ## Single-source steps
 

@@ -34,27 +34,27 @@ def _cp(args, returncode=0, stdout="", stderr=""):
 def test_url_html_ok_parses_frontmatter(monkeypatch):
     def fake_run(argv, **kw):
         assert argv[1] == H2M and "https://example.com/x" in argv
-        assert "--stdout" not in argv                       # output-dir mode now
-        (Path(argv[3]) / "x.reader.md").write_text(_HTML_OK, encoding="utf-8")
+        assert "--stdout" not in argv and "--reader-only" in argv   # output-dir, reader-only
+        (Path(argv[3]) / "x.md").write_text(_HTML_OK, encoding="utf-8")  # single <slug>.md
         return _cp(argv, 0, "")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = _fetch.dispatch_fetch("https://example.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
-    assert r.ok and r.engine == "html2md"
+    r = _fetch.dispatch_fetch("https://example.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
+    assert r.ok and r.engine == "html"
     assert r.title == "Deep Dive" and r.author == "Jane Doe" and r.date == "2025-03-01"
     assert "Body text here." in r.raw_text
 
 
 def test_url_html_empty_body_is_not_ok(monkeypatch):
-    # html2md exit 0 but empty stdout → never-empty-raw guard trips (R-3)
+    # html-skill exit 0 but empty stdout → never-empty-raw guard trips (R-3)
     monkeypatch.setattr(subprocess, "run", lambda a, **k: _cp(a, 0, "   \n"))
-    r = _fetch.dispatch_fetch("https://ex.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://ex.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
     assert not r.ok and r.raw_text is None
 
 
 def test_html2md_fetchfailed_propagates(monkeypatch):
     err = '{"v":1,"error":"...403","code":10,"type":"FetchFailed","details":{"url":"u","status":403,"kind":"forbidden"}}'
     monkeypatch.setattr(subprocess, "run", lambda a, **k: _cp(a, 10, "", err))
-    r = _fetch.dispatch_fetch("https://ex.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://ex.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
     assert not r.ok
     assert r.error["type"] == "FetchFailed"
     assert r.error["details"]["status"] == 403
@@ -75,7 +75,7 @@ def test_arxiv_no_html_falls_back_to_pdf(monkeypatch):
     monkeypatch.setattr(_fetch, "_download_pdf", lambda url: Path("/tmp/fake.pdf"))
     monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: None)
     r = _fetch.dispatch_fetch("https://arxiv.org/abs/2204.00251",
-                              html2md_bin=H2M, pdf_extract_bin=PDFX)
+                              html_bin=H2M, pdf_extract_bin=PDFX)
     assert calls["html"] == 1 and calls["pdf"] == 1
     assert r.ok and r.engine == "pdf" and "PDF body text" in r.raw_text
 
@@ -86,21 +86,21 @@ def test_url_pdf_goes_straight_to_pdf(monkeypatch):
     monkeypatch.setattr(subprocess, "run",
                         lambda a, **k: _cp(a, 0, '{"pages":[{"text":"ecb report"}]}'))
     r = _fetch.dispatch_fetch("https://ecb.europa.eu/x.pdf",
-                              html2md_bin=H2M, pdf_extract_bin=PDFX)
+                              html_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok and r.engine == "pdf" and "ecb report" in r.raw_text
 
 
 def test_local_md_passthrough(tmp_path, monkeypatch):
     f = tmp_path / "raw.md"
     f.write_text('---\ntitle: "Local"\n---\n\nhello\n', encoding="utf-8")
-    r = _fetch.dispatch_fetch(str(f), html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch(str(f), html_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok and r.engine == "local-md" and r.title == "Local" and "hello" in r.raw_text
 
 
 def test_require_bin_missing_raises_dep(monkeypatch):
     monkeypatch.setattr(_fetch.shutil, "which", lambda n: None)
     with pytest.raises(ImportArticleError) as ei:
-        _REAL_REQUIRE_BIN("definitely-not-here-xyz", "html2md")
+        _REAL_REQUIRE_BIN("definitely-not-here-xyz", "html")
     assert ei.value.exit_code == EXIT_DEP_MISSING
 
 
@@ -114,7 +114,7 @@ def test_url_serving_pdf_without_suffix_routes_to_pdf(monkeypatch):
         seen.setdefault("url", url),
         _fetch.FetchResult(ok=True, raw_text="PDF TEXT", engine="pdf"))[1])
     r = _fetch.dispatch_fetch("https://dl.acm.org/doi/pdf/10.1145/3517340",
-                              html2md_bin=H2M, pdf_extract_bin=PDFX)
+                              html_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok and r.engine == "pdf" and r.raw_text == "PDF TEXT"
     assert seen["url"] == "https://dl.acm.org/doi/pdf/10.1145/3517340"
 
@@ -142,7 +142,7 @@ _X_WALL = ('---\ntitle: "x"\n---\n## Post\n[Log in](/i/flow/login)[Sign up](/x)\
            '## Post\n[![a](b)](c)\n[handle](d)\n[@handle](e)\n')
 
 
-def _wa_run(content):  # mock html2md output-dir run: write content as the whole-page .md
+def _wa_run(content):  # mock html-skill output-dir run: write content as the whole-page .md
     def fake_run(argv, **kw):
         (Path(argv[3]) / "x.md").write_text(content, encoding="utf-8")
         return _cp(argv, 0, "")
@@ -150,7 +150,7 @@ def _wa_run(content):  # mock html2md output-dir run: write content as the whole
 
 
 def test_html_fetch_timeout_cleans_tmpdir_and_fails_typed(monkeypatch):
-    # round-11: a hung html2md must NOT escape as a raw TimeoutExpired traceback NOR orphan its
+    # round-11: a hung html-skill fetch must NOT escape as a raw TimeoutExpired traceback NOR orphan its
     # mkdtemp — _fetch_html returns a typed FETCH_FAILED(kind=timeout) and reclaims the temp dir.
     import tempfile as _tf
     created: dict[str, str] = {}
@@ -160,14 +160,14 @@ def test_html_fetch_timeout_cleans_tmpdir_and_fails_typed(monkeypatch):
     def boom(argv, **kw):
         raise subprocess.TimeoutExpired(argv, 180)
     monkeypatch.setattr(subprocess, "run", boom)
-    r = _fetch.dispatch_fetch("https://example.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://example.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
     assert not r.ok and r.error["details"]["kind"] == "timeout"
     assert not Path(created["dir"]).exists()   # temp dir reclaimed, not orphaned
 
 
 def test_x_login_wall_is_not_ok(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _wa_run(_X_WALL))
-    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html_bin=H2M, pdf_extract_bin=PDFX)
     assert not r.ok and r.error["details"]["kind"] == "login_wall"
 
 
@@ -179,14 +179,14 @@ def test_x_with_real_post_text_is_ok(monkeypatch):
           'long-term conviction. So we analyzed ten past airdrops to discover who held vs '
           'dumped, and built a Holder Score for wallet addresses across many chains.\n')
     monkeypatch.setattr(subprocess, "run", _wa_run(md))
-    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html2md_bin=H2M, pdf_extract_bin=PDFX)
-    assert r.ok and r.engine == "html2md"
+    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html_bin=H2M, pdf_extract_bin=PDFX)
+    assert r.ok and r.engine == "html"
 
 
 def test_non_x_login_markers_not_flagged(monkeypatch):
     # the login-wall gate is scoped to x.com/twitter — a short non-x page is left alone
     monkeypatch.setattr(subprocess, "run", _wa_run(_X_WALL))
-    r = _fetch.dispatch_fetch("https://example.com/p", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://example.com/p", html_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok
 
 
@@ -195,61 +195,61 @@ def test_x_login_wall_detected_via_url_marker_without_english_text(monkeypatch):
     # locale-independent URL marker — the robust primary signal, not the English text markers.
     wall = ('---\ntitle: "x"\n---\n## Post\n[ログイン](/i/flow/login)\n[新規登録](/x)\n')
     monkeypatch.setattr(subprocess, "run", _wa_run(wall))
-    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://x.com/u/status/1", html_bin=H2M, pdf_extract_bin=PDFX)
     assert not r.ok and r.error["details"]["kind"] == "login_wall"
 
 
-# --- reader-first + image import (config-driven, default ON at the prepare layer) -----
-def test_fetch_html_prefers_reader_and_prunes_unreferenced_images(monkeypatch):
+# --- reader-only single-output + image import (config-driven, default ON at the prepare layer) -----
+def test_fetch_html_reader_only_single_md_and_prunes_unreferenced_images(monkeypatch):
     def fake_run(argv, **kw):
-        assert "--download-images" in argv and "--stdout" not in argv  # output-dir mode
+        assert "--download-images" in argv and "--reader-only" in argv and "--stdout" not in argv
         outdir = Path(argv[3])
-        # whole page = nav chrome + an unreferenced chrome image
+        # --reader-only ⇒ a SINGLE <slug>.md = clean reader body (references only h.png)
         (outdir / "page.md").write_text(
-            '---\nsource: "https://e.com/x"\n---\n\n[Skip to main](#)\n\n'
-            '![logo](_attachments/logo.png)\n# T\n\n![a](_attachments/h.png)\n', encoding="utf-8")
-        # reader extraction = clean body (references only h.png), well over the 200-char floor
-        (outdir / "page.reader.md").write_text(
             '---\nsource: "https://e.com/x"\n---\n\n# T\n\nClean reader body with no nav chrome. '
             + ("This is the substantive article content the reader extraction keeps. " * 4)
             + '![a](_attachments/h.png)\n', encoding="utf-8")
         att = outdir / "_attachments"; att.mkdir()
-        (att / "h.png").write_bytes(b"PNG"); (att / "logo.png").write_bytes(b"PNG")
+        (att / "h.png").write_bytes(b"PNG"); (att / "logo.png").write_bytes(b"PNG")  # logo unreferenced
         return _cp(argv, 0, "")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = _fetch.dispatch_fetch("https://e.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX,
+    r = _fetch.dispatch_fetch("https://e.com/x", html_bin=H2M, pdf_extract_bin=PDFX,
                               download_images=True)
-    assert r.ok and r.engine == "html2md"
-    assert "Clean reader body" in (r.raw_text or "") and "Skip to main" not in (r.raw_text or "")
-    # only the reader-referenced image is kept; the chrome `logo.png` is pruned
+    assert r.ok and r.engine == "html"
+    assert "Clean reader body" in (r.raw_text or "")
+    # wiki-import's defensive prune drops the unreferenced `logo.png`, keeps the referenced one
     assert r.attachments_dir is not None
     assert (r.attachments_dir / "h.png").exists() and not (r.attachments_dir / "logo.png").exists()
 
 
-def test_fetch_html_falls_back_to_whole_when_reader_too_thin(monkeypatch):
+def test_fetch_html_requests_reader_only(monkeypatch):
+    # The reader-vs-whole fallback now lives in the `html` skill (--reader-only). wiki-import
+    # just asks for it and reads the single <slug>.md the skill returns (no fallback here).
+    seen: dict = {}
     def fake_run(argv, **kw):
-        outdir = Path(argv[3])
-        (outdir / "p.md").write_text('---\ntitle: "t"\n---\n\n# T\n\n' + "x" * 400 + "\n",
-                                     encoding="utf-8")
-        (outdir / "p.reader.md").write_text('---\ntitle: "t"\n---\n\nthin\n', encoding="utf-8")
+        seen["argv"] = argv
+        (Path(argv[3]) / "p.md").write_text('---\ntitle: "t"\n---\n\n# T\n\n' + "x" * 400 + "\n",
+                                            encoding="utf-8")
         return _cp(argv, 0, "")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = _fetch.dispatch_fetch("https://e.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
-    assert r.ok and "x" * 400 in (r.raw_text or "")   # whole page (reader under the floor)
+    r = _fetch.dispatch_fetch("https://e.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
+    assert r.ok and "x" * 400 in (r.raw_text or "")
+    assert "--reader-only" in seen["argv"]
 
 
 def test_fetch_html_no_images_keeps_remote(monkeypatch):
-    # download_images=False (default) → --no-download-images, output-dir mode, no attachments
+    # download_images=False (default) → --no-download-images + --reader-only, output-dir, no attachments
     seen = {}
     def fake_run(argv, **kw):
         seen["argv"] = argv
-        (Path(argv[3]) / "p.reader.md").write_text(
+        (Path(argv[3]) / "p.md").write_text(
             '---\ntitle: "t"\n---\n\n# T\n\n' + "body " * 60 + "\n", encoding="utf-8")
         return _cp(argv, 0, "")
     monkeypatch.setattr(subprocess, "run", fake_run)
-    r = _fetch.dispatch_fetch("https://e.com/x", html2md_bin=H2M, pdf_extract_bin=PDFX)
+    r = _fetch.dispatch_fetch("https://e.com/x", html_bin=H2M, pdf_extract_bin=PDFX)
     assert r.ok and r.attachments_dir is None
-    assert "--no-download-images" in seen["argv"] and "--stdout" not in seen["argv"]
+    assert "--no-download-images" in seen["argv"] and "--reader-only" in seen["argv"]
+    assert "--stdout" not in seen["argv"]
 
 
 def test_ensure_source_frontmatter_cases():

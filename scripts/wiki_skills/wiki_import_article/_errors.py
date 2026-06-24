@@ -11,8 +11,8 @@ from typing import Any
 EXIT_OK = 0
 EXIT_USAGE = 1          # argparse / internal usage error
 EXIT_BAD_ARG = 2        # malformed argument value (bad JSON, missing field)
-EXIT_DEP_MISSING = 6    # a required external skill binary (html2md/pdf) is absent
-EXIT_FETCH_FAILED = 10  # deterministic fetch/convert failed (propagated from html2md/pdf)
+EXIT_DEP_MISSING = 6    # a required external skill binary (html/pdf) is absent
+EXIT_FETCH_FAILED = 10  # deterministic fetch/convert failed (propagated from html/pdf)
 
 
 class ImportArticleError(Exception):

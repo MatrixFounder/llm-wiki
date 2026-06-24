@@ -2,13 +2,13 @@
 
 **Composition, not reinvention (NF-2):** this module never parses HTML or PDFs
 itself — it shells out to the existing global skills:
-  * HTML / URL  → the `html2md` skill (which itself owns the Wikipedia-REST-HTML
+  * HTML / URL  → the `html` skill (which itself owns the Wikipedia-REST-HTML
     and arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits).
   * PDF         → the `pdf` skill's `pdf_extract.py` (structured JSON dump).
 
 The caller (the `prepare` facade) writes `_raw/<slug>.md` **only** when the result
 is `ok` with a non-empty body — so a failed/empty fetch never persists an empty raw
-(R-3). All html2md/pdf typed failures are propagated into `FetchResult.error`.
+(R-3). All html/pdf typed failures are propagated into `FetchResult.error`.
 """
 from __future__ import annotations
 
@@ -28,14 +28,14 @@ from ._errors import EXIT_DEP_MISSING, EXIT_FETCH_FAILED, ImportArticleError
 _FM_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 _ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([\w.\-/]+?)(?:v\d+)?(?:\.pdf)?$")
 _MAX_PDF_BYTES = 64 * 1024 * 1024  # 64 MiB cap on a downloaded PDF (DoS guard)
-_HTML2MD_TIMEOUT = 180
+_HTML_TIMEOUT = 180
 _PDF_TIMEOUT = 240
 # Browser-like UA: many PDF hosts (CDNs, hubfs, journal sites) reject non-browser
 # agents with 403. Operator-supplied URL — this fetches a document the operator asked
-# for (not detection-evasion); mirrors what the html2md skill's fetch already sends.
+# for (not detection-evasion); mirrors what the html skill's fetch already sends.
 _PDF_FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-# X/Twitter served logged-out: html2md's lite fetch returns only the login chrome (no post
+# X/Twitter served logged-out: the html skill's lite fetch returns only the login chrome (no post
 # text). Detect it (scoped to these hosts) so we surface a needs-manual signal instead of
 # writing a junk _raw. Conservative threshold — a captured first tweet (~300+ prose chars)
 # is NOT flagged; only the bare login wall (<220 prose chars) is.
@@ -57,8 +57,8 @@ class FetchResult:
     title: str | None = None
     author: str | None = None
     date: str | None = None
-    engine: str = ""                     # provenance of the fetch (html2md / pdf / local-md)
-    error: dict[str, Any] | None = None  # html2md/pdf typed error envelope on failure
+    engine: str = ""                     # provenance of the fetch (html / pdf / local-md)
+    error: dict[str, Any] | None = None  # html/pdf typed error envelope on failure
     attachments_dir: Path | None = None  # downloaded images (image-import ON) → caller files them
 
 
@@ -84,7 +84,7 @@ def ensure_source_frontmatter(raw_text: str, source: str) -> str:
 # ---- helpers ---------------------------------------------------------------
 
 def _parse_frontmatter(md: str) -> dict[str, str]:
-    """Pull title/author/date out of an html2md YAML frontmatter block (best effort)."""
+    """Pull title/author/date out of an `html`-skill YAML frontmatter block (best effort)."""
     m = _FM_RE.match(md)
     out: dict[str, str] = {}
     if not m:
@@ -138,7 +138,7 @@ def _arxiv_pdf_url(url: str) -> str | None:
 
 
 def _is_x_login_wall(md: str, target: str) -> bool:
-    """True iff `target` is an x.com/twitter URL whose html2md output is just the
+    """True iff `target` is an x.com/twitter URL whose `html`-skill output is just the
     logged-out login chrome (no post text) — so the caller fails instead of writing
     a junk `_raw`. Conservative: requires a login marker AND <`_X_PROSE_FLOOR` chars
     of real prose, so a captured first tweet still passes through."""
@@ -155,14 +155,15 @@ def _is_x_login_wall(md: str, target: str) -> bool:
 
 # ---- fetch strategies ------------------------------------------------------
 
-def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False) -> FetchResult:
-    """URL/local HTML → markdown via html2md, OUTPUT-DIR mode (the only mode that yields
-    html2md's dual output). **Prefers the reader extraction** (`<slug>.reader.md` — main
-    content, no nav/chrome) and falls back to the whole page only when reader is missing
-    or over-stripped. With ``download_images`` it keeps just the images the chosen text
-    references in a sibling ``_attachments/``; else remote URLs are kept verbatim. (html2md
-    owns the Wikipedia-REST-HTML / arXiv rewrites + its own SSRF + ``--max-images`` bound.)"""
-    bin_path = require_bin(html2md_bin, "html2md")
+def _fetch_html(html_bin: str, target: str, *, download_images: bool = False) -> FetchResult:
+    """URL/local HTML → markdown via the `html` skill, OUTPUT-DIR mode + ``--reader-only``:
+    the skill writes a SINGLE ``<slug>.md`` = the reader extraction (main content, no
+    nav/chrome), with its own whole-page fallback when the reader is empty/over-stripped —
+    so notes never get the chrome-laden whole page and there is no variant to choose here.
+    With ``download_images`` it keeps just the images the text references in a sibling
+    ``_attachments/``; else remote URLs are kept verbatim. (The skill owns the
+    Wikipedia-REST-HTML / arXiv rewrites + its own SSRF + ``--max-images`` bound.)"""
+    bin_path = require_bin(html_bin, "html")
     tmpdir = tempfile.mkdtemp(prefix="wiki-import-fetch-")
 
     def _cleanup() -> None:
@@ -170,53 +171,50 @@ def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False)
 
     def _fail(kind: str, code: int = 1) -> FetchResult:
         _cleanup()
-        return FetchResult(ok=False, engine="html2md", error={
+        return FetchResult(ok=False, engine="html", error={
             "error": "FetchFailed", "type": "FetchFailed", "exit_code": code,
             "details": {"url": target, "kind": kind}})
 
     img_flag = "--download-images" if download_images else "--no-download-images"
+    # --reader-only: the skill emits a SINGLE <slug>.md = reader extraction (with its OWN
+    # whole-page fallback when reader is empty), so notes get clean body with no nav chrome
+    # and no whole-page file to choose between.
     argv = ["python3", bin_path, target, tmpdir, img_flag,
-            "--json-errors", "--engine", "auto"]
+            "--reader-only", "--json-errors", "--engine", "auto"]
     # A hung/over-long fetch (slow/hostile host, huge page — exactly what the timeout exists
     # for) must NOT escape as a raw traceback that ALSO orphans `tmpdir` (Decision-17 + the
     # mkdtemp lifecycle). `_fail` cleans the temp dir and returns a typed FETCH_FAILED.
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=_HTML2MD_TIMEOUT, env=_skill_env())
+                              timeout=_HTML_TIMEOUT, env=_skill_env())
     except subprocess.TimeoutExpired:
         return _fail("timeout", code=EXIT_FETCH_FAILED)
     except (OSError, ValueError):  # spawn failure — clean envelope, never a raw traceback
         return _fail("spawn_failed", code=EXIT_FETCH_FAILED)
     if proc.returncode != 0:
         _cleanup()
-        return FetchResult(ok=False, engine="html2md",
+        return FetchResult(ok=False, engine="html",
                            error=_parse_skill_error(proc.stderr, proc.returncode))
 
     out = Path(tmpdir)
-    reader = sorted(out.glob("*.reader.md"))
-    whole = [p for p in out.glob("*.md") if not p.name.endswith(".reader.md")]
-    reader_txt = reader[0].read_text(encoding="utf-8", errors="replace") if reader else ""
-    # Reader-first: take the reader extraction when it has a substantial body; only read the
-    # (larger, nav/chrome-laden) whole-page output LAZILY when reader is missing/over-stripped
-    # — on the common path this avoids a wasted read+decode + transient ~2× peak memory.
-    if reader_txt and len(_FM_RE.sub("", reader_txt).strip()) >= 200:
-        md = reader_txt
-    else:
-        whole_txt = whole[0].read_text(encoding="utf-8", errors="replace") if whole else ""
-        md = whole_txt or reader_txt
+    # --reader-only ⇒ a SINGLE <slug>.md (the reader extraction, with the skill's own
+    # whole-page fallback already applied). Read that one file; the reader-vs-whole choice
+    # now lives in the skill, not here. (Exclude any `.reader.md` defensively.)
+    mds = [p for p in out.glob("*.md") if not p.name.endswith(".reader.md")]
+    md = mds[0].read_text(encoding="utf-8", errors="replace") if mds else ""
     if not md.strip():
         return _fail("no_output")
     if _is_x_login_wall(md, target):  # logged-out X chrome only → no post text
         _cleanup()
-        return FetchResult(ok=False, engine="html2md", error={
+        return FetchResult(ok=False, engine="html", error={
             "error": "x.com returned only the logged-out login wall (no post text "
                      "captured); save the thread/article as a .webarchive while logged "
                      "in and import that file instead.",
             "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
             "details": {"url": target, "kind": "login_wall"}})
 
-    # Keep only the images the CHOSEN text references (drops nav/chrome images html2md
-    # downloaded for the whole page) — less junk in `_attachments/`.
+    # Keep only the images the markdown references (defensive prune; with --reader-only the
+    # skill already downloads just the reader's images) — less junk in `_attachments/`.
     attach: Path | None = None
     adir = out / "_attachments"
     if download_images and adir.is_dir():
@@ -229,14 +227,14 @@ def _fetch_html(html2md_bin: str, target: str, *, download_images: bool = False)
         _cleanup()
     fm = _parse_frontmatter(md)
     return FetchResult(
-        ok=True, raw_text=md, engine="html2md", attachments_dir=attach,
+        ok=True, raw_text=md, engine="html", attachments_dir=attach,
         title=fm.get("title") or None,
         author=fm.get("author") or None,
         date=(fm.get("date") or fm.get("published") or None))
 
 
 def _parse_skill_error(stderr: str, returncode: int) -> dict[str, Any]:
-    # generic: extracts the last single-line JSON error envelope from html2md OR pdf stderr
+    # generic: extracts the last single-line JSON error envelope from the html OR pdf skill stderr
     for line in reversed((stderr or "").strip().splitlines()):
         line = line.strip()
         if line.startswith("{"):
@@ -311,11 +309,11 @@ def _fetch_pdf_url(pdf_extract_bin: str, url: str) -> FetchResult:
 
 # ---- public dispatch -------------------------------------------------------
 
-def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str,
+def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
                    download_images: bool = False) -> FetchResult:
-    """Route `source` (URL or local file) to html2md / pdf and return a FetchResult.
+    """Route `source` (URL or local file) to html / pdf and return a FetchResult.
 
-    `download_images` (config-driven; default ON at the prepare layer) makes the html2md
+    `download_images` (config-driven; default ON at the prepare layer) makes the html skill
     path download images into a sibling `_attachments/`. PDFs are text-only — no images.
     Never writes anything — the caller persists `_raw/` only on a non-empty `ok` result.
     """
@@ -323,17 +321,17 @@ def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str,
     bare = source.split("?", 1)[0].lower()
 
     if is_url and not bare.endswith(".pdf"):
-        res = _fetch_html(html2md_bin, source, download_images=download_images)
+        res = _fetch_html(html_bin, source, download_images=download_images)
         if res.ok:
             return res
-        # html2md says "HTML-only article has no HTML, use the PDF" → fall back.
+        # the html skill says "HTML-only article has no HTML, use the PDF" → fall back.
         kind = (res.error or {}).get("details", {}).get("kind")
         if kind == "arxiv_no_html":
             pdf_url = _arxiv_pdf_url(source)
             if pdf_url:
                 return _fetch_pdf_url(pdf_extract_bin, pdf_url)
         # The URL serves a PDF despite no `.pdf` suffix (e.g. dl.acm.org/doi/pdf/…,
-        # CDN/hubfs links): html2md reports details.kind=="pdf". Download + extract via
+        # CDN/hubfs links): the html skill reports details.kind=="pdf". Download + extract via
         # the pdf skill rather than failing. (A real paywall still surfaces as FETCH_FAILED.)
         if kind == "pdf":
             return _fetch_pdf_url(pdf_extract_bin, source)
@@ -353,5 +351,5 @@ def dispatch_fetch(source: str, *, html2md_bin: str, pdf_extract_bin: str,
             ok=bool(text.strip()), raw_text=text or None, engine="local-md",
             title=fm.get("title") or None, author=fm.get("author") or None,
             date=(fm.get("date") or fm.get("published") or None))
-    # any other local file → let html2md try (it handles .html/.htm/.mhtml/.webarchive)
-    return _fetch_html(html2md_bin, str(p), download_images=download_images)
+    # any other local file → let the html skill try (it handles .html/.htm/.mhtml/.webarchive)
+    return _fetch_html(html_bin, str(p), download_images=download_images)

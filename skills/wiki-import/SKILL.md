@@ -5,7 +5,7 @@ description: >-
   transcript / finished summary into any Obsidian vault. Two orthogonal axes: content-type
   (--kind) sets the note type — all content-types run the ONE universal summarizing-meetings
   harness (summary→register); the vault LAYOUT (config) picks where it files (Karpathy vs PARA).
-  Deterministic fetch+convert (html2md/pdf) → orchestrator REASON FED the known-concepts list
+  Deterministic fetch+convert (html/pdf) → orchestrator REASON FED the known-concepts list
   → authored note + concept pages + index. Triggers: "import this into the vault", "wiki-import",
   "add this paper/article/transcript to the wiki". (`wiki-import-article` is a back-compat alias.)
 tier: 2
@@ -43,14 +43,15 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
 wiki-import prepare --vault <id> --vault-root <abs> \
   --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread
 ```
-Dispatches to `html2md` (URL/HTML — it already owns the Wikipedia-REST-HTML and
+Dispatches to `html` (URL/HTML — it already owns the Wikipedia-REST-HTML and
 arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits) or the `pdf`
 skill (PDF), writes `_raw/<slug>.md` **only on a non-empty fetch**, **detects the
 content-type** (`--kind auto`; override with `--kind`), and emits:
-> **Reader-first:** the html2md path prefers the **reader extraction** (clean main
-> content — no nav/"Skip to main content"/"Edit page" chrome) and falls back to the
-> whole page only when reader is missing/over-stripped; only reader-referenced images
-> are kept in `_attachments/` (chrome/avatar images dropped). Less junk in `_raw`.
+> **Reader-only:** the `html` path runs with `--reader-only`, so the skill emits a SINGLE
+> `<slug>.md` = the **reader extraction** (clean main content — no nav/"Skip to main
+> content"/"Edit page" chrome), with its own whole-page fallback when the reader is
+> empty/over-stripped. Only reader-referenced images are kept in `_attachments/`
+> (chrome/avatar images dropped). Less junk in `_raw`.
 ```
 { action, raw_path, folder, slug, project, mode,
   kind, reason_harness, kind_confidence,            # ← content-type → which harness
@@ -122,8 +123,8 @@ note. Skipped candidates are reported in the manifest, never silently dropped.
 |---|---|
 | 0 | ok (`action:"prepared"` / `"imported"`) |
 | 2 | bad argument (bad note JSON, invalid slug, folder escapes vault) |
-| 6 | a dependency missing (`html2md`/`pdf` bin absent), or partial (index/concept-file failed) |
-| 10 | `FETCH_FAILED` (source unreachable/empty — propagated from html2md/pdf; no raw written) |
+| 6 | a dependency missing (`html`/`pdf` bin absent), or partial (index/concept-file failed) |
+| 10 | `FETCH_FAILED` (source unreachable/empty — propagated from html/pdf; no raw written) |
 
 ## Batch import
 For a list (the DAO/#01 pattern) the CLI stays **per-article**; the batch fan-out is a
@@ -132,13 +133,13 @@ documented **Workflow-tool recipe** — see [`workflows/wiki-import.md`](../../w
 write contention).
 
 ## Safety
-- Fetch is deterministic (the html2md/pdf skills) — never "convert in your head".
+- Fetch is deterministic (the html/pdf skills) — never "convert in your head".
 - All write paths (`_raw/`, note, concepts) go through `validate_inside_vault` (R-26) +
   a target-symlink refusal; the slug passes `_is_valid_slug` (no traversal). YAML
   frontmatter scalars are newline/control-stripped + quoted (H-6 frontmatter-injection
   guard); the note body is orchestrator-authored markdown (kept structural); concept pages
   are markdown-sanitized by `wiki-extract-concepts`.
-- `html2md`/`pdf` are external skill **binaries** (`--html2md-bin`/`--pdf-extract-bin`,
+- `html`/`pdf` are external skill **binaries** (`--html-bin`/`--pdf-extract-bin`,
   fail-fast if absent) — not Python deps.
 
 ## Related

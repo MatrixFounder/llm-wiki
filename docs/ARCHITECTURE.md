@@ -261,7 +261,7 @@ equivalent** — `wiki-ingest` writes Karpathy `_sources/` + root `_concepts/_en
 wrong for PARA (TASK 024 finding #2). This component packages the PARA path as a new
 **Decision-17** CLI (no `import anthropic`; `prepare`/`apply`) plus a skill/command/workflow
 triple. It is **composition, not reinvention** (NF-2): `prepare` shells out to the global
-`html2md` (URL/HTML — which post-2026-06-18 itself owns the Wikipedia-REST-HTML and
+`html` (URL/HTML — which post-2026-06-18 itself owns the Wikipedia-REST-HTML and
 arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html`) and the `pdf` skill
 (PDF), writes `_raw/<slug>.md` **only on a non-empty fetch**, and emits an envelope adding
 `known_concepts[]` + `existing_page_slugs[]` (sourced from the existing
@@ -287,7 +287,7 @@ quoted (H-6 frontmatter-injection guard); the note BODY is orchestrator-authored
 kept structural (escaping a translation's headings/lists would defeat the purpose — same
 trust posture as `wiki-ingest`/`summarizing-meetings` summaries), while the generated
 **concept pages** are markdown-sanitized by extract-concepts' `write_concept_page`
-(`_sanitize_markdown_text`). The `html2md`/`pdf` shell-outs are external
+(`_sanitize_markdown_text`). The `html`/`pdf` shell-outs are external
 skill **binaries** (configurable `--*-bin`, fail-fast if absent) — NOT Python runtime
 dependencies, so NF-1 "zero new deps" holds. Zero impact on §4 Data Model (no DDL — rides
 `pages`/`entities`/`page_entity_refs`), §6 Stack (no deps). §5 Interfaces gains ONE new CLI
@@ -322,7 +322,7 @@ layouts and any output language**:
   dev-project + cybos gained `**/_raw/**` in `ignore` (the `_raw/` capture is never indexed as a
   phantom page that could clobber the curated note on a shared `(vault_id, slug, project)`).
 - **Decision-17 entry points.** A missing `--folder`/`--vault-root` → clean `INVALID_FOLDER`/
-  `INVALID_VAULT_ROOT`; a schemaless vault → language `en` (no crash); a hung `html2md` →
+  `INVALID_VAULT_ROOT`; a schemaless vault → language `en` (no crash); a hung `html` →
   `FETCH_FAILED(timeout)` with the temp dir reclaimed; the note JSON is a **bounded read**
   (`NOTE_TOO_LARGE` over 32 MiB); and `main()` has a **catch-all backstop** emitting a typed
   `INTERNAL_ERROR` (exception class only — never `str(e)`, CWE-209) so no path raw-tracebacks.

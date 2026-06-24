@@ -26,7 +26,7 @@ _FNAME_BAD = re.compile(r'[/\\:*?"<>|#^\[\]]')
 _ALLOWED_CHAR = re.compile(r"[\w\s\-.,:;()'\"!?]", re.UNICODE)
 _MAX_CANDIDATES = 25  # was 15 — full articles legitimately carry 15–18 entities
 _QUOTE_CAP = 480
-# Obsidian image-embeds to fetched attachments: html2md runs with --no-download-images,
+# Obsidian image-embeds to fetched attachments: the html skill runs with --no-download-images,
 # so `![[Attachments/<hash>.png]]` (often wrapped as `[![[…]]](url)`) never resolves in the
 # target vault → it renders as a broken embed + counts as a dangling link. Strip the line.
 _IMG_EMBED_LINE = re.compile(r"^[^\n]*\[\[Attachments/[^\n]*$\n?", re.MULTILINE)
@@ -120,7 +120,7 @@ def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
 
 
 def _strip_image_embeds(text: str) -> str:
-    """Drop `[[Attachments/…]]` image-embed lines (never resolve — html2md fetched with
+    """Drop `[[Attachments/…]]` image-embed lines (never resolve — the html skill fetched with
     --no-download-images) and collapse the gap, so they don't leak into the note body."""
     return re.sub(r"\n{3,}", "\n\n", _IMG_EMBED_LINE.sub("", text or ""))
 
