@@ -93,10 +93,12 @@ translation into the target language; **summary** = thorough digest (`body` null
 > ## 🔴 HARD RULE — inject `known_concepts` (R-6, the core fix)
 > You MUST pass `prepare`'s `known_concepts` into your reasoning context and **reuse an
 > existing concept's `name`** whenever an entity matches one — do NOT mint a new variant
-> ("AMM" vs "Автоматический маркет-мейкер"). This is the exact discipline `wiki-ingest`
-> enforces (SKILL.md:34). Skipping it is what produced dangling `[[wikilinks]]` and slug
-> collisions in the ad-hoc DAO/#01 imports. Each `entities[].quote` MUST be copied
-> **verbatim** from the target-language text you produce.
+> ("AMM" vs "Автоматический маркет-мейкер"). The list is **already in the `prepare` envelope** —
+> match against it in-context; don't run a separate command to enumerate the vault's concepts.
+> This is the exact discipline `wiki-ingest` enforces (SKILL.md:34). Skipping it is what produced
+> dangling `[[wikilinks]]` and slug collisions in the ad-hoc DAO/#01 imports. Each
+> `entities[].quote` MUST be copied **verbatim** from the target-language text you produce —
+> **author the body first, then copy quotes out of it** (never quote the raw source).
 
 ### 3. `apply` — author + file + index
 ```bash

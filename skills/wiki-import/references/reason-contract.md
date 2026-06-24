@@ -11,7 +11,10 @@ and `summarizing-meetings` — the shared note-JSON source of truth so the two n
 - `language` — **the target language to produce ALL output in** (the vault's `language`;
   English fallback). The project is international: produce title/tldr/bullets/body/definitions
   in THIS language, NOT a hardcoded one. (The source may be in any language; you translate.)
-- `known_concepts: [{slug, name}]` — the vault's existing concept names.
+- `known_concepts: [{slug, name}]` — the vault's existing concept names. **Already in this
+  envelope** → match your entities against it **in-context** (scan these names for the terms you
+  extract); do NOT issue a separate command to dump the vault's full concept list — it's a large,
+  noisy read and a needless approval prompt.
 - `existing_page_slugs: […]` — round-trip these into `apply` for the collision guard.
 - `mode` — `full` | `summary` | `thread`.
 
@@ -51,16 +54,20 @@ If the source is already in the target language (`prepare` fetched a same-langua
    **`name`** verbatim — never mint a variant ("AMM" vs "Автоматический маркет-мейкер").
    This is the discipline `wiki-ingest` enforces (SKILL.md:34); skipping it is what caused
    the dangling `[[wikilinks]]` + slug collisions in the ad-hoc DAO/#01 imports (TASK 038 §1).
-2. **Verbatim quotes.** Each `entities[].quote` MUST be an exact substring of the
-   target-language text *you* produce (`body` for full/thread; one `summary_bullets`/`tldr` line for summary).
-   Copy each quote **FROM the text you write**, not from the raw source — a paraphrase costs you
-   that concept page. If a quote isn't a verbatim substring, `apply` falls back to a body line
-   that mentions the entity by name (the base name, ignoring any trailing `(disambiguator)`);
-   if there's no such line it **drops** the candidate (`no-verbatim-quote`).
-   **Pre-apply self-check:** before calling `apply`, confirm every `entities[].quote` literally
-   occurs in your `body`/`summary_bullets`. After `apply`, check the envelope's `warnings[]`:
-   a `{"code": "CONCEPTS_DROPPED", …}` entry lists concepts that were NOT filed — fix their
-   quotes and re-run `apply` to recover them.
+2. **Verbatim quotes — author body-first, THEN quote.** Produce the prose **in order**:
+   (1) finalize the `body` (full/thread) or `summary_bullets`/`tldr` (summary); (2) **then** fill
+   each `entities[].quote` by copying an exact span **from that finalized text** — never author the
+   body and the quotes in parallel, and never lift a quote from the raw source (it is usually the
+   wrong language and may name something your body never says). A paraphrase costs you that concept
+   page: if a quote isn't a verbatim substring, `apply` falls back to a body line that mentions the
+   entity by name (the base name, ignoring any trailing `(disambiguator)`); if there's no such line
+   it **drops** the candidate (`no-verbatim-quote`).
+   **Pre-apply self-check (run before EVERY `apply`):**
+   - every `entities[].quote` is a literal substring of the `body`/`summary_bullets`/`tldr` you wrote;
+   - `summary_bullets` count is within the mode range — **full 4–7 · summary 8–14 · thread 3–6**;
+   - `entities` count is within the mode range — **full 12–15 · summary 10–15 · thread 5–9**.
+   After `apply`, check the envelope's `warnings[]`: a `{"code": "CONCEPTS_DROPPED", …}` entry
+   lists concepts that were NOT filed — fix their quotes and re-run `apply` to recover them.
 3. **Clean entity names.** No `/`, em-dash `—`, or guillemets `«»` (the `apply` normalizer
    rewrites them, but clean names avoid surprises). 12–15 entities (full), 10–15 (summary),
    5–9 (thread).
