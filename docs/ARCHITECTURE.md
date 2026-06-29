@@ -603,9 +603,10 @@ RESOLVED foundational decisions (11a), defer-able items (11b), and the
 architecture-specific open/resolved **Q-0XX** entries (11c) — every shipped TASK's
 design rationale lives here (the layout engine Q-012, metadata filter Q-013/033,
 vault-local DB Q-022, typed classes/event graph Q-031/032, temporal `--as-of`
-Q-034, the TASK 035 FTS-narrowed tag-membership **Q-035-1/2**, and the TASK 044
+Q-034, the TASK 035 FTS-narrowed tag-membership **Q-035-1/2**, the TASK 044
 transcript-fetcher video routing **Q-044-1**; embedded-video design rationale +
-ad-exclusion heuristic **Q-044-9/Q-044-10/Q-044-11**).
+ad-exclusion heuristic **Q-044-9/Q-044-10/Q-044-11**; and TASK 045 Obsidian
+deep-link design **Q-045-1/2**).
 
 → [details](./architectures/open-questions.md)
 
@@ -635,4 +636,5 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **FTS-narrowed tag membership (TASK 035, ADR-005)**: closes the hot branch of R-X3-MF-SCAN measured on the real 2493-page vault. Metadata-only `--tag`/`tags=` membership now narrows via the already-existing `pages_fts.tags` index ("FTS narrows, `json_each` confirms" — Q-035-2) instead of a full-partition scan; result list byte-identical (superset + exact confirm, empirically 0 mismatches over 40 real tags), zero-token values fall back to the scan. The scalar/temporal/non-tags branches are left as a scan by design (P-5: their fields are sparse/absent — Q-035-1). **Zero DDL** (`user_version` stays 7), no new dep, no layering inversion, Karpathy byte-identity preserved.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
+- [x] **Obsidian deep-links (TASK 045)**: `wiki-search` JSON hits gain `file_path` (always present) + `obsidian_url` (`obsidian://open?vault=<folder-basename>&file=<encoded-path>`, null when vault unknown — Q-045-1). Vault cache built once per unique `vault_id` across hits (R-3). `--format markdown`: OSC 8 hyperlinks on iTerm2/VS Code terminal; plain URL fallback for pipe + Apple Terminal (detected via `TERM_PROGRAM=Apple_Terminal` — Q-045-2); chat agents show clean title/slug/snippet (obsidian:// not clickable in VS Code webview CSP). H-6 control-char sanitisation (`_term_safe`) applied to title/snippet before TTY output (CWE-150). Zero DDL, zero new deps.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).
