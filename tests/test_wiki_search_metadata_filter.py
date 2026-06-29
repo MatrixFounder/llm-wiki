@@ -302,7 +302,9 @@ def test_cli_no_flag_search_schema_unchanged(repo, capsys) -> None:
     assert payload["action"] == "searched"
     assert payload["query"] == "drift"
     assert set(payload["hits"][0].keys()) == {
-        "vault_id", "slug", "project", "type", "title", "bm25_score", "snippet"}
+        "vault_id", "slug", "project", "type", "title", "bm25_score", "snippet",
+        "file_path", "obsidian_url",  # TASK 045: new additive fields
+    }
 
 
 # =============================================================================

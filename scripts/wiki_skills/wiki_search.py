@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from datetime import date as _date_cls
+from typing import cast
+from urllib.parse import quote as _url_quote
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
-from scripts.wiki_index.models import PageHit
+from scripts.wiki_index.models import PageHit, Vault
 from scripts.wiki_index.repository import validate_filter_field
 from scripts.wiki_index.query_normalizer import fold_yo as _fold_yo
 from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
@@ -86,6 +89,32 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
     return p
+
+
+def _obsidian_url(vault: Vault | None, file_path: str) -> str | None:
+    """Build an obsidian://open URI for a search hit.
+
+    Returns None when the vault is unknown (stale registry / removed vault).
+    vault_name is the root folder basename — the identifier Obsidian uses in
+    its URI scheme (may differ from vault_id if the folder was renamed).
+    """
+    if vault is None:
+        return None
+    vault_name = _url_quote(vault.root_path.name, safe="")
+    file_enc = _url_quote(file_path, safe="/-_.~")
+    return f"obsidian://open?vault={vault_name}&file={file_enc}"
+
+
+def _term_safe(s: str) -> str:
+    """Strip C0/C1 control chars from untrusted DB strings before terminal output (H-6).
+
+    Prevents terminal escape injection (CWE-150) when titles/snippets from
+    externally-imported pages reach --format markdown on a TTY.
+    """
+    return "".join(
+        c for c in s
+        if not (ord(c) < 0x20 or ord(c) == 0x7F or 0x80 <= ord(c) <= 0x9F)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -209,11 +238,22 @@ def main(argv: list[str] | None = None) -> int:
                     return emit({"error": "INVALID_QUERY", "field": "query",
                                  "reason": "not a valid FTS5 expression; quote terms "
                                            "containing special characters (e.g. hyphens)"}, 2)
+        # R-3: resolve each unique vault_id once (cache — not once per hit).
+        # The _global_ sentinel never appears as a pages.vault_id in practice,
+        # but guard it explicitly so get_vault is never called with a sentinel.
+        vault_cache: dict[str, Vault | None] = {
+            vid: (None if vid == GLOBAL_VAULT_SENTINEL else repo.get_vault(vid))
+            for vid in {h.page.vault_id for h in hits}
+        }
         results = [{
             "vault_id": h.page.vault_id, "slug": h.page.slug,
             "project": h.page.project, "type": h.page.type,
             "title": h.page.title, "bm25_score": h.bm25_score,
             "snippet": h.snippet,
+            "file_path": h.page.file_path,
+            "obsidian_url": _obsidian_url(
+                vault_cache.get(h.page.vault_id), h.page.file_path
+            ),
         } for h in hits]
         if args.format == "json":
             return emit({"action": "searched", "query": query_arg,
@@ -226,11 +266,29 @@ def main(argv: list[str] | None = None) -> int:
             f'"{query_arg}"' if query_arg
             else "filter " + " ".join(filter_bits)
         )
+        # R-4/R-5: detect TTY once; append OSC 8 link (iTerm2/VS Code/modern) or
+        # plain URL (pipe, or Apple Terminal which ignores OSC 8 and leaves a
+        # dangling [↗] glyph with no URL — useless without the fallback).
+        _is_tty = sys.stdout.isatty()
+        _osc8 = _is_tty and os.environ.get("TERM_PROGRAM") != "Apple_Terminal"
         lines = [f'## {heading} — {len(results)} hits', ""]
         for r in results:
+            obs_url = cast("str | None", r["obsidian_url"])
+            if obs_url is not None:
+                if _osc8:
+                    # OSC 8 hyperlink — clickable in iTerm2 / VS Code terminal
+                    suffix = f"  →  \033]8;;{obs_url}\033\\[↗]\033]8;;\033\\"
+                else:
+                    suffix = f"  →  {obs_url}"
+            else:
+                suffix = ""
+            # H-6: title/snippet are untrusted content (from wiki-import of external pages).
+            # Strip C0/C1 control chars before writing to a TTY-targeted stream.
+            safe_title = _term_safe(cast("str", r["title"]))
+            safe_snippet = _term_safe(cast("str", r["snippet"]))
             lines.append(
-                f"- [[{r['vault_id']}:{r['project']}/{r['slug']}|{r['title']}]] "
-                f"(BM25={r['bm25_score']:.2f}) — \"{r['snippet']}\""
+                f"- [[{r['vault_id']}:{r['project']}/{r['slug']}|{safe_title}]] "
+                f"(BM25={r['bm25_score']:.2f}) — \"{safe_snippet}\"{suffix}"
             )
         print("\n".join(lines))
         return 0
