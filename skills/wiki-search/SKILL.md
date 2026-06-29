@@ -8,7 +8,7 @@ description: >-
   Triggers: "search wiki", "find in vault", "wiki-search", "what is", "how do I",
   any vault-domain question.
 tier: 2
-version: 1.6
+version: 1.9
 ---
 
 # wiki-search
@@ -86,8 +86,11 @@ listing is returned.
   slug is **ambiguous** (the same slug exists in >1 project — the TASK 020/021
   `slug_collisions` hygiene case), the page is left **active** rather than risk retiring
   it by an unrelated namesake (over-report, not silent data loss).
-- Default output: JSON envelope with `hits[]` (each hit has `vault_id`,
-  `slug`, `project`, `type`, `title`, `bm25_score`, `snippet`).
+- Default output: JSON envelope with `hits[]`. Each hit has:
+  `vault_id`, `slug`, `project`, `type`, `title`, `bm25_score`, `snippet`,
+  `file_path` (relative to vault root — use to `Read` the note),
+  `obsidian_url` (`obsidian://open?vault=…&file=…` — null when the vault is
+  not in the registry; see **Obsidian deep-links** below).
 
 ## Search WELL — broaden, don't stop at the first hit, and NEVER hallucinate
 
@@ -142,6 +145,58 @@ vault root) is the note's path. Two anti-patterns that waste turns:
   leaves un-downloaded files as `.icloud` placeholders, and spaces + Cyrillic/CJK names break
   naive `find`/`grep` pipelines — they silently match nothing. Use `wiki-search` (re-`wiki-reindex
   --delta` first if a known file isn't indexed yet).
+
+## Obsidian deep-links (TASK 045)
+
+Each search hit carries `file_path` (always present) and `obsidian_url` (null
+when the vault is unknown — stale registry or removed vault):
+
+```
+obsidian://open?vault=<vault_folder_basename>&file=<url_encoded_path>
+```
+
+- **Vault name** is `vault.root_path.name` (the folder's basename on disk),
+  NOT the `vault_id`. These can differ if the folder was renamed after
+  registration. Spaces and Cyrillic are percent-encoded (`safe=""`).
+- **File path** uses `safe="/-_.~"` — slashes are kept readable, spaces and
+  Cyrillic are encoded.
+- **`obsidian_url` is null** when `repo.get_vault(vault_id)` returns `None`.
+  The page is still indexed (`file_path` always present); the vault just
+  isn't resolvable in the current registry.
+
+### `--format markdown` behavior
+
+| Context | Suffix appended per hit |
+|---------|-------------------------|
+| TTY (iTerm2, VS Code terminal) | OSC 8 hyperlink: `\033]8;;<url>\033\\[↗]\033]8;;\033\\` — clickable |
+| Pipe / redirect | Plain URL: `  →  obsidian://open?vault=…&file=…` |
+| `obsidian_url` is null | No suffix appended |
+
+JSON output always has both `file_path` and `obsidian_url` (value or `null`);
+the format flag only affects the text rendering branch.
+
+### Deep-links in chat responses
+
+**Do NOT include `obsidian_url` in chat-formatted results.** The `obsidian://`
+scheme is not clickable in Claude CLI (VS Code webview CSP blocks custom URL
+schemes), and the long percent-encoded paths pollute the output when shown as text.
+
+Present results as clean, readable lines — title, slug, snippet. Example:
+
+```
+- **Bitcoin (BTC)** (`bitcoin-btc`) — "peer-to-peer electronic cash system"
+- **Bitcoin Improvement Proposal** (`bitcoin-improvement-proposal-bip`) — "процесс делиберации"
+```
+
+**For clickable deep-links**: tell the user to run the CLI directly in a terminal
+that supports OSC 8 (iTerm2 or VS Code integrated terminal):
+
+```bash
+wiki-search "bitcoin" --vaults all --format markdown
+```
+
+This produces `[↗]` OSC 8 hyperlinks that open Obsidian on click. Apple Terminal
+and Claude CLI chat do not support custom URL schemes — no workaround exists.
 
 ## Exit codes
 
