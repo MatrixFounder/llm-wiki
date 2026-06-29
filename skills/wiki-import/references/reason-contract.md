@@ -6,8 +6,28 @@ content harness (it handles meetings AND articles/papers/threads). Decision-17: 
 deterministic plumbing; *this* is the only reasoning. Referenced by `skills/wiki-import/SKILL.md`
 and `summarizing-meetings` — the shared note-JSON source of truth so the two never drift.
 
+## 🚩 Anti-rationalization (read this if you are about to cut corners)
+
+This REASON step **IS** the note's quality — the Python plumbing does NOT summarize (Decision-17).
+If you under-invest here the note is junk no matter how clean the fetch/index was. STOP if you catch
+yourself thinking:
+
+- *"I'll skim the first part of `raw_path` and summarize the rest"* → **WRONG.** Read the **WHOLE**
+  `raw_path` — all of it, never a `limit`/sample. A note authored from a fraction of the source
+  silently drops most of the content.
+- *"`mode=full`, but I'll just write a tight summary to save effort"* → **WRONG.** `full` means a
+  **COMPLETE** translation of EVERY section (headings, lists, tables, code, formulae) into the target
+  language — not a digest. You do NOT silently downgrade `full` to a summary; if a digest is wanted
+  the operator passes `mode=summary`.
+- *"The source is long, I'll trim it"* → **WRONG.** For a long source, **fan out**: translate it
+  section-by-section (in parallel if your host supports it), sharing a term glossary for consistency,
+  then stitch. Length is not a licence to lose content.
+- *"The math/code is hard to carry over, I'll paraphrase it"* → **WRONG.** Preserve every `$…$`
+  formula and code block verbatim — they are language-independent.
+
 ## Inputs (from `prepare`'s envelope)
-- `raw_path` — the fetched+converted original (read it in full).
+- `raw_path` — the fetched+converted original. **Read it IN FULL** (the entire file, not a `limit`
+  or a sample) — a hard rule, not advice (see Anti-rationalization above).
 - `language` — **the target language to produce ALL output in** (the vault's `language`;
   English fallback). The project is international: produce title/tldr/bullets/body/definitions
   in THIS language, NOT a hardcoded one. (The source may be in any language; you translate.)
@@ -49,6 +69,13 @@ on the CLI side (a fixed map can't cover arbitrary topics). Omit → falls back 
 If the source is already in the target language (`prepare` fetched a same-language page),
 `body` is the *cleaned* body (strip conversion artifacts), not a re-translation.
 
+**Coverage (mode=full) — the failure mode to avoid.** The `body` must cover EVERY section of the
+source and be comparable in scope to `raw_path`. A `body` that is a small fraction of the source
+(e.g. a handful of paragraphs for a long article) is a **FAILURE**: it means you summarized instead
+of translating. Re-read the FULL `raw_path` and translate every section (fan out by section for a
+long source). Rule of thumb: a `mode=full` body that drops below ~half the source's length is almost
+always an accidental summary — verify before `apply`.
+
 ## 🔴 Hard rules (the load-bearing discipline)
 1. **Inject `known_concepts`.** When an entity matches an existing concept, reuse its
    **`name`** verbatim — never mint a variant ("AMM" vs "Автоматический маркет-мейкер").
@@ -63,6 +90,9 @@ If the source is already in the target language (`prepare` fetched a same-langua
    entity by name (the base name, ignoring any trailing `(disambiguator)`); if there's no such line
    it **drops** the candidate (`no-verbatim-quote`).
    **Pre-apply self-check (run before EVERY `apply`):**
+   - **(mode=full) coverage:** the `body` covers EVERY section of `raw_path` (you read the whole file,
+     not a sample) and is comparable in scope to the source — if it is a small fraction of the raw,
+     you summarized by mistake; re-read the FULL raw and translate every section before `apply`;
    - every `entities[].quote` is a literal substring of the `body`/`summary_bullets`/`tldr` you wrote;
    - `summary_bullets` count is within the mode range — **full 4–7 · summary 8–14 · thread 3–6**;
    - `entities` count is within the mode range — **full 12–15 · summary 10–15 · thread 5–9**.

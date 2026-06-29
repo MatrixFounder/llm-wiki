@@ -114,8 +114,9 @@ articles/papers/threads**, emitting the reason-contract note-JSON; a separate
 The harness is model-agnostic (PRE-FLIGHT + self-verification) so the floor stays high on any
 model/harness. **Full contract:** [`references/reason-contract.md`](references/reason-contract.md)
 — the canonical schema + depth-by-mode + hard rules (reuse it verbatim; the digest follows).
-Read `raw_path`, then produce the structured note **in the target `language`** that `prepare`
-reports (the vault's `language`; English fallback) — the project is international, NOT RU-only:
+Read **the WHOLE** `raw_path` (the entire file — never a `limit`/sample), then produce the structured
+note **in the target `language`** that `prepare` reports (the vault's `language`; English fallback) —
+the project is international, NOT RU-only:
 ```
 { title, title_orig?, author?, published?, tldr, summary_bullets[],
   body?,                          # full body in the target language (mode=full/thread); null for summary
@@ -125,6 +126,14 @@ reports (the vault's `language`; English fallback) — the project is internatio
 (`title_ru`/`ru_body` are accepted as legacy aliases.) Depth by mode: **full** = complete
 translation into the target language; **summary** = thorough digest (`body` null, detailed
 `summary_bullets`); **thread** = tight synopsis. All prose is in the target `language`.
+
+> ## 🔴 HARD RULE — `mode=full` is a COMPLETE translation, not a summary
+> Read the **ENTIRE** `raw_path` and translate **every section** (preserve headings / lists / tables /
+> code / `$…$` formulae). A `mode=full` body that is a small fraction of the source is an accidental
+> summary — a **FAILURE**. For a long source, **fan out by section** (parallel translators sharing a
+> term glossary), then stitch — never truncate. You do NOT silently downgrade `full` to a digest
+> (that is what `mode=summary` is for). See the contract's *Anti-rationalization* + *Coverage (mode=full)*
+> blocks: [`references/reason-contract.md`](references/reason-contract.md).
 
 > ## 🔴 HARD RULE — inject `known_concepts` (R-6, the core fix)
 > You MUST pass `prepare`'s `known_concepts` into your reasoning context and **reuse an
