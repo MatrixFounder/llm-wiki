@@ -17,6 +17,17 @@ DB lives off the synced drive at an absolute path under the OS app-data dir (e.g
 `~/Library/Application Support/…`), which is **trusted automatically — no env var needed**.
 (An absolute DB *outside* app-data still needs `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`.)
 
+> **⚠️ Permissions: do NOT inline the env var or call a CLI by absolute path.**
+> The `.claude/settings.json` allowlist matches the command's **leading token** — `Bash(wiki-search *)`
+> fires only if the command begins with exactly `wiki-search`. An inline prefix
+> (`WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 wiki-search …`), an absolute path (`/Users/…/bin/wiki-search …`),
+> or the `python -m scripts.wiki_skills.wiki_search …` form all **shift** that token → the rule
+> misses → Claude prompts and appends the exact literal to `settings.local.json` (cruft accretes).
+> **Run the bare command:** `wiki-search "query" --vaults personal`. If you genuinely need the var,
+> set it in the **`env` block** of `.claude/settings.json` (the iCloud vault already does) or
+> `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` once as a **separate** command — then the `wiki-*` command
+> stays bare and matches the rule.
+
 > **Which `--vault <id>` value? (two different "vault" names — don't mix them up)**
 > - `wiki-* --vault`/`--vaults <id>` take the **wiki `vault_id`** — declared in
 >   `WIKI_SCHEMA.md` (`vault_id:`), e.g. `personal`. **You** choose it.

@@ -18,6 +18,18 @@
 **доверяется автоматически — env-переменная НЕ нужна**. (Абсолютный путь *вне* app-data
 по-прежнему требует `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1`.)
 
+> **⚠️ Разрешения: не инлайньте env-переменную и не зовите CLI по абсолютному пути.**
+> Аллоулист в `.claude/settings.json` матчит **ведущий токен** команды — `Bash(wiki-search *)`
+> срабатывает, только если команда начинается ровно с `wiki-search`. Инлайн-префикс
+> (`WIKI_ALLOW_ABSOLUTE_INDEX_DB=1 wiki-search …`), абсолютный путь
+> (`/Users/…/bin/wiki-search …`) или форма `python -m scripts.wiki_skills.wiki_search …`
+> **сдвигают** этот токен → правило промахивается → Claude спрашивает подтверждение и дописывает
+> точную строку в `settings.local.json` (мусор копится). **Запускайте голую команду:**
+> `wiki-search "запрос" --vaults personal`. Если переменная реально нужна — задайте её в
+> **`env`-блоке** `.claude/settings.json` (для iCloud-vault она там уже есть) либо один раз
+> `export WIKI_ALLOW_ABSOLUTE_INDEX_DB=1` **отдельной** командой — тогда сам `wiki-*` остаётся
+> голым и матчится правилом.
+
 > **Какое значение `--vault <id>`? (два РАЗНЫХ «vault» — не путайте)**
 > - `wiki-* --vault`/`--vaults <id>` принимают **вики `vault_id`** — он объявлен в
 >   `WIKI_SCHEMA.md` (`vault_id:`), например `personal`. Его выбираете **вы**.

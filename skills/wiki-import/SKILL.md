@@ -107,8 +107,8 @@ and writes **nothing** — file a `needs-manual` stub by hand.
 ### 2. REASON (the orchestrator's job — the one LLM step)
 Run the **one universal content harness** — **[`summarizing-meetings`](../summarizing-meetings/)**
 (`prepare` reports it in `reason_harness`). It auto-detects + handles **meetings AND
-articles/papers/threads**, emitting the reason-contract note-JSON; a separate
-`summarizing-articles` would be redundant. For `kind: summary` (already a finished summary) →
+articles/papers/threads**, emitting the reason-contract note-JSON — there is no separate
+articles/paper skill; use this one for every content type. For `kind: summary` (already a finished summary) →
 **skip REASON**, register the source directly. (`--kind` still drives the note `type:`.)
 
 The harness is model-agnostic (PRE-FLIGHT + self-verification) so the floor stays high on any
