@@ -22,6 +22,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ._errors import EXIT_DEP_MISSING, EXIT_FETCH_FAILED, ImportArticleError
 
@@ -49,6 +50,31 @@ _X_LOGIN_TEXT_MARKERS = ("Log in", "Sign up")
 _X_LOGIN_MARKERS = _X_LOGIN_URL_MARKERS + _X_LOGIN_TEXT_MARKERS
 _X_PROSE_FLOOR = 220
 
+# ---- TASK 044: video sources via the transcript-fetcher skill ----------------
+# Video-host classification (R-1) — pure URL-shape, label-boundary matched (reuses `_X_HOSTS`).
+_VIDEO_HOSTS_YOUTUBE = ("youtube.com", "youtu.be", "youtube-nocookie.com")
+_VIDEO_HOSTS_VIMEO = ("vimeo.com",)
+_VIDEO_HOSTS_SKOOL = ("skool.com",)
+_X_BROADCAST_RE = re.compile(r"/i/(?:broadcasts|spaces)/\w", re.I)   # has no usable text path
+_X_STATUS_RE = re.compile(r"/[^/]+/status/\d+", re.I)               # text OR text+video (ambiguous)
+_SKOOL_LESSON_RE = re.compile(r"/classroom/", re.I)                # a lesson page (host alone ≠ video)
+_TRANSCRIPT_TIMEOUT_DEFAULT = 300                                   # Q-044-4 (env-overridable)
+
+# Embedded-video discovery on a not_video html page (R-13). Discovery runs over RAW HTML (the html
+# skill strips <iframe>/<video> before Markdown), so ad-exclusion is FIRST-CLASS & always-on.
+_EMBED_FETCH_MAX_BYTES = 2 * 1024 * 1024                            # size-cap on the raw-HTML GET
+_EMBED_CONTEXT_WINDOW = 600                                        # bounded char window for ad-context
+_EMBED_ALLOW_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "vimeo.com")  # SSRF egress bound
+_AD_NETWORK_HOSTS = ("doubleclick.net", "googlesyndication.com", "googleads.g.doubleclick.net",
+                     "g.doubleclick.net", "imasdk.googleapis.com", "2mdn.net", "adnxs.com",
+                     "adservice.google.")
+_AD_PARAM_KEYS = ("ad_type", "adformat", "ad_companion")
+# bounded, anchored alternation (no nested quantifiers — ReDoS-safe) over a fixed-length window
+_AD_CONTEXT_RE = re.compile(
+    r"\b(?:ads?|advert\w{0,12}|advertising|sponsored?|promo\w{0,8}|dfp|adsbygoogle|googlead\w{0,8}|"
+    r"outbrain|taboola|recommend\w{0,4}|related|widget)\b", re.I)
+_IFRAME_SRC_RE = re.compile(r"""<iframe\b[^>]{0,2000}?\bsrc=["']([^"']{1,2000})["']""", re.I)
+
 
 @dataclass
 class FetchResult:
@@ -57,9 +83,11 @@ class FetchResult:
     title: str | None = None
     author: str | None = None
     date: str | None = None
-    engine: str = ""                     # provenance of the fetch (html / pdf / local-md)
+    engine: str = ""                     # provenance of the fetch (html / pdf / local-md / transcript:<origin>)
     error: dict[str, Any] | None = None  # html/pdf typed error envelope on failure
     attachments_dir: Path | None = None  # downloaded images (image-import ON) → caller files them
+    quality_flag: str | None = None      # transcript stat quality_flag (e.g. english_auto_translation — R-8)
+    embed_log: list[dict[str, Any]] | None = None  # per-embed discovery/skip log (--embedded-videos, R-13f)
 
 
 def _fm_safe(value: str) -> str:
@@ -307,22 +335,333 @@ def _fetch_pdf_url(pdf_extract_bin: str, url: str) -> FetchResult:
         pdf.unlink(missing_ok=True)
 
 
+# ---- TASK 044: video-host classification + transcript fetch ----------------
+
+def _video_host(url: str) -> str:
+    """Classify `url` by video modality — PURE, URL-shape only, no I/O (R-1). Returns one of
+    `"unambiguous_video"` (the URL IS a video — YouTube/Vimeo/Skool-lesson/X-broadcast/space),
+    `"ambiguous_x_status"` (an x.com status — text OR text+video), or `"not_video"`. Host matching
+    is label-boundary (`evil-youtube.com` / `youtube.com.evil.net` → `not_video`)."""
+    if not url.startswith(("http://", "https://")):
+        return "not_video"
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    path = parts.path or ""
+
+    def _host_in(hosts: tuple[str, ...]) -> bool:
+        return any(host == h or host.endswith("." + h) for h in hosts)
+
+    if _host_in(_VIDEO_HOSTS_YOUTUBE) or _host_in(_VIDEO_HOSTS_VIMEO):
+        return "unambiguous_video"
+    if _host_in(_VIDEO_HOSTS_SKOOL):
+        return "unambiguous_video" if _SKOOL_LESSON_RE.search(path) else "not_video"
+    if _host_in(_X_HOSTS):
+        if _X_BROADCAST_RE.search(path):
+            return "unambiguous_video"
+        if _X_STATUS_RE.search(path):
+            return "ambiguous_x_status"
+    return "not_video"
+
+
+def _transcript_python(script_path: str) -> str:
+    """transcript-fetcher ships its deps in `scripts/.venv`; prefer that interpreter (mirrors
+    `_pdf_python`). Falls back to `python3` when the venv is absent."""
+    venv_py = Path(script_path).expanduser().resolve().parent / ".venv" / "bin" / "python"
+    return str(venv_py) if venv_py.exists() else "python3"
+
+
+def _transcript_timeout() -> int:
+    try:
+        return max(1, int(os.environ.get("WIKI_TRANSCRIPT_TIMEOUT_S",
+                                         str(_TRANSCRIPT_TIMEOUT_DEFAULT))))
+    except ValueError:
+        return _TRANSCRIPT_TIMEOUT_DEFAULT
+
+
+def _transcript_origin(stat: dict[str, Any]) -> str:
+    """Provenance label for `engine="transcript:<origin>"`. `transcript_origin` is X-media-only
+    (S0 finding — youtube/vimeo/skool never set it), so fall back to `chosen_track_kind`
+    (+ `asr_backend` when ASR) rather than emit a meaningless `unknown` for the common case."""
+    origin = stat.get("transcript_origin")
+    if not origin:
+        kind = stat.get("chosen_track_kind")
+        origin = (stat.get("asr_backend") or "asr") if kind == "asr" else (kind or "unknown")
+    return str(origin)
+
+
+def _map_transcript_error(rc: int, stderr: str, url: str) -> FetchResult:
+    """Map a transcript-fetcher non-zero exit into a wiki-import result (S0 translation table).
+    Exit 7 (MissingDependency) RAISES `ImportArticleError` → prepare exit 6 (R-7); 3/5/6/other →
+    a typed `FetchResult.error` the caller routes (no-media fallback / cookies hint / etc.)."""
+    upstream = _parse_skill_error(stderr, rc)
+    if rc == 7:  # MissingDependency (no ffmpeg / no ASR backend) → wiki-import DEP_MISSING (exit 6)
+        remediation = (upstream.get("details", {}) or {}).get("remediation") \
+            or "install ffmpeg + a whisper backend (whisper-cli, whisper.cpp, or MacWhisper)"
+        raise ImportArticleError(
+            "DEP_MISSING",
+            f"transcript-fetcher reports a missing dependency: {remediation}",
+            exit_code=EXIT_DEP_MISSING,
+            details={"url": url, "kind": "no_asr_backend", "remediation": remediation,
+                     "upstream": upstream})
+    if rc == 3:  # no transcript producible → typed no-media marker (consumed by dispatch — R-6)
+        return FetchResult(ok=False, engine="transcript", error={
+            "error": "NoMedia", "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+            "details": {"url": url, "kind": "no_media", "upstream": upstream}})
+    if rc == 5:  # source-auth (HTTP 401/403) → cookies guidance (R-10)
+        return FetchResult(ok=False, engine="transcript", error={
+            "error": "transcript source needs auth (HTTP 401/403); supply "
+                     "--cookies-from-browser <browser> or --cookies-file <path>.",
+            "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+            "details": {"url": url, "kind": "auth", "upstream": upstream}})
+    if rc == 6:  # source rate-limit (HTTP 429) → transient FETCH_FAILED (S0 #3)
+        return FetchResult(ok=False, engine="transcript", error={
+            "error": "transcript source rate-limited (HTTP 429); retry later.",
+            "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+            "details": {"url": url, "kind": "rate_limit", "upstream": upstream}})
+    return FetchResult(ok=False, engine="transcript", error={  # 2 usage / 1 unexpected / other
+        "error": "FetchFailed", "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+        "details": {"url": url, "kind": "transcript_error", "rc": rc, "upstream": upstream}})
+
+
+def _fetch_transcript(transcript_bin: str, url: str, *, lang: str,
+                      max_duration_min: float | None = None,
+                      cookies_from_browser: str | None = None,
+                      cookies_file: str | None = None) -> FetchResult:
+    """URL → transcript via the transcript-fetcher skill (R-3). Shells out (argv array — NF-3a)
+    to the skill's own venv python, reads the `.txt` + sibling `.stat.json`, sets
+    `engine="transcript:<origin>"`, and maps typed exits. Temp dir reclaimed in a `finally`
+    (R-3g). `--with-description` (so the stat carries title/uploader/date — S0) + `--lang`
+    (ALWAYS, never the skill's `ru` default — C-3) + `--json-errors` are always passed."""
+    bin_path = require_bin(transcript_bin, "transcript")
+    tmpdir = tempfile.mkdtemp(prefix="wiki-import-transcript-")
+    out_txt = Path(tmpdir) / "t.txt"
+    argv = [_transcript_python(bin_path), bin_path, url, "--out", str(out_txt),
+            "--json-errors", "--with-description", "--lang", lang]
+    if max_duration_min is not None:
+        argv += ["--max-duration-min", str(max_duration_min)]
+    if cookies_from_browser:
+        argv += ["--cookies-from-browser", cookies_from_browser]
+    if cookies_file:
+        argv += ["--cookies-file", cookies_file]
+
+    def _fail(kind: str) -> FetchResult:
+        return FetchResult(ok=False, engine="transcript", error={
+            "error": "FetchFailed", "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
+            "details": {"url": url, "kind": kind}})
+
+    try:
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True,
+                                  timeout=_transcript_timeout(), env=_skill_env())
+        except subprocess.TimeoutExpired:
+            return _fail("timeout")
+        except (OSError, ValueError):
+            return _fail("spawn_failed")
+        if proc.returncode != 0:
+            return _map_transcript_error(proc.returncode, proc.stderr, url)
+        raw_text = out_txt.read_text(encoding="utf-8", errors="replace") if out_txt.exists() else ""
+        if not raw_text.strip():
+            return _fail("no_output")
+        stat: dict[str, Any] = {}
+        sidecar = Path(str(out_txt) + ".stat.json")
+        if sidecar.exists():
+            try:
+                loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    stat = loaded
+            except (json.JSONDecodeError, OSError):
+                stat = {}
+        return FetchResult(
+            ok=True, raw_text=raw_text, engine=f"transcript:{_transcript_origin(stat)}",
+            title=(stat.get("title") or None), author=(stat.get("uploader") or None),
+            date=(stat.get("upload_date") or None), quality_flag=(stat.get("quality_flag") or None))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _fetch_x_status_with_video(html_bin: str, transcript_bin: str, url: str, *, lang: str,
+                               download_images: bool = False,
+                               max_duration_min: float | None = None,
+                               cookies_from_browser: str | None = None,
+                               cookies_file: str | None = None) -> FetchResult:
+    """Decision 3 (R-5): `--video` on an x-status → CONCATENATE the tweet prose (html) with the
+    video transcript. A transcript failure (no-media/auth/rate/dep) degrades to html-only when the
+    tweet text is available; only when html ALSO fails is the transcript error surfaced."""
+    html_res = _fetch_html(html_bin, url, download_images=download_images)
+    try:
+        tr = _fetch_transcript(transcript_bin, url, lang=lang, max_duration_min=max_duration_min,
+                               cookies_from_browser=cookies_from_browser, cookies_file=cookies_file)
+    except ImportArticleError:
+        # video dep-missing: the tweet text is still useful → html-only WHEN html succeeded; but if
+        # html ALSO failed (e.g. a login-walled tweet) re-raise so prepare surfaces the actionable
+        # DEP_MISSING (exit 6 + remediation), not a generic FETCH_FAILED (symmetric with the no-media/
+        # auth/rate branch below; matches this function's contract — VDD L-1).
+        if html_res.ok:
+            return html_res
+        raise
+    if not tr.ok:
+        return html_res if html_res.ok else tr   # no-media/auth/rate → html-only (R-5d/R-6)
+    if not html_res.ok:
+        return tr                                 # transcript-only (R-5c)
+    body = (f"## Tweet\n\n{html_res.raw_text}\n\n"
+            f"## Video Transcript\n\n{tr.raw_text}")
+    return FetchResult(ok=True, raw_text=body, engine=f"html+{tr.engine}",
+                       title=(html_res.title or tr.title),
+                       author=(html_res.author or tr.author),
+                       date=(html_res.date or tr.date),
+                       quality_flag=tr.quality_flag,
+                       attachments_dir=html_res.attachments_dir)
+
+
+# ---- TASK 044 / R-13: embedded-video discovery (opt-in --embedded-videos) ----
+
+def _download_raw_html(url: str) -> str:
+    """Size-capped raw-HTML GET for embed discovery (mirrors `_download_pdf`; R-13b). The network
+    call lives HERE so `_discover_embedded_videos` stays a pure string→list function (Decision-17)."""
+    req = urllib.request.Request(
+        url, headers={"User-Agent": _PDF_FETCH_UA, "Accept": "text/html,*/*"})
+    chunks: list[bytes] = []
+    total = 0
+    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _EMBED_FETCH_MAX_BYTES:
+                break
+            chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _embed_allowlisted(url: str) -> bool:
+    """SSRF egress bound (R-13c): only youtube/vimeo embed hosts are ever fetched."""
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _EMBED_ALLOW_HOSTS)
+
+
+def _discover_embedded_videos(raw_html: str) -> list[tuple[str, str]]:
+    """PURE string→list (R-13b): scan raw HTML for `<iframe src>` and run the FIXED ad-exclusion
+    filter chain — allowlist → ad-network denylist → ad-context → ad-param → dedup. Returns an
+    ORDERED `(url, reason)` log for EVERY discovered embed (reason ∈ keep/not-allowlisted/
+    ad-denylist/ad-context/ad-param/dedup) — no silent drops (R-13f). Ad-exclusion is always-on."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for m in _IFRAME_SRC_RE.finditer(raw_html):
+        url = m.group(1).strip()
+        if url.startswith("//"):
+            url = "https:" + url
+        if not _embed_allowlisted(url):
+            out.append((url, "not-allowlisted"))
+            continue
+        if any(h in url.lower() for h in _AD_NETWORK_HOSTS):   # belt-and-braces: youtube-hosted IMA/ad
+            out.append((url, "ad-denylist"))
+            continue
+        window = raw_html[max(0, m.start() - _EMBED_CONTEXT_WINDOW):m.start()]
+        if _AD_CONTEXT_RE.search(window):                      # enclosing ad/related/aside slot
+            out.append((url, "ad-context"))
+            continue
+        if any(k in urlsplit(url).query.lower() for k in _AD_PARAM_KEYS):
+            out.append((url, "ad-param"))
+            continue
+        if url in seen:
+            out.append((url, "dedup"))
+            continue
+        seen.add(url)
+        out.append((url, "keep"))
+    return out
+
+
+def _append_embedded_videos(res: FetchResult, page_url: str, *, transcript_bin: str,
+                            lang: str, max_n: int) -> None:
+    """R-13: discover allowlisted, NON-AD video embeds on a `not_video` page and APPEND their
+    transcripts to `res.raw_text` (best-effort, additive — a per-embed failure NEVER aborts the
+    page; contrast the hard-fail on an unambiguous_video URL). Records the full skip-reason log on
+    `res.embed_log` (R-13f). Cap-dropped keeps are logged `cap`; nothing is silently truncated."""
+    try:
+        raw_html = _download_raw_html(page_url)
+    except Exception as e:  # noqa: BLE001 — the page import already succeeded; embeds are best-effort
+        res.embed_log = [{"reason": "discovery-failed", "detail": str(e)[:200]}]
+        return
+    log: list[dict[str, Any]] = []
+    sections: list[str] = []
+    fetched = 0
+    qflag: str | None = None
+    for url, reason in _discover_embedded_videos(raw_html):
+        if reason != "keep":
+            log.append({"url": url, "reason": reason})
+            continue
+        if fetched >= max_n:
+            log.append({"url": url, "reason": "cap"})
+            continue
+        try:
+            tr = _fetch_transcript(transcript_bin, url, lang=lang)
+        except ImportArticleError:
+            log.append({"url": url, "reason": "transcript-failure:dep"})
+            continue
+        if not tr.ok:
+            k = (tr.error or {}).get("details", {}).get("kind", "fail")
+            log.append({"url": url, "reason": f"transcript-failure:{k}"})
+            continue
+        fetched += 1
+        qflag = qflag or tr.quality_flag
+        log.append({"url": url, "reason": "fetched", "origin": tr.engine})
+        sections.append(f"\n\n## Embedded video {fetched} — {tr.title or url}\n\n{tr.raw_text}")
+    if sections:
+        res.raw_text = (res.raw_text or "") + "".join(sections)
+        res.engine = f"{res.engine}+embedded:{fetched}"
+        if qflag and not res.quality_flag:
+            res.quality_flag = qflag
+    res.embed_log = log
+
+
 # ---- public dispatch -------------------------------------------------------
 
 def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
-                   download_images: bool = False) -> FetchResult:
-    """Route `source` (URL or local file) to html / pdf and return a FetchResult.
+                   download_images: bool = False,
+                   transcript_bin: str | None = None, video: bool = False,
+                   embedded_videos: bool = False, embedded_videos_max: int = 5,
+                   lang: str = "en", max_duration_min: float | None = None,
+                   cookies_from_browser: str | None = None,
+                   cookies_file: str | None = None) -> FetchResult:
+    """Route `source` (URL or local file) to transcript / html / pdf and return a FetchResult.
 
-    `download_images` (config-driven; default ON at the prepare layer) makes the html skill
-    path download images into a sibling `_attachments/`. PDFs are text-only — no images.
-    Never writes anything — the caller persists `_raw/` only on a non-empty `ok` result.
+    TASK 044 prepends a media-tier BEFORE the html branch: an `unambiguous_video` URL goes to the
+    transcript-fetcher skill; an `ambiguous_x_status` goes to transcript ONLY with `video=True`
+    (else the existing html path, zero regression — NF-2). `embedded_videos` additively appends
+    transcripts of allowlisted, non-ad embeds found on a `not_video` html page. With all new flags
+    unset (and `transcript_bin=None`), behavior is byte-for-byte the pre-TASK-044 html/pdf dispatch.
+
+    `download_images` (config-driven; default ON at the prepare layer) makes the html skill path
+    download images into a sibling `_attachments/`. Never writes anything — the caller persists
+    `_raw/` only on a non-empty `ok` result.
     """
     is_url = source.startswith(("http://", "https://"))
     bare = source.split("?", 1)[0].lower()
+    host_class = _video_host(source) if is_url else "not_video"
 
+    # --- media-tier (R-2) ---
+    if is_url and host_class == "unambiguous_video":
+        # the URL IS the video → transcript only; no html fallback (exit-3 no-media is a hard
+        # FETCH_FAILED here — C-1; exit-7 dep raises → prepare exit 6 — R-7).
+        return _fetch_transcript(transcript_bin or "", source, lang=lang,
+                                 max_duration_min=max_duration_min,
+                                 cookies_from_browser=cookies_from_browser,
+                                 cookies_file=cookies_file)
+    if is_url and host_class == "ambiguous_x_status" and video:
+        return _fetch_x_status_with_video(
+            html_bin, transcript_bin or "", source, lang=lang,
+            download_images=download_images, max_duration_min=max_duration_min,
+            cookies_from_browser=cookies_from_browser, cookies_file=cookies_file)
+
+    # --- existing dispatch (unchanged for not_video / default x-status) ---
     if is_url and not bare.endswith(".pdf"):
         res = _fetch_html(html_bin, source, download_images=download_images)
         if res.ok:
+            # R-13: optionally append non-ad embedded-video transcripts on a not_video page
+            if embedded_videos and host_class == "not_video":
+                _append_embedded_videos(res, source, transcript_bin=transcript_bin or "",
+                                        lang=lang, max_n=embedded_videos_max)
             return res
         # the html skill says "HTML-only article has no HTML, use the PDF" → fall back.
         kind = (res.error or {}).get("details", {}).get("kind")

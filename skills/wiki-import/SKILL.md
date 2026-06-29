@@ -43,10 +43,12 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
 wiki-import prepare --vault <id> --vault-root <abs> \
   --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread
 ```
-Dispatches to `html` (URL/HTML — it already owns the Wikipedia-REST-HTML and
-arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits) or the `pdf`
-skill (PDF), writes `_raw/<slug>.md` **only on a non-empty fetch**, **detects the
-content-type** (`--kind auto`; override with `--kind`), and emits:
+Dispatches to one of **three** wrapped external skills (composition, not reinvention —
+extends ADR-001): `html` (URL/HTML — it already owns the Wikipedia-REST-HTML and
+arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits), the `pdf`
+skill (PDF), or **`transcript-fetcher`** (video — see *Video sources* below). It writes
+`_raw/<slug>.md` **only on a non-empty fetch**, **detects the content-type** (`--kind auto`;
+override with `--kind`), and emits:
 > **Reader-only:** the `html` path runs with `--reader-only`, so the skill emits a SINGLE
 > `<slug>.md` = the **reader extraction** (clean main content — no nav/"Skip to main
 > content"/"Edit page" chrome), with its own whole-page fallback when the reader is
@@ -56,6 +58,8 @@ content-type** (`--kind auto`; override with `--kind`), and emits:
 { action, raw_path, folder, slug, project, mode,
   kind, reason_harness, kind_confidence,            # ← content-type → which harness
   title, author, date, source_hash, images,         # images = count filed to _raw/_attachments/
+  quality_flag,                                      # transcript: non-null (e.g. english_auto_translation) → WARN the operator BEFORE REASON
+  embedded,                                          # --embedded-videos: per-embed [{url,reason}] log (fetched / ad-context / ad-denylist / cap / …); null otherwise
   known_concepts: [{slug,name}…], existing_page_slugs: […] }
 ```
 **The `_raw` is a self-contained capture (invariants):** it always carries a `source:`
@@ -68,6 +72,37 @@ capture (an Obsidian-clickable wikilink `[[_raw/<slug>]]`) and the original URL 
 `Source` line). `sources:` frontmatter keeps the machine-readable `_raw/` path (resummarization).
 On an unreachable/empty source it emits `{error:"FETCH_FAILED", upstream:…}` (exit 10)
 and writes **nothing** — file a `needs-manual` stub by hand.
+
+> ### Video sources (TASK 044 — the `transcript-fetcher` branch)
+> A **video URL routes deterministically by host** (URL-shape only — Decision-17, no LLM, no probe):
+> - **Unambiguous video** (`youtube.com`/`youtu.be`, `vimeo.com`, a Skool `/classroom/` lesson,
+>   `x.com|twitter.com/i/broadcasts/`+`/i/spaces/`) → **`transcript-fetcher`** automatically.
+>   `engine = transcript:<origin>` (origin = `transcript_origin` for X, else `chosen_track_kind` —
+>   e.g. `transcript:auto`/`transcript:embedded-captions`/`transcript:whisper-cli`). No html fallback:
+>   if the video has no producible transcript it is a hard `FETCH_FAILED` (there is no text path).
+> - **Ambiguous `x.com/<user>/status/<id>`** → stays the **`html`** path by default (most tweets are
+>   text — zero regression). Pass **`--video`** to ALSO fetch the embedded clip and **concatenate**
+>   (`## Tweet` + `## Video Transcript`, `engine = html+transcript:<origin>`); a tweet with no media
+>   degrades gracefully to html-only.
+> - **A non-video web page** is `not_video` → `html` as before. Pass **`--embedded-videos`** to ALSO
+>   discover + transcribe video embeds on the page and append them (`## Embedded video <k>`,
+>   `engine = html+embedded:<n>`). **Ad videos are ALWAYS excluded** (no off switch): the fixed chain is
+>   *allowlist (youtube/vimeo only — bounds egress) → ad-network denylist → ad-context → ad-param → dedup
+>   → cap*. `--embedded-videos-max N` (default 5) caps it; every discovered embed is logged in the
+>   envelope `embedded[]` with its keep/skip reason (no silent drops). Ad-exclusion is best-effort
+>   heuristic — a cleverly-disguised ad embed may slip; the opt-in + cap + per-embed skip bound the blast.
+>   (`--video` and `--embedded-videos` are mutually exclusive — passing both is a usage error, exit 2.)
+>
+> **Passthroughs** to the transcript subprocess: `--lang` is ALWAYS forwarded (the vault language; never
+> the skill's own `ru` default), plus `--max-duration-min` (clip long Broadcasts/Spaces),
+> `--cookies-from-browser`/`--cookies-file` (login-walled video). `--transcript-bin` overrides the
+> skill path (absent → exit 6 when a video URL is hit). Timeout via `WIKI_TRANSCRIPT_TIMEOUT_S` (default 300s).
+>
+> **Dependencies are path-dependent:** captioned YouTube/Vimeo/x-status-video need only **yt-dlp**
+> (light); caption-less **Broadcasts/Spaces** additionally need **ffmpeg + a whisper backend** (ASR) —
+> absent → a typed `DEP_MISSING` (exit 6) with remediation, never a junk `_raw`. A non-null
+> `quality_flag` in the envelope (e.g. `english_auto_translation`) MUST be **surfaced to the operator
+> before the REASON harness** runs.
 
 ### 2. REASON (the orchestrator's job — the one LLM step)
 Run the **one universal content harness** — **[`summarizing-meetings`](../summarizing-meetings/)**
@@ -123,8 +158,8 @@ note. Skipped candidates are reported in the manifest, never silently dropped.
 |---|---|
 | 0 | ok (`action:"prepared"` / `"imported"`) |
 | 2 | bad argument (bad note JSON, invalid slug, folder escapes vault) |
-| 6 | a dependency missing (`html`/`pdf` bin absent), or partial (index/concept-file failed) |
-| 10 | `FETCH_FAILED` (source unreachable/empty — propagated from html/pdf; no raw written) |
+| 6 | a dependency missing (`html`/`pdf`/`transcript` bin absent; or no ffmpeg/ASR backend for caption-less video — `transcript-fetcher` exit 7); or partial (index/concept-file failed) |
+| 10 | `FETCH_FAILED` (source unreachable/empty; or transcript no-media on an unambiguous-video URL / source-auth / rate-limit — propagated from html/pdf/transcript; no raw written) |
 
 ## Batch import
 For a list (the DAO/#01 pattern) the CLI stays **per-article**; the batch fan-out is a
@@ -133,14 +168,20 @@ documented **Workflow-tool recipe** — see [`workflows/wiki-import.md`](../../w
 write contention).
 
 ## Safety
-- Fetch is deterministic (the html/pdf skills) — never "convert in your head".
+- Fetch is deterministic (the html/pdf/transcript skills + URL-shape host routing) — never "convert in your head".
 - All write paths (`_raw/`, note, concepts) go through `validate_inside_vault` (R-26) +
   a target-symlink refusal; the slug passes `_is_valid_slug` (no traversal). YAML
   frontmatter scalars are newline/control-stripped + quoted (H-6 frontmatter-injection
   guard); the note body is orchestrator-authored markdown (kept structural); concept pages
   are markdown-sanitized by `wiki-extract-concepts`.
-- `html`/`pdf` are external skill **binaries** (`--html-bin`/`--pdf-extract-bin`,
-  fail-fast if absent) — not Python deps.
+- `html`/`pdf`/`transcript-fetcher` are external skill **binaries**
+  (`--html-bin`/`--pdf-extract-bin`/`--transcript-bin`, fail-fast if absent) — not Python deps.
+- **Untrusted-content egress bound (H-6):** `--embedded-videos` discovers embed URLs from an
+  untrusted page body, but only **allowlisted video hosts** (youtube/vimeo) are ever fetched — a
+  page cannot drive a fetch to an arbitrary host; ad-network embeds are denylisted; the raw-HTML
+  scan is size-capped and the discovery regex is ReDoS-safe (bounded). The transcript subprocess is
+  invoked via an argv array (never a shell string). Operator-supplied URLs to the transcript/pdf
+  subprocess are the same documented residual SSRF surface — run untrusted imports egress-restricted.
 
 ## Related
 - [`references/reason-contract.md`](references/reason-contract.md) — the canonical REASON-step contract (schema + depth + hard rules)

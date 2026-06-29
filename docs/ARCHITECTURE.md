@@ -253,6 +253,205 @@ path as `wiki-index-upsert`/`wiki-extract-concepts`). This replaces the TASK 038
 matrix are in [functional-architecture §2.3](./architectures/functional-architecture.md). The
 original (now-legacy) PARA-import design below is preserved for history.
 
+**§2.3.2 Transcript-fetcher: a third wrapped external skill for video sources (TASK 044 — extends ADR-001).**
+`dispatch_fetch` in `scripts/wiki_skills/wiki_import_article/_fetch.py` previously routed every
+source to one of TWO external skills (`html` or `pdf`). A video URL therefore hit the `html` skill
+and captured only the watch-page chrome — no spoken content. TASK 044 adds a THIRD external-skill
+fetch branch, `transcript-fetcher`, following the exact composition pattern of `html`/`pdf`
+(NF-2, ADR-001 "Wrap + Index").
+
+**External skill contract.** `transcript-fetcher` lives at
+`/Users/sergey/dev-projects/Universal-skills/skills/transcript-fetcher/`; its own venv is
+`scripts/.venv/bin/python scripts/fetch.py`. CLI: `fetch.py <URL> --out <path.txt> --json-errors
+[--lang <code>] [--prefer manual|auto] [--with-description] [--cookies-file PATH]
+[--cookies-from-browser BROWSER] [--max-duration-min N]`. Output: a plain-text `.txt` (no
+frontmatter) + a sibling `<out>.stat.json` sidecar carrying `transcript_origin`
+(`embedded-captions | macwhisper | whisper-cli | whisper-cpp | openai-api`), `quality_flag`
+(e.g. `english_auto_translation`), and title/uploader/duration. Optional `<out>.description.md`.
+Typed exit codes; exit 7 = `MissingDependency`. A `_transcript_python()` helper mirrors
+`_pdf_python()` — prefers the skill's own venv interpreter.
+
+**Routing table (DECISION 2 — hybrid, URL-shape + `--video` flag; Decision-17: zero LLM guesses,
+zero network probes in the default path).**
+
+| Source shape | Default route | `--video` flag |
+|---|---|---|
+| `youtube.com`, `youtu.be`, `vimeo.com` | transcript-fetcher AUTO | n/a (unambiguous) |
+| Skool lesson URL (`skool.com/*/…/lesson/`) | transcript-fetcher AUTO | n/a (unambiguous) |
+| `x.com/i/broadcasts/<id>`, `x.com/i/spaces/<id>` | transcript-fetcher AUTO | n/a (unambiguous) |
+| `x.com/<user>/status/<id>` (ambiguous: text OR video) | existing `html` path | forces transcript path |
+| Any other URL / local file | existing `html`/`pdf` dispatch (byte-identical) | — |
+
+Auto-routing applies only to hosts that have **no usable text path** (html returns login/landing
+chrome) — it is a pure win with zero regression. The ambiguous `status/<id>` URL stays on the html
+default (most tweets are text) so the existing text-only path is never broken.
+
+**Text + video concatenation for `--video` on a status URL (DECISION 3).** When `--video` is
+given on an `x.com/<user>/status/<id>` URL both fetches are run: the `html` skill (tweet prose)
+AND `transcript-fetcher` (video). The written `_raw/<slug>.md` = the tweet text as a header
+section followed by the video transcript as the body. Nothing is lost; neither branch is
+short-circuited.
+
+**Typed-error / FETCH_FAILED mapping and the no-media → html fallback.** The `_fetch_transcript()`
+function maps transcript-fetcher exit codes into `FetchResult.error` using the same
+`FetchResult(ok=False, engine="transcript:<origin>", error={…})` shape as `_fetch_html`/
+`_fetch_pdf_url`. Key behaviours:
+
+- **"No media" (transcript-fetcher exit 3 = "no transcript producible") — fallback is SCOPED BY
+  HOST CLASS:**
+  - on an **`ambiguous_x_status`** URL under `--video`, `_fetch_transcript` returns a typed
+    no-media result → `dispatch_fetch` falls back to the existing `_fetch_html` path (mirrors the
+    `arxiv_no_html` → pdf fallback). A misused `--video` flag degrades gracefully to the tweet prose.
+  - on an **`unambiguous_video`** URL (YouTube/Vimeo/Broadcast/Space) exit 3 maps to
+    **`FETCH_FAILED` (exit 10), NO html fallback** — there is no useful text path (html would return
+    only the watch-page chrome this task removes). Note exit 3 conflates genuine no-media with
+    "ASR produced nothing on real media"; on an unambiguous-video host both are a hard FETCH_FAILED.
+  No `_raw/` is written on an empty/failed result either way (R-3 holds).
+- **Broadcast/Space with no ASR backend (exit 7)** — mapped to the `FETCH_FAILED` envelope with
+  `DEP_MISSING` semantics (exit code 6), carrying an actionable "install ffmpeg + a whisper
+  backend" message. No `_raw/` is written on failure (R-3). The `--transcript-bin` flag enables
+  fail-fast absent-binary detection via the existing `require_bin()` helper.
+- **Login-walled video** — surfaces the same cookies guidance as the existing `_is_x_login_wall`
+  check; suggests `--cookies-from-browser` / `--cookies-file`.
+- **`quality_flag: english_auto_translation`** — surfaced to the operator in the prepare envelope
+  AND recorded in the note frontmatter provenance. This is a hard rule of the transcript-fetcher
+  skill.
+
+**Provenance.** `FetchResult.engine` is set to `transcript:<origin>`. As shipped (S0 contract
+verification against the real transcript-fetcher source): `transcript_origin` is set ONLY by the X
+adapter, so for youtube/vimeo/skool the origin falls back to the stat's `chosen_track_kind`
+(+`asr_backend` for ASR) — e.g. `transcript:embedded-captions` / `transcript:auto`. wiki-import
+ALWAYS passes `--with-description` (so the stat carries `title`/`uploader`/`upload_date`) and
+`--lang <vault-language>` (never the skill's `ru` default). The `.txt` output carries no frontmatter,
+so the existing `ensure_source_frontmatter()` function — which already handles the PDF/text-dump
+no-FM case — injects the `source:` field without any new code. The `<out>.txt.stat.json` sidecar +
+exit-code map (transcript 7→DEP_MISSING exit 6 · 6=rate-limit→FETCH_FAILED · 5=auth→cookies hint ·
+3=no-media) were pinned against the real source (resolves Q-044-2).
+
+**Content-type axis stays orthogonal (Decision-17 + `_detect.py` unaffected).** `--kind`
+detection in `_detect.py` is unchanged: a transcript body with timestamps/speaker-turns heuristically
+maps to `kind=meeting`; the operator may override `--kind`. The one universal `summarizing-meetings`
+harness handles all kinds — no new `kind` is introduced. The routing decision in `dispatch_fetch`
+is deterministic (URL shape + `--video` flag), never an LLM guess.
+
+**Path-dependent dependency posture.** Captioned YouTube/Vimeo/x-status-video need only `yt-dlp`
+(light path). Caption-less broadcasts/spaces additionally need `ffmpeg` + a whisper backend (ASR
+path). `ffmpeg` is REQUIRED for HLS sources; absent → exit 7 → `DEP_MISSING` envelope in
+`dispatch_fetch`. No new entry in `requirements.txt` — `transcript-fetcher` is an external binary
+(like `html`/`pdf`) loaded via `--transcript-bin` (or discovered via `require_bin()`), not a Python
+runtime import. **Zero new Python runtime deps; zero SQLite DDL** (`user_version` 7 untouched).
+
+**Invariants preserved.** Decision-17 (no `import anthropic`; deterministic routing); Class A/B/C
+layering (`_raw/` written only on a non-empty `ok` result, R-3); `validate_inside_vault` + H-6
+frontmatter-injection guards on all write paths (R-26); vendor-agnostic (subprocess + flags, runs
+identically under claude/codex/gemini/pi/hermes); zero-DDL posture. New CLI flags (`--video`,
+`--transcript-bin`, `--max-duration-min`, `--cookies-from-browser`, `--cookies-file`, `--lang`)
+land in `__init__.py`/`__main__.py` and are passed through to `dispatch_fetch`. Design residuals:
+Q-044-1.
+
+**§2.3.3 Embedded-video discovery (opt-in `--embedded-videos`) — TASK 044 R-13.**
+When the operator passes `--embedded-videos`, `dispatch_fetch` extends the `not_video` html path:
+after the html skill fetches the page prose it also discovers, filters, and transcribes `<iframe>`
+video embeds found in the raw HTML. The flag is **off by default** and is a **NO-OP** on
+`unambiguous_video` and `ambiguous_x_status` URLs (those are `--video`'s domain). Passing both
+`--video` and `--embedded-videos` on the same URL is a usage error (exit 2).
+
+**Why raw-HTML scan, not html-skill output.** The html skill (`preprocess.py`) strips `<iframe>`
+and `<video>` elements before emitting Markdown, and its `meta.json` sidecar carries no embed
+URLs. Composing with the html skill's output is therefore impossible for embed discovery — the
+raw page HTML must be read directly. Discovery uses a **single SIZE-CAPPED raw-HTML GET** (reuses
+the `urllib` + browser-UA + byte-cap pattern of `_download_pdf`; cap constant
+`_EMBED_FETCH_MAX_BYTES`, default 2 MB) followed by a bounded, anchored, ReDoS-safe regex scan
+for video-embed URL patterns. The raw-HTML GET is the only additional network call; the html
+skill's own fetch (which already ran for the article prose) is separate and unchanged. Design
+rationale: Q-044-9 / Q-044-10.
+
+**Filter chain — order is fixed and always applied in full when `--embedded-videos` is set.**
+
+```
+allowlist → ad-network denylist → ad-context → ad-param → dedup → cap → fetch
+```
+
+1. **Allowlist (H-6 / SSRF).** Only known video-host embed patterns pass:
+   `youtube.com/embed`, `youtube-nocookie.com/embed`, `youtu.be`, `player.vimeo.com/video`,
+   `vimeo.com`. Any `<iframe src>` not matching is silently dropped — the page cannot trigger a
+   fetch to an arbitrary host. Residual SSRF surface (operator-trusted, allowlisted hosts only)
+   is documented in `skills/wiki-import/SKILL.md` alongside the pdf residual.
+
+2. **Ad-network host denylist (always-on belt-and-braces).** Drop any embed whose host matches
+   a known ad-network domain: `doubleclick.net` (incl. `*.doubleclick.net`,
+   `googleads.g.doubleclick.net`, `g.doubleclick.net`), `googlesyndication.com` (incl.
+   `pagead2.googlesyndication.com`), `imasdk.googleapis.com` (Google IMA SDK), `2mdn.net`,
+   `adnxs.com`, `adservice.google.*`. Most of these are already rejected at step 1 (outside the
+   allowlist), but they are listed explicitly here as a belt-and-braces guard against
+   youtube-hosted IMA/ad URLs that carry an allowlisted host but resolve to an ad endpoint.
+   Logged as skip reason `ad-denylist`.
+
+3. **Ad-context exclusion (always-on, bounded scan).** Skip any allowlisted embed whose
+   ENCLOSING element (inspected within a **bounded character window** around each matched
+   `<iframe>` — not a full DOM parse) carries class/id/data-* attributes that signal an ad or
+   non-content slot. Word-boundary, case-insensitive match on:
+   `ad`, `ads`, `advert`, `advertisement`, `advertising`, `sponsor`, `sponsored`, `promo`,
+   `promoted`, `dfp`, `adsbygoogle`, `googlead`, `outbrain`, `taboola`, `recommend`, `related`,
+   `widget`. Also excluded: embeds inside `<ins class="adsbygoogle">`, inside `<aside>`, inside
+   `[role=complementary]`, and inside `[aria-hidden="true"]`. The scan uses a fixed-length
+   character window and bounded-quantifier regex — no nested quantifiers, ReDoS-safe by
+   construction (same posture as the layout-config load-gate). Logged as skip reason `ad-context`.
+
+4. **YouTube ad-param drop (always-on).** Drop any youtube/youtube-nocookie embed URL carrying
+   ad marker query parameters: `ad_type`, `adformat`, `ad_companion` (case-insensitive key match
+   on the parsed query string). Logged as skip reason `ad-param`.
+
+5. **Dedup.** The same embed URL appearing multiple times in the raw HTML is fetched once
+   (set-based dedup applied after ad-exclusion, before cap). Logged as skip reason `dedup`.
+
+6. **Cap (`--embedded-videos-max N`, default 5).** Applied after ad-exclusion and dedup, so
+   ad embeds never consume cap slots. Embeds surviving filtering beyond N are dropped; a note
+   naming the count dropped is appended to the prepare envelope's `details` list. Logged as
+   skip reason `cap`.
+
+7. **Fetch.** Each surviving embed URL is passed to the existing `_fetch_transcript()` function
+   (reused without modification) with `--lang` always forwarded (R-11 invariant).
+
+**Ad-exclusion is always-on — there is no flag to disable it.** When `--embedded-videos` is
+active, the three ad-exclusion filters (steps 2–4) are unconditional. Advertising and promotional
+embeds must never be transcribed; this is an operator hard requirement. The `--embedded-videos`
+flag itself is the opt-in control; ad-exclusion has no separate toggle. Design rationale:
+Q-044-11.
+
+**Per-embed failure isolation (contrast §2.3.2's hard-fail).** A transcript failure for one
+embed (exit 3 no-media / exit 7 dep-missing / exit 5 auth) is skipped with a logged note in the
+envelope `details` and does NOT abort the page import — the article prose remains the primary
+content and `_raw` is still written. This is the inverse of the `unambiguous_video` path in
+§2.3.2, where exit 3 is a hard `FETCH_FAILED`: embedded videos are supplementary, not primary.
+
+**Skip-reason logging — no silent behavior.** The prepare envelope's `details` MUST log every
+discovered embed URL and the reason it was skipped or fetched. Skip reasons are exactly:
+`ad-denylist` / `ad-context` / `ad-param` / `not-allowlisted` / `dedup` / `cap` /
+`transcript-failure`. An embed that proceeds to fetch and fails is logged as
+`transcript-failure`. No embed is silently dropped at any filtering stage.
+
+**`_raw` assembly and provenance.** `_raw` = article prose (primary output of the html skill
+fetch), with each successfully transcribed embed appended as a level-2 heading:
+`## Embedded video <k> — <title or url>`. `FetchResult.engine = "html+embedded:<count_transcribed>"`,
+where `count_transcribed` is the number of embeds that produced a transcript. `_raw` is written
+only if the html result was ok and non-empty (R-3 invariant); embedded transcripts are strictly
+additive. Each embed's `transcript_origin` is preserved in its heading; any `quality_flag`
+(e.g. `english_auto_translation`) from any embed sidecar is aggregated and surfaced in the
+prepare envelope per R-8.
+
+**Reuse.** `_fetch_transcript()`, `_video_host()` (for allowlist matching), `require_bin`,
+`ensure_source_frontmatter`, and `_fm_safe` are all reused without modification; no fetch or
+parse logic is duplicated. Zero new Python runtime deps; zero SQLite DDL (`user_version` 7
+untouched). `mypy --strict scripts/` clean; no `import anthropic` (Decision-17).
+
+**Ad-exclusion residual.** Ad-exclusion is a heuristic — a sufficiently disguised embed (no ad
+signal in class/id, allowlisted host, no ad query params) may slip through. The residual is
+bounded by: (1) `--embedded-videos` is opt-in, (2) cap bounds total embed count, (3) per-embed
+failure isolation means a slipped-through ad that returns no transcript is logged harmlessly,
+(4) full skip-reason logging gives the operator visibility. The residual and its boundary
+conditions are documented in `skills/wiki-import/SKILL.md`. Design rationale: Q-044-11.
+
 **(TASK 038 — legacy framing, retained)** The framework's Karpathy construct path is `wiki-enrich` → external
 `wiki-ingest` → (Phase 2) `summarizing-meetings` → concept/entity wiring → index, whose
 load-bearing discipline is *passing the known-concepts list to the summary generator* so
@@ -404,7 +603,9 @@ RESOLVED foundational decisions (11a), defer-able items (11b), and the
 architecture-specific open/resolved **Q-0XX** entries (11c) — every shipped TASK's
 design rationale lives here (the layout engine Q-012, metadata filter Q-013/033,
 vault-local DB Q-022, typed classes/event graph Q-031/032, temporal `--as-of`
-Q-034, and the TASK 035 FTS-narrowed tag-membership **Q-035-1/2**).
+Q-034, the TASK 035 FTS-narrowed tag-membership **Q-035-1/2**, and the TASK 044
+transcript-fetcher video routing **Q-044-1**; embedded-video design rationale +
+ad-exclusion heuristic **Q-044-9/Q-044-10/Q-044-11**).
 
 → [details](./architectures/open-questions.md)
 

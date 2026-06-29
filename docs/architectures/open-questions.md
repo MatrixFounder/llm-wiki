@@ -1186,3 +1186,105 @@
   code-workflows — this framework's markdown workflow *recipes* are skill-referenced prose, not
   ported. 1671 pytest, mypy strict, zero DDL.
 
+### 11h. TASK 044 — video sources for wiki-import (design rationale)
+
+- **Q-044-1 (TASK 044 — residuals: `--max-duration-min` default, status auto-detection probe,
+  cookies UX).**
+  Three design choices left open intentionally to avoid speculative complexity:
+
+  **(a) Default for `--max-duration-min`.** The transcript-fetcher skill accepts this cap to
+  refuse unexpectedly long media (DoS guard). No default is established in the TASK 044 design
+  (the operator may pass it explicitly). **Resolved default = NONE (no cap)** by the
+  skip-speculative-limits principle; the skill's own internal cap (if any) applies. A
+  recommended value (e.g. 180 min) should be determined from dogfood on real broadcast/space
+  sources and may be added as a config key in `WIKI_SCHEMA.md` without any DDL change.
+
+  **(b) `x.com/<user>/status/<id>` auto-detection: should it ever probe the URL to detect
+  a video?** **DECIDED: NO** — permanently. A network probe in `dispatch_fetch`'s default
+  path violates Decision-17 (deterministic routing; no network in the classify step). The
+  `--video` flag is the explicit opt-in for an ambiguous status URL; there is no case where a
+  silent network probe is acceptable. This question is CLOSED.
+
+  **(c) Cookies UX for login-walled video.** The current design surfaces the same
+  `--cookies-from-browser` / `--cookies-file` guidance as the existing `_is_x_login_wall`
+  path. A future UX improvement — e.g. a vault-level `cookies_from_browser:` config key in
+  `WIKI_SCHEMA.md` so the operator need not repeat the flag — is a non-blocking follow-up.
+  Zero DDL (it would be a `WIKI_SCHEMA.md` schema extension, Class A identity layer).
+  **Non-blocking; defer to a later hardening task.**
+
+- **Q-044-9 (TASK 044 R-13 — embedded-video design rationale: why a capped raw-HTML scan).**
+  The natural first instinct for discovering embedded videos in an article page would be to
+  reuse the html skill's output — the same subprocess already runs for the article prose, and
+  reusing its Markdown avoids a second GET. This approach was investigated and ruled out:
+
+  **(a) The html skill strips iframes before emitting Markdown.** The html skill's preprocessing
+  pipeline (preprocess.py lines ~1079–1116) removes `<iframe>`, `<object>`, and `<embed>` elements
+  before the reader extraction step. The emitted `.md` file therefore contains no iframe src
+  attributes — there is nothing to scan for embed URLs.
+
+  **(b) The html skill's `meta.json` sidecar does not carry embed URLs.** The sidecar records
+  the page's title, author, date, language, and engine provenance. It does not record a list of
+  iframe/video sources encountered during preprocessing. There is no field to read.
+
+  **(c) Consequence: raw-HTML scan is the only viable mechanism.** The raw page HTML (before the
+  html skill's stripping pass) is the only representation that contains `<iframe src>` attributes.
+  A single SIZE-CAPPED raw-HTML GET (reusing the `urllib` + browser-UA + byte-cap pattern of
+  `_download_pdf`, cap constant `_EMBED_FETCH_MAX_BYTES`, default 2 MB) followed by a bounded,
+  anchored, ReDoS-safe regex scan is the correct approach. This is one additional network call
+  per `--embedded-videos` invocation; the html skill's own fetch (for the article prose) is
+  separate, unchanged, and already complete at the point discovery runs.
+
+  **(d) No alternative remains.** All other mechanisms considered (html skill DOM output,
+  `meta.json` extension, a separate readability pass on the html skill's intermediate state)
+  require modifying the html skill's interface contract. The raw-HTML scan approach is the only
+  option that is zero-dep, zero-DDL, and leaves the html skill unchanged. **CLOSED.**
+
+- **Q-044-10 (TASK 044 R-13 — discovery mechanism: html-skill-compose ruled out; raw-HTML scan
+  chosen; CLOSED).**
+  Directly confirmed by Q-044-9 analysis. The discovery mechanism is: a single SIZE-CAPPED
+  raw-HTML GET to the same page URL the html skill fetched, followed by a bounded regex scan
+  for `<iframe src="...">` patterns matching the video-host allowlist. The regex is anchored and
+  uses bounded quantifiers (no unbounded `.*`), identical ReDoS posture to the layout-config
+  load-gate. Composing with the html skill's output is ruled out (html skill strips iframes;
+  `meta.json` carries no embed URLs). No alternative mechanism exists without modifying the
+  html skill's contract. This question is **CLOSED** — the design is settled.
+
+- **Q-044-11 (TASK 044 R-13 — ad-exclusion heuristic + documented residual; security posture).**
+  The three ad-exclusion filters (ad-network denylist / ad-context / ad-param) are deterministic
+  string/regex heuristics. They are not a DOM parser (which would require an additional Python
+  dependency, violating zero-new-deps) and not an LLM judgment (Decision-17: deterministic
+  plumbing only). This design choice has a documented residual: a sufficiently disguised ad embed
+  (no ad signal in class/id attributes, allowlisted host like `youtube.com`, no ad query params)
+  may slip through.
+
+  **(a) Why the residual is acceptable.** Four independent boundaries contain the blast radius:
+  (1) `--embedded-videos` is opt-in — the operator explicitly activated the feature;
+  (2) `--embedded-videos-max` (default 5) caps total embed processing;
+  (3) per-embed failure isolation means a slipped-through ad that produces no transcript is
+  logged as `transcript-failure` and discarded harmlessly;
+  (4) the prepare envelope's `details` log gives the operator full visibility over every
+  discovered embed and its disposition. A worst-case slipped-through ad embed that actually
+  produces a transcript is a transcript of an ad appearing in the `_raw` file — a clearly
+  anomalous entry the operator will notice and can remove manually. No data is lost; no
+  additional pages are written; no DB rows are affected.
+
+  **(b) ReDoS safety of the ad-context bounded scan.** The ad-context exclusion inspects the
+  enclosing element of each matched `<iframe>` by extracting a fixed-length character window
+  from the raw HTML around the iframe's byte offset. The attribute match over that window uses
+  a simple alternation of literal strings with word-boundary anchors (`\b(ad|ads|advert|…)\b`
+  with `re.IGNORECASE`) — no nested quantifiers, no backreferences, no unbounded `.*` across
+  the window. The window is a fixed-size string slice (constant `_AD_CONTEXT_WINDOW_BYTES`,
+  proposed 2048 bytes), making the input to the regex always bounded. An attacker who controls
+  the page HTML cannot cause catastrophic backtracking: the worst case is a 2 KB input to a
+  simple alternation regex, which is O(N) in the input length. This analysis is identical in
+  structure to the layout-config ReDoS load-gate (Q-017-1/2). **Security reviewer sign-off
+  required** before the implementation is merged (TASK 044 AC-5 VDD gate: `critic-security`
+  must approve the bounded-regex ReDoS analysis and the allowlist+denylist SSRF containment).
+
+  **(c) Relationship to Decision-17.** The three ad-exclusion filters are implemented as
+  deterministic, network-free heuristics in Python (no subprocess, no LLM call, no additional
+  GET beyond the single capped raw-HTML fetch already performed for discovery). This is fully
+  consistent with Decision-17 (deterministic plumbing; the calling orchestrator owns reasoning).
+  The filters are unconditional when `--embedded-videos` is active — there is no flag to disable
+  them. **Non-blocking; design is settled; implementation review pending.**
+

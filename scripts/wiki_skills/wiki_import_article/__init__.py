@@ -89,6 +89,7 @@ __version__ = "1.0"
 
 _DEFAULT_HTML = "~/.claude/skills/html/scripts/html2md.py"  # `html` skill; html2md.py is the combined URL→md command
 _DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
+_DEFAULT_TRANSCRIPT = "~/.claude/skills/transcript-fetcher/scripts/fetch.py"  # TASK 044 (Q-044-1); absent → exit 6
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 # MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
 # lowercase-kebab slug, decoupled from the vault's layout `slug_strategy` (karpathy's
@@ -111,12 +112,26 @@ def _mint_strategy(slug_strategy: str) -> str:
     return _MINT_SLUG if slug_strategy == "identity" else slug_strategy
 
 
+_SLUG_MAX_BYTES = 180  # filesystem-safe: `<slug>.md` stays well under NAME_MAX (255 bytes/component)
+
+
 def _derive_slug(title: str | None, source: str, slug_strategy: str) -> str:
     base = (title or "").strip()
     if not base:
         base = source.rstrip("/").rsplit("/", 1)[-1].split("?", 1)[0]
     base = _EXT_RE.sub("", base)
-    return _apply_slug_strategy(base, slug_strategy)
+    slug = _apply_slug_strategy(base, slug_strategy)
+    # Cap the slug to a filesystem-safe byte length: a titleless source (e.g. an x.com tweet whose
+    # whole body becomes the og:title) yields a >255-byte filename → `OSError [Errno 63] File name
+    # too long` at write_bytes. Truncate byte-safe (UTF-8/Cyrillic-aware), then back off to a hyphen
+    # boundary and strip trailing separators so the slug stays valid.
+    if len(slug.encode("utf-8")) > _SLUG_MAX_BYTES:
+        slug = slug.encode("utf-8")[:_SLUG_MAX_BYTES].decode("utf-8", errors="ignore")
+        cut = slug.rfind("-")
+        if cut >= 20:
+            slug = slug[:cut]
+        slug = slug.strip("-")
+    return slug
 
 
 # --------------------------------------------------------------------------- prepare
@@ -177,6 +192,14 @@ def prepare(args: argparse.Namespace) -> int:
             html_bin=args.html_bin,
             pdf_extract_bin=args.pdf_extract_bin,
             download_images=layout.import_images,   # config-driven, default ON
+            transcript_bin=args.transcript_bin,     # TASK 044: video sources
+            video=args.video,
+            embedded_videos=args.embedded_videos,
+            embedded_videos_max=args.embedded_videos_max,
+            lang=note_lang,                         # ALWAYS forward the vault language (C-3)
+            max_duration_min=args.max_duration_min,
+            cookies_from_browser=args.cookies_from_browser,
+            cookies_file=args.cookies_file,
         )
     except ImportArticleError as e:
         return emit(e.envelope(), exit_code=e.exit_code)
@@ -298,6 +321,11 @@ def prepare(args: argparse.Namespace) -> int:
         "engine": result.engine,
         "source_hash": source_hash,
         "images": n_images,
+        # TASK 044: a non-null quality_flag (e.g. english_auto_translation) MUST be surfaced to the
+        # operator BEFORE the REASON harness runs (R-8c); the embedded log records every discovered
+        # embed + WHY it was skipped (ad-denylist/ad-context/cap/… — R-13f, no silent drops).
+        "quality_flag": result.quality_flag,
+        "embedded": result.embed_log,
         "known_concepts": known,
         "existing_page_slugs": existing,
     })
@@ -693,6 +721,24 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
                     help="path to the `html` skill combined command (default: the deployed symlink)")
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
+    # TASK 044 — video sources via the transcript-fetcher skill.
+    pp.add_argument("--transcript-bin", dest="transcript_bin", default=_DEFAULT_TRANSCRIPT,
+                    help="transcript-fetcher fetch.py (absent → exit 6 when a video URL is hit)")
+    # --video (force transcript for an ambiguous x-status) and --embedded-videos (discover + append
+    # non-ad embeds on a not_video page) are mutually exclusive — argparse rejects both with exit 2.
+    _vid = pp.add_mutually_exclusive_group()
+    _vid.add_argument("--video", action="store_true",
+                      help="force the transcript path for an ambiguous x.com/status URL (concat text+video)")
+    _vid.add_argument("--embedded-videos", dest="embedded_videos", action="store_true",
+                      help="on a non-video html page, discover + transcribe NON-AD video embeds (ads always excluded)")
+    pp.add_argument("--embedded-videos-max", dest="embedded_videos_max", type=int, default=5,
+                    help="cap on embedded videos transcribed (default 5); overflow logged, never silently dropped")
+    pp.add_argument("--max-duration-min", dest="max_duration_min", type=float, default=None,
+                    help="passthrough: transcribe only the first N minutes (long Broadcasts/Spaces)")
+    pp.add_argument("--cookies-from-browser", dest="cookies_from_browser", default=None,
+                    help="passthrough: load cookies from a local browser (login-walled video)")
+    pp.add_argument("--cookies-file", dest="cookies_file", default=None,
+                    help="passthrough: Netscape cookies.txt path (login-walled video)")
     pp.set_defaults(func=prepare)
 
     ap = sub.add_parser("apply", help="Author the PARA note + file concepts + index.")
