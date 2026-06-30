@@ -679,7 +679,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 
 #### 6.2 Business Constraints
 
-- **MVP — для одного пользователя** (innokentiy.georgievskiy@mdcloud.tech), один vault.
+- **MVP — для одного пользователя** (the operator), один vault.
 - **Open source** (или internal use) — нет PII protection требований сверх R-Privacy.
 - **Бюджет токенов** [auditable математика — runtime verification через `llm_tokens_used` JSON field из UC-06 step 9 / UC-07 step 12]:
   - **Model pinning**: `wiki.transcript.model` в CLAUDE.md `wiki:` block, default `claude-sonnet-4-6` (latest stable Sonnet, knowledge cutoff Jan 2026). Price-table (Anthropic public pricing as of 2026-05): Sonnet 4.6 = $3 / $15 per M input/output tokens. Haiku 4.5 = $0.80 / $4 per M. Эти числа должны сверяться при benchmark-suite runs (R-14).

@@ -124,6 +124,20 @@ class TranscriptDedupConfig:
 
 
 @dataclass(frozen=True)
+class SummarizeConfig:
+    """TASK 046 P3 — per-zone distil knobs wiki-sync passes to the delegated wiki-import.
+    `profile` resolves to the wiki-import `--kind` (`auto` → wiki-import auto-detects;
+    `meeting`/`lesson` → pyramid grammar; `article` → article wrapper). The defaults below
+    are EXACTLY the P2 hardcoded delegate (auto / no diagrams / concepts ON / no subdir), so
+    a vault with no `summarize:` block is byte-identical to P2 (back-compat / R-12)."""
+
+    profile: str = "auto"
+    diagrams: bool = False
+    extract_concepts: bool = True
+    target_subdir: str = ""
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     """The merged `.wiki/sync.yaml` the dispatcher consumes.
 
@@ -141,6 +155,7 @@ class SyncConfig:
     extensions_skip: tuple[str, ...] = field(default_factory=tuple)
     resummarize: ResummarizeConfig | None = None
     transcript_dedup: TranscriptDedupConfig | None = None
+    summarize: SummarizeConfig | None = None
 
 
 class _NoAliasSafeLoader(yaml.SafeLoader):
@@ -223,7 +238,51 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
         extensions_skip=tuple(ext.get("skip") or ()),
         resummarize=_parse_resummarize(raw.get("resummarize")),
         transcript_dedup=_parse_transcript_dedup(raw.get("transcript_dedup")),
+        summarize=_parse_summarize(raw.get("summarize")),
     )
+
+
+def _is_safe_subdir(sub: str) -> bool:
+    """A `target_subdir` must be a SAFE relative POSIX subpath: no leading `/` (absolute),
+    no `..`/empty segment (traversal / `//`), no backslash, no control chars. Unicode +
+    spaces are allowed (Cyrillic folder names). Defense-in-depth at the config-validating
+    layer (H-6) — the downstream wiki-import `validate_inside_vault` still refuses escapes,
+    but a malformed path should be refused HERE (exit 6) not surface as a late INVALID_FOLDER."""
+    if sub.startswith("/") or "\\" in sub or any(ch < " " for ch in sub):
+        return False
+    parts = sub.split("/")
+    return ".." not in parts and "" not in parts
+
+
+def _parse_summarize(block: Any) -> SummarizeConfig | None:
+    """Build the typed `SummarizeConfig` from a schema-validated `summarize` block
+    (`None` when absent ≡ the P2 defaults). Already strict-validated, so the enum/types
+    are sound; apply the field defaults jsonschema does not inject. `target_subdir` is
+    normalised (strip + drop a trailing `/`) and path-validated (no escape/traversal —
+    raises INVALID_SYNC_CONFIG, value NOT echoed; CWE-209)."""
+    if not block:
+        return None
+    sub = str(block.get("target_subdir") or "").strip().rstrip("/")
+    if sub and not _is_safe_subdir(sub):
+        raise SyncConfigError(
+            "INVALID_SYNC_CONFIG",
+            "summarize.target_subdir must be a safe relative path "
+            "(no leading '/', no '..' segment, no backslash/control chars)")
+    return SummarizeConfig(
+        profile=str(block.get("profile") or "auto"),
+        diagrams=bool(block.get("diagrams", False)),
+        extract_concepts=bool(block.get("extract_concepts", True)),
+        target_subdir=sub,
+    )
+
+
+def load_summarize_raw(root: Path) -> dict[str, Any] | None:
+    """The RAW (un-parsed, schema-validated) ``summarize`` block of ``<root>/.wiki/sync.yaml``,
+    or ``None`` if absent. The per-folder cascade resolver deep-merges these RAW dicts
+    deepest-wins *before* applying defaults, so a folder override that sets only ``diagrams``
+    INHERITS the parent's ``profile`` (partial override). Reuses ``_load_validated_raw``."""
+    block = _load_validated_raw(root).get("summarize")
+    return block if isinstance(block, dict) else None
 
 
 def _parse_transcript_dedup(block: Any) -> TranscriptDedupConfig | None:

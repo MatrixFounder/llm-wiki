@@ -30,6 +30,7 @@
 
 - [1. Task Description](#1-task-description) (inline)
 - [1.5. Project Anatomy](#15-project-anatomy) → [architectures/project-anatomy.md](./architectures/project-anatomy.md)
+- [1.6. Skill / Command / Workflow Execution Model](#16-skill--command--workflow-execution-model) → [architectures/skill-command-workflow-model.md](./architectures/skill-command-workflow-model.md) (RU · [EN](./architectures/skill-command-workflow-model.en.md))
 - [2. Functional Architecture](#2-functional-architecture) → [architectures/functional-architecture.md](./architectures/functional-architecture.md)
 - [3. System Architecture](#3-system-architecture) → [architectures/system-architecture.md](./architectures/system-architecture.md)
 - [4. Data Model (Conceptual)](#4-data-model-conceptual) → [architectures/data-model.md](./architectures/data-model.md)
@@ -63,6 +64,26 @@
 Where things live in the repo: anatomy of one in-repo skill (template + symlink graph), `wiki-enrich` ↔ `wiki-ingest` integration flow (primary in-process path + subprocess fallback), dual-existence of `wiki-ingest` (Universal-skills standalone + this repo's vendored snapshot), and the vendored module's directory layout / sync policy / public API.
 
 → [details](./architectures/project-anatomy.md)
+
+---
+
+## 1.6. Skill / Command / Workflow Execution Model
+
+Как **один `/wiki-*` вызов реально исполняется** — how-to для человека (с presentation-ready
+mermaid-схемами). Объясняет: почему одно имя (`wiki-sync`) встречается как **command +
+SKILL + workflow (+ `bin/` + `scripts/`)** и почему это намеренный многоключевой биндинг,
+а не дубликат; **симлинк-разветвление** repo-root → `.claude/`/`.agent/`/глобальная
+установка (в `.claude/` **нет** `workflows/` — рецепт читается по пути через `Read`);
+**ленивая загрузка слоями** (Слой 0 `description`-меню → Слой 1 инжект тела харнессом →
+Слои 2–3 `Read`-цепочка workflow + `references/`); **детерминированная диспетчеризация** (`/`
+разрешает CLI, не LLM; команды слиты со скилами; одноимённая коллизия безвредна — оба входа
+сходятся на одном рецепте); и **управляющая структура workflow** (линейный спайн + цикл по
+`entries[]` + ветвления + per-file isolation, исполняемые оркестратором, тогда как
+детерминизм сидит в shell-out Decision-17 CLI). Дополняет [§1.5](#15-project-anatomy) (там —
+*где лежат файлы*; здесь — *что и откуда берётся при запуске*). Доступно на двух языках
+(держатся синхронными).
+
+→ [details (RU)](./architectures/skill-command-workflow-model.md) · [details (EN)](./architectures/skill-command-workflow-model.en.md)
 
 ---
 
@@ -251,7 +272,12 @@ AND articles/papers/threads; finished `summary`→register), and **layout (confi
 path as `wiki-index-upsert`/`wiki-extract-concepts`). This replaces the TASK 038 *layout-fork*
 (which left a PARA meeting transcript with no clean path); the single diagram + orthogonality
 matrix are in [functional-architecture §2.3](./architectures/functional-architecture.md). The
-original (now-legacy) PARA-import design below is preserved for history.
+original (now-legacy) PARA-import design below is preserved for history. **TASK 046 (converged
+construct pipeline)** makes `wiki-import` the **single per-source engine** (it absorbs office/`.vtt`
+acquire into `prepare`; `apply` picks output-grammar by `--kind` — pyramid for meeting/lesson, article
+otherwise; adds `--diagrams` + `--concepts/--no-concepts`) and turns `wiki-sync` into a **pure batch
+driver that delegates per item to `wiki-import`** — retiring the `wiki-sync`↔`wiki-import` acquire/distil
+overlap (one owner per concern; §2.3.4 + Q-046-1).
 
 **§2.3.2 Transcript-fetcher: a third wrapped external skill for video sources (TASK 044 — extends ADR-001).**
 `dispatch_fetch` in `scripts/wiki_skills/wiki_import_article/_fetch.py` previously routed every
@@ -516,7 +542,7 @@ layouts and any output language**:
   (reported, not a failure) — preserving the Class A/B rebuildability invariant (no orphaned,
   non-`--full`-rebuildable markdown).
 - **Layout `type_mapping` + ignore.** dev-project + cybos gained `summary`/`article-summary`/
-  `meeting-summary` → db_type summary (imported notes index); cybos also gained
+  `meeting-summary`/`lesson-summary` → db_type summary (imported notes index); cybos also gained
   concept/external/person/company/product/group (its concept pages index). karpathy +
   dev-project + cybos gained `**/_raw/**` in `ignore` (the `_raw/` capture is never indexed as a
   phantom page that could clobber the curated note on a shared `(vault_id, slug, project)`).

@@ -19,6 +19,8 @@ _CLASSES = {
     "reason-completeness", "reason-concepts", "reason-language",
     "security-injection", "mode-selection", "routing-video",
     "routing-embedded", "contract-apply",
+    "reason-grammar",       # TASK 046: pyramid-vs-article grammar + diagrams discipline
+    "acquire-degradation",  # TASK 046 P4: scanned-PDF graceful FETCH_FAILED + the OCR xfail tripwire
 }
 # The closed vocabulary of expectation fields (a typo'd field would silently never be graded).
 _EXPECT_FIELDS = {
@@ -29,11 +31,21 @@ _EXPECT_FIELDS = {
     "expect_command_absent", "expect_command_substring", "expect_routes_to", "expect_ads_excluded",
     "expect_dep_error_surfaced", "expect_roundtrip_existing_slugs", "expect_checks_warnings",
     "expect_statement",
+    # TASK 046 converged-discipline fields
+    "expect_pyramid", "expect_no_fulltext_wrapper", "expect_sections", "expect_type",
+    "expect_mermaid_selective", "expect_no_decorative_diagrams", "expect_states_concepts_deferred",
+    # TASK 046 P4 acquire-degradation + xfail tripwire
+    "expect_graceful_fetch_failed", "expect_no_fabricated_summary", "expect_produces_summary",
 }
 _LIST_FIELDS = {"expect_no_minted_variant", "expect_entity_name_absent",
-                "expect_command_absent", "expect_command_substring"}
-# never_relax cases (the regression + the two safety invariants) must always be present + flagged.
-_NEVER_RELAX = {"WI-01", "WI-07", "WI-13"}
+                "expect_command_absent", "expect_command_substring", "expect_sections"}
+# Closed vocab for the note `type:` — the OUTPUT values of wiki_import_article/__init__.py
+# `_KIND_NOTE_TYPE` (article/paper/thread all map to `article-summary`), plus the layout-safe
+# `summary` fallback. NOT the `--kind` keys (which would admit a fake type / reject the real one).
+_TYPES = {"meeting-summary", "lesson-summary", "article-summary", "summary"}
+# never_relax cases (the regression + safety invariants + TASK 046 grammar invariants) must
+# always be present + flagged.
+_NEVER_RELAX = {"WI-01", "WI-07", "WI-13", "WI-16", "WI-19", "WI-20"}
 
 
 def _load() -> dict:
@@ -43,10 +55,24 @@ def _load() -> dict:
 def test_parses_meets_floor_unique_ids() -> None:
     d = _load()
     cases = d["evals"]
-    assert len(cases) >= d["floor"] >= 12, "must meet the declared floor (>= 12)"
+    # floor is measured over expected_pass cases only — an xfail tripwire must not inflate it.
+    expected_pass = [c for c in cases if not c.get("expected_fail")]
+    assert len(expected_pass) >= d["floor"] >= 12, "expected_pass cases must meet the declared floor (>= 12)"
     ids = [c["id"] for c in cases]
     assert len(ids) == len(set(ids)), "case ids must be unique"
     assert d["skill"] == "wiki-import"
+
+
+def test_expected_fail_cases_are_tracked_and_not_never_relax() -> None:
+    """An xfail tripwire (expected_fail: true) MUST cite a tracked known-issue (`tracks`) and may NOT
+    be never_relax (a 'must always pass' that is 'expected to fail' is a contradiction). When the gap
+    closes the case xPASSES → promote it (drop expected_fail)."""
+    for c in _load()["evals"]:
+        if c.get("expected_fail"):
+            assert isinstance(c.get("tracks"), str) and c["tracks"].strip(), \
+                f"case {c['id']}: expected_fail must carry a non-empty 'tracks' known-issue ref"
+            assert c.get("never_relax") is not True, \
+                f"case {c['id']}: an expected_fail case cannot also be never_relax"
 
 
 def test_every_case_self_contained() -> None:
@@ -73,6 +99,8 @@ def test_expectation_values_in_contract() -> None:
             assert c["expect_mode"] in _MODES, f"case {c['id']}: bad mode '{c['expect_mode']}'"
         if "expect_routes_to" in c:
             assert c["expect_routes_to"] in _ROUTES, f"case {c['id']}: bad route"
+        if "expect_type" in c:
+            assert c["expect_type"] in _TYPES, f"case {c['id']}: bad note type '{c['expect_type']}'"
         for f in _LIST_FIELDS:
             if f in c:
                 assert isinstance(c[f], list) and c[f], f"case {c['id']}: '{f}' must be a non-empty list"
@@ -101,4 +129,21 @@ def test_full_mode_completeness_regression_pinned() -> None:
 def test_covers_reason_and_routing_classes() -> None:
     classes = {c["class"] for c in _load()["evals"]}
     assert {"reason-completeness", "reason-concepts", "security-injection",
-            "routing-video", "routing-embedded"} <= classes, "must exercise REASON + routing + security"
+            "routing-video", "routing-embedded", "reason-grammar"} <= classes, \
+        "must exercise REASON + routing + security + TASK-046 grammar"
+
+
+def test_pyramid_grammar_regression_pinned() -> None:
+    """TASK 046 P1: --kind meeting/lesson must produce a PYRAMID note, never the article full-text
+    wrapper. WI-16 (meeting) + WI-19 (lesson) pin this; their load-bearing expectations may not be
+    silently dropped (the lesson branch was mutation-survivable in P1 review)."""
+    by_id = {c["id"]: c for c in _load()["evals"]}
+    for cid, typ in (("WI-16", "meeting-summary"), ("WI-19", "lesson-summary")):
+        c = by_id[cid]
+        assert c.get("never_relax") is True, f"{cid} must be never_relax"
+        assert c["class"] == "reason-grammar"
+        assert c.get("expect_pyramid") is True, f"{cid} must assert the pyramid grammar"
+        assert c.get("expect_no_fulltext_wrapper") is True, f"{cid} must forbid the article wrapper"
+        assert c.get("expect_type") == typ, f"{cid} must pin type {typ}"
+        assert isinstance(c.get("expect_sections"), list) and c["expect_sections"], \
+            f"{cid} must list the pyramid sections"

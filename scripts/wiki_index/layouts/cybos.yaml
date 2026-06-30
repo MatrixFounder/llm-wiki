@@ -89,6 +89,7 @@ type_mapping:
   summary:         {db_type: summary, tag: null}      # generic imported-source summary
   article-summary: {db_type: summary, tag: article}
   meeting-summary: {db_type: summary, tag: meeting}
+  lesson-summary:  {db_type: summary, tag: lesson}    # TASK 046: --kind lesson (else → generic summary)
   # wiki-import concept/entity pages (TASK 037 pattern, mirror obsidian-personal): the
   # construct path files `<folder>/_concepts/<slug>.md` with `type: concept` (or person/…).
   # cybos's recursive per-folder globs DISCOVER them; these mappings let them INDEX (else

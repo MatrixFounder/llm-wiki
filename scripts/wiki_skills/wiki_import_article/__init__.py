@@ -65,9 +65,14 @@ from ._fetch import _parse_frontmatter, dispatch_fetch, ensure_source_frontmatte
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
 _KIND_NOTE_TYPE = {
-    "meeting": "meeting-summary", "article": "article-summary",
+    "meeting": "meeting-summary", "lesson": "lesson-summary",
+    "article": "article-summary",
     "paper": "article-summary", "thread": "article-summary", "summary": "summary",
 }
+
+# kinds whose REASON-authored note is the rich `summarizing-meetings` PYRAMID (TASK 046):
+# `apply` files the body verbatim WITHOUT the article wrappers. The rest use the article grammar.
+_PYRAMID_KINDS = frozenset({"meeting", "lesson"})
 
 # `skipped` reasons that mean a concept page the orchestrator INTENDED was lost and is
 # RECOVERABLE (vs benign dedup/collision/layout skips). Surfaced LOUDLY in the apply
@@ -89,6 +94,9 @@ __version__ = "1.0"
 
 _DEFAULT_HTML = "~/.claude/skills/html/scripts/html2md.py"  # `html` skill; html2md.py is the combined URL→md command
 _DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
+# TASK 046: office→text reuses the office skills' hardened soffice wrapper (throw-away profile +
+# sandbox shim + location fallback), imported by path — not a bare `soffice` bin.
+_DEFAULT_SOFFICE_WRAPPER = "~/.claude/skills/pptx/scripts/_soffice.py"
 _DEFAULT_TRANSCRIPT = "~/.claude/skills/transcript-fetcher/scripts/fetch.py"  # TASK 044 (Q-044-1); absent → exit 6
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 # MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
@@ -191,6 +199,7 @@ def prepare(args: argparse.Namespace) -> int:
             args.source,
             html_bin=args.html_bin,
             pdf_extract_bin=args.pdf_extract_bin,
+            soffice_wrapper=args.soffice_wrapper,    # TASK 046: office→text (docx/pptx/xlsx)
             download_images=layout.import_images,   # config-driven, default ON
             transcript_bin=args.transcript_bin,     # TASK 044: video sources
             video=args.video,
@@ -548,6 +557,18 @@ def apply(args: argparse.Namespace) -> int:
     note = _load_note_json(args)
     today = args.today or datetime.date.today().isoformat()
     note_type = _note_type(args.kind, layout)
+    # TASK 046: meeting/lesson → the REASON-authored PYRAMID is filed verbatim (no article
+    # wrappers); everything else keeps the per-mode article grammar.
+    grammar = "pyramid" if args.kind in _PYRAMID_KINDS else "article"
+    # The pyramid body IS the entire deliverable (no Саммари/bullets wrapper to fall back on),
+    # so an empty body would file a content-less note as action=imported (silent). Refuse it
+    # (L-1 / vdd-multi) — author the pyramid digest in `body` before apply.
+    if grammar == "pyramid" and not (note.get("body") or note.get("ru_body") or "").strip():
+        return emit({"error": "EMPTY_PYRAMID_BODY",
+                     "message": f"--kind {args.kind} files a pyramid whose `body` IS the "
+                                "deliverable, but the note body is empty; author the pyramid "
+                                "digest (TL;DR + sections) in `body` before apply"},
+                    exit_code=EXIT_BAD_ARG)
     raw_rel = args.raw_rel  # required (see parser) — always prepare's real raw_path, never re-slugified
     # dedup (order-preserving): two entities with the same name must not double the footer link
     san_names = list(dict.fromkeys(
@@ -586,7 +607,8 @@ def apply(args: argparse.Namespace) -> int:
             note, mode=args.mode, raw_rel_basename=raw_rel,
             source_url=args.source_url or str(note.get("URL", "")),
             source_lang=args.source_lang, today=today, note_type=note_type,
-            san_names=names, fname=slug_fname, mint_strategy=mint, lang=note_lang)
+            san_names=names, fname=slug_fname, mint_strategy=mint, lang=note_lang,
+            grammar=grammar)
 
     # Build the note once (footer = every filable entity), then reconcile that footer
     # with what concept-filing will actually materialize (below).
@@ -617,7 +639,13 @@ def apply(args: argparse.Namespace) -> int:
     # + dangling footer wikilinks, a Class A/B breach). A structured-doc layout like dev-project
     # files the summary note WITHOUT concepts; concept-graph layouts (karpathy/obsidian/cybos) do.
     concepts_indexable = _layout_indexes_concepts(layout, vault_root, note_dir)
-    if concepts_indexable:
+    if not args.concepts:
+        # TASK 046 --no-concepts: defer concept filing to a separate /wiki-extract-concepts run.
+        # NOT a lossy skip (no per-entity warning noise) — the entities are intact in the body;
+        # the footer is dropped (footer_names → [] below) so no wikilink dangles.
+        candidates: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+    elif concepts_indexable:
         candidates, skipped = derive_candidates(
             note["entities"], note_text, slug_strategy=mint,
             note_slug=note_slug, existing_page_slugs=existing)
@@ -662,6 +690,9 @@ def apply(args: argparse.Namespace) -> int:
         # indexing failed → the source note has no pages row, so concept refs can't
         # attach. Skip filing (avoid orphan _concepts/ pages) and report partial.
         cc_env = {"created": 0, "note": "skipped: source note indexing failed"}
+    elif not args.concepts and note["entities"]:
+        # TASK 046 --no-concepts: intentional deferral, not a failure.
+        cc_env = {"created": 0, "note": "deferred (--no-concepts); run /wiki-extract-concepts"}
     elif not concepts_indexable and note["entities"]:
         # intentional (not a failure): this layout can't index _concepts pages → note only.
         cc_env = {"created": 0, "note": "skipped: layout does not index _concepts pages"}
@@ -685,6 +716,9 @@ def apply(args: argparse.Namespace) -> int:
         "note": note_rel,
         "slug": note_slug,
         "mode": args.mode,
+        "grammar": grammar,                       # TASK 046: pyramid (meeting/lesson) | article
+        "diagrams": bool(args.diagrams),          # TASK 046: --diagrams recorded for the recipe
+        "concepts_deferred": not args.concepts,   # TASK 046: --no-concepts → filed separately
         "note_hash": note_hash,
         "candidates": len(candidates),
         "skipped": skipped,
@@ -721,6 +755,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
                     help="path to the `html` skill combined command (default: the deployed symlink)")
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
+    pp.add_argument("--soffice-wrapper", dest="soffice_wrapper", default=_DEFAULT_SOFFICE_WRAPPER,
+                    help="Path to the office skills' soffice wrapper (office→text for docx/pptx/xlsx)")
     # TASK 044 — video sources via the transcript-fetcher skill.
     pp.add_argument("--transcript-bin", dest="transcript_bin", default=_DEFAULT_TRANSCRIPT,
                     help="transcript-fetcher fetch.py (absent → exit 6 when a video URL is hit)")
@@ -759,6 +795,17 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Vault-rel path of the _raw original (use prepare's raw_path verbatim)")
     ap.add_argument("--source-lang", default="en")
     ap.add_argument("--today", default=None, help="ISO date stamp (default: today)")
+    # TASK 046: orthogonal generation modifiers. --diagrams signals the REASON harness to
+    # include selective mermaid (the body already carries it on the CLI side; recorded in the
+    # manifest). --concepts/--no-concepts gates concept filing (default ON = back-compat;
+    # --no-concepts defers to a separate /wiki-extract-concepts run).
+    ap.add_argument("--diagrams", action="store_true",
+                    help="REASON includes selective mermaid diagrams (recorded in the manifest)")
+    concepts_grp = ap.add_mutually_exclusive_group()
+    concepts_grp.add_argument("--concepts", dest="concepts", action="store_true", default=True,
+                              help="File concept pages (default)")
+    concepts_grp.add_argument("--no-concepts", dest="concepts", action="store_false",
+                              help="Defer concept filing to a separate /wiki-extract-concepts run")
     ap.set_defaults(func=apply)
 
     return parser

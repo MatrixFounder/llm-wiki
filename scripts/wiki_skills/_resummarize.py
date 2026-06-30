@@ -39,9 +39,11 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import (
     MirrorConfig,
     ResummarizeConfig,
+    SummarizeConfig,
     SyncConfigError,
+    _load_validated_raw,
     _parse_resummarize,
-    load_resummarize_raw,
+    _parse_summarize,
 )
 from scripts.wiki_skills._sync import Decision
 
@@ -69,6 +71,23 @@ class Caches:
     resolved: dict[Path, ResummarizeConfig | None] = field(default_factory=dict)
     cited: dict[tuple[tuple[str, ...], str], frozenset[str]] = field(default_factory=dict)
     mirror: dict[tuple[str, str, str | None, str], dict[str, str]] = field(default_factory=dict)
+    # TASK 046 P3 — per-dir RAW `summarize` block (cascade input) + parsed result (output).
+    summarize_raw: dict[Path, dict[str, Any] | None] = field(default_factory=dict)
+    summarize: dict[Path, SummarizeConfig] = field(default_factory=dict)
+    # vdd-multi PERF-046-1 — the FULL hardened+validated `.wiki/sync.yaml` dict per dir, read
+    # ONCE per scan; the resummarize AND summarize cascades both source their block from here,
+    # so the same file is no longer read+parsed+validated twice per directory.
+    validated: dict[Path, dict[str, Any]] = field(default_factory=dict)
+
+
+def _validated_dir(d: Path, c: "Caches") -> dict[str, Any]:
+    """The hardened + schema-validated `<d>/.wiki/sync.yaml` dict, read ONCE per dir per scan
+    (vdd-multi PERF-046-1). Both the `resummarize` and `summarize` cascades pull their block from
+    this single memo, so the file is no longer read + parsed + validated twice per directory.
+    Raises `SyncConfigError` (→ exit 6) on a malformed config, exactly as before."""
+    if d not in c.validated:
+        c.validated[d] = _load_validated_raw(d)
+    return c.validated[d]
 
 
 def _ancestor_dirs(path: Path, vault_root: Path) -> list[Path]:
@@ -95,8 +114,8 @@ def resolve_policy(
 ) -> ResummarizeConfig | None:
     """Resolve the effective re-summarization policy for `path` (Q-019-3).
 
-    Reads each ancestor dir's RAW `resummarize` block (hardened via
-    `load_resummarize_raw` — size-cap + anchor-ban + symlink-refuse + strict schema
+    Reads each ancestor dir's RAW `resummarize` block (hardened via the shared
+    `_validated_dir` read — size-cap + anchor-ban + symlink-refuse + strict schema
     at EVERY level), deep-merges them deepest-wins, and parses once. The
     RAW-then-parse order makes a partial override (`mode:` only) inherit the
     parent's `detect`. Both the per-dir RAW read AND the parsed result are memoized
@@ -112,13 +131,43 @@ def resolve_policy(
     found = False
     for d in _ancestor_dirs(path, vault_root):
         if d not in c.raw:
-            c.raw[d] = load_resummarize_raw(d)
+            blk = _validated_dir(d, c).get("resummarize")
+            c.raw[d] = blk if isinstance(blk, dict) else None
         block = c.raw[d]
         if block is not None:
             found = True
             merged = deep_merge(merged, block)
     result = _parse_resummarize(merged) if found else None
     c.resolved[parent] = result
+    return result
+
+
+def resolve_summarize(
+    path: Path,
+    *,
+    vault_root: Path,
+    caches: Caches | None = None,
+) -> SummarizeConfig:
+    """Resolve the effective `summarize` config for `path` (TASK 046 P3), via the SAME
+    per-folder Option-A cascade as `resolve_policy`: deep-merge every ancestor's RAW
+    `summarize:` block deepest-wins, then parse once. A partial folder override (e.g. only
+    `diagrams: true`) inherits the parent's `profile`. Returns `SummarizeConfig()` DEFAULTS
+    when no level configures it (≡ the P2 hardcoded delegate; back-compat). Memoized per
+    `path.parent` on `caches` (resolution is a function of the parent dir)."""
+    c = caches or Caches()
+    parent = path.parent
+    if parent in c.summarize:
+        return c.summarize[parent]
+    merged: dict[str, Any] = {}
+    for d in _ancestor_dirs(path, vault_root):
+        if d not in c.summarize_raw:
+            blk = _validated_dir(d, c).get("summarize")
+            c.summarize_raw[d] = blk if isinstance(blk, dict) else None
+        block = c.summarize_raw[d]
+        if block is not None:
+            merged = deep_merge(merged, block)
+    result = _parse_summarize(merged) or SummarizeConfig()
+    c.summarize[parent] = result
     return result
 
 

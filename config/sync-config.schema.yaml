@@ -71,6 +71,38 @@ $defs:
         $ref: '#/$defs/Resummarize'
       transcript_dedup:
         $ref: '#/$defs/TranscriptDedup'
+      summarize:
+        $ref: '#/$defs/Summarize'
+
+  # ----------------------------------------------------------------------------
+  # Summarize (TASK 046 P3) — per-zone distil knobs that wiki-sync passes to the
+  # delegated `wiki-import` (the converged construct path). OPT-IN + per-folder
+  # overridable (cascade deep-merge, deepest-wins, like Resummarize): absence ≡ the
+  # P2 defaults (profile auto / no diagrams / concepts ON / no subdir). `profile`
+  # resolves to the wiki-import `--kind` (meeting/lesson → pyramid grammar; article →
+  # article wrapper; auto → wiki-import auto-detects). STRICT (additionalProperties:
+  # false) — a misspelled key is INVALID_SYNC_CONFIG (exit 6, value never echoed).
+  # ----------------------------------------------------------------------------
+  Summarize:
+    type: object
+    additionalProperties: false
+    properties:
+      profile:
+        type: string
+        enum: [auto, meeting, lesson, article]
+        description: >
+          Distil profile → wiki-import `--kind`. `auto` (default): wiki-import prepare
+          auto-detects the content-type. `meeting`/`lesson`: pyramid grammar
+          (meeting-summary / lesson-summary). `article`: the article wrapper.
+      diagrams:
+        type: boolean
+        description: 'Pass `--diagrams` (selective-mermaid overlay) to wiki-import. Default false.'
+      extract_concepts:
+        type: boolean
+        description: 'File concept pages (default true). false → `--no-concepts` (defer to /wiki-extract-concepts).'
+      target_subdir:
+        type: string
+        description: 'Optional subfolder under the topic folder where the summary note files (e.g. "_summary"). Default "" (the topic folder itself).'
 
   # ----------------------------------------------------------------------------
   # TranscriptDedup (TASK 023) — transcript FORMAT dedup. OPT-IN: absence ≡ no

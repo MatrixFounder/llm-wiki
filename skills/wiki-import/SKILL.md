@@ -2,26 +2,39 @@
 name: wiki-import
 description: >-
   The unified construct path — import an external article / paper / X-thread / meeting
-  transcript / finished summary into any Obsidian vault. Two orthogonal axes: content-type
-  (--kind) sets the note type — all content-types run the ONE universal summarizing-meetings
-  harness (summary→register); the vault LAYOUT (config) picks where it files (Karpathy vs PARA).
-  Deterministic fetch+convert (html/pdf) → orchestrator REASON FED the known-concepts list
-  → authored note + concept pages + index. Triggers: "import this into the vault", "wiki-import",
-  "add this paper/article/transcript to the wiki". (`wiki-import-article` is a back-compat alias.)
+  transcript / lesson / finished summary into any Obsidian vault. Orthogonal axes: content-type
+  (--kind) sets the note type AND its grammar — meeting/lesson → a pyramid digest (no full-text
+  wrapper), article/paper/thread → the article wrapper; all run the ONE universal
+  summarizing-meetings harness (summary→register); the vault LAYOUT (config) picks where it files
+  (Karpathy vs PARA). Generation modifiers: --diagrams (opt-in selective mermaid), --no-concepts
+  (author entities but defer filing to /wiki-extract-concepts). Deterministic fetch+convert
+  (html/pdf/office/.vtt) → orchestrator REASON FED the known-concepts list → authored note +
+  concept pages + index. Triggers: "import this into the vault", "wiki-import",
+  "add this paper/article/transcript/lesson to the wiki". (`wiki-import-article` is a back-compat alias.)
 tier: 2
-version: 2.0
+version: 2.1
 ---
 
 # wiki-import
 
 **Purpose**: the **unified construct path**. Turns any external source into a compounding
 node — a translated/summarized note **plus** its `_concepts/` entity pages, indexed into
-SQLite — across **two orthogonal axes**:
-- **content-type → the note `type:` + what the REASON harness emphasizes** (the one LLM step):
-  meeting / article / paper / thread all run the ONE universal
+SQLite — across **two orthogonal axes** (plus two opt-in generation modifiers):
+- **content-type (`--kind`) → the note `type:` + its GRAMMAR + what the REASON harness emphasizes**
+  (the one LLM step): meeting / lesson / article / paper / thread all run the ONE universal
   [`summarizing-meetings`](../summarizing-meetings/) harness; finished `summary` → register directly.
+  **Grammar splits by kind:** `meeting`/`lesson` → a **pyramid digest** (the body IS the
+  summarizing-meetings two-level pyramid — TL;DR → detailed sections / decisions / action items —
+  filed verbatim under the H1 with **no** `## Полный текст (перевод)` wrapper; `type:`
+  `meeting-summary`/`lesson-summary`); `article`/`paper`/`thread` → the per-`mode` **article wrapper**
+  (Саммари / Ключевые сущности / Полный текст). One code path — `apply` selects the grammar from `--kind`.
 - **layout (CONFIG) → where it files**: `resolve_layout_config` decides Karpathy (`_sources/`
   + root `_concepts/`) vs PARA (topic folder + sibling `_concepts/`). One code path, not a fork.
+
+**Generation modifiers (orthogonal to both axes):** `--diagrams` → the REASON step adds *selective*
+mermaid (illustrative flows/loops only — never decorative); `--concepts`/`--no-concepts` (default ON)
+→ `--no-concepts` still authors `entities[]` but **defers** concept filing to a separate
+`/wiki-extract-concepts` run (the envelope reports `concepts_deferred: true`).
 
 A Decision-17 skill: **no `import anthropic`** — Python does the deterministic plumbing
 (`prepare`/`apply`); the **orchestrator owns the one reasoning step** (the harness).
@@ -29,8 +42,11 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
 ## When to use
 - You have a URL or a local file (`.md`/`.html`/`.pdf`/transcript) to file into a vault folder.
   Works for **any layout** (Karpathy or PARA) — the layout is read from config, not chosen by you.
-- `--kind auto` (default) detects the content-type; pass `--kind {meeting,article,paper,thread,summary}`
-  to override. The vault is registered (`/wiki-init --register-existing`).
+- `--kind auto` (default) detects the content-type; pass `--kind {meeting,lesson,article,paper,thread,summary}`
+  to override (`lesson` is **opt-in only** — never auto-detected; a course/lecture transcript that
+  should file as a pyramid `lesson-summary`). The vault is registered (`/wiki-init --register-existing`).
+- `--diagrams` (opt-in) → ask the REASON step for selective mermaid diagrams; `--no-concepts` → author
+  `entities[]` but skip filing the `_concepts/` pages (defer to `/wiki-extract-concepts`).
 
 ## When NOT to use
 - Re-index an existing note → `wiki-index-upsert`. The legacy Karpathy-raw on-ramp `wiki-enrich`
@@ -145,14 +161,36 @@ translation into the target language; **summary** = thorough digest (`body` null
 > `entities[].quote` MUST be copied **verbatim** from the target-language text you produce —
 > **author the body first, then copy quotes out of it** (never quote the raw source).
 
+> ## 🔴 HARD RULE — note GRAMMAR follows `--kind` (pyramid vs article wrapper)
+> `--kind meeting`/`lesson` → the note is a **pyramid digest**, NOT a verbatim full translation:
+> author the `body` as the summarizing-meetings two-level pyramid (TL;DR → detailed sections; for
+> transcripts also decisions / action items / open questions). `apply` files that `body` **verbatim
+> under the H1** with **no** `## Полный текст (перевод)` / `## Саммари` wrapper, and sets `type:`
+> `meeting-summary`/`lesson-summary`. Do NOT produce a full-text-wrapped article note for a meeting/
+> lesson — the pyramid IS the deliverable (even at `mode=full`, which here means "cover the whole
+> transcript in the pyramid", not "translate every line verbatim"). `--kind article`/`paper`/`thread`
+> keep the per-`mode` article wrapper (the depth-by-mode table above). See
+> [`references/reason-contract.md`](references/reason-contract.md) *Note grammar by content-type*.
+>
+> **`--diagrams`** → add *selective* mermaid only where it earns its place (a process flow, a state
+> loop, an architecture relationship the prose can't carry); **never** a decorative diagram per
+> section. **`--no-concepts`** → still author `entities[]` (so a later `/wiki-extract-concepts` run has
+> them), but STATE that concept filing is deferred — `apply` will skip filing and report
+> `concepts_deferred: true`.
+
 ### 3. `apply` — author + file + index
 ```bash
 wiki-import apply --vault <id> --vault-root <abs> \
   --folder "<topic folder>" --mode <same> --kind <prepare.kind> \
   --raw-rel <prepare.raw_path> --source-url <URL> --source-lang en|ru \
+  [--diagrams] [--no-concepts] \
   --existing-page-slugs '<prepare.existing_page_slugs JSON>' --note-stdin   # note JSON on stdin
 ```
-`apply` files the note **per the resolved layout** (Karpathy `_sources/` vs PARA topic folder)
+(`apply` rejects `--kind auto` — pass the **resolved concrete** kind from `prepare`. `--diagrams`/
+`--no-concepts` mirror the REASON modifiers above: `--diagrams` is recorded in the manifest;
+`--no-concepts` skips concept filing and sets `concepts_deferred: true`.)
+`apply` files the note **per the resolved layout** (Karpathy `_sources/` vs PARA topic folder),
+selects the **grammar from `--kind`** (pyramid for meeting/lesson, article wrapper otherwise),
 and sets the note `type:` from `--kind` (layout-safe). The remainder:
 `apply` assembles the per-mode PARA note, **sanitizes entity names** (normalizer that
 feeds the extract-concepts name gate), **guarantees verbatim quotes**, runs the

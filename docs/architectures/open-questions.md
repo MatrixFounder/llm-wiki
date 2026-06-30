@@ -1288,3 +1288,39 @@
   The filters are unconditional when `--embedded-videos` is active — there is no flag to disable
   them. **Non-blocking; design is settled; implementation review pending.**
 
+- **Q-046-1 (TASK 046 — converge `wiki-import` + `wiki-sync`; why this de-dup, why this split).**
+  Through TASK 039–044 the acquire+distil logic existed twice: `wiki-import` (fetch → article
+  `assemble_note` → always-concepts) and `wiki-sync` ingest (convert/de-timestamp →
+  `summarizing-meetings` pyramid → file/index → always-concepts). §2.3 already named the retirement
+  as a "future task". The operator hit it directly: a PARA webinar (2026-06-30) had **no** command
+  for "rich pyramid, no concepts" and was imported by hand.
+
+  **(a) Why one engine + one driver (not two front-doors, not extend-both).** The unit of work
+  for *distil* is ONE source; the unit for *idempotency/sweep* is a FOLDER. Putting the per-source
+  pipeline in `wiki-import` and the folder sweep in `wiki-sync` gives each concern exactly one
+  owner. The rejected alternative — give BOTH tools profile/pyramid abilities — duplicates the
+  distil grammar in two places (the very smell the operator flagged). So `wiki-sync` **delegates**
+  per item to `wiki-import` rather than re-implementing distil. `wiki-index-upsert` /
+  `wiki-extract-concepts` stay shared **leaf** tools (called by `wiki-import`), not pipelines.
+
+  **(b) Why conversion moves INTO `wiki-import.prepare` (operator decision 2026-06-30).** For
+  `wiki-sync` to delegate "all the work", the engine must accept any source format. Rather than
+  split conversion across both tools, `prepare` becomes the universal acquire+normalize
+  (url/pdf/video + office docx/pptx/xlsx + `.vtt`/`.srt` + md → `_raw/<slug>.md`). `wiki-sync`
+  then only classifies + decides new/re-ingest + delegates — it carries no converter logic. Cost:
+  `wiki-import.prepare` grows (mitigated — it already composes external skills via `dispatch_fetch`;
+  office/vtt are two more branches in the same pattern, ADR-001 "Wrap + Index").
+
+  **(c) Why output-grammar keys off `--kind` (not a parallel `profile` axis).** `--kind` already
+  exists and already maps meeting→`meeting-summary`. The only bug was that `apply` assembled an
+  article note regardless. So `apply` keys the note grammar off `--kind` (meeting/lesson → pyramid;
+  article/paper/thread → article wrapper; summary → register) — reusing the axis, not adding a
+  redundant one. `.wiki/sync.yaml summarize.profile` is just the per-zone name that resolves to a
+  `--kind`. `--diagrams` and `--concepts/--no-concepts` are orthogonal generation modifiers.
+
+  **(d) Back-compat + scope.** Concepts default ON (`--no-concepts` is the explicit opt-out);
+  `--kind article` byte-identical; absent `summarize:` ≡ today's `wiki-sync` defaults; zero-DDL
+  (`summarize:` is `.wiki/sync.yaml` config, `user_version` 5). `wiki-enrich` (legacy Karpathy
+  on-ramp) is NOT retired here — a separate task. **Design settled (operator-directed); staged
+  P1/P1b/P2/P3 — see docs/TASK.md + docs/PLAN.md.**
+

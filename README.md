@@ -7,14 +7,17 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 040**
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 046**
 > (typed knowledge classes + event graph [`wiki-graph`, graph-aware RAG], the
 > list-membership `--where`/`--tag` filter + temporal `wiki-search --as-of`, derived
 > knowledge-health [`wiki-health`], and the **config-driven write-grammar** [ADR-007]
-> that unifies the Karpathy/PARA construct path). The unified on-ramp **`wiki-import`**
+> that unifies the Karpathy/PARA construct path; **TASK 046** then *converged* it —
+> `wiki-import` is the per-source **engine** [+ office/`.vtt` acquire, grammar by
+> `--kind` (meeting/lesson → pyramid), `--diagrams`/`--no-concepts`] and `wiki-sync` a
+> batch **driver** that delegates to it). The unified on-ramp **`wiki-import`**
 > is hardened across **all four built-in layouts** and **language-agnostic** (output
 > follows the vault's `language`; English fallback) — validated by a 14-round adversarial
-> `/vdd-multi`. Schema **v7** (`user_version = 7`). **1630 pytest passed / 5 skipped,
+> `/vdd-multi`. Schema **v7** (`user_version = 7`). **1793 pytest passed / 5 skipped,
 > `mypy --strict` clean on 84 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
@@ -429,8 +432,8 @@ binaries.
 
 | Command | What it does |
 |---|---|
-| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file; `#wiki/raw\|skip\|keep` tags; generated-view sidecars auto-skipped). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it with per-file idempotency (`wiki-sync record`) — office/PDF convert, **scanned-PDF OCR** (eng+rus), transcript de-timestamp → summarise → enrich → extract. A **re-summarization policy** (TASK 019, opt-in `resummarize:` in `.wiki/sync.yaml`, per-folder overridable) skips a raw source whose summary already exists (`source_state` ∪ provenance ∪ filesystem mirror) unless `--force`; a new raw sharing an already-summarised N:1 key is skipped + a **merge/split WARN** (TASK 021) names the levers (`--force` to merge / finer key to split). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
-| `wiki-import prepare/apply … [--kind auto]` | The **unified external-source on-ramp** (any layout): deterministic fetch+convert of a URL/PDF/X-thread/transcript → hand the orchestrator the cleaned text + the vault's `known_concepts` for a REASON step (the `summarizing-meetings` harness) → file a summary note + its `_concepts/` per the resolved layout's **write-grammar** (config-driven, [ADR-007](docs/adr/ADR-007-config-driven-write-grammar.md)). Content-type (`--kind`) and layout (config) are orthogonal. `wiki-import-article` is a back-compat alias. |
+| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file; `#wiki/raw\|skip\|keep` tags; generated-view sidecars auto-skipped). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it as a pure **batch DRIVER** (TASK 046): each distil entry carries a `delegate` and is handed to **`wiki-import`** (which owns convert + de-timestamp + REASON + file + index + concepts) — there is no inline summarise/enrich/extract/convert; ready notes → `wiki-index-upsert`. A per-folder `.wiki/sync.yaml` `summarize:` block (profile/diagrams/extract_concepts/target_subdir) drives the delegate knobs; per-file idempotency via a dual `wiki-sync record` commit-marker. A **re-summarization policy** (TASK 019, opt-in `resummarize:` in `.wiki/sync.yaml`, per-folder overridable) skips a raw source whose summary already exists (`source_state` ∪ provenance ∪ filesystem mirror) unless `--force`; a new raw sharing an already-summarised N:1 key is skipped + a **merge/split WARN** (TASK 021) names the levers (`--force` to merge / finer key to split). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
+| `wiki-import prepare/apply … [--kind auto]` | The **unified external-source on-ramp** (any layout) and the per-source **engine**: deterministic fetch+convert of a URL/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/X-thread/transcript → hand the orchestrator the cleaned text + the vault's `known_concepts` for a REASON step (the `summarizing-meetings` harness) → file a note + its `_concepts/` per the resolved layout's **write-grammar** (config-driven, [ADR-007](docs/adr/ADR-007-config-driven-write-grammar.md)). **Grammar by `--kind`** (meeting/lesson → a pyramid digest; article/paper/thread → the article wrapper); modifiers `--diagrams` (selective mermaid) + `--no-concepts` (defer concept filing). Content-type (`--kind`) and layout (config) are orthogonal. `wiki-import-article` is a back-compat alias. |
 | `wiki-enrich --vault <vid> --source <file>` | Legacy Karpathy raw-file bridge: invoke (vendored) `wiki-ingest` on a raw source, then mirror its manifest into the index. |
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
@@ -578,17 +581,48 @@ Conventions:
 
 ## License
 
-The code **in this repository** is licensed under the **Apache License,
-Version 2.0** — see [LICENSE](LICENSE).
+The code **in this repository** is **dual-licensed** — see
+[LICENSING.md](LICENSING.md) for the full breakdown:
+
+- **Community license — Elastic License 2.0 (ELv2)** (default, free; see
+  [LICENSE](LICENSE)). Source-available: you may read, fork, modify, and use it
+  (including internally for commercial purposes), but you may **not** provide it
+  to third parties as a hosted/managed service, nor remove its license/copyright
+  notices.
+- **Commercial license** — for uses ELv2 doesn't permit (e.g. offering it as a
+  hosted/managed service or SaaS). Granted case-by-case by the copyright holder;
+  see [LICENSING.md](LICENSING.md) for how to request one.
 
 > [!IMPORTANT]
-> **Some external skills this framework integrates with are under PROPRIETARY
-> (closed-source) licenses** and are **not** covered by this repo's Apache-2.0
-> grant. They are installed and invoked separately (not vendored here); their
-> own license terms apply. Notices for the vendored `wiki-ingest` (Apache-2.0)
-> and the proprietary/external skill set (`summarizing-meetings`,
-> `transcript-fetcher`, `html`, `pdf`, `docx`, …) are in
+> **This framework's full functionality depends on separately-installed external
+> skills, some of which are under PROPRIETARY (closed-source) licenses.** Those
+> skills are **not** vendored here and are **not** covered by this repo's ELv2
+> grant — they are installed and invoked separately, and their own license terms
+> apply. Without them, parts of the construct/REASON pipeline (e.g. `wiki-import`,
+> `wiki-enrich`) are not fully operational. Notices for the vendored `wiki-ingest`
+> (Apache-2.0, an independent component that keeps its own license) and the
+> proprietary/external skill set (`summarizing-meetings`, `transcript-fetcher`,
+> `html`, `pdf`, `docx`, …) are in
 > [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Consult each skill's license
 > before redistribution or commercial use.
-</content>
-</invoke>
+
+### FAQ — can I use this commercially?
+
+- **Can I use it inside my own company / for client work?** Yes. ELv2 permits
+  internal use, modification, and building on top of it — including for
+  commercial purposes — as long as you don't resell the framework itself as a
+  service. You must also separately license any proprietary external skills you
+  rely on (see above).
+- **Can I host it and sell access to it as a product/SaaS?** No. ELv2's core
+  limitation forbids providing the software to third parties as a hosted or
+  managed service that exposes a substantial set of its features.
+- **Can I fork it, modify it, and redistribute my fork?** Yes — provided you keep
+  the license and copyright notices intact, pass these terms along to anyone you
+  give it to, and add a prominent notice stating that you modified it. The same
+  ELv2 limitations carry over to your fork.
+- **Is this "open source"?** No — it's **source-available**. The source is open to
+  read and build on, but ELv2 is not an OSI-approved open-source license because
+  of the hosted-service restriction.
+- **I want to do something ELv2 doesn't allow (e.g. offer it as a managed
+  service).** A **commercial license** is available — see
+  [LICENSING.md](LICENSING.md) for terms and how to request one.

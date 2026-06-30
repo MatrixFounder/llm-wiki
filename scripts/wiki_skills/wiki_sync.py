@@ -49,6 +49,7 @@ from scripts.wiki_skills._resummarize import (
     Caches,
     apply_policy,
     resolve_policy,
+    resolve_summarize,
 )
 from scripts.wiki_skills._common import (
     build_repo_config,
@@ -194,6 +195,26 @@ def _build_entries(
             "converter": d.converter, "staged_target": d.staged_target,
             "normalize": d.normalize,
         }
+        # TASK 046 P2: the distil actions (ingest / convert+ingest) are DELEGATED to wiki-import —
+        # the single per-source engine that owns convert + REASON + file + index. The executor
+        # runs wiki-import per `delegate` instead of inline summarise/enrich/extract (R-9); the
+        # classifier's converter/normalize stay only as the DETECTED-format hint (wiki-import
+        # prepare re-detects). The kind/diagrams/concepts knobs DEFAULT here (back-compat:
+        # auto-detect kind, no diagrams, concepts ON) and are populated from the per-folder
+        # `.wiki/sync.yaml` `summarize:` block in P3.
+        if d.action in ACTIONABLE:
+            sm = resolve_summarize(cand.path, vault_root=vault_root, caches=caches)
+            folder = _delegate_folder(cand.rel)
+            if sm.target_subdir:
+                folder = sm.target_subdir if folder == "." else f"{folder}/{sm.target_subdir}"
+            entry["delegate"] = {
+                "tool": "wiki-import",
+                "source": cand.rel,
+                "folder": folder,
+                "kind": sm.profile,            # profile == wiki-import --kind (auto/meeting/lesson/article)
+                "diagrams": sm.diagrams,
+                "concepts": sm.extract_concepts,
+            }
         if d.action != "skip":
             source_hash = _hash_file(cand.path)
             entry["source_hash"] = source_hash
@@ -213,6 +234,28 @@ def _build_entries(
         entries.append(entry)
     entries.sort(key=lambda e: str(e["path"]))
     return entries
+
+
+# Raw/source-machinery dir names trimmed when resolving a delegate's topic folder. Covers the
+# `mirror.raw_dirs` defaults (`_raw`, `_transcripts`) + the `_raw/.staging` scratch dir — so a
+# source under ANY of them files its summary in the TOPIC folder, not inside the raw tree.
+_RAW_DIR_NAMES = frozenset({"_raw", ".staging", "_transcripts"})
+
+
+def _delegate_folder(rel: str) -> str:
+    """Target topic folder for a delegated wiki-import (TASK 046 P2): the topic folder ABOVE all
+    raw/source machinery — so the summary note (and wiki-import's own `_raw/<slug>.md` capture)
+    land in the topic folder, never INSIDE a `_raw/`/`_transcripts/` tree. We trim from the FIRST
+    raw-machinery segment onward (not just the immediate parent): a source nested under a grouping
+    subdir like `<topic>/_raw/<group>/x.vtt` (or `<topic>/_transcripts/x.txt`) still resolves to
+    `<topic>`, else its capture lands in the raw tree and the next scan re-ingests it (re-ingest
+    loop, P2 review) / the summary is mis-filed (TASK 046 P3 dogfood). A vault-root source → `.`."""
+    segs: list[str] = []
+    for seg in PurePosixPath(rel).parent.parts:
+        if seg in _RAW_DIR_NAMES:
+            break
+        segs.append(seg)
+    return PurePosixPath(*segs).as_posix() if segs else "."
 
 
 def _hash_file(path: Path) -> str | None:
@@ -253,7 +296,16 @@ def _emit_dry_run(plan: dict[str, Any]) -> int:
     lines = [f"wiki-sync scan (dry-run) — vault={plan['vault_id']} zone={plan['zone']}"]
     for e in plan["entries"]:
         flag = " [unchanged]" if e.get("is_unchanged") else ""
-        extra = f" -> {e['staged_target']}" if e.get("staged_target") else ""
+        # TASK 046 P2: a delegated distil entry shows where wiki-import files it (delegate.folder),
+        # NOT the classifier's staged_target (a `_raw/.staging/...` path that is no longer written —
+        # conversion moved into wiki-import prepare). Non-delegated entries keep the old arrow.
+        deleg = e.get("delegate")
+        if deleg:
+            extra = f" -> wiki-import:{deleg.get('folder', '.')}"
+        elif e.get("staged_target"):
+            extra = f" -> {e['staged_target']}"
+        else:
+            extra = ""
         lines.append(f"  {e['action']:<14} {e['path']}  — {e['reason']}{flag}{extra}")
     summary = plan["summary"]
     lines.append(
