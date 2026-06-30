@@ -73,17 +73,18 @@ Phases are ordered by dependency: **P1 → P1b → P2 → P3**. RTM IDs (R-1…R
   `test_sync_plan_no_inline_distil`. *Gate:* collected, SKIP.
 - **B11 [R-8]** — scan plan emits the `wiki-import` delegation.
   `wiki_sync.py`: for `ingest`/`convert+ingest` entries add
-  `entry.delegate = {tool:"wiki-import", kind, diagrams, concepts, folder}` resolved
-  from the effective `summarize` config (P3 default-resolves when absent).
-  *Test:* `test_sync_scan_delegates_to_import` (plan entry carries `delegate.tool ==
-  "wiki-import"` + kind/concepts).
+  `entry.delegate = {tool:"wiki-import", source, folder, kind, diagrams, concepts}`
+  (+ `_delegate_folder`). Knobs default `auto`/`false`/`true`; populated from `summarize`
+  config in P3. **Additive** — classifier `converter`/`normalize`/`staged_target` stay as the
+  detected-format hint (dropping them breaks ~24 existing assertions; wiki-import re-detects).
+  *Test:* `test_sync_scan_delegates_to_import` (`delegate.tool=="wiki-import"` + kind/concepts/folder).
 - **B12 [R-9]** — retire inline distil in the recipe.
-  `workflows/wiki-sync.md` Step 4: replace 4a (convert) + 4b (inline
-  summarise/enrich/extract) with "run `wiki-import` prepare→REASON→apply per
-  `entry.delegate`"; keep 4c (`upsert`) + 4d (`record`). The `converter`/`normalize`
-  plan fields are no longer emitted for delegated entries (conversion moved to
-  `wiki-import prepare`, P1b).
-  *Test:* `test_sync_plan_no_inline_distil` (delegated entries omit `converter`/`normalize`).
+  `workflows/wiki-sync.md` Step 4a/4b → ONE "distil = delegate to wiki-import" step: run
+  `wiki-import` prepare→REASON→apply per `entry.delegate` (conversion is wiki-import prepare's
+  job, P1b); keep 4c (`upsert`) + 4d (`record` the original source hash = D1 idempotency). No
+  inline `summarizing-meetings`/`wiki-enrich`/`wiki-extract-concepts`.
+  *Test:* `test_sync_plan_delegates_not_inline` (every distil entry carries a wiki-import
+  `delegate`; `upsert`/`skip` carry none) + recipe review.
 
 ### Issue P3 — `.wiki/sync.yaml summarize:` config + docs  →  [task-046-04](tasks/task-046-04-config-docs.md)
 
@@ -143,7 +144,7 @@ Phases are ordered by dependency: **P1 → P1b → P2 → P3**. RTM IDs (R-1…R
 | R-6 | B8 | P1b | `test_import_prepare_office` |
 | R-7 | B9 | P1b | `test_import_prepare_vtt` |
 | R-8 | B11 | P2 | `test_sync_scan_delegates_to_import` |
-| R-9 | B12 | P2 | `test_sync_plan_no_inline_distil` |
+| R-9 | B12 | P2 | `test_sync_plan_delegates_not_inline` + recipe review |
 | R-10 | B14 | P3 | `test_sync_config_summarize_accept/_reject` |
 | R-11 | B15 | P3 | `test_sync_config_summarize_deepmerge` |
 | R-12 | B15 | P3 | `test_sync_config_summarize_default_backcompat` |

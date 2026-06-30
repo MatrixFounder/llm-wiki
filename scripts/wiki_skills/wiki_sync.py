@@ -194,6 +194,22 @@ def _build_entries(
             "converter": d.converter, "staged_target": d.staged_target,
             "normalize": d.normalize,
         }
+        # TASK 046 P2: the distil actions (ingest / convert+ingest) are DELEGATED to wiki-import —
+        # the single per-source engine that owns convert + REASON + file + index. The executor
+        # runs wiki-import per `delegate` instead of inline summarise/enrich/extract (R-9); the
+        # classifier's converter/normalize stay only as the DETECTED-format hint (wiki-import
+        # prepare re-detects). The kind/diagrams/concepts knobs DEFAULT here (back-compat:
+        # auto-detect kind, no diagrams, concepts ON) and are populated from the per-folder
+        # `.wiki/sync.yaml` `summarize:` block in P3.
+        if d.action in ACTIONABLE:
+            entry["delegate"] = {
+                "tool": "wiki-import",
+                "source": cand.rel,
+                "folder": _delegate_folder(cand.rel),
+                "kind": "auto",
+                "diagrams": False,
+                "concepts": True,
+            }
         if d.action != "skip":
             source_hash = _hash_file(cand.path)
             entry["source_hash"] = source_hash
@@ -213,6 +229,17 @@ def _build_entries(
         entries.append(entry)
     entries.sort(key=lambda e: str(e["path"]))
     return entries
+
+
+def _delegate_folder(rel: str) -> str:
+    """Target topic folder for a delegated wiki-import (TASK 046 P2): the source's containing
+    folder — or its PARENT when the source sits under a `_raw/`/`.staging/` machinery dir, so the
+    summary note lands in the topic folder, not inside `_raw`. (P3 may further nest via
+    `summarize.target_subdir`.) A vault-root source yields `.` (wiki-import's vault-root folder)."""
+    parent = PurePosixPath(rel).parent
+    if parent.name in ("_raw", ".staging"):
+        parent = parent.parent
+    return parent.as_posix()
 
 
 def _hash_file(path: Path) -> str | None:

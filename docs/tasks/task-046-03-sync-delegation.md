@@ -15,24 +15,29 @@ prepare→REASON→apply per item. `upsert` (ready note → `wiki-index-upsert`)
 - New test: `tests/test_sync_delegation.py`. Reference: existing `tests/test_wiki_sync_*.py`.
 
 ## Steps
-1. **B10** — create test file with 2 `@pytest.mark.skip` stubs.
-2. **B11 (R-8)** — for `ingest`/`convert+ingest` entries, add
-   `entry["delegate"] = {"tool":"wiki-import","kind":<resolved>,"diagrams":<bool>,
-   "concepts":<bool>,"folder":<zone-folder + target_subdir>}`. `kind`/`diagrams`/`concepts`
-   come from the effective `summarize` config (P3); until P3 lands, default
-   `kind=<detected>`, `diagrams=false`, `concepts=true` (back-compat). The `convert+ingest`
-   action collapses to `ingest`+`delegate` (conversion now lives in `wiki-import prepare`).
-3. **B12 (R-9)** — rewrite `workflows/wiki-sync.md` Step 4: per delegated entry run
-   `wiki-import prepare … && <REASON> && wiki-import apply …` with the entry's delegate flags;
-   keep H-6 fencing inside the REASON step; keep Step 4c (`upsert`) + 4d (`record`). Remove the
-   inline `summarizing-meetings`/`wiki-enrich`/`wiki-extract-concepts` steps and the
-   `converter`/`normalize` plan fields from delegated entries.
+1. **B10** — RED tests in `tests/test_sync_delegation.py`.
+2. **B11 (R-8)** — for `ingest`/`convert+ingest` entries, add (in `_build_entries`)
+   `entry["delegate"] = {"tool":"wiki-import","source":<rel>,"folder":<topic>,"kind":<k>,
+   "diagrams":<bool>,"concepts":<bool>}` + the `_delegate_folder` helper (topic = the source's
+   folder, or its parent when under `_raw/`/`.staging/`). `kind`/`diagrams`/`concepts` default
+   here (`auto`/`false`/`true` — back-compat) and are populated from the per-folder `summarize`
+   config in P3. **Additive (as shipped):** the classifier's `converter`/`normalize`/`staged_target`
+   stay in the entry as the **detected-format hint** (wiki-import `prepare` re-detects + converts) —
+   dropping them would break ~24 existing classifier/plan assertions for no gain. `upsert`/`skip`
+   entries carry NO `delegate`.
+3. **B12 (R-9)** — rewrite `workflows/wiki-sync.md` Step 4a/4b into ONE "distil = delegate to
+   wiki-import" step: per delegated entry run `wiki-import prepare → REASON → apply` with the
+   delegate flags (`--kind`, `--diagrams` iff `delegate.diagrams`, `--no-concepts` iff not
+   `delegate.concepts`); conversion is wiki-import `prepare`'s job (no inline convert/de-timestamp);
+   keep 4c (`upsert`) + 4d (`record` the original source hash = the D1 idempotency marker). Remove
+   the inline `summarizing-meetings`/`wiki-enrich`/`wiki-extract-concepts` steps.
 
-## Test Cases
-- **TC-UNIT-01 (B11/R-8)** `test_sync_scan_delegates_to_import`: a zone with a `.vtt` drop →
-  plan entry has `delegate.tool == "wiki-import"` and `delegate.concepts == True` (default).
-- **TC-UNIT-02 (B12/R-9)** `test_sync_plan_no_inline_distil`: a delegated entry omits
-  `converter`/`normalize` (conversion moved to `prepare`).
+## Test Cases (shipped)
+- **TC-UNIT-01 (B11/R-8)** `test_sync_scan_delegates_to_import`: a `.vtt` under `_raw/` →
+  `delegate.tool == "wiki-import"`, `concepts == True`, `kind == "auto"`, `folder == "courses"`.
+- **TC-UNIT-02 (R-9)** `test_sync_plan_delegates_not_inline`: EVERY ingest/convert+ingest entry
+  carries a wiki-import `delegate` (executor delegates, never inlines); `upsert`/`skip` carry none.
+- **TC-UNIT-03** `test_delegate_folder_resolution`: `_delegate_folder` strips `_raw`/`.staging`.
 
 ## Verification
 `pytest tests/test_sync_delegation.py tests/test_wiki_sync_*.py -v` green.
