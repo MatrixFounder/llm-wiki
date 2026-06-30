@@ -573,5 +573,22 @@ Conventions:
 - **[sql/wiki-index-v2.sql](sql/wiki-index-v2.sql)** — the schema DDL.
 - **[scripts/wiki_index/layout.py](scripts/wiki_index/layout.py)** — single source of truth for the `karpathy` layout constants.
 - **[CLAUDE.md](CLAUDE.md)** — project agent instructions + the full per-task ship log.
+
+---
+
+## License
+
+The code **in this repository** is licensed under the **Apache License,
+Version 2.0** — see [LICENSE](LICENSE).
+
+> [!IMPORTANT]
+> **Some external skills this framework integrates with are under PROPRIETARY
+> (closed-source) licenses** and are **not** covered by this repo's Apache-2.0
+> grant. They are installed and invoked separately (not vendored here); their
+> own license terms apply. Notices for the vendored `wiki-ingest` (Apache-2.0)
+> and the proprietary/external skill set (`summarizing-meetings`,
+> `transcript-fetcher`, `html`, `pdf`, `docx`, …) are in
+> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Consult each skill's license
+> before redistribution or commercial use.
 </content>
 </invoke>
