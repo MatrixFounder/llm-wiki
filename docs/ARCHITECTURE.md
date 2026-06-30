@@ -110,7 +110,7 @@ intercepts the call (the R-2 invariant, guarded by `test_patch_target_lock_at_sk
 | `_validation.py` | Validators, sanitizers, candidate-schema, `classify_candidates`, `_preflight_sanitize`, `_parse_source_span`, regex/const allowlists | none |
 | `_sourcing.py` | `_read_file_bounded`, `_resolve_source_inside_sources`, `_all_concepts_dirs`, `_derive_source_project`, `_load_candidates`, `_path_is_absolute`, byte caps | none |
 | `_db.py` | `load_known_entities`, `upsert_extracted_entity`, `upsert_entity_refs`, `check_idempotency`, `update_idempotency_state`, `build_manifest`, `_lookup_entity_row` | **carve-out**: `load_known_entities` + `update_idempotency_state` are re-imported into the facade and called there as facade globals |
-| `_pages.py` | `write_concept_page`, `_format_source_quote_block`, name allowlist | none |
+| `_pages.py` | `write_concept_page` (seeds the derived `BEGIN-AUTO:mentions` block via the shared `_common.format_concept_mentions_body`; TASK 047 retired the embedded per-source quote-block), name allowlist | none |
 | `_errors.py` | `ExtractionParseError`, `_envelope_from_parse_error` | none |
 
 `python -m scripts.wiki_skills.wiki_extract_concepts` keeps working via a package
@@ -123,8 +123,8 @@ is the dependency sink. Leaves MAY depend on lower leaves: `_validation` → `_e
 `_sourcing` → `_errors`; `_pages` → `_validation` + `_errors`; `_db` → `_validation`
 (`upsert_entity_refs` calls `_parse_source_span`) + `_errors`. The facade → all leaves +
 `_manifest_consumer` + `factory`. No leaf may import the facade (that would both cycle and
-break the facade-global lock). `_format_source_quote_block` lives in `_pages` (its only
-caller is `write_concept_page`), resolving the TASK §3.1 dual-listing.
+break the facade-global lock). (TASK 047 deleted the dead `_format_source_quote_block` — the
+concept-page mentions ledger is now a derived Class-B AUTO block, links only.)
 
 **§2.2 Native-App Control Skill `obsidian-cli` (TASK 029 / R-12 — prompt-layer only).**
 The component is **skill text, not code**: `skills/obsidian-cli/` (SKILL.md +

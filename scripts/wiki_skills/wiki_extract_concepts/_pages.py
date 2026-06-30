@@ -25,7 +25,9 @@ from scripts.wiki_index.security import (
     validate_inside_vault,
 )
 from scripts.wiki_skills._common import (
-    sanitize_markdown_text as _sanitize_markdown_text,
+    AUTO_MENTIONS_NAME,
+    format_concept_mentions_body,
+    wrap_auto_block,
 )
 from ._errors import ExtractionParseError
 from ._validation import (
@@ -38,23 +40,9 @@ from ._validation import (
 logger = logging.getLogger(__name__)
 
 
-def _format_source_quote_block(
-    source_quote: str, source_slug: str, source_span: str,
-) -> str:
-    """Render the source quote as a Markdown blockquote (``>``) line(s)
-    followed by a provenance footer line.
-
-    H-4: `source_quote` is sanitized via `_sanitize_markdown_text` so a
-    hostile quote containing `<script>...`, `[[evil-wikilink]]`,
-    `` `dataview LIST FROM ""` ``, or footnote-syntax injection cannot
-    surface in the rendered concept page. The `> ` line prefix
-    additionally neutralizes any leading-line block-markdown that
-    survives the escape.
-    """
-    sanitized_quote = _sanitize_markdown_text(source_quote)
-    quote_lines = sanitized_quote.split("\n")
-    quoted = "\n".join(f"> {line}" for line in quote_lines)
-    return f"{quoted}\n> — [[{source_slug}]] ({source_span})"
+# TASK 047: `_format_source_quote_block` was DELETED — the per-source quote-block is no longer
+# embedded in the concept-page body. The "Mentions across sources" ledger is a derived Class-B
+# AUTO block (links only, rendered from page_entity_refs by `wiki-index-render --concept-mentions`).
 
 
 def write_concept_page(
@@ -126,8 +114,9 @@ def write_concept_page(
     safe_name = _sanitize_name(str(candidate["name"]))
     safe_definition = _sanitize_definition(str(candidate["definition"]))
 
-    # Defense-in-depth source_span regex check at body-construction time
-    # (in addition to the upstream `_validate_candidates_schema` check).
+    # Defense-in-depth source_span regex check (kept even though TASK 047 no longer embeds
+    # the span in the body — `candidate["source_span"]` is still a required, attacker-influenced
+    # field, and the upstream `_validate_candidates_schema` check is the other half).
     source_span = str(candidate["source_span"])
     if not _SOURCE_SPAN_RE.match(source_span):
         raise ExtractionParseError(
@@ -137,9 +126,6 @@ def write_concept_page(
             reason=("source_span must match ^L\\d+-L\\d+$ before embedding "
                     "into _concepts page body"),
         )
-    safe_quote_block = _format_source_quote_block(
-        str(candidate["source_quote"]), source_slug, source_span,
-    )
 
     fm: dict[str, Any] = {
         "type": "concept",
@@ -156,11 +142,17 @@ def write_concept_page(
         "source_page": source_slug,
         "trust_level": "medium",
     }
+    # TASK 047: the per-source quote-block is RETIRED from the page body. The "Mentions
+    # across sources" ledger is a DERIVED Class-B AUTO block (rendered from page_entity_refs
+    # by `wiki-index-render --concept-mentions`); seed it here with the create source so a
+    # freshly-filed concept already carries the well-formed block (a later render reconciles
+    # the full set). Seeded via the SHARED formatter → byte-identical to what render produces.
+    mentions_block = wrap_auto_block(
+        AUTO_MENTIONS_NAME, format_concept_mentions_body([source_slug]))
     body = (
         f"# {safe_name}\n\n"
         f"{safe_definition}\n\n"
-        f"## Mentions\n\n"
-        f"{safe_quote_block}\n"
+        f"{mentions_block}\n"
     )
     post = frontmatter.Post(body, **fm)
     payload = frontmatter.dumps(post)

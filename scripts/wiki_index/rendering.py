@@ -20,7 +20,11 @@ from scripts.wiki_index.security import PathTraversalError
 # Neutral repo-wide egress sanitiser (Decision-16) — escapes wikilink/markdown/
 # HTML actives so untrusted frontmatter `title`/`tldr`/`id` can't inject into a
 # Class-B rendered page (graph-poisoning / custom-block-hijack / header-spoof).
-from scripts.wiki_skills._common import sanitize_markdown_text
+from scripts.wiki_skills._common import (
+    format_concept_mentions_body,
+    sanitize_markdown_text,
+    wrap_auto_block,
+)
 
 if TYPE_CHECKING:
     from scripts.wiki_index.layout_config import LayoutConfig
@@ -44,6 +48,47 @@ def extract_custom_sections(existing_md: str) -> dict[str, str]:
         name = m.group(1)
         out[name] = m.group(0)
     return out
+
+
+# =============================================================================
+# TASK 047 — derived "Mentions across sources" ledger (an in-page AUTO block).
+#
+# A concept page carries a managed `<!-- BEGIN-AUTO:mentions -->…<!-- END-AUTO:mentions -->`
+# block listing the SOURCE pages that reference the concept (`ref_type='mentioned'`),
+# regenerated from `page_entity_refs` (Class B). LINKS ONLY — no quote/span (those are not a
+# pure function of Class A: extract-time stores the LLM quote/span, `reindex --full` rebuilds
+# from the source footer wikilink; only the *set of linking sources* agrees across both, so
+# only it is rebuild-stable). NO `GENERATED-AT` line (it must stay byte-identical across
+# no-op re-renders). The AUTO markers are DISTINCT from BEGIN-CUSTOM (operator-owned).
+# =============================================================================
+
+def apply_auto_block(existing_md: str, name: str, body: str) -> str:
+    """Replace the `BEGIN-AUTO:<name>` region of `existing_md` with `wrap_auto_block(name, body)`,
+    preserving everything else byte-for-byte. The pattern is anchored on `<name>` (non-greedy) →
+    it matches ONLY the block of that name and can never swallow the definition, a different-named
+    AUTO block, or a `BEGIN-CUSTOM` island. If the named block is ABSENT (a pre-047 page or a
+    fresh non-seeded one) it is inserted BEFORE the first operator `BEGIN-CUSTOM` island (so the
+    derived Class-B block sits above operator-owned prose), else appended at the end."""
+    new_block = wrap_auto_block(name, body)
+    pat = re.compile(
+        rf"<!--\s*BEGIN-AUTO:{re.escape(name)}\s*-->.*?<!--\s*END-AUTO:{re.escape(name)}\s*-->",
+        re.DOTALL,
+    )
+    if pat.search(existing_md):
+        return pat.sub(lambda _m: new_block, existing_md, count=1)
+    custom = _CUSTOM_BLOCK_RE.search(existing_md)
+    if custom:
+        return existing_md[:custom.start()].rstrip() + "\n\n" + new_block + "\n\n" + existing_md[custom.start():]
+    return existing_md.rstrip() + "\n\n" + new_block + "\n"
+
+
+def render_concept_mentions_body(repo: "IndexRepository", vault_id: str, entity_slug: str) -> str:
+    """The mentions AUTO-block BODY for one concept — a pure function of the DB
+    (`mentioning_source_pages`). Deterministic (sorted, deduped, links only)."""
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+    if not isinstance(repo, SQLiteRepository):
+        raise NotImplementedError("render_concept_mentions supports SQLiteRepository only")
+    return format_concept_mentions_body(repo.mentioning_source_pages(vault_id, entity_slug))
 
 
 def render_index(

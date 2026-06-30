@@ -74,6 +74,30 @@ def sanitize_markdown_text(text: str) -> str:
     return "\n".join(out_lines)
 
 
+# --- TASK 047: shared concept-mentions AUTO-block format ---------------------
+# Pure string helpers shared by `write_concept_page` (seeds the block on create) and
+# `rendering.render_concept_mentions_body` (regenerates it) so a seeded block is
+# byte-identical to a rendered one. Kept here (the neutral leaf both already import) to
+# respect the _pages.py "no import another skill / no rendering edge" dependency rule.
+
+AUTO_MENTIONS_NAME = "mentions"
+_MENTIONS_HEADING = "## Mentions across sources"
+
+
+def wrap_auto_block(name: str, body: str) -> str:
+    """The full `<!-- BEGIN-AUTO:name -->\\n<body>\\n<!-- END-AUTO:name -->` text."""
+    return f"<!-- BEGIN-AUTO:{name} -->\n{body}\n<!-- END-AUTO:{name} -->"
+
+
+def format_concept_mentions_body(source_slugs: list[str]) -> str:
+    """The AUTO-block BODY for a concept's mentions: the heading + one `- [[slug]]` per
+    source (caller dedups+sorts; sanitized on egress). Heading-only when empty — the block
+    is always present, never absent."""
+    lines = [_MENTIONS_HEADING, ""]
+    lines += [f"- [[{sanitize_markdown_text(s)}]]" for s in source_slugs]
+    return "\n".join(lines).rstrip()
+
+
 def atomic_write_text(target: Path, text: str) -> None:
     """Atomically write ``text`` to ``target`` (tempfile in the same dir +
     fsync + ``os.replace``). ``os.replace`` is ``rename(2)`` on POSIX — it does

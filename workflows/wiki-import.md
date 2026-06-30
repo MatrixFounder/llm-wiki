@@ -45,7 +45,12 @@ content harness) is yours, the orchestrator. **No `import anthropic`.**
      concept pages (`wiki-extract-concepts apply` with a FRESH hash of the written note + the
      note's rel path as `--source-page`), and indexes the note.
    - Review the manifest's `skipped[]` (collision-guarded candidates) — expected, not an error.
-4. **verify** — `wiki-reindex --full` (collisions must stay 0); `wiki-lint` (orphan-link delta
+4. **mentions ledger (TASK 047)** — `wiki-index-render --concept-mentions --vault <id>
+   [--vault-root <abs>]`. Regenerates each concept page's derived `BEGIN-AUTO:mentions` block
+   (the sources that reference it, from `page_entity_refs`) and re-indexes each rewritten page.
+   Idempotent + cheap; run it after concepts are filed so this note's concept pages show it as a
+   source. (Class-B: it is part of the rebuild path — `wiki-reindex --full → --concept-mentions`.)
+5. **verify** — `wiki-reindex --full` (collisions must stay 0); `wiki-lint` (orphan-link delta
    for this note ≈ 0 — wikilinks resolve because known-concepts were injected).
 
 ## Batch path (the DAO/#01 pattern — Workflow tool)

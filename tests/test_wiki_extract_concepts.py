@@ -745,7 +745,8 @@ def test_write_concept_page_returns_correct_path(tmp_path: Path) -> None:
 
 def test_write_concept_page_writes_file_with_frontmatter(tmp_path: Path) -> None:
     """R-36(b,c): frontmatter contains the 9 required fields; body has
-    `# <name>`, definition, `## Mentions`, provenance line."""
+    `# <name>`, definition, and the TASK-047 seeded `BEGIN-AUTO:mentions` block
+    (the per-source quote/span are no longer embedded — that ledger is derived)."""
     target, _action = wec.write_concept_page(
         tmp_path, _DEMO_CANDIDATE, "self-improving-agent",
         date(2026, 5, 27), vault_id="trade-agents",
@@ -765,9 +766,10 @@ def test_write_concept_page_writes_file_with_frontmatter(tmp_path: Path) -> None
     body = post.content
     assert body.startswith("# Sharpe Ratio")
     assert "A measure of risk-adjusted return." in body
-    assert "## Mentions" in body
-    assert "[[self-improving-agent]]" in body
-    assert "L12-L14" in body
+    assert "<!-- BEGIN-AUTO:mentions -->" in body          # TASK 047: derived ledger seeded on create
+    assert "## Mentions across sources" in body
+    assert "- [[self-improving-agent]]" in body            # the create source, as a link (no quote/span)
+    assert "L12-L14" not in body                           # the per-source span is no longer embedded
 
 
 # test_write_concept_page_skips_existing_file DELETED in 003-v3-04:
@@ -961,23 +963,26 @@ def test_write_concept_page_sanitize_definition_escapes_html_tag_H7(
     assert "<script>" not in post.content
 
 
-def test_write_concept_page_source_quote_wrapped_in_blockquote_H7(
+def test_write_concept_page_source_quote_not_embedded_H7(
     tmp_path: Path,
 ) -> None:
-    """NEW-1: source_quote rendered as ``> ...`` blockquote with a
-    provenance footer line, eliminating inline-quote ambiguity and the
-    `]]` wikilink-escape attack vector."""
+    """TASK 047: the source_quote is NO LONGER embedded in the page body — the derived
+    "Mentions across sources" ledger renders LINKS only. This is a STRONGER H7 mitigation
+    than the old blockquote-wrap: the `]]` wikilink-escape vector via an untrusted quote is
+    structurally eliminated (the quote never reaches the page markdown). The quote still
+    lives in `page_entity_refs.source_quote`, but the renderer never emits it."""
     cand = {**_DEMO_CANDIDATE,
-            "source_quote": 'said something "smart" today'}
+            "source_quote": 'said something "smart" today]] [[evil'}
     path, _action = wec.write_concept_page(
         tmp_path, cand, "self-improving-agent",
         date(2026, 5, 27), vault_id="test-vault",
     )
     text = path.read_text(encoding="utf-8")
-    assert '> said something "smart" today' in text
-    assert "> — [[self-improving-agent]] (L12-L14)" in text
-    # v2 inline ``- [[slug]] — "quote"`` format must be gone.
-    assert '- [[self-improving-agent]] — "said something' not in text
+    assert "said something" not in text          # the quote is not embedded at all
+    assert "[[evil" not in text                   # → its injection payload can't reach the body
+    # the create source appears only as a sanitized LINK in the seeded AUTO block
+    assert "<!-- BEGIN-AUTO:mentions -->" in text
+    assert "- [[self-improving-agent]]" in text
 
 
 def test_write_concept_page_invalid_source_span_raises_H7(
