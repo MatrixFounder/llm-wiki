@@ -542,7 +542,7 @@ layouts and any output language**:
   (reported, not a failure) — preserving the Class A/B rebuildability invariant (no orphaned,
   non-`--full`-rebuildable markdown).
 - **Layout `type_mapping` + ignore.** dev-project + cybos gained `summary`/`article-summary`/
-  `meeting-summary` → db_type summary (imported notes index); cybos also gained
+  `meeting-summary`/`lesson-summary` → db_type summary (imported notes index); cybos also gained
   concept/external/person/company/product/group (its concept pages index). karpathy +
   dev-project + cybos gained `**/_raw/**` in `ignore` (the `_raw/` capture is never indexed as a
   phantom page that could clobber the curated note on a shared `(vault_id, slug, project)`).
