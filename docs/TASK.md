@@ -1,131 +1,138 @@
-# TASK 046 — Converge the construct path: `wiki-import` = per-source engine, `wiki-sync` = batch driver
+# TASK 047 — Derived "Mentions across sources" ledger on concept pages; retire `wiki-enrich` + vendored `wiki_ingest`
+
+## 0. Meta Information
+- **Task ID**: 047
+- **Slug**: additive-concept-merge
+- **Depends on**: TASK 046 (converged construct path — merged to `main`)
+- **Decision history**: review chose *option 2* (compound concept pages, then retire the legacy
+  on-ramp). Two adversarial plan-review rounds on a **body-merge** design surfaced a blocker +
+  6 high (it fights the confirm lifecycle, the entity/page slug duality, the pure-fn collision
+  guard, layout `_concepts`-dir resolution, H-6, and concurrency). **Pivoted to a derived/rendered
+  ledger** (`docs/reviews/plan-047-review.md`): same visible result, Class-A/B-clean, none of those
+  hazards exist by construction.
 
 ## Problem / Motivation
-
-The construct tools **duplicate**. Today **two** code paths own *acquire + distil*:
-
-- **`wiki-import`** = fetch (`prepare`: html/pdf/transcript) → REASON → `apply`
-  (**article-shaped** `assemble_note` + **always** concepts).
-- **`wiki-sync`** ingest = convert (docx/pptx/xlsx/pdf) + de-timestamp (vtt) →
-  `summarizing-meetings` (**pyramid**) → file/index → **always** concepts.
-
-The overlap is real and already flagged in
-[functional-architecture §2.3](architectures/functional-architecture.md) ("A future
-task may route `wiki-sync ingest` → `wiki-import` to retire the overlap"). Two
-symptoms it causes:
-
-1. A PARA **transcript/webinar** has no clean path to a **rich pyramid without
-   concepts** — `wiki-import apply` makes an article-shaped note and force-files
-   concepts. The 2026-06-30 webinar import ("Building AI-Native Startups [003]")
-   had to be done **by hand**.
-2. The same "raw → summary → index" logic is maintained twice, in two grammars.
+1. **Concept pages don't compound.** A concept page (`# name / definition / ## Mentions <one
+   source quote-block>`) is re-filed by **content-hash overwrite**; a 2nd source mentioning the same
+   concept never adds to the page. The accumulating behaviour lived only in the vendored `wiki_ingest`
+   (reachable solely via the legacy `wiki-enrich` on-ramp).
+2. **`wiki-enrich` is a redundant on-ramp** (6,372 LOC of vendored `scripts/wiki_ingest/` + a
+   vendoring policy §7.4 + drift tests), dead after TASK 046's converged `wiki-import`/`wiki-sync`.
 
 ## Goal
+Make each concept page show a **compounding "Mentions across sources"** section that is **derived**
+(Class B, rebuildable) from the existing `page_entity_refs` table — NOT a Class-A read-modify-write
+merge. Then **retire** `wiki-enrich` + the vendored `wiki_ingest` (a clean delete — the derived
+design needs nothing ported).
 
-Collapse to **one per-source engine** and **one batch driver** (the convergence the
-architecture already anticipated), with **zero duplication** of acquire/distil:
+## Design / Architecture (derived-ledger — grounded in existing machinery)
 
-- **`wiki-import` = the per-source engine** (unit of work = ONE source). It absorbs:
-  - **(A) universal acquire+normalize** in `prepare`: in addition to URL/PDF/video,
-    handle **office (docx/pptx/xlsx)** + **`.vtt`/`.srt` de-timestamp** + local
-    `.md`/`.txt` → `_raw/<slug>.md`. (Moved out of `wiki-sync`'s executor.)
-  - **(B) output-grammar by `--kind`** in `apply`: `meeting`/`lesson` → **pyramid**
-    (rich `summarizing-meetings` structure), `article`/`paper`/`thread` → the
-    existing article wrapper, `summary` → register. Add **`lesson`** kind (→
-    `generate-detailed-meeting-summary` educational overlay).
-  - **(C) `--diagrams`** flag — selective-mermaid overlay on any kind.
-  - **(D) `--concepts` / `--no-concepts`** flag — gate the concept-filing step
-    (**default ON** — zero regression; `--no-concepts` defers to `/wiki-extract-concepts`).
-- **`wiki-sync` = the batch driver** (the "what's new / re-ingest" brain). It **drops
-  its own summarise/enrich/extract/convert executor** and instead: walk zone →
-  classify (source / ready-note / skip) → decide new-vs-reingest (`source_state` /
-  `resummarize` / `--force`) → **delegate each due SOURCE item to `wiki-import`**
-  (prepare→REASON→apply) with settings resolved from `.wiki/sync.yaml`; ready notes
-  → `wiki-index-upsert`; record the commit-marker on success.
-- **Settings flow:** `.wiki/sync.yaml` `summarize:` (`profile`→`--kind`,
-  `diagrams`→`--diagrams`, `extract_concepts`→`--concepts/--no-concepts`,
-  `target_subdir`→`--folder` suffix), per-folder deep-merge (like `resummarize:`).
-  A direct `/wiki-import` call takes the same flags — one knob-set, two entry points.
+The data already exists: every source note's wiki-link to a concept is indexed in
+**`page_entity_refs`**, queryable via **`get_backlinks(vault_id, entity_slug, ref_type='mentioned')`**. So:
 
-After this, the de-dup audit holds: acquire+normalize and distil each have **one**
-owner (`wiki-import`); `wiki-sync` is a pure batch driver; `wiki-index-upsert` /
-`wiki-extract-concepts` are shared leaf tools, not pipelines. `wiki-enrich` stays a
-**legacy Karpathy-only** on-ramp (separate retirement — out of scope).
+```
+# <name>
+<definition>                              ← Class A, authored by wiki-extract-concepts (overwrite-on-create)
+
+<!-- BEGIN-AUTO:mentions -->              ← Class B, DERIVED — regenerated from page_entity_refs
+## Mentions across sources
+- [[source-a]]
+- [[source-b]]                            ← appears automatically once source-b's `mentioned` ref is indexed
+<!-- END-AUTO:mentions -->
+```
+
+- **Source LINKS only — deduped, sorted, no quote/span (the rebuild-stability fix, ARCH-R3-1).** The
+  block renders one `- [[source]]` per **distinct** source slug that has a **`ref_type='mentioned'`**
+  inbound ref, sorted by slug. It does NOT render the quote/line-span: those are NOT a pure function
+  of Class A — extract-time stores the LLM quote+multi-line span, but `wiki-reindex --full` rebuilds
+  refs from the source's `## Entities` **footer-line** wikilink (a single-line, different quote). Only
+  the *set of linking sources* agrees across both paths → only it is rebuild-stable (R-5). No
+  `GENERATED-AT` timestamp in the block (would break byte-identity). Self-references and zero-mention
+  pages render an empty (but present) block.
+- **The block is rendered, never hand-merged**, preserving everything else on the page (name,
+  definition, operator prose, any `BEGIN-CUSTOM` islands). Reuses `rendering.py` (`sanitize_markdown_text`,
+  `atomic_write`) + a **NEW** non-greedy `BEGIN-AUTO:<name>`…`END-AUTO:<name>` regex (distinct from
+  `_CUSTOM_BLOCK_RE`). On first render the block is inserted after the definition, before any `BEGIN-CUSTOM`.
+- **`write_concept_page` DOES change (R047-2/ARCH-R3-5).** The create path emits the
+  `BEGIN-AUTO:mentions`/`END-AUTO:mentions` markers **in place of** today's hardcoded `## Mentions
+  <quote-block>` (else the legacy block duplicates/diverges from the rendered one) — seeded with the
+  create source as the first `- [[source]]` entry. The re-mention path (`mention_list`) is unchanged
+  (it upserts the ref; the render reads it). No ownership guard, no `derive_candidates` change, no slug-duality.
+  > **Byte-baseline note (R047-4):** the new block format re-baselines every concept page's content
+  > hash once (a one-time `updated` sweep) and changes the **karpathy concept-page byte-identity
+  > anchor** — P1 updates that golden anchor + the affected eval pins (in-scope, called out, not a surprise).
+- **Render↔reindex ordering (ARCH-R3-3).** Rewriting a page changes its bytes, so `--concept-mentions`
+  **re-indexes each page it rewrites** (updates `pages.file_hash`) so it never leaves a spurious
+  `hash-mismatch` drift. The full rebuild path is `reindex --full` (rebuild refs) → `--concept-mentions`
+  (render + re-hash). Idempotent — re-running with no new refs is a no-op.
+- **Fully rebuildable (Class A/B).** `wiki-reindex --full` rebuilds `page_entity_refs` from the source
+  notes' footer wiki-links; the render rebuilds every Mentions block (a pure function of the linking-
+  source set) → deterministic. The name/definition above the markers stays Class-A canonical. (No
+  in-page lint-drift guard — render overwrites any hand-edit on the next run; the existing
+  `hash-mismatch` drift already surfaces page edits. R-9 dropped — PW-Q only covers whole-file
+  `auto_indexes[]` targets, not an in-page block.)
+- **No hazards by construction:** no read-modify-write of accumulated state (regeneration); confirm
+  lifecycle irrelevant (keys on refs, not `is_candidate`); H-6 = `sanitize_markdown_text`; concurrency
+  = idempotent regeneration; no entity-vs-page slug coupling (render by `entity_slug`).
 
 ## Phases (stub-first within each)
 
-- **P1 — `wiki-import` output-grammar + toggles (the engine's new shape).**
-  `apply` assembles a **pyramid** for `--kind meeting|lesson` (vs the article wrapper
-  for `article|paper|thread`); add `lesson` kind; add `--diagrams` and
-  `--concepts/--no-concepts`. RED tests first.
-- **P1b — `wiki-import prepare` universal acquire+normalize.**
-  `dispatch_fetch` gains office (docx/pptx/xlsx) + `.vtt`/`.srt` de-timestamp
-  branches (reuse the harness skills + transcript-fetcher `_vtt_to_text.py`) → a
-  source of any supported format produces `_raw/<slug>.md`.
-- **P2 — `wiki-sync` delegates to `wiki-import`.**
-  Replace the inline executor (workflow Step 4) with per-item `wiki-import`
-  delegation; `scan` plan emits, per due source entry, the resolved `wiki-import`
-  invocation (kind/diagrams/concepts/folder). `upsert`/`skip` unchanged. Retire the
-  inline summarise/enrich/extract recipe steps.
-- **P3 — config + docs.**
-  `.wiki/sync.yaml` `summarize:` block (schema `$defs/Summarize`, loader deep-merge),
-  update `skills/{wiki-import,wiki-sync}/SKILL.md`, `workflows/*`, ARCHITECTURE
-  (retire the overlap note; the converged diagram), open-questions Q-046-1.
-- **P4 — evals (vendor-agnostic behaviour), high-graded.**
-  Update `skills/wiki-import/evals/` for the new discipline (meeting/lesson → **pyramid**
-  grammar, `--diagrams` selective-mermaid, `--no-concepts` deferral) and **create**
-  `skills/wiki-sync/evals/` (it has none) for the **delegation** discipline (classify →
-  new/re-ingest decision → delegate to `wiki-import`, never inline-distil; honour the
-  `summarize:` profile; keep the H-6 fence in the delegated REASON). Grader-free,
-  machine-checkable `expect_*` fields — same harness as the existing wiki-import evals,
-  authored to the `never_relax` bar. **High-graded gate (R-13):** after P1–P3 land, run
-  both eval sets against the converged skills and **file a report under `reports/`** showing
-  a **high grade** (no `never_relax` failure; meet-or-raise each skill's `floor`) — the eval
-  is not "done" until the implementation passes it at a high grade, not merely above floor.
+- **P1 — derived mentions-ledger renderer (the meat).**
+  `rendering.py`: `render_concept_mentions(repo, vault, entity_slug)` (or per-vault sweep) → build the
+  `## Mentions across sources` list from `get_backlinks`, inject/replace ONLY the `BEGIN-AUTO:mentions`
+  block, preserve the rest. Wire a `wiki-index-render --concept-mentions` mode. `write_concept_page`
+  seeds the empty AUTO block on create. RED tests first (drive import of 2 sources → render → page
+  shows both; rebuildable; idempotent; rest-preserved; confirmed concept still renders).
+- **P2 — retire `wiki-enrich` + vendored `wiki_ingest` (clean delete).**
+  Remove `bin/wiki-enrich`, `commands/wiki-enrich.md`, `skills/wiki-enrich/`, `workflows/wiki-enrich.md`,
+  `scripts/wiki_skills/wiki_enrich.py`, the whole `scripts/wiki_ingest/` tree, and the vendored tests
+  (`test_vendored_*`, `test_wiki_enrich`, `test__page_merge`, `test__markdown`, the vendored half of
+  `test_layout_invariants`). **No port needed.** Update README (CLI 18→17, drop the ADR-001 Option-I
+  diagram), `THIRD_PARTY_NOTICES.md`, `CLAUDE.md`, `WIKI-INGEST-V1.1-CONTRACT.md` (archive), §7.4
+  vendoring policy, `.AGENTS.md`.
+- **P3 — evals + docs + dogfood.**
+  R-5 rebuildability test (reindex --full + render reproduces the Mentions blocks deterministically);
+  update `docs/ARCHITECTURE.md` + functional-architecture §2.3 + extend ADR-007; dogfood on a
+  `samples/` vault (two sources → a concept page showing both; re-render idempotent; `--full` rebuild
+  reproduces). Final gate.
 
 ## Requirements (RTM)
 
 | ID | Requirement | Phase | Acceptance test |
 |----|-------------|-------|-----------------|
-| R-1 | `wiki-import apply --kind meeting` files a **pyramid** note (`type: meeting-summary`), not the article wrapper | P1 | `test_import_apply_pyramid_grammar[meeting]` |
-| R-2 | `--kind lesson` → pyramid (`type: lesson-summary`; educational overlay is an orchestrator-recipe concern over the shared harness) | P1 | `test_import_apply_pyramid_grammar[lesson]` |
-| R-3 | `--kind article|paper|thread` → unchanged article wrapper (byte-compat) | P1 | `test_import_apply_article_unchanged` |
-| R-4 | `--diagrams` adds mermaid overlay; absent → none | P1 | `test_import_apply_diagrams_flag` |
-| R-5 | `--no-concepts` skips concept filing; default (omitted) files concepts as today | P1 | `test_import_apply_concepts_toggle` |
-| R-6 | `prepare` normalizes docx/pptx/xlsx → `_raw/<slug>.md` | P1b | `test_import_prepare_office` |
-| R-7 | `prepare` de-timestamps `.vtt`/`.srt` → `_raw/<slug>.md` | P1b | `test_import_prepare_vtt` |
-| R-8 | `wiki-sync scan` emits a per-source `wiki-import` delegation (kind/diagrams/concepts) in the plan | P2 | `test_sync_scan_delegates_to_import` |
-| R-9 | `wiki-sync` no longer references inline summarise/enrich/extract for `ingest` (executor delegates) | P2 | recipe review + `test_sync_plan_delegates_not_inline` |
-| R-10 | `.wiki/sync.yaml` `summarize:{profile,diagrams,extract_concepts,target_subdir}` accepted; unknown key / bad enum → exit 6, no echo | P3 | `test_sync_config_summarize_accept` / `_reject_unknown_key` / `_bad_profile` |
-| R-11 | `summarize:` deep-merges deepest-wins per folder; maps to `wiki-import` delegate flags | P3 | `test_sync_config_summarize_deepmerge` + `test_sync_scan_summarize_drives_delegate` |
-| R-12 | Absent `summarize:` ≡ P2 default (profile `auto`, concepts ON) | P3 | `test_sync_config_summarize_default_backcompat` |
-| R-13 | Evals updated (`wiki-import`) + created (`wiki-sync`) for the converged discipline, **high-graded** — a filed `reports/` run passes with no `never_relax` failure + meets/raises each `floor` | P4 | eval-harness report under `skills/*/evals/reports/` |
+| R-1 | After two sources mention a concept, the rendered `BEGIN-AUTO:mentions` block lists **both** sources as `- [[source]]` (deduped, sorted, `ref_type='mentioned'` only — no quote/span, no typed-edge backlinks), via the full import→render path | P1 | `test_concept_mentions_lists_all_sources` + `test_concept_mentions_excludes_typed_edges` |
+| R-2 | The render is **idempotent** — re-running with no new refs leaves the page byte-identical (no `GENERATED-AT` stamp; deterministic order); a new `mentioned` ref adds exactly one entry | P1 | `test_concept_mentions_render_idempotent` |
+| R-3 | The render **replaces ONLY** the AUTO block — name, definition, operator prose, and `BEGIN-CUSTOM` islands are byte-preserved (non-greedy `BEGIN-AUTO` regex) | P1 | `test_concept_mentions_preserves_rest` |
+| R-4 | A **confirmed** concept (`is_candidate: false` after `wiki-confirm`) still renders its Mentions block (render keys on refs, not lifecycle) | P1 | `test_concept_mentions_renders_after_confirm` |
+| R-5 | `wiki-reindex --full` (rebuild refs from footers) + `--concept-mentions` reproduces every block **byte-deterministically** (Class A/B — the linking-source SET is the stable invariant; quotes/spans intentionally NOT rendered) | P3 | `test_reindex_full_rebuilds_concept_mentions` |
+| R-6 | `wiki-enrich` (bin/cmd/skill/workflow/script) and `scripts/wiki_ingest/` removed; no runtime import of `wiki_ingest` remains | P2 | `test_no_wiki_ingest_imports` + grep |
+| R-7 | Docs reflect 17 CLIs; `THIRD_PARTY_NOTICES` drops `wiki_ingest`; no dangling links | P2 | doc-lint / `wiki-lint` |
+| R-8 | **Per-phase exit gate**: full suite green + `mypy --strict` clean; existing extract-concepts/import/sync/render evals pass (incl. the **updated karpathy concept-page byte-identity anchor**) | all | `pytest` + `mypy` + eval pins |
+| R-9 | `--concept-mentions` **re-indexes each page it rewrites** (updates `pages.file_hash`) → no spurious `hash-mismatch` drift; `write_concept_page`'s create path emits the AUTO markers **in place of** the legacy `## Mentions` quote-block (no duplicate) | P1 | `test_concept_mentions_no_drift_after_render` + `test_write_concept_page_emits_auto_block_not_legacy` |
 
 ## Invariants to preserve
-- **Decision-17** — no `import anthropic`; the LLM step stays the orchestrator's
-  REASON between `wiki-import prepare` and `apply`. `wiki-sync scan` stays
-  deterministic plan-only.
-- **Zero-DDL** — `summarize:` is file config; `user_version` stays 5.
-- **No new pipeline / engine** — the convergence REMOVES a path; it adds none.
-- **Back-compat** — concepts default ON; `--kind article` byte-identical; absent
-  `summarize:` ≡ today's wiki-sync defaults.
-- **STRICT config** (`additionalProperties:false`, no value echo), **H-6** (cap +
-  alias-refusing loader), **idempotency** (commit-marker short-circuit) — unchanged.
-- **`known_concepts` injection** discipline (R-6) preserved on every REASON path.
+- **Class A/B/C** — name/definition = Class A; the Mentions block = Class B (regenerated from
+  `page_entity_refs`, which `wiki-reindex --full` rebuilds). No accumulation lives only in Class A.
+- **Decision-17** — the renderer is deterministic Python; no `import anthropic`.
+- **Zero-DDL** — `page_entity_refs` already exists; no schema change.
+- **H-6** — rendered source links/titles pass `sanitize_markdown_text` (as index.md rendering does).
+- **Collision guard (TASK 039)** — untouched: the **overwrite-on-create** semantics + the existing
+  collision guard are unchanged. (`write_concept_page`'s create-time BODY changes — legacy `## Mentions`
+  → AUTO markers — but it still fires only for a NEW concept; the re-mention path is untouched.)
 
 ## Out of scope
-- Retiring `wiki-enrich` / external `wiki-ingest` (legacy Karpathy on-ramp) — a
-  separate task; it stays coexisting.
-- Any DB schema change.
-- **Scanned/image-only PDF OCR** (P2 review). The pre-P2 `wiki-sync` inline path had an OCR
-  remediation hop; the converged `wiki-import prepare` has **no OCR** — an image-only PDF surfaces
-  as `FETCH_FAILED` (flagged `needs-ocr` from the pdf skill's `DocumentScanned` envelope). Restoring
-  an OCR hop inside `wiki-import prepare` is a **separate task** (tracked in `docs/issues/`).
+- The collision guard / `derive_candidates` / the REASON contract / the re-mention routing (all unchanged).
+- A literal Class-A body-merge (the rejected design — `docs/reviews/plan-047-review.md`).
+- **Per-source quote/span in the ledger** — not rendered: not rebuild-stable across extract-vs-reindex
+  (ARCH-R3-1). Links only.
+- **An in-page lint drift-guard** for the AUTO block — render corrects any hand-edit on the next run;
+  the existing `hash-mismatch` drift already surfaces page edits; PW-Q covers only whole-file
+  `auto_indexes[]` targets, so no new lint machinery is built (R-9 reframed to the re-index contract).
+- `## Contradictions` / definition reconciliation across sources (definition stays the latest authored one).
 
 ## Verification
-- `pytest tests/` green (new + no regression); `mypy --strict scripts/` clean.
-- End-to-end on a `samples/` PARA vault: drop a `.vtt` + a `.docx` in a zone with
-  `.wiki/sync.yaml summarize:{profile:meeting,diagrams:true,extract_concepts:false}`
-  → `wiki-sync` → two pyramid notes, no concepts, indexed; a second run is a no-op.
-- Direct `/wiki-import --kind meeting --diagrams --no-concepts <URL>` → same pyramid.
-- `wiki-reindex --full` still rebuilds (Class-B gate).
+- `pytest tests/` green; `mypy --strict scripts/` clean.
+- `samples/` dogfood: import source A → concept page with an AUTO-mentions block listing A; import
+  source B (same concept) → render → the page lists A **and** B; re-render → byte-identical;
+  `wiki-reindex --full` + render → identical Mentions blocks.
+- `grep -rn 'wiki_ingest' scripts/` clean of imports; `wiki-enrich` gone; README = 17 CLIs.
