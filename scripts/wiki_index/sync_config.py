@@ -242,17 +242,37 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
     )
 
 
+def _is_safe_subdir(sub: str) -> bool:
+    """A `target_subdir` must be a SAFE relative POSIX subpath: no leading `/` (absolute),
+    no `..`/empty segment (traversal / `//`), no backslash, no control chars. Unicode +
+    spaces are allowed (Cyrillic folder names). Defense-in-depth at the config-validating
+    layer (H-6) — the downstream wiki-import `validate_inside_vault` still refuses escapes,
+    but a malformed path should be refused HERE (exit 6) not surface as a late INVALID_FOLDER."""
+    if sub.startswith("/") or "\\" in sub or any(ch < " " for ch in sub):
+        return False
+    parts = sub.split("/")
+    return ".." not in parts and "" not in parts
+
+
 def _parse_summarize(block: Any) -> SummarizeConfig | None:
     """Build the typed `SummarizeConfig` from a schema-validated `summarize` block
     (`None` when absent ≡ the P2 defaults). Already strict-validated, so the enum/types
-    are sound; apply the field defaults jsonschema does not inject."""
+    are sound; apply the field defaults jsonschema does not inject. `target_subdir` is
+    normalised (strip + drop a trailing `/`) and path-validated (no escape/traversal —
+    raises INVALID_SYNC_CONFIG, value NOT echoed; CWE-209)."""
     if not block:
         return None
+    sub = str(block.get("target_subdir") or "").strip().rstrip("/")
+    if sub and not _is_safe_subdir(sub):
+        raise SyncConfigError(
+            "INVALID_SYNC_CONFIG",
+            "summarize.target_subdir must be a safe relative path "
+            "(no leading '/', no '..' segment, no backslash/control chars)")
     return SummarizeConfig(
         profile=str(block.get("profile") or "auto"),
         diagrams=bool(block.get("diagrams", False)),
         extract_concepts=bool(block.get("extract_concepts", True)),
-        target_subdir=str(block.get("target_subdir") or ""),
+        target_subdir=sub,
     )
 
 

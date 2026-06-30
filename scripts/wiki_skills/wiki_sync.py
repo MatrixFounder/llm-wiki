@@ -236,17 +236,23 @@ def _build_entries(
     return entries
 
 
+# Raw/source-machinery dir names trimmed when resolving a delegate's topic folder. Covers the
+# `mirror.raw_dirs` defaults (`_raw`, `_transcripts`) + the `_raw/.staging` scratch dir — so a
+# source under ANY of them files its summary in the TOPIC folder, not inside the raw tree.
+_RAW_DIR_NAMES = frozenset({"_raw", ".staging", "_transcripts"})
+
+
 def _delegate_folder(rel: str) -> str:
     """Target topic folder for a delegated wiki-import (TASK 046 P2): the topic folder ABOVE all
-    `_raw/`/`.staging/` machinery — so the summary note (and wiki-import's own `_raw/<slug>.md`
-    capture) land in the topic folder, never INSIDE a `_raw/` tree. We trim from the FIRST
-    `_raw`/`.staging` segment onward (not just the immediate parent): a source nested under a
-    grouping subdir like `<topic>/_raw/<group>/x.vtt` must still resolve to `<topic>`, else its
-    capture lands in `_raw/` and the next scan re-ingests it (the re-ingest loop, P2 review).
-    A vault-root source yields `.` (wiki-import's vault-root folder)."""
+    raw/source machinery — so the summary note (and wiki-import's own `_raw/<slug>.md` capture)
+    land in the topic folder, never INSIDE a `_raw/`/`_transcripts/` tree. We trim from the FIRST
+    raw-machinery segment onward (not just the immediate parent): a source nested under a grouping
+    subdir like `<topic>/_raw/<group>/x.vtt` (or `<topic>/_transcripts/x.txt`) still resolves to
+    `<topic>`, else its capture lands in the raw tree and the next scan re-ingests it (re-ingest
+    loop, P2 review) / the summary is mis-filed (TASK 046 P3 dogfood). A vault-root source → `.`."""
     segs: list[str] = []
     for seg in PurePosixPath(rel).parent.parts:
-        if seg in ("_raw", ".staging"):
+        if seg in _RAW_DIR_NAMES:
             break
         segs.append(seg)
     return PurePosixPath(*segs).as_posix() if segs else "."

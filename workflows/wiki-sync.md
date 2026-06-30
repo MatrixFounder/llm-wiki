@@ -118,8 +118,15 @@ engine: convert → REASON → file → index → concepts). Each distil entry c
 TASK 046 P3; default `kind:auto`, `diagrams:false`, `concepts:true`). Run the wiki-import
 3-step loop per entry (its full contract: [`workflows/wiki-import.md`](wiki-import.md)):
 
+0. **Ensure the delegate folder exists** — `mkdir -p "$VAULT_ROOT/<delegate.folder>"`. wiki-import
+   refuses a missing `--folder` (`INVALID_FOLDER`, exit 2) and auto-creates only its OWN machinery
+   subdirs (`_raw`/`_concepts`) UNDER an existing folder — never the folder itself. The source's own
+   topic folder always exists, but a `summarize.target_subdir` (e.g. `<topic>/_summary`) names a NEW
+   sublocation nothing else creates, so pre-create it here (idempotent; per-file isolation on failure).
 1. **prepare** — `wiki-import prepare --vault "$VAULT" --vault-root "$VAULT_ROOT"
    --source "$VAULT_ROOT/<delegate.source>" --folder "<delegate.folder>" --kind <delegate.kind>`.
+   (`<delegate.kind>` may be `auto` — `prepare` accepts it and auto-detects; it reports the resolved
+   concrete `kind` in its envelope, which **apply** then uses — see item 3.)
    wiki-import's `prepare` **owns the conversion** — office (docx/pptx/xlsx, via the hardened
    soffice wrapper) and `.vtt`/`.srt` (de-timestamp) are handled there (TASK 046 P1b); there is
    **no** separate convert / de-timestamp / staging step here anymore. On `FETCH_FAILED` (exit 10)
@@ -136,8 +143,13 @@ TASK 046 P3; default `kind:auto`, `diagrams:false`, `concepts:true`). Run the wi
    ([`references/reason-contract.md`](../skills/wiki-import/references/reason-contract.md)) treats it
    as data; honour that contract (no separate sentinel fence step). Emit the note JSON — a **pyramid**
    for `kind` meeting/lesson, the article shape otherwise.
-3. **apply** — `wiki-import apply … --kind <delegate.kind>` plus `--diagrams` iff
-   `delegate.diagrams`, and `--no-concepts` iff **not** `delegate.concepts`. The full required flag
+3. **apply** — `wiki-import apply … --kind <KIND>` plus `--diagrams` iff
+   `delegate.diagrams`, and `--no-concepts` iff **not** `delegate.concepts`. **`<KIND>` = the
+   RESOLVED concrete kind from `prepare`'s envelope (`prepare.kind`), NOT `delegate.kind` verbatim**
+   — apply's `--kind` does NOT accept `auto` (its choices exclude it; passing `auto` is a usage
+   error, exit 2). When `delegate.kind` is a concrete value (meeting/lesson/article) it equals
+   `prepare.kind`; when it is `auto`, `prepare` resolved it to a concrete kind — use that. The full
+   required flag
    set (`--raw-rel <prepare.raw_path>`, the `--note-stdin`/`--note-file` note source,
    `--existing-page-slugs`, `--source-url`) is spelled out in
    [`workflows/wiki-import.md`](wiki-import.md) Step 3 — pass them exactly as there. wiki-import files

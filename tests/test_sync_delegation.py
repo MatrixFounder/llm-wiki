@@ -97,3 +97,7 @@ def test_delegate_folder_resolution():
     assert f("a/b/_raw/sub/x.vtt") == "a/b"
     assert f("_raw/x.vtt") == "."          # zone == vault root
     assert f("x.vtt") == "."               # bare vault-root file
+    # _transcripts is also a raw-machinery dir (mirror.raw_dirs default) — strip it too
+    # (TASK 046 P3 dogfood: a course's _transcripts/X.txt must file in the COURSE folder).
+    assert f("03 - Learning/Courses/Руководитель 2026/_transcripts/X.ru.txt") == "03 - Learning/Courses/Руководитель 2026"
+    assert f("a/_transcripts/b/x.txt") == "a"

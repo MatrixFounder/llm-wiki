@@ -55,6 +55,26 @@ def test_sync_config_summarize_bad_profile(tmp_path):
     with pytest.raises(SyncConfigError) as ei:
         load_sync_config(tmp_path)
     assert ei.value.code == "INVALID_SYNC_CONFIG"
+    assert "pyramid" not in str(ei.value)   # no-echo symmetry with the unknown-key test
+
+
+@pytest.mark.parametrize("bad", ["/abs/path", "../escape", "a/../../etc", "a\b"])
+def test_sync_config_summarize_target_subdir_rejects_unsafe(tmp_path, bad):
+    # target_subdir traversal/escape/control → refused at the exit-6 validating layer (H-6),
+    # not surfaced late as INVALID_FOLDER from wiki-import; the value is never echoed.
+    _write(tmp_path, ".wiki/sync.yaml", f"summarize:\n  profile: lesson\n  target_subdir: {bad!r}\n")
+    with pytest.raises(SyncConfigError) as ei:
+        load_sync_config(tmp_path)
+    assert ei.value.code == "INVALID_SYNC_CONFIG"
+    assert bad not in str(ei.value)
+
+
+def test_sync_config_summarize_target_subdir_normalized(tmp_path):
+    # trailing slash + surrounding whitespace are normalised; whitespace-only → "" (no subdir).
+    _write(tmp_path, ".wiki/sync.yaml", "summarize:\n  target_subdir: \"  _summary/  \"\n")
+    assert load_sync_config(tmp_path).summarize.target_subdir == "_summary"
+    _write(tmp_path, ".wiki/sync.yaml", "summarize:\n  target_subdir: \"   \"\n")
+    assert load_sync_config(tmp_path).summarize.target_subdir == ""
 
 
 # --- R-11: per-folder deep-merge (deepest-wins, partial override inherits) --
@@ -113,3 +133,38 @@ def test_sync_scan_summarize_drives_delegate(tmp_path):
     assert deleg["diagrams"] is True
     assert deleg["concepts"] is False         # extract_concepts: false → --no-concepts
     assert deleg["folder"] == "courses/_summary"   # topic folder + target_subdir
+
+
+def test_sync_scan_summarize_root_target_subdir(tmp_path):
+    # folder == "." (vault-root raw source) + target_subdir → "_summary", NOT "./_summary"
+    # (pins the folder=="." then-branch; a mutation dropping the special-case is caught).
+    vault = tmp_path / "vault"
+    (vault / "_raw").mkdir(parents=True)
+    (vault / "_raw" / "lec.vtt").write_text("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n", encoding="utf-8")
+    _write(vault, ".wiki/sync.yaml", "summarize:\n  profile: meeting\n  target_subdir: _summary\n")
+    db = tmp_path / "g.db"
+    _register(db, vault)
+    res = subprocess.run(
+        [sys.executable, "-m", "scripts.wiki_skills.wiki_sync", "scan", str(vault),
+         "--vault", _VAULT, "--vault-root", str(vault), "--db-path", str(db)],
+        capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stderr
+    by_path = {e["path"]: e for e in json.loads(res.stdout)["entries"]}
+    assert by_path["_raw/lec.vtt"]["delegate"]["folder"] == "_summary"
+
+
+def test_sync_config_present_without_summarize_backcompat(tmp_path):
+    # a sync.yaml that exists but has NO summarize: block ≡ defaults (R-12, the other path).
+    _write(tmp_path, ".wiki/sync.yaml", "resummarize:\n  mode: if-missing\n")
+    assert load_sync_config(tmp_path).summarize is None
+    assert resolve_summarize(tmp_path / "x.vtt", vault_root=tmp_path) == SummarizeConfig()
+
+
+def test_resolve_summarize_memoization_hit(tmp_path):
+    # two files in the SAME dir resolve once (the cache-hit early return), same Caches.
+    _write(tmp_path, ".wiki/sync.yaml", "summarize:\n  profile: article\n")
+    caches = Caches()
+    a = resolve_summarize(tmp_path / "a.vtt", vault_root=tmp_path, caches=caches)
+    b = resolve_summarize(tmp_path / "b.vtt", vault_root=tmp_path, caches=caches)
+    assert a is b                              # identical object from the memo (same parent dir)
+    assert a.profile == "article"
