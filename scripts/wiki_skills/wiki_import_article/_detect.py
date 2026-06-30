@@ -10,14 +10,19 @@ from __future__ import annotations
 import re
 from typing import Any
 
-KINDS = ("meeting", "article", "paper", "thread", "summary", "auto")
+KINDS = ("meeting", "lesson", "article", "paper", "thread", "summary", "auto")
 
 # kind → the REASON harness the orchestrator should run for it.
 # `summarizing-meetings` is the ONE universal content harness (it auto-detects + handles
 # meetings AND articles/papers/threads, emitting the reason-contract note-JSON); a separate
 # `summarizing-articles` would be redundant. `summary` is already finished → no REASON.
+# `lesson` (TASK 046) is a transcript variant → the same universal harness; the educational
+# `generate-detailed-meeting-summary` overlay + the pyramid note grammar are recipe/apply-side
+# concerns, not a separate harness. `lesson` is opt-in via `--kind` (never auto-detected — a
+# lecture is indistinguishable from a meeting by transcript shape alone).
 KIND_HARNESS: dict[str, str] = {
     "meeting": "summarizing-meetings",
+    "lesson": "summarizing-meetings",
     "article": "summarizing-meetings",
     "paper": "summarizing-meetings",
     "thread": "summarizing-meetings",

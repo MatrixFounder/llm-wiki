@@ -185,9 +185,17 @@ def assemble_note(
     fname: str | None = None,
     mint_strategy: str = "preserve-unicode",
     lang: str = "en",
+    grammar: str = "article",
 ) -> tuple[str, str]:
-    """Build (filename, full note text) for the given mode. `san_names` are the
+    """Build (filename, full note text) for the given mode/grammar. `san_names` are the
     already-sanitized entity names used for the entity-index wikilinks.
+
+    `grammar` (TASK 046) selects the note shape: ``"article"`` (default) keeps the per-`mode`
+    section wrappers (Саммари/Ключевые сущности/Полный текст); ``"pyramid"`` (meeting/lesson)
+    files the REASON-authored body VERBATIM under the frontmatter+header with NO article
+    wrappers — the body already carries its own pyramid (TL;DR + decisions/sections). The
+    entity footer is appended only when `san_names` is non-empty (concepts on; with
+    --no-concepts the caller passes an empty `san_names` → no dangling footer).
 
     `lang` selects the localized section headings/labels (the vault's `language`; en fallback)
     — the project is international, so NO output string is hardcoded to one locale.
@@ -220,9 +228,16 @@ def assemble_note(
 
     src = (source_lang or "").upper()
     dst = (lang or "en").upper()
-    if mode == "thread":
+    same_lang = bool(source_lang) and source_lang.lower() == (lang or "en").lower()
+    if grammar == "pyramid":
+        # TASK 046: a pyramid (meeting/lesson) is a DIGEST, not a verbatim translation, REGARDLESS
+        # of --mode (which is orthogonal to --kind) — label it the same-language original or a
+        # "{dst}-саммари/summary", never "перевод/translation" and never the thread phrasing.
+        origin = " · " + (t["origin_same"].format(lang=src) if same_lang
+                          else t["origin_summary"].format(src=src, dst=dst))
+    elif mode == "thread":
         origin = " · " + t["origin_thread"]
-    elif source_lang and source_lang.lower() == (lang or "en").lower():
+    elif same_lang:
         origin = " · " + t["origin_same"].format(lang=src)
     elif mode == "summary":
         origin = " · " + t["origin_summary"].format(src=src, dst=dst)
@@ -255,19 +270,26 @@ def assemble_note(
     _raw_link = f"[[_raw/{_raw_stem}|_raw/{_raw_base}]]"
     head = (f"\n# {title}\n\n{src_line}\n"
             f"> **{t['raw']}:** {_raw_link}\n\n")
-    if mode == "full":
-        body = (head + f"## {t['summary']}\n\n{bullets}\n\n"
-                + f"## {t['entities']}\n\n{wikilinks}\n\n"
+    # Entity-index section — OMITTED entirely when there are no filable entities (e.g. TASK 046
+    # --no-concepts, or all candidates dropped) so no empty "## Ключевые сущности" heading with a
+    # blank body slips in. Byte-identical to the old output whenever `san_names` is non-empty.
+    ents = f"## {t['entities']}\n\n{wikilinks}\n\n" if san_names else ""
+    if grammar == "pyramid":
+        # TASK 046: the REASON-authored pyramid IS the body — file it verbatim under the
+        # header, NO article wrappers. Entity footer only when there are filable entities.
+        body = head + body_text + "\n"
+        if san_names:
+            body += f"\n## {t['entities']}\n\n{wikilinks}\n"
+    elif mode == "full":
+        body = (head + f"## {t['summary']}\n\n{bullets}\n\n" + ents
                 + f"## {t['full_text']}\n\n{body_text}\n")
     elif mode == "summary":
         body = (head + (f"## {t['brief']}\n\n{tldr}\n\n" if tldr else "")
-                + f"## {t['key_findings']}\n\n{bullets}\n\n"
-                + f"## {t['entities']}\n\n{wikilinks}\n\n"
+                + f"## {t['key_findings']}\n\n{bullets}\n\n" + ents
                 + f"_{t['raw_full']}_ {_raw_link}_._\n")
     else:  # thread
         body = (head + (f"## {t['brief']}\n\n{tldr}\n\n" if tldr else "")
-                + f"## {t['theses']}\n\n{bullets}\n\n"
-                + f"## {t['entities']}\n\n{wikilinks}\n\n"
+                + f"## {t['theses']}\n\n{bullets}\n\n" + ents
                 + f"## {t['synopsis']}\n\n{body_text}\n")
     return fname, fm + body
 
