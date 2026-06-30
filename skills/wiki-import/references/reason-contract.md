@@ -76,6 +76,31 @@ of translating. Re-read the FULL `raw_path` and translate every section (fan out
 long source). Rule of thumb: a `mode=full` body that drops below ~half the source's length is almost
 always an accidental summary — verify before `apply`.
 
+## Note grammar by content-type (the second, orthogonal axis)
+`--mode` (above) controls **depth**; `--kind` controls the **grammar** of the note `apply` assembles
+— and therefore the shape your `body` must take. The two are orthogonal:
+
+| `--kind` | grammar | what your `body` is | `apply` files it as | `type:` |
+|---|---|---|---|---|
+| `meeting`, `lesson` | **pyramid** | the summarizing-meetings two-level pyramid: **TL;DR → detailed sections**; for transcripts also **decisions / action items / open questions**. A DIGEST, not a verbatim line-by-line translation. | the `body` **verbatim under the H1**, NO `## Полный текст (перевод)` / `## Саммари` wrapper (the pyramid carries its own headings) | `meeting-summary` / `lesson-summary` |
+| `article`, `paper`, `thread` | **article wrapper** | per the depth-by-mode table (full translation / detailed bullets / synopsis) | wrapped in `## Саммари` + `## Ключевые сущности` + (`full`) `## Полный текст (перевод)` | `article` / `paper` / `thread` |
+| `summary` | register | — (skip REASON; the source is already a finished summary) | indexed as-is | `summary` |
+
+**`mode=full` on a `meeting`/`lesson` means "cover the WHOLE transcript in the pyramid"** — every
+topic/decision represented — **not** "translate every line verbatim". The completeness rule still
+applies (read the whole `raw_path`, lose no topic); the *form* is a digest, by design. Do NOT emit a
+full-text-wrapped article note for a meeting/lesson.
+
+## Generation modifiers (opt-in flags)
+- **`--diagrams`** → include **selective** mermaid where a diagram earns its place (a process flow, a
+  state loop, an architecture relationship the prose alone can't carry). Embed it in `body` as a
+  fenced ```mermaid``` block. **Never** a decorative diagram per section — one or two load-bearing
+  diagrams beat a wall of boxes. Absent the flag, prefer prose. (For readability, prefer a vertical
+  `flowchart TD` over `LR` for anything deeper than ~3 nodes.)
+- **`--no-concepts`** → still author `entities[]` in full (a later `/wiki-extract-concepts` run reuses
+  them), but STATE that concept filing is deferred this run; `apply` skips the `_concepts/` write and
+  reports `concepts_deferred: true`. Default (`--concepts`) files them inline as usual.
+
 ## 🔴 Hard rules (the load-bearing discipline)
 1. **Inject `known_concepts`.** When an entity matches an existing concept, reuse its
    **`name`** verbatim — never mint a variant ("AMM" vs "Автоматический маркет-мейкер").

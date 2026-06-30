@@ -49,6 +49,26 @@ pass at a **high grade** (R-13) — not merely above floor.
 - Vendor-agnostic: cases assert behaviour from SKILL text only (no model-specific assumptions).
 
 ## Acceptance
-- [ ] wiki-import evals updated (WI-16..18 + re-framing; floor bumped).
-- [ ] wiki-sync evals created (WS-01..05; floor set; `never_relax` marked).
-- [ ] high-graded report filed for both (R-13) — no `never_relax` failure, floor met/raised.
+- [x] wiki-import evals updated — **WI-16/17/18 + WI-19** (the lesson variant of WI-16; P1
+  mutation testing found the lesson grammar branch unpinned). version 1→2, floor 12→**15**.
+  New class `reason-grammar`; pin test (`tests/test_wiki_import_evals.py`) extended with the new
+  vocab/classes/`never_relax` + a `test_pyramid_grammar_regression_pinned`. (No re-framing of
+  existing cases needed — none assumed the article wrapper for a meeting.)
+- [x] wiki-sync evals created — `skills/wiki-sync/evals/{evals.json,README.md,reports/}`,
+  **WS-01..06** (added WS-06 = the dual commit-marker / re-ingest-loop discipline, the P2 BLOCKER),
+  floor 5, `never_relax` on WS-01 (delegation) + WS-03 (H-6 fence); pin test
+  `tests/test_wiki_sync_evals.py` (8 checks).
+- [x] high-graded report filed for both (R-13) — `skills/wiki-import/evals/reports/2026-06-30-...-converged.md`
+  (7/7: WI-16/17/18/19 + the 3 `never_relax` regression cases) and
+  `skills/wiki-sync/evals/reports/2026-06-30-...md` (6/6). Produce=**sonnet** (mid-tier, tests
+  skill-text strength), grade=**opus** (adversarial, with an `impl_leak` check). **13/13 PASS, 0
+  `never_relax` failures, 0 impl leaks; floor met/raised.**
+
+## Outcome note — the skill-text gap P4 surfaced (and closed)
+Authoring the behaviour evals exposed that **P1–P3 shipped the flags but not the skill TEXT**:
+`skills/wiki-import/SKILL.md` + `references/reason-contract.md` never documented the meeting/lesson →
+**pyramid** grammar, `--diagrams`, or `--no-concepts`. Behaviour evals grade from skill text only, so
+this was a hard prerequisite — closed first (the new *content-type → grammar* axis, the
+generation-modifiers block, the *Note grammar by content-type* contract section, and a
+`🔴 HARD RULE — note GRAMMAR follows --kind`). The mid-tier (sonnet) producer then passed every new
+case from that text alone — confirming the text is loud enough without strong-model priors.

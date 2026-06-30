@@ -1,10 +1,15 @@
 # wiki-import — eval harness
 
 Behaviour evals for the **orchestration discipline** of `wiki-import`: the REASON step
-(`references/reason-contract.md`) and the TASK-044 video/embedded routing. **15 cases authored
-(WI-01..WI-15); 12 is the floor.** No Python grader — every case carries machine-checkable
-`expect_*` fields, so PASS/FAIL is a deterministic checklist over a dry-run transcript, replayable
-on any model/skill-version bump.
+(`references/reason-contract.md`), the TASK-044 video/embedded routing, and the **TASK-046**
+converged grammar + generation modifiers. **19 cases authored (WI-01..WI-19); 15 is the floor.**
+No Python grader — every case carries machine-checkable `expect_*` fields, so PASS/FAIL is a
+deterministic checklist over a dry-run transcript, replayable on any model/skill-version bump.
+
+**TASK-046 additions:** `WI-16` (meeting → pyramid grammar) + `WI-19` (lesson → pyramid) —
+`never_relax`: a meeting/lesson must file as a TL;DR→detailed **pyramid**, never the article
+full-text wrapper. `WI-17` (`--diagrams` → selective, load-bearing mermaid only). `WI-18`
+(`--no-concepts` → still author `entities[]`, defer filing — never drop entities).
 
 The **deterministic plumbing** (dispatch_fetch routing, exit codes, ad-exclusion filter chain,
 slug byte-cap, concat) is covered by `tests/test_import_video.py` + the other `test_import_article_*`
@@ -60,13 +65,21 @@ code blocks or explicitly proposed as commands to run; prose discussion does NOT
 | `expect_ads_excluded: true` | The plan states advertising/promotional embeds are excluded (always-on), only content embeds transcribed. |
 | `expect_dep_error_surfaced: true` | The plan surfaces a typed DEP_MISSING (exit 6, with remediation) and writes NO junk `_raw`. |
 | `expect_roundtrip_existing_slugs: true` / `expect_checks_warnings: true` | Round-trips `existing_page_slugs` into `apply`; inspects the envelope `warnings[]` (CONCEPTS_DROPPED) afterward. |
+| `expect_pyramid: true` | (meeting/lesson) The plan authors the `body` as a **pyramid digest** (TL;DR → detailed sections / decisions / action items), NOT a verbatim full translation. |
+| `expect_no_fulltext_wrapper: true` | The plan does NOT wrap the note in `## Полный текст (перевод)` / `## Саммари` (the article grammar) — the pyramid is filed verbatim under the H1. |
+| `expect_sections: [s…]` | The named pyramid sections appear in the plan's body shape. `"a\|b"` = at least one alternative (e.g. `decisions\|theses`). |
+| `expect_type: X` | The plan sets the note `type:` to X (e.g. `meeting-summary` / `lesson-summary`). |
+| `expect_mermaid_selective: true` | (`--diagrams`) The plan adds mermaid ONLY where it carries structure the prose can't (a flow / loop / relationship) — load-bearing, not per-section. |
+| `expect_no_decorative_diagrams: true` | The plan explicitly avoids decorative/per-section diagrams (and does not diagram non-technical chatter). |
+| `expect_states_concepts_deferred: true` | (`--no-concepts`) The plan still authors the FULL `entities[]` but states concept-page filing is **deferred** (`concepts_deferred: true`) — entities are NOT dropped. |
 | `expect_statement: "…"` | The transcript contains a statement semantically matching the description (the one judgment-call field — quote the matching sentence in the report). |
 
 ## never_relax
 
 `WI-01` (mode=full completeness — the regression this set exists to prevent), `WI-07` (H-6 injection),
-and `WI-13` (always-on ad-exclusion) are **`never_relax`**: their expectations may never be weakened,
-reworded, or removed. A failing never_relax case blocks the chain (escalate to the user).
+`WI-13` (always-on ad-exclusion), and the TASK-046 grammar invariants `WI-16` (meeting → pyramid) +
+`WI-19` (lesson → pyramid) are **`never_relax`**: their expectations may never be weakened, reworded,
+or removed. A failing never_relax case blocks the chain (escalate to the user).
 
 ## Reports
 

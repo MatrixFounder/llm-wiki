@@ -1,8 +1,8 @@
 {
   "skill": "wiki-import",
-  "version": 1,
-  "floor": 12,
-  "note": "Vendor-agnostic, grader-free BEHAVIOUR evals for the wiki-import orchestration discipline (the REASON step + TASK-044 routing). The deterministic plumbing (dispatch_fetch routing, exit codes, ad-exclusion chain, slug cap) is pytest-covered in tests/test_import_video.py etc.; THESE cases test what only an LLM can get wrong — following the SKILL.md + references/reason-contract.md discipline. Each case carries machine-checkable expect_* fields → PASS/FAIL is a deterministic checklist over a dry-run transcript (see README). never_relax cases may never be weakened.",
+  "version": 2,
+  "floor": 15,
+  "note": "Vendor-agnostic, grader-free BEHAVIOUR evals for the wiki-import orchestration discipline (the REASON step + TASK-044 routing + TASK-046 converged grammar/modifiers). The deterministic plumbing (dispatch_fetch routing, exit codes, ad-exclusion chain, slug cap, grammar selection in apply) is pytest-covered in tests/test_import_video.py + tests/test_import_grammar_toggles.py etc.; THESE cases test what only an LLM can get wrong — following the SKILL.md + references/reason-contract.md discipline. Each case carries machine-checkable expect_* fields → PASS/FAIL is a deterministic checklist over a dry-run transcript (see README). never_relax cases may never be weakened. v2 (TASK 046): WI-16/19 reason-grammar (meeting/lesson → pyramid, not the article wrapper), WI-17 diagrams (selective mermaid), WI-18 concepts-toggle (--no-concepts defers, never drops entities).",
   "evals": [
     {
       "id": "WI-01",
@@ -154,6 +154,51 @@
       "expect_dep_error_surfaced": true,
       "expect_statement": "broadcast → transcript path; with no ASR backend transcript-fetcher exits 7 → wiki-import surfaces a typed DEP_MISSING (exit 6) with remediation (install ffmpeg + a whisper backend); NO junk _raw written",
       "notes": "TASK 044 R-7: caption-less broadcast w/o ASR backend → typed dep error, not a silent junk import."
+    },
+    {
+      "id": "WI-16",
+      "class": "reason-grammar",
+      "never_relax": true,
+      "framing": { "mode": "full", "language": "ru", "kind": "meeting", "source": "a 90-minute webinar ASR transcript fetched to _raw (raw_path points at the full transcript with decisions and action items scattered throughout)" },
+      "prompt_setup": "prepare emitted {mode: full, language: ru, kind: meeting, reason_harness: summarizing-meetings, raw_path: _raw/webinar-003.md}. Run the REASON step and state the SHAPE of the note `body` you will author (which sections it has) and the note `type:`.",
+      "expect_pyramid": true,
+      "expect_no_fulltext_wrapper": true,
+      "expect_sections": ["tldr", "decisions|theses", "detailed"],
+      "expect_type": "meeting-summary",
+      "expect_statement": "the body is a summarizing-meetings PYRAMID digest (TL;DR → decisions/action items → detailed sections), filed verbatim under the H1 with NO '## Полный текст (перевод)' article wrapper; type: meeting-summary; mode=full here means cover the WHOLE transcript in the pyramid, not translate every line verbatim",
+      "notes": "TASK 046 P1: --kind meeting uses the pyramid grammar, NOT the article full-text wrapper. mode=full ≠ verbatim translation for a transcript — the pyramid is the deliverable. reason-contract.md 'Note grammar by content-type'."
+    },
+    {
+      "id": "WI-17",
+      "class": "reason-grammar",
+      "framing": { "mode": "full", "language": "ru", "kind": "meeting", "diagrams": true, "source": "a technical architecture walkthrough transcript describing a request→retrieval→synthesis pipeline plus a retry-with-backoff loop, then a long stretch of organizational/scheduling chatter" },
+      "prompt_setup": "prepare/apply run with --diagrams. The transcript describes a multi-stage pipeline and a retry loop, plus a lot of non-technical chatter. State WHETHER and WHERE you add mermaid, and what you deliberately do NOT diagram.",
+      "expect_mermaid_selective": true,
+      "expect_no_decorative_diagrams": true,
+      "expect_statement": "add a mermaid block ONLY where it carries structure the prose can't (the pipeline flow / the retry loop) — one or two load-bearing diagrams; do NOT add a decorative diagram per section and do NOT diagram the org/scheduling chatter",
+      "notes": "TASK 046 P1b: --diagrams = selective illustrative mermaid (flows/loops/relationships), never decorative-per-section."
+    },
+    {
+      "id": "WI-18",
+      "class": "reason-concepts",
+      "framing": { "mode": "full", "language": "ru", "kind": "article", "concepts": false, "source": "a DeFi article with ~12 extractable entities; the operator passed --no-concepts (concept pages will be filed later via /wiki-extract-concepts)" },
+      "prompt_setup": "prepare/apply run with --no-concepts. State whether you still author entities[] and exactly what you tell the operator about the concept pages.",
+      "expect_states_concepts_deferred": true,
+      "expect_statement": "still author the FULL entities[] (so a later /wiki-extract-concepts run reuses them), but state that concept-page filing is DEFERRED this run (apply skips it and reports concepts_deferred: true) — entities are NOT dropped",
+      "notes": "TASK 046 P1: --no-concepts authors entities but defers filing; the orchestrator must not silently drop entities just because filing is off."
+    },
+    {
+      "id": "WI-19",
+      "class": "reason-grammar",
+      "never_relax": true,
+      "framing": { "mode": "full", "language": "ru", "kind": "lesson", "source": "a course lecture transcript (.vtt de-timestamped) fetched to _raw — a single instructor teaching one topic, no decisions/action items" },
+      "prompt_setup": "prepare emitted {mode: full, language: ru, kind: lesson, reason_harness: summarizing-meetings, raw_path: _raw/lecture-04.md}. State the note `body` SHAPE (sections) and the note `type:`.",
+      "expect_pyramid": true,
+      "expect_no_fulltext_wrapper": true,
+      "expect_sections": ["tldr", "detailed"],
+      "expect_type": "lesson-summary",
+      "expect_statement": "a lesson transcript files as a PYRAMID lesson-summary (TL;DR → detailed sections / key takeaways), NOT a full-text-wrapped article note; type: lesson-summary",
+      "notes": "TASK 046 P1 — the lesson variant of WI-16 (P1 mutation testing found the lesson grammar branch unpinned). lesson is opt-in via --kind, never auto-detected."
     }
   ]
 }
