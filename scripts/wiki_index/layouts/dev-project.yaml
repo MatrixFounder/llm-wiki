@@ -76,6 +76,7 @@ type_mapping:
   summary:         {db_type: summary, tag: null}
   article-summary: {db_type: summary, tag: article}
   meeting-summary: {db_type: summary, tag: meeting}
+  lesson-summary:  {db_type: summary, tag: lesson}   # TASK 046: --kind lesson (else → generic summary)
 
 path_type_fallback: {}              # dev types come from paths[].type
 

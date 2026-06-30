@@ -168,3 +168,31 @@ def test_resolve_summarize_memoization_hit(tmp_path):
     b = resolve_summarize(tmp_path / "b.vtt", vault_root=tmp_path, caches=caches)
     assert a is b                              # identical object from the memo (same parent dir)
     assert a.profile == "article"
+
+
+def test_validated_raw_read_once_per_dir_across_both_cascades(tmp_path, monkeypatch):
+    # vdd-multi PERF-046-1: the resummarize AND summarize cascades SHARE one per-dir validated-raw
+    # read, so the same .wiki/sync.yaml is parsed ONCE per dir per scan — not twice (once per cascade).
+    from collections import Counter
+
+    from scripts.wiki_skills import _resummarize
+
+    _write(tmp_path, ".wiki/sync.yaml", "resummarize:\n  mode: always\nsummarize:\n  profile: lesson\n")
+    _write(tmp_path, "courses/.wiki/sync.yaml", "summarize:\n  diagrams: true\n")
+
+    real = _resummarize._load_validated_raw
+    calls: list[Path] = []
+
+    def _counting(d: Path):
+        calls.append(Path(d))
+        return real(d)
+
+    monkeypatch.setattr(_resummarize, "_load_validated_raw", _counting)
+    caches = _resummarize.Caches()
+    f = tmp_path / "courses" / "lec.vtt"
+    _resummarize.resolve_policy(f, vault_root=tmp_path, caches=caches)       # resummarize cascade
+    _resummarize.resolve_summarize(f, vault_root=tmp_path, caches=caches)    # summarize cascade
+    per_dir = Counter(calls)
+    # ancestors = {tmp_path, tmp_path/courses}; each read EXACTLY ONCE despite TWO cascades.
+    assert set(per_dir) == {tmp_path, tmp_path / "courses"}
+    assert all(n == 1 for n in per_dir.values()), f"a dir was read more than once: {per_dir}"

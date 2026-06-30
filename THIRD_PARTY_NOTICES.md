@@ -54,7 +54,7 @@ documented API surface. Standalone usage of upstream `wiki-ingest`
 > **Some of these external skills are governed by PROPRIETARY (closed-source)
 > licenses.** They are integrated at runtime — installed separately by the
 > operator and invoked by this framework — but their source is **not** copied
-> into this repository. This repository's Apache-2.0 grant (see
+> into this repository. This repository's Elastic License 2.0 grant (see
 > [`LICENSE`](LICENSE)) covers **only** the code in this repo and does **NOT**
 > extend to any of the external skills listed below. Before redistributing,
 > bundling, or commercially using any of these skills, you **must** consult and
@@ -72,7 +72,7 @@ fetch+convert wrappers (ADR-001, ARCHITECTURE.md §2.3).
   open-source. There is no blanket license across this skill set. Treat each as
   an independently-licensed third-party component.
 - **No grant by this repo**: nothing in this repository, including its
-  Apache-2.0 license, conveys any right to use, copy, modify, or redistribute
+  Elastic License 2.0, conveys any right to use, copy, modify, or redistribute
   these external skills. Their respective owners reserve all rights not granted
   by their own licenses.
 - **Operator responsibility**: the operator who installs and runs these skills

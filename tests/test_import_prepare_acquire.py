@@ -87,6 +87,31 @@ def test_import_prepare_office_convert_fails_is_soft(tmp_path, monkeypatch):
     assert (res.error or {}).get("error") == "OfficeConvertFailed"
 
 
+def test_office_convert_error_does_not_leak_path(tmp_path, monkeypatch):
+    # vdd-multi SEC-046-02 (CWE-209): a run-but-fail office conversion must NOT echo the
+    # SofficeError string — it carries the soffice command line (the absolute SOURCE PATH) +
+    # raw LibreOffice stderr. The envelope detail must be a fixed, path-free message.
+    secret = "/Users/secret/Vault/private/lecture.docx"
+
+    class _LeakySoffice:
+        def find_soffice(self):
+            return "/fake/soffice"
+
+        def convert_to(self, src, out_dir, target_format, *, timeout=180):
+            raise RuntimeError(f"soffice --convert-to txt {secret}: Error 9: stderr leak")
+
+    doc = tmp_path / "lecture.docx"
+    doc.write_bytes(b"PK garbage")
+    monkeypatch.setattr(_fetch, "_load_soffice", lambda *a, **k: _LeakySoffice())
+    res = _dispatch(str(doc))
+    assert res.ok is False
+    err = res.error or {}
+    assert err.get("error") == "OfficeConvertFailed"
+    detail = err.get("detail", "")
+    assert detail == "LibreOffice could not convert the document"
+    assert secret not in detail and "soffice" not in detail   # no path / cmd / stderr leak
+
+
 # --- R-7: vtt/srt de-timestamp ---------------------------------------------
 
 def test_import_prepare_vtt(tmp_path, monkeypatch):
@@ -169,6 +194,15 @@ def test_read_text_fallback_utf16_bom(tmp_path):
     # UTF-16(-BOM) caption must decode correctly (the prior cp1251-before-utf16 ladder mangled it).
     p = tmp_path / "u16.srt"
     p.write_bytes("Привет мир".encode("utf-16"))  # encodes with a BOM
+    assert _fetch._read_text_fallback(p) == "Привет мир"
+
+
+def test_read_text_fallback_utf32_bom(tmp_path):
+    # vdd-multi L-2: a UTF-32 LE BOM (\xff\xfe\x00\x00) starts with the UTF-16 LE BOM bytes, so the
+    # 4-byte UTF-32 check must run BEFORE the 2-byte UTF-16 check — else a utf-32 file is mis-decoded
+    # as utf-16 mojibake. (UTF-32 captions are vanishingly rare; this is a robustness guard.)
+    p = tmp_path / "u32.srt"
+    p.write_bytes("Привет мир".encode("utf-32"))  # encodes with a UTF-32 BOM
     assert _fetch._read_text_fallback(p) == "Привет мир"
 
 

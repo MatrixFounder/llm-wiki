@@ -578,17 +578,48 @@ Conventions:
 
 ## License
 
-The code **in this repository** is licensed under the **Apache License,
-Version 2.0** — see [LICENSE](LICENSE).
+The code **in this repository** is **dual-licensed** — see
+[LICENSING.md](LICENSING.md) for the full breakdown:
+
+- **Community license — Elastic License 2.0 (ELv2)** (default, free; see
+  [LICENSE](LICENSE)). Source-available: you may read, fork, modify, and use it
+  (including internally for commercial purposes), but you may **not** provide it
+  to third parties as a hosted/managed service, nor remove its license/copyright
+  notices.
+- **Commercial license** — for uses ELv2 doesn't permit (e.g. offering it as a
+  hosted/managed service or SaaS). Granted case-by-case by the copyright holder;
+  see [LICENSING.md](LICENSING.md) for how to request one.
 
 > [!IMPORTANT]
-> **Some external skills this framework integrates with are under PROPRIETARY
-> (closed-source) licenses** and are **not** covered by this repo's Apache-2.0
-> grant. They are installed and invoked separately (not vendored here); their
-> own license terms apply. Notices for the vendored `wiki-ingest` (Apache-2.0)
-> and the proprietary/external skill set (`summarizing-meetings`,
-> `transcript-fetcher`, `html`, `pdf`, `docx`, …) are in
+> **This framework's full functionality depends on separately-installed external
+> skills, some of which are under PROPRIETARY (closed-source) licenses.** Those
+> skills are **not** vendored here and are **not** covered by this repo's ELv2
+> grant — they are installed and invoked separately, and their own license terms
+> apply. Without them, parts of the construct/REASON pipeline (e.g. `wiki-import`,
+> `wiki-enrich`) are not fully operational. Notices for the vendored `wiki-ingest`
+> (Apache-2.0, an independent component that keeps its own license) and the
+> proprietary/external skill set (`summarizing-meetings`, `transcript-fetcher`,
+> `html`, `pdf`, `docx`, …) are in
 > [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Consult each skill's license
 > before redistribution or commercial use.
-</content>
-</invoke>
+
+### FAQ — can I use this commercially?
+
+- **Can I use it inside my own company / for client work?** Yes. ELv2 permits
+  internal use, modification, and building on top of it — including for
+  commercial purposes — as long as you don't resell the framework itself as a
+  service. You must also separately license any proprietary external skills you
+  rely on (see above).
+- **Can I host it and sell access to it as a product/SaaS?** No. ELv2's core
+  limitation forbids providing the software to third parties as a hosted or
+  managed service that exposes a substantial set of its features.
+- **Can I fork it, modify it, and redistribute my fork?** Yes — provided you keep
+  the license and copyright notices intact, pass these terms along to anyone you
+  give it to, and add a prominent notice stating that you modified it. The same
+  ELv2 limitations carry over to your fork.
+- **Is this "open source"?** No — it's **source-available**. The source is open to
+  read and build on, but ELv2 is not an OSI-approved open-source license because
+  of the hosted-service restriction.
+- **I want to do something ELv2 doesn't allow (e.g. offer it as a managed
+  service).** A **commercial license** is available — see
+  [LICENSING.md](LICENSING.md) for terms and how to request one.

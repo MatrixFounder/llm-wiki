@@ -355,8 +355,15 @@ def _read_text_fallback(path: Path) -> str:
     single-byte ``cp1251`` codec almost never raises (so a codec ladder with cp1251 before utf-16
     would shadow it — making UTF-16 support dead code). After the BOM check: ``utf-8-sig`` (strips
     a UTF-8 BOM, else == utf-8), then ``cp1251`` (legacy RU), then a lossy replace as last resort.
+    UTF-32 is checked FIRST: a UTF-32 LE BOM (``\\xff\\xfe\\x00\\x00``) starts with the UTF-16 LE
+    BOM bytes, so a 2-byte-first check would mis-decode a UTF-32 file as utf-16 mojibake.
     """
     data = path.read_bytes()
+    if data[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):  # UTF-32 LE/BE BOM — BEFORE utf-16 (shares its 2-byte prefix)
+        try:
+            return data.decode("utf-32")
+        except (UnicodeDecodeError, UnicodeError):
+            pass
     if data[:2] in (b"\xff\xfe", b"\xfe\xff"):       # UTF-16 LE/BE BOM → the utf-16 codec auto-picks endianness
         try:
             return data.decode("utf-16")
@@ -471,10 +478,13 @@ def _office_to_text(path: Path, *, wrapper_path: str = _DEFAULT_SOFFICE_WRAPPER)
     with tempfile.TemporaryDirectory() as td:
         try:
             produced = soffice.convert_to(path, td, "txt:Text", timeout=_OFFICE_TIMEOUT)
-        except soffice_error as e:  # run-but-fail conversion → soft FETCH_FAILED
+        except soffice_error:  # run-but-fail conversion → soft FETCH_FAILED
+            # CWE-209: do NOT echo the SofficeError string — it carries the soffice command line
+            # (the absolute source path) + raw LibreOffice stderr. Mirror the PDF path's posture:
+            # a fixed typed error, no untrusted/path content in the structured envelope.
             return FetchResult(ok=False, engine="convert-office",
                                error={"error": "OfficeConvertFailed", "exit_code": 1,
-                                      "detail": str(e)[:500]})
+                                      "detail": "LibreOffice could not convert the document"})
         # soffice writes UTF-8-with-BOM → utf-8-sig strips the leading ﻿ (else it would
         # surface as an invisible char at the head of the _raw body).
         text = Path(produced).read_text(encoding="utf-8-sig", errors="replace")

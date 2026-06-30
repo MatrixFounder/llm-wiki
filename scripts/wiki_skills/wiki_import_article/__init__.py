@@ -560,6 +560,15 @@ def apply(args: argparse.Namespace) -> int:
     # TASK 046: meeting/lesson → the REASON-authored PYRAMID is filed verbatim (no article
     # wrappers); everything else keeps the per-mode article grammar.
     grammar = "pyramid" if args.kind in _PYRAMID_KINDS else "article"
+    # The pyramid body IS the entire deliverable (no Саммари/bullets wrapper to fall back on),
+    # so an empty body would file a content-less note as action=imported (silent). Refuse it
+    # (L-1 / vdd-multi) — author the pyramid digest in `body` before apply.
+    if grammar == "pyramid" and not (note.get("body") or note.get("ru_body") or "").strip():
+        return emit({"error": "EMPTY_PYRAMID_BODY",
+                     "message": f"--kind {args.kind} files a pyramid whose `body` IS the "
+                                "deliverable, but the note body is empty; author the pyramid "
+                                "digest (TL;DR + sections) in `body` before apply"},
+                    exit_code=EXIT_BAD_ARG)
     raw_rel = args.raw_rel  # required (see parser) — always prepare's real raw_path, never re-slugified
     # dedup (order-preserving): two entities with the same name must not double the footer link
     san_names = list(dict.fromkeys(

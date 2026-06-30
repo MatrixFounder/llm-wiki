@@ -99,6 +99,18 @@ def test_import_apply_pyramid_thread_mode_keeps_digest_origin(vault, tmp_path, c
     assert "тред" not in text
 
 
+@pytest.mark.parametrize("kind", ["meeting", "lesson"])
+def test_import_apply_pyramid_empty_body_refused(vault, tmp_path, capsys, kind):
+    # vdd-multi L-1: the pyramid body IS the deliverable (no bullets/wrapper fallback), so an
+    # empty body must be a typed refusal — NOT a silently-filed content-less note (action=imported).
+    rc = _run(vault, _pyramid_note(tmp_path, body=""), kind=kind)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2, out
+    assert out["error"] == "EMPTY_PYRAMID_BODY"
+    # nothing filed — no note path in the envelope
+    assert "note" not in out
+
+
 # --- R-3: article kind unchanged (article wrapper still emitted) ------------
 
 def test_import_apply_article_unchanged(vault, tmp_path, capsys):

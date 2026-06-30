@@ -39,8 +39,10 @@ _EXPECT_FIELDS = {
 }
 _LIST_FIELDS = {"expect_no_minted_variant", "expect_entity_name_absent",
                 "expect_command_absent", "expect_command_substring", "expect_sections"}
-# Closed vocab for the note `type:` (mirrors _detect.py _KIND_NOTE_TYPE for the pyramid kinds).
-_TYPES = {"meeting-summary", "lesson-summary", "article", "paper", "thread", "summary"}
+# Closed vocab for the note `type:` — the OUTPUT values of wiki_import_article/__init__.py
+# `_KIND_NOTE_TYPE` (article/paper/thread all map to `article-summary`), plus the layout-safe
+# `summary` fallback. NOT the `--kind` keys (which would admit a fake type / reject the real one).
+_TYPES = {"meeting-summary", "lesson-summary", "article-summary", "summary"}
 # never_relax cases (the regression + safety invariants + TASK 046 grammar invariants) must
 # always be present + flagged.
 _NEVER_RELAX = {"WI-01", "WI-07", "WI-13", "WI-16", "WI-19", "WI-20"}

@@ -50,6 +50,20 @@ def test_every_builtin_layout_maps_summary_for_import(tmp_path: Path, layout: st
     assert db_type == "summary", f"{layout} maps summary → {db_type!r}, expected 'summary'"
 
 
+@pytest.mark.parametrize("layout", ["karpathy", "obsidian-personal", "dev-project", "cybos"])
+def test_every_builtin_layout_maps_lesson_summary_like_meeting(tmp_path: Path, layout: str) -> None:
+    """TASK 046 (vdd-multi INT-046-2): `--kind lesson` is a first-class kind → `lesson-summary`.
+    Every built-in layout that maps `meeting-summary` MUST also map `lesson-summary` (symmetry) —
+    else a lesson import silently downgrades to the generic `type: summary` on that layout,
+    losing the lesson tag/type. Mirror meeting-summary's db_type."""
+    tm = _load(tmp_path, layout).type_mapping
+    if "meeting-summary" in tm:   # all built-ins map it; guards future layout edits
+        assert "lesson-summary" in tm, \
+            f"{layout} maps meeting-summary but NOT lesson-summary (lesson import → generic summary)"
+        assert tm["lesson-summary"][0] == tm["meeting-summary"][0], \
+            f"{layout} lesson-summary db_type != meeting-summary db_type"
+
+
 # --------------------------------------------------------------------------- #
 # The byte-identity invariant
 # --------------------------------------------------------------------------- #
@@ -298,7 +312,7 @@ def test_cybos_config_loads_and_validates(tmp_path: Path) -> None:
         # TASK 034 — agent-memory classes
         "agent", "tool", "workflow", "capability", "execution", "pattern",
         # wiki-import construct path (ADR-007) — imported-source summary family
-        "summary", "article-summary", "meeting-summary",
+        "summary", "article-summary", "meeting-summary", "lesson-summary",
         # wiki-import concept/entity pages (TASK-037 pattern)
         "concept", "external", "person", "company", "product", "group",
     }
