@@ -251,7 +251,12 @@ AND articles/papers/threads; finished `summary`→register), and **layout (confi
 path as `wiki-index-upsert`/`wiki-extract-concepts`). This replaces the TASK 038 *layout-fork*
 (which left a PARA meeting transcript with no clean path); the single diagram + orthogonality
 matrix are in [functional-architecture §2.3](./architectures/functional-architecture.md). The
-original (now-legacy) PARA-import design below is preserved for history.
+original (now-legacy) PARA-import design below is preserved for history. **TASK 046 (converged
+construct pipeline)** makes `wiki-import` the **single per-source engine** (it absorbs office/`.vtt`
+acquire into `prepare`; `apply` picks output-grammar by `--kind` — pyramid for meeting/lesson, article
+otherwise; adds `--diagrams` + `--concepts/--no-concepts`) and turns `wiki-sync` into a **pure batch
+driver that delegates per item to `wiki-import`** — retiring the `wiki-sync`↔`wiki-import` acquire/distil
+overlap (one owner per concern; §2.3.4 + Q-046-1).
 
 **§2.3.2 Transcript-fetcher: a third wrapped external skill for video sources (TASK 044 — extends ADR-001).**
 `dispatch_fetch` in `scripts/wiki_skills/wiki_import_article/_fetch.py` previously routed every

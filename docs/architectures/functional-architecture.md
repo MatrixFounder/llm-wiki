@@ -747,10 +747,66 @@ flowchart LR
 
 **Legacy / coexisting:** the original Karpathy-raw on-ramp `wiki-enrich` → external `wiki-ingest`
 → (Phase 2) `summarizing-meetings` stays as-is (external, Karpathy-hardwired filing); it overlaps
-the top-left cells. A future task may route `wiki-sync ingest` → `wiki-import` to retire the overlap.
+the top-left cells. Retiring it is a **separate** task (it remains coexisting).
 Decision-17 throughout: every CLI is deterministic plumbing; the single reasoning step is the
 harness-guided LLM, never inside a CLI. Skill-call detail + the `summarizing-meetings` note-JSON
 alignment: TASK 039 + the `summarizing-meetings` postanovka.
+
+#### 2.3.4 Converged construct pipeline — one engine, one batch driver (TASK 046)
+
+Through TASK 039–044 **two** code paths owned *acquire + distil*: `wiki-import`
+(fetch → article-`assemble_note` → always-concepts) **and** `wiki-sync` ingest
+(convert/de-timestamp → `summarizing-meetings` pyramid → file/index → always-concepts).
+The overlap was real (it is why a PARA transcript had no "rich pyramid, no concepts"
+path). TASK 046 retires it by making **`wiki-import` the single per-source engine** and
+**`wiki-sync` a pure batch driver that delegates to it** — the convergence §2.3 above
+anticipated. **One owner per concern:**
+
+| Concern | Single owner | Was duplicated? |
+|---|---|---|
+| acquire + normalize (any format → `_raw/<slug>.md`) | `wiki-import` `prepare` | ✅ → now ONE (absorbs `wiki-sync`'s office/`.vtt` convert) |
+| distil (raw → summary note) | `wiki-import` REASON + `apply` | ✅ → now ONE (`apply` grammar by `--kind`: pyramid for meeting/lesson, article for article/paper/thread) |
+| batch sweep + new/re-ingest decision | `wiki-sync` (`source_state`/`resummarize`/`--force`) | no |
+| index one file | `wiki-index-upsert` (shared leaf) | no |
+| concept filing | `wiki-extract-concepts` (shared leaf, `--concepts/--no-concepts` toggle) | no |
+
+`wiki-import` gains FOUR knobs (also reachable per-zone via `.wiki/sync.yaml`
+`summarize:` → flags): **output-grammar by `--kind`** (adds `lesson`), **`--diagrams`**
+(selective-mermaid overlay), **`--concepts/--no-concepts`** (default ON = back-compat),
+and `prepare`'s **universal acquire** (docx/pptx/xlsx + `.vtt`/`.srt` + md, on top of
+url/pdf/video). `wiki-sync` drops its inline summarise/enrich/extract and calls
+`wiki-import` per due source item (ready notes → `wiki-index-upsert`; skips unchanged).
+
+```mermaid
+flowchart TD
+    subgraph DRIVER["wiki-sync — batch driver (new / re-ingest)"]
+        direction TB
+        Z[scan zone] --> CLS{classify + decide<br/>source_state · resummarize · --force}
+        CLS -->|ready note| UP[wiki-index-upsert]
+        CLS -->|skip| SK[skip view/binary/unmappable]
+        CLS -->|source, due| DEL[delegate per item<br/>flags ← .wiki/sync.yaml summarize:]
+    end
+    ONE[/"direct: /wiki-import one source"/] --> ENG
+    DEL ==>|once per item| ENG
+    subgraph ENG["wiki-import — per-source engine (ONE source)"]
+        direction TB
+        PREP["prepare: acquire+normalize → _raw/.md<br/>url · pdf · video · docx/pptx/xlsx · vtt · md"] --> REAS["REASON harness by --kind<br/>output-grammar: pyramid ∣ article"]
+        REAS --> APP["apply: file layout-aware · provenance"]
+    end
+    APP --> IDXL[wiki-index-upsert]
+    UP --> DB[("SQLite index")]
+    IDXL --> DB
+    APP -.concepts toggle.-> CEX[wiki-extract-concepts]
+    classDef cli fill:#eef7ee,stroke:#5a5,color:#000;
+    classDef store fill:#eee,stroke:#999,color:#000;
+    class Z,DEL,UP,SK,PREP,REAS,APP,IDXL,CEX cli; class ONE,DB store;
+```
+
+Invariants held: Decision-17 (the REASON LLM step stays the orchestrator's, between
+`prepare` and `apply`; `wiki-sync scan` stays deterministic plan-only), zero-DDL
+(`summarize:` is file config; `user_version` 5), back-compat (concepts default ON;
+`--kind article` byte-identical; absent `summarize:` ≡ today's defaults). `wiki-enrich`
+stays the legacy Karpathy on-ramp (separate retirement). Design rationale: Q-046-1.
 
 ---
 
