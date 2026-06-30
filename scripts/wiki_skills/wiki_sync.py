@@ -232,14 +232,19 @@ def _build_entries(
 
 
 def _delegate_folder(rel: str) -> str:
-    """Target topic folder for a delegated wiki-import (TASK 046 P2): the source's containing
-    folder — or its PARENT when the source sits under a `_raw/`/`.staging/` machinery dir, so the
-    summary note lands in the topic folder, not inside `_raw`. (P3 may further nest via
-    `summarize.target_subdir`.) A vault-root source yields `.` (wiki-import's vault-root folder)."""
-    parent = PurePosixPath(rel).parent
-    if parent.name in ("_raw", ".staging"):
-        parent = parent.parent
-    return parent.as_posix()
+    """Target topic folder for a delegated wiki-import (TASK 046 P2): the topic folder ABOVE all
+    `_raw/`/`.staging/` machinery — so the summary note (and wiki-import's own `_raw/<slug>.md`
+    capture) land in the topic folder, never INSIDE a `_raw/` tree. We trim from the FIRST
+    `_raw`/`.staging` segment onward (not just the immediate parent): a source nested under a
+    grouping subdir like `<topic>/_raw/<group>/x.vtt` must still resolve to `<topic>`, else its
+    capture lands in `_raw/` and the next scan re-ingests it (the re-ingest loop, P2 review).
+    A vault-root source yields `.` (wiki-import's vault-root folder)."""
+    segs: list[str] = []
+    for seg in PurePosixPath(rel).parent.parts:
+        if seg in ("_raw", ".staging"):
+            break
+        segs.append(seg)
+    return PurePosixPath(*segs).as_posix() if segs else "."
 
 
 def _hash_file(path: Path) -> str | None:
@@ -280,7 +285,16 @@ def _emit_dry_run(plan: dict[str, Any]) -> int:
     lines = [f"wiki-sync scan (dry-run) — vault={plan['vault_id']} zone={plan['zone']}"]
     for e in plan["entries"]:
         flag = " [unchanged]" if e.get("is_unchanged") else ""
-        extra = f" -> {e['staged_target']}" if e.get("staged_target") else ""
+        # TASK 046 P2: a delegated distil entry shows where wiki-import files it (delegate.folder),
+        # NOT the classifier's staged_target (a `_raw/.staging/...` path that is no longer written —
+        # conversion moved into wiki-import prepare). Non-delegated entries keep the old arrow.
+        deleg = e.get("delegate")
+        if deleg:
+            extra = f" -> wiki-import:{deleg.get('folder', '.')}"
+        elif e.get("staged_target"):
+            extra = f" -> {e['staged_target']}"
+        else:
+            extra = ""
         lines.append(f"  {e['action']:<14} {e['path']}  — {e['reason']}{flag}{extra}")
     summary = plan["summary"]
     lines.append(

@@ -77,10 +77,14 @@ def test_sync_plan_delegates_not_inline(tmp_path):
             assert e.get("delegate", {}).get("tool") == "wiki-import", f"{path} not delegated"
         else:  # upsert / skip never delegate
             assert "delegate" not in e, f"{path} ({e['action']}) should not delegate"
-    # the office file also delegates (conversion now lives in wiki-import prepare, P1b)
-    assert by_path["courses/deck.docx"]["action"] == "convert+ingest"
-    assert by_path["courses/deck.docx"]["delegate"]["tool"] == "wiki-import"
-    assert by_path["courses/deck.docx"]["delegate"]["folder"] == "courses"
+    # the office file also delegates (conversion now lives in wiki-import prepare, P1b) — assert
+    # the FULL knob set, not just tool+folder (a convert+ingest-special-casing mutation must fail)
+    deck = by_path["courses/deck.docx"]
+    assert deck["action"] == "convert+ingest"
+    assert deck["delegate"] == {
+        "tool": "wiki-import", "source": "courses/deck.docx", "folder": "courses",
+        "kind": "auto", "diagrams": False, "concepts": True,
+    }
 
 
 def test_delegate_folder_resolution():
@@ -88,3 +92,8 @@ def test_delegate_folder_resolution():
     assert f("03 - Learning/Webinars/_raw/x.vtt") == "03 - Learning/Webinars"
     assert f("03 - Learning/Webinars/lecture.docx") == "03 - Learning/Webinars"
     assert f("courses/.staging/deck-docx.md") == "courses"
+    # nested _raw grouping subdir → trim from the FIRST _raw onward (the re-ingest-loop fix);
+    # only stripping the immediate parent would yield "a/b/_raw/sub" → capture back inside _raw.
+    assert f("a/b/_raw/sub/x.vtt") == "a/b"
+    assert f("_raw/x.vtt") == "."          # zone == vault root
+    assert f("x.vtt") == "."               # bare vault-root file
