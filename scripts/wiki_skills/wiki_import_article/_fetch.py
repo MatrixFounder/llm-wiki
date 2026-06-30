@@ -349,13 +349,25 @@ def _fetch_pdf_url(pdf_extract_bin: str, url: str) -> FetchResult:
 
 def _read_text_fallback(path: Path) -> str:
     """Read a caption/text file tolerating non-UTF-8 (older RU captions ship CP1251/UTF-16).
-    `utf-8-sig` strips a leading BOM if present (else identical to utf-8)."""
-    for enc in ("utf-8-sig", "cp1251", "utf-16"):
+
+    UTF-16 is detected by BOM and decoded FIRST: a bare ``utf-16`` decode reads any even-length
+    byte string (so it would silently mis-decode BOM-less CP1251 as mojibake), and the near-total
+    single-byte ``cp1251`` codec almost never raises (so a codec ladder with cp1251 before utf-16
+    would shadow it — making UTF-16 support dead code). After the BOM check: ``utf-8-sig`` (strips
+    a UTF-8 BOM, else == utf-8), then ``cp1251`` (legacy RU), then a lossy replace as last resort.
+    """
+    data = path.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):       # UTF-16 LE/BE BOM → the utf-16 codec auto-picks endianness
         try:
-            return path.read_text(encoding=enc)
+            return data.decode("utf-16")
+        except (UnicodeDecodeError, UnicodeError):
+            pass
+    for enc in ("utf-8-sig", "cp1251"):
+        try:
+            return data.decode(enc)
         except (UnicodeDecodeError, UnicodeError):
             continue
-    return path.read_text(encoding="utf-8", errors="replace")
+    return data.decode("utf-8", errors="replace")
 
 
 def _load_vtt_cleaner(path: str = _DEFAULT_VTT_CLEANER) -> Any:
@@ -386,8 +398,10 @@ _SRT_INDEX_RE = re.compile(r"^\d+$")
 
 def _srt_to_vtt(raw: str) -> str:
     """Minimal SRT→WebVTT normalisation: comma→dot in cue timestamps, and drop the standalone
-    integer index line that precedes each cue (only when the next non-blank line IS a cue
-    header — so a caption that is itself just a number is never eaten)."""
+    integer index line that precedes each cue (only when the next non-blank line IS a cue header).
+    The index-line guard is BEST-EFFORT, not a guarantee — a bare-integer *caption* is preserved
+    here, but the downstream cleaner skips bare-digit lines unconditionally, so such a caption may
+    still be dropped later (and malformed SRT without cue separators is not handled)."""
     lines = raw.splitlines()
     out = ["WEBVTT", ""]
     for i, ln in enumerate(lines):
@@ -444,16 +458,20 @@ def _office_to_text(path: Path, *, wrapper_path: str = _DEFAULT_SOFFICE_WRAPPER)
     (caller → FETCH_FAILED), never a junk `_raw`.
     """
     soffice = _load_soffice(wrapper_path)
+    # Catch ONLY the wrapper's own error type (a RuntimeError subclass) — a genuine
+    # TypeError/AttributeError from wrapper API drift must surface as a traceback, not be
+    # mislabeled "install LibreOffice" / a soft convert failure.
+    soffice_error = getattr(soffice, "SofficeError", Exception)
     try:
         soffice.find_soffice()  # LibreOffice itself absent → DEP_MISSING (exit 6)
-    except Exception as e:  # SofficeError (skill-private type) — normalise to our typed exit 6
+    except soffice_error as e:
         raise ImportArticleError(
-            "DEPENDENCY_MISSING", str(e),
-            exit_code=EXIT_DEP_MISSING, details={"label": "office"}) from e
+            "DEPENDENCY_MISSING", str(e), exit_code=EXIT_DEP_MISSING,
+            details={"binary": "soffice", "label": "office"}) from e
     with tempfile.TemporaryDirectory() as td:
         try:
             produced = soffice.convert_to(path, td, "txt:Text", timeout=_OFFICE_TIMEOUT)
-        except Exception as e:  # SofficeError on a failed/empty conversion → soft FETCH_FAILED
+        except soffice_error as e:  # run-but-fail conversion → soft FETCH_FAILED
             return FetchResult(ok=False, engine="convert-office",
                                error={"error": "OfficeConvertFailed", "exit_code": 1,
                                       "detail": str(e)[:500]})

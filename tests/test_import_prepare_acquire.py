@@ -145,3 +145,69 @@ def test_import_prepare_srt_normalized_before_cleaner(tmp_path, monkeypatch):
     assert res.ok is True and res.engine == "vtt"
     assert "00:00:01.000 -->" in seen["raw"]   # dot (normalised), not the SRT comma
     assert "00:00:01,000" not in seen["raw"]
+
+
+def test_srt_bare_number_caption_survives():
+    # a bare-integer CAPTION (lookahead is NOT a cue header) must NOT be eaten by the index-drop
+    # heuristic — pins the lookahead guard (kills the "always drop ^\d+$" mutant).
+    srt = "1\n00:00:01,000 --> 00:00:02,000\n42\n"
+    out = _fetch._srt_to_vtt(srt)
+    assert "42" in out
+    assert "00:00:01.000 --> 00:00:02.000" in out
+
+
+# --- _read_text_fallback encoding ladder (R-7 robustness, was uncovered) -----
+
+def test_read_text_fallback_cp1251(tmp_path):
+    # CP1251 Cyrillic that is NOT valid UTF-8 → utf-8-sig raises → cp1251 branch decodes it.
+    p = tmp_path / "legacy.srt"
+    p.write_bytes("Привет мир".encode("cp1251"))
+    assert _fetch._read_text_fallback(p) == "Привет мир"
+
+
+def test_read_text_fallback_utf16_bom(tmp_path):
+    # UTF-16(-BOM) caption must decode correctly (the prior cp1251-before-utf16 ladder mangled it).
+    p = tmp_path / "u16.srt"
+    p.write_bytes("Привет мир".encode("utf-16"))  # encodes with a BOM
+    assert _fetch._read_text_fallback(p) == "Привет мир"
+
+
+def test_import_prepare_vtt_utf8_bom_stripped(tmp_path, monkeypatch):
+    # a .vtt with a leading UTF-8 BOM → the BOM is stripped before the cleaner sees it.
+    vtt = tmp_path / "bom.vtt"
+    vtt.write_bytes("﻿WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n".encode("utf-8"))
+    seen = {}
+    monkeypatch.setattr(_fetch, "_load_vtt_cleaner",
+                        lambda *a, **k: (lambda raw: (seen.__setitem__("raw", raw) or "hi")))
+    _dispatch(str(vtt))
+    assert not seen["raw"].startswith("﻿")
+    assert seen["raw"].startswith("WEBVTT")
+
+
+# --- loader dep-missing symmetry + real-cleaner integration ----------------
+
+def test_load_vtt_cleaner_missing_is_dep_error():
+    # symmetric with the office missing-wrapper test: an absent cleaner script → exit 6.
+    with pytest.raises(ImportArticleError) as ei:
+        _fetch._load_vtt_cleaner("/nonexistent/_vtt_to_text.py")
+    assert ei.value.exit_code == EXIT_DEP_MISSING
+
+
+def test_import_prepare_srt_real_cleaner_end_to_end(tmp_path):
+    # The load-bearing contract: a comma-ms multi-cue .srt through the REAL transcript-fetcher
+    # cleaner yields de-timestamped prose (a raw comma-SRT through the cleaner would be EMPTY —
+    # the _srt_to_vtt normalization is what stands between working output and silent data loss).
+    try:
+        _fetch._load_vtt_cleaner()  # skip if the transcript-fetcher skill isn't installed
+    except ImportArticleError:
+        pytest.skip("transcript-fetcher skill not installed")
+    srt = tmp_path / "real.srt"
+    srt.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nHello and welcome.\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\nAgent loops today.\n",
+        encoding="utf-8")
+    res = _dispatch(str(srt))
+    assert res.ok is True and res.engine == "vtt"
+    body = res.raw_text or ""
+    assert "Hello and welcome." in body and "Agent loops today." in body
+    assert "-->" not in body and "00:00:0" not in body   # fully de-timestamped, indices gone
