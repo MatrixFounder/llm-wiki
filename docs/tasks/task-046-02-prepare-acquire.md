@@ -8,31 +8,41 @@ add **office (docx/pptx/xlsx)** conversion and **`.vtt`/`.srt`** de-timestamp br
 `dispatch_fetch` (on top of the existing url/pdf/video/md/txt). This absorbs the conversion
 that `wiki-sync` currently does, so `wiki-sync` can delegate raw files of any format.
 
-## Context (files to edit)
-- `scripts/wiki_skills/wiki_import_article/_fetch.py` — `dispatch_fetch` local-file tail (lines ~682–694).
-- Reuse: the `docx`/`pptx`/`xlsx` harness skills (invoked via `Skill({...})` in the recipe, or their
-  scripts); `transcript-fetcher/scripts/sources/_vtt_to_text.py` for de-timestamping.
-- New test: `tests/test_import_prepare_acquire.py`. Reference: `tests/test_import_article_prepare.py`,
-  `tests/test_import_video.py`.
+## Context (files edited) — as shipped
+- `scripts/wiki_skills/wiki_import_article/_fetch.py` — `dispatch_fetch` local-file tail: new
+  `.vtt/.srt` and `.docx/.pptx/.xlsx` branches; helpers `_read_text_fallback`, `_srt_to_vtt`,
+  `_load_vtt_cleaner`/`_vtt_to_text`, `_load_soffice`/`_office_to_text`; `soffice_wrapper` param.
+- `__init__.py` — `_DEFAULT_SOFFICE_WRAPPER`, `--soffice-wrapper` arg, threaded into `prepare`.
+- **Reuse (ADR-001 "Wrap + Index"), imported by path — NOT reimplemented:**
+  - `transcript-fetcher/scripts/sources/_vtt_to_text.py::vtt_text_to_plain` (the canonical WebVTT
+    de-timestamper) for captions;
+  - `pptx/scripts/_soffice.py::convert_to` (HARDENED soffice wrapper — throw-away UserInstallation
+    profile → no lock contention, AF_UNIX sandbox shim, soffice-location fallback) for office.
+- New test: `tests/test_import_prepare_acquire.py` (mocks both converters at their import boundary).
 
-## Steps
-1. **B7** — create test file with 2 `@pytest.mark.skip` stubs.
-2. **B8 (R-6)** — in `dispatch_fetch`, before the `.md/.txt` branch: if `bare.endswith((".docx",".pptx",".xlsx"))`
-   → run the matching converter to markdown → `FetchResult(ok=bool(text.strip()), raw_text=text,
-   engine="convert-office", title=..., ...)`. Office conversion is a subprocess/skill call — keep it a
-   thin wrapper (ADR-001 "Wrap + Index"); fail-fast with a typed envelope if the converter bin is absent.
-3. **B9 (R-7)** — if `bare.endswith((".vtt",".srt"))` → pipe through `_vtt_to_text.py` (de-timestamp)
-   → `FetchResult(ok=..., raw_text=plain, engine="vtt", ...)`.
+## Steps (as implemented)
+1. **B7** — RED tests in `tests/test_import_prepare_acquire.py` (test `dispatch_fetch` directly).
+2. **B8 (R-6)** — `.docx/.pptx/.xlsx` → `_office_to_text(p, wrapper_path=…)`: import the office
+   skills' `_soffice` wrapper → `convert_to(src, td, "txt:Text")` → read the `.txt` with
+   `utf-8-sig` (strips soffice's BOM) → `FetchResult(engine="convert-office")`. **MISSING LibreOffice
+   = hard `DEP_MISSING` (exit 6)**, like html/pdf; a run-but-fail conversion = a typed soft
+   `FetchResult` error (caller → FETCH_FAILED), never a junk `_raw`.
+3. **B9 (R-7)** — `.vtt/.srt` → `_vtt_to_text(p)`: `.srt` is normalised to WebVTT first
+   (`_srt_to_vtt`: comma→dot in cue timestamps + drop the standalone sequence-index line) because
+   the cleaner's cue regex is dot-millisecond/VTT-specific; then `vtt_text_to_plain` →
+   `FetchResult(engine="vtt")`. Encoding fallback (`utf-8-sig`/cp1251/utf-16) for legacy captions.
 
-## Test Cases
-- **TC-E2E-01 (B8/R-6)** `test_import_prepare_office`: a small `.docx` fixture → `prepare` writes a
-  non-empty `_raw/<slug>.md`, envelope `action: prepared`, `engine` reflects office conversion.
-- **TC-E2E-02 (B9/R-7)** `test_import_prepare_vtt`: a `.vtt` fixture with cue timings → `_raw/<slug>.md`
-  has the cue timings stripped (plain transcript text).
+## Test Cases (shipped)
+- **office:** happy (BOM stripped), missing-wrapper → exit 6, soffice-absent → exit 6,
+  convert-fails → soft FetchResult error.
+- **vtt:** happy (cleaner gets raw vtt verbatim), missing-cleaner → exit 6.
+- **srt:** `_srt_to_vtt` unit (comma→dot, index dropped, numeric caption preserved) + dispatch-level
+  (cleaner receives normalised WebVTT, no SRT commas). Real-cleaner + live-soffice smoke verified.
 
 ## Verification
-`pytest tests/test_import_prepare_acquire.py tests/test_import_article_prepare.py -v` green.
-`mypy --strict scripts/` clean. Missing converter bin → typed `DEP_MISSING`/exit 6 (no junk `_raw`).
+`pytest tests/test_import_prepare_acquire.py tests/test_import_article_prepare.py -v` green (full
+suite 1751 passed). `mypy --strict scripts/` clean. Missing LibreOffice → typed `DEP_MISSING`/exit 6
+(no junk `_raw`).
 
 ## Acceptance
 - [ ] office + vtt fixtures produce correct `_raw/<slug>.md`.

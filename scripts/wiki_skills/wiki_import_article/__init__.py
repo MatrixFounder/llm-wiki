@@ -94,6 +94,9 @@ __version__ = "1.0"
 
 _DEFAULT_HTML = "~/.claude/skills/html/scripts/html2md.py"  # `html` skill; html2md.py is the combined URL→md command
 _DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
+# TASK 046: office→text reuses the office skills' hardened soffice wrapper (throw-away profile +
+# sandbox shim + location fallback), imported by path — not a bare `soffice` bin.
+_DEFAULT_SOFFICE_WRAPPER = "~/.claude/skills/pptx/scripts/_soffice.py"
 _DEFAULT_TRANSCRIPT = "~/.claude/skills/transcript-fetcher/scripts/fetch.py"  # TASK 044 (Q-044-1); absent → exit 6
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 # MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
@@ -196,6 +199,7 @@ def prepare(args: argparse.Namespace) -> int:
             args.source,
             html_bin=args.html_bin,
             pdf_extract_bin=args.pdf_extract_bin,
+            soffice_wrapper=args.soffice_wrapper,    # TASK 046: office→text (docx/pptx/xlsx)
             download_images=layout.import_images,   # config-driven, default ON
             transcript_bin=args.transcript_bin,     # TASK 044: video sources
             video=args.video,
@@ -742,6 +746,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
                     help="path to the `html` skill combined command (default: the deployed symlink)")
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
+    pp.add_argument("--soffice-wrapper", dest="soffice_wrapper", default=_DEFAULT_SOFFICE_WRAPPER,
+                    help="Path to the office skills' soffice wrapper (office→text for docx/pptx/xlsx)")
     # TASK 044 — video sources via the transcript-fetcher skill.
     pp.add_argument("--transcript-bin", dest="transcript_bin", default=_DEFAULT_TRANSCRIPT,
                     help="transcript-fetcher fetch.py (absent → exit 6 when a video URL is hit)")

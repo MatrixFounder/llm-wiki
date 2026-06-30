@@ -12,6 +12,7 @@ is `ok` with a non-empty body — so a failed/empty fetch never persists an empt
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -31,6 +32,14 @@ _ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([\w.\-/]+?)(?:v\d+)?(?:\.p
 _MAX_PDF_BYTES = 64 * 1024 * 1024  # 64 MiB cap on a downloaded PDF (DoS guard)
 _HTML_TIMEOUT = 180
 _PDF_TIMEOUT = 240
+_OFFICE_TIMEOUT = 240  # TASK 046: LibreOffice headless convert
+# TASK 046: the transcript-fetcher skill (already a dependency via _DEFAULT_TRANSCRIPT) owns the
+# canonical WebVTT de-timestamper; reuse it by path rather than re-implement caption parsing.
+_DEFAULT_VTT_CLEANER = "~/.claude/skills/transcript-fetcher/scripts/sources/_vtt_to_text.py"
+# TASK 046: the office skills ship a HARDENED soffice wrapper (throw-away UserInstallation profile
+# → no "office already running" lock contention, AF_UNIX sandbox shim, soffice-location fallback).
+# Reuse it (ADR-001 "Wrap + Index") rather than re-implement a fragile `soffice --headless` call.
+_DEFAULT_SOFFICE_WRAPPER = "~/.claude/skills/pptx/scripts/_soffice.py"
 # Browser-like UA: many PDF hosts (CDNs, hubfs, journal sites) reject non-browser
 # agents with 403. Operator-supplied URL — this fetches a document the operator asked
 # for (not detection-evasion); mirrors what the html skill's fetch already sends.
@@ -335,6 +344,126 @@ def _fetch_pdf_url(pdf_extract_bin: str, url: str) -> FetchResult:
         pdf.unlink(missing_ok=True)
 
 
+# ---- TASK 046: office + caption local-file acquire -------------------------
+
+
+def _read_text_fallback(path: Path) -> str:
+    """Read a caption/text file tolerating non-UTF-8 (older RU captions ship CP1251/UTF-16).
+    `utf-8-sig` strips a leading BOM if present (else identical to utf-8)."""
+    for enc in ("utf-8-sig", "cp1251", "utf-16"):
+        try:
+            return path.read_text(encoding=enc)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _load_vtt_cleaner(path: str = _DEFAULT_VTT_CLEANER) -> Any:
+    """Import transcript-fetcher's `vtt_text_to_plain` by path (fail-fast, exit 6, if absent).
+
+    Reusing the skill's tested cleaner (rolling-caption overlap, entity decode, encoding
+    fallback) beats re-implementing it here — and the skill is already a wiki-import dependency.
+    """
+    p = Path(path).expanduser()
+    spec = importlib.util.spec_from_file_location("_wiki_vtt_cleaner", p) if p.exists() else None
+    if spec is None or spec.loader is None:
+        raise ImportArticleError(
+            "DEPENDENCY_MISSING",
+            f"vtt cleaner not found at {path!r}; install the transcript-fetcher skill.",
+            exit_code=EXIT_DEP_MISSING, details={"binary": path, "label": "vtt_cleaner"})
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.vtt_text_to_plain
+
+
+# SubRip (.srt) cue header: `00:00:01,000 --> 00:00:02,000` (COMMA millisecond sep) and a
+# standalone integer index line before each cue — neither is recognised by the VTT cleaner
+# (its TS_RE requires a DOT). Normalise SRT → WebVTT-ish so the cleaner handles it.
+_SRT_TS_RE = re.compile(
+    r"^(\d{2}:\d{2}:\d{2}),(\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}),(\d{3})")
+_SRT_INDEX_RE = re.compile(r"^\d+$")
+
+
+def _srt_to_vtt(raw: str) -> str:
+    """Minimal SRT→WebVTT normalisation: comma→dot in cue timestamps, and drop the standalone
+    integer index line that precedes each cue (only when the next non-blank line IS a cue
+    header — so a caption that is itself just a number is never eaten)."""
+    lines = raw.splitlines()
+    out = ["WEBVTT", ""]
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        m = _SRT_TS_RE.match(s)
+        if m:
+            out.append(f"{m.group(1)}.{m.group(2)} --> {m.group(3)}.{m.group(4)}")
+            continue
+        if _SRT_INDEX_RE.match(s):
+            nxt = next((l.strip() for l in lines[i + 1:i + 3] if l.strip()), "")
+            if _SRT_TS_RE.match(nxt):
+                continue  # SRT sequence index → drop
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _vtt_to_text(path: Path, *, cleaner_path: str = _DEFAULT_VTT_CLEANER) -> FetchResult:
+    """`.vtt`/`.srt` → de-timestamped plain text (TASK 046 R-7), via the skill's cleaner.
+    `.srt` is normalised to WebVTT first (the cleaner is VTT-specific)."""
+    raw = _read_text_fallback(path)
+    if path.suffix.lower() == ".srt":
+        raw = _srt_to_vtt(raw)
+    cleaner = _load_vtt_cleaner(cleaner_path)
+    text = cleaner(raw)
+    return FetchResult(ok=bool(text and text.strip()), raw_text=text or None,
+                       engine="vtt", title=path.stem)
+
+
+def _load_soffice(path: str = _DEFAULT_SOFFICE_WRAPPER) -> Any:
+    """Import the office skills' hardened soffice wrapper by path (fail-fast, exit 6, if absent).
+
+    The wrapper (`pptx/scripts/_soffice.py`) gives a throw-away UserInstallation profile (no lock
+    contention), the AF_UNIX sandbox shim, soffice-location fallback, and `convert_to()` — all of
+    which a naive `soffice --headless` would miss. Same wrap-by-path posture as the vtt cleaner.
+    """
+    p = Path(path).expanduser()
+    spec = importlib.util.spec_from_file_location("_wiki_soffice", p) if p.exists() else None
+    if spec is None or spec.loader is None:
+        raise ImportArticleError(
+            "DEPENDENCY_MISSING",
+            f"soffice wrapper not found at {path!r}; install the pptx/docx/xlsx skill "
+            "(LibreOffice) or pass --soffice-wrapper.",
+            exit_code=EXIT_DEP_MISSING, details={"binary": path, "label": "office"})
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _office_to_text(path: Path, *, wrapper_path: str = _DEFAULT_SOFFICE_WRAPPER) -> FetchResult:
+    """`.docx`/`.pptx`/`.xlsx` → plain text via the hardened LibreOffice wrapper (TASK 046 R-6).
+
+    Deterministic (Decision-17 — no LLM). A MISSING LibreOffice is a hard dependency error
+    (exit 6, like html/pdf); a conversion that runs-but-fails is a TYPED FetchResult error
+    (caller → FETCH_FAILED), never a junk `_raw`.
+    """
+    soffice = _load_soffice(wrapper_path)
+    try:
+        soffice.find_soffice()  # LibreOffice itself absent → DEP_MISSING (exit 6)
+    except Exception as e:  # SofficeError (skill-private type) — normalise to our typed exit 6
+        raise ImportArticleError(
+            "DEPENDENCY_MISSING", str(e),
+            exit_code=EXIT_DEP_MISSING, details={"label": "office"}) from e
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            produced = soffice.convert_to(path, td, "txt:Text", timeout=_OFFICE_TIMEOUT)
+        except Exception as e:  # SofficeError on a failed/empty conversion → soft FETCH_FAILED
+            return FetchResult(ok=False, engine="convert-office",
+                               error={"error": "OfficeConvertFailed", "exit_code": 1,
+                                      "detail": str(e)[:500]})
+        # soffice writes UTF-8-with-BOM → utf-8-sig strips the leading ﻿ (else it would
+        # surface as an invisible char at the head of the _raw body).
+        text = Path(produced).read_text(encoding="utf-8-sig", errors="replace")
+    return FetchResult(ok=bool(text.strip()), raw_text=text or None,
+                       engine="convert-office", title=path.stem)
+
+
 # ---- TASK 044: video-host classification + transcript fetch ----------------
 
 def _video_host(url: str) -> str:
@@ -618,6 +747,7 @@ def _append_embedded_videos(res: FetchResult, page_url: str, *, transcript_bin: 
 # ---- public dispatch -------------------------------------------------------
 
 def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
+                   soffice_wrapper: str = _DEFAULT_SOFFICE_WRAPPER,
                    download_images: bool = False,
                    transcript_bin: str | None = None, video: bool = False,
                    embedded_videos: bool = False, embedded_videos_max: int = 5,
@@ -683,6 +813,10 @@ def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
     p = Path(source).expanduser()
     if bare.endswith(".pdf"):
         return _pdf_to_text(pdf_extract_bin, p)
+    if bare.endswith((".vtt", ".srt")):                       # TASK 046 R-7: caption → de-timestamp
+        return _vtt_to_text(p)
+    if bare.endswith((".docx", ".pptx", ".xlsx")):           # TASK 046 R-6: office → text (soffice)
+        return _office_to_text(p, wrapper_path=soffice_wrapper)
     if bare.endswith((".md", ".markdown", ".txt")):
         text = p.read_text(encoding="utf-8")
         fm = _parse_frontmatter(text)
