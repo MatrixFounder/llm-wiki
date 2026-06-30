@@ -96,9 +96,9 @@ owner (`wiki-import`); `wiki-sync` is a pure batch driver; `wiki-index-upsert` /
 | R-7 | `prepare` de-timestamps `.vtt`/`.srt` → `_raw/<slug>.md` | P1b | `test_import_prepare_vtt` |
 | R-8 | `wiki-sync scan` emits a per-source `wiki-import` delegation (kind/diagrams/concepts) in the plan | P2 | `test_sync_scan_delegates_to_import` |
 | R-9 | `wiki-sync` no longer references inline summarise/enrich/extract for `ingest` (executor delegates) | P2 | recipe review + `test_sync_plan_delegates_not_inline` |
-| R-10 | `.wiki/sync.yaml` `summarize:{profile,diagrams,extract_concepts,target_subdir}` accepted; unknown key → exit 6, no echo | P3 | `test_sync_config_summarize_accept` / `_reject` |
-| R-11 | `summarize:` deep-merges deepest-wins per folder; maps to `wiki-import` flags | P3 | `test_sync_config_summarize_deepmerge` |
-| R-12 | Absent `summarize:` ≡ current default (kind from detect, concepts ON) | P3 | `test_sync_summarize_default_backcompat` |
+| R-10 | `.wiki/sync.yaml` `summarize:{profile,diagrams,extract_concepts,target_subdir}` accepted; unknown key / bad enum → exit 6, no echo | P3 | `test_sync_config_summarize_accept` / `_reject_unknown_key` / `_bad_profile` |
+| R-11 | `summarize:` deep-merges deepest-wins per folder; maps to `wiki-import` delegate flags | P3 | `test_sync_config_summarize_deepmerge` + `test_sync_scan_summarize_drives_delegate` |
+| R-12 | Absent `summarize:` ≡ P2 default (profile `auto`, concepts ON) | P3 | `test_sync_config_summarize_default_backcompat` |
 | R-13 | Evals updated (`wiki-import`) + created (`wiki-sync`) for the converged discipline, **high-graded** — a filed `reports/` run passes with no `never_relax` failure + meets/raises each `floor` | P4 | eval-harness report under `skills/*/evals/reports/` |
 
 ## Invariants to preserve

@@ -20,7 +20,8 @@ deep-merge (deepest-wins), exactly like `resummarize:`. Absent block ≡ current
 ## Steps
 1. **B13** — create test file with 5 `@pytest.mark.skip` stubs.
 2. **B14 (R-10)** — schema `$defs/Summarize` (STRICT, `additionalProperties:false`):
-   `profile` (enum `[meeting,lesson,article,pyramid]`), `diagrams` (bool),
+   `profile` (enum `[auto,meeting,lesson,article]` → wiki-import `--kind`; `auto` default — `pyramid`
+   dropped: it has no `--kind`; the pyramid *grammar* comes from `meeting`/`lesson`), `diagrams` (bool),
    `extract_concepts` (bool), `target_subdir` (string); `summarize: {$ref:'#/$defs/Summarize'}`
    on `SyncConfig.properties`. Unknown key / bad enum → `INVALID_SYNC_CONFIG` (exit 6), no echo.
 3. **B15 (R-11/R-12)** — loader: parse `summarize`, deep-merge per-folder deepest-wins (mirror the

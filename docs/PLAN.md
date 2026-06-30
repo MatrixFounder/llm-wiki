@@ -93,7 +93,7 @@ Phases are ordered by dependency: **P1 → P1b → P2 → P3**. RTM IDs (R-1…R
   `..._bad_profile`, `..._deepmerge`, `..._default_backcompat`. *Gate:* collected, SKIP.
 - **B14 [R-10]** — schema `$defs/Summarize` + key.
   `config/sync-config.schema.yaml`: `Summarize` $def — `profile`
-  (enum `[meeting,lesson,article,pyramid]`), `diagrams` (bool), `extract_concepts`
+  (enum `[auto,meeting,lesson,article]` → wiki-import `--kind`; `auto` default), `diagrams` (bool), `extract_concepts`
   (bool), `target_subdir` (string); `summarize: {$ref}` on `SyncConfig`. STRICT.
   *Test:* `_accept` / `_reject_unknown_key` / `_bad_profile`.
 - **B15 [R-11][R-12]** — loader deep-merge + flag mapping.

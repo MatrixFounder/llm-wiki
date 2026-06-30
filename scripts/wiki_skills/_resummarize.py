@@ -39,9 +39,12 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import (
     MirrorConfig,
     ResummarizeConfig,
+    SummarizeConfig,
     SyncConfigError,
     _parse_resummarize,
+    _parse_summarize,
     load_resummarize_raw,
+    load_summarize_raw,
 )
 from scripts.wiki_skills._sync import Decision
 
@@ -69,6 +72,9 @@ class Caches:
     resolved: dict[Path, ResummarizeConfig | None] = field(default_factory=dict)
     cited: dict[tuple[tuple[str, ...], str], frozenset[str]] = field(default_factory=dict)
     mirror: dict[tuple[str, str, str | None, str], dict[str, str]] = field(default_factory=dict)
+    # TASK 046 P3 — per-dir RAW `summarize` block (cascade input) + parsed result (output).
+    summarize_raw: dict[Path, dict[str, Any] | None] = field(default_factory=dict)
+    summarize: dict[Path, SummarizeConfig] = field(default_factory=dict)
 
 
 def _ancestor_dirs(path: Path, vault_root: Path) -> list[Path]:
@@ -119,6 +125,34 @@ def resolve_policy(
             merged = deep_merge(merged, block)
     result = _parse_resummarize(merged) if found else None
     c.resolved[parent] = result
+    return result
+
+
+def resolve_summarize(
+    path: Path,
+    *,
+    vault_root: Path,
+    caches: Caches | None = None,
+) -> SummarizeConfig:
+    """Resolve the effective `summarize` config for `path` (TASK 046 P3), via the SAME
+    per-folder Option-A cascade as `resolve_policy`: deep-merge every ancestor's RAW
+    `summarize:` block deepest-wins, then parse once. A partial folder override (e.g. only
+    `diagrams: true`) inherits the parent's `profile`. Returns `SummarizeConfig()` DEFAULTS
+    when no level configures it (≡ the P2 hardcoded delegate; back-compat). Memoized per
+    `path.parent` on `caches` (resolution is a function of the parent dir)."""
+    c = caches or Caches()
+    parent = path.parent
+    if parent in c.summarize:
+        return c.summarize[parent]
+    merged: dict[str, Any] = {}
+    for d in _ancestor_dirs(path, vault_root):
+        if d not in c.summarize_raw:
+            c.summarize_raw[d] = load_summarize_raw(d)
+        block = c.summarize_raw[d]
+        if block is not None:
+            merged = deep_merge(merged, block)
+    result = _parse_summarize(merged) or SummarizeConfig()
+    c.summarize[parent] = result
     return result
 
 

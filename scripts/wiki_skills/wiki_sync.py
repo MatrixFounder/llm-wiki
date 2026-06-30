@@ -49,6 +49,7 @@ from scripts.wiki_skills._resummarize import (
     Caches,
     apply_policy,
     resolve_policy,
+    resolve_summarize,
 )
 from scripts.wiki_skills._common import (
     build_repo_config,
@@ -202,13 +203,17 @@ def _build_entries(
         # auto-detect kind, no diagrams, concepts ON) and are populated from the per-folder
         # `.wiki/sync.yaml` `summarize:` block in P3.
         if d.action in ACTIONABLE:
+            sm = resolve_summarize(cand.path, vault_root=vault_root, caches=caches)
+            folder = _delegate_folder(cand.rel)
+            if sm.target_subdir:
+                folder = sm.target_subdir if folder == "." else f"{folder}/{sm.target_subdir}"
             entry["delegate"] = {
                 "tool": "wiki-import",
                 "source": cand.rel,
-                "folder": _delegate_folder(cand.rel),
-                "kind": "auto",
-                "diagrams": False,
-                "concepts": True,
+                "folder": folder,
+                "kind": sm.profile,            # profile == wiki-import --kind (auto/meeting/lesson/article)
+                "diagrams": sm.diagrams,
+                "concepts": sm.extract_concepts,
             }
         if d.action != "skip":
             source_hash = _hash_file(cand.path)

@@ -124,6 +124,20 @@ class TranscriptDedupConfig:
 
 
 @dataclass(frozen=True)
+class SummarizeConfig:
+    """TASK 046 P3 — per-zone distil knobs wiki-sync passes to the delegated wiki-import.
+    `profile` resolves to the wiki-import `--kind` (`auto` → wiki-import auto-detects;
+    `meeting`/`lesson` → pyramid grammar; `article` → article wrapper). The defaults below
+    are EXACTLY the P2 hardcoded delegate (auto / no diagrams / concepts ON / no subdir), so
+    a vault with no `summarize:` block is byte-identical to P2 (back-compat / R-12)."""
+
+    profile: str = "auto"
+    diagrams: bool = False
+    extract_concepts: bool = True
+    target_subdir: str = ""
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     """The merged `.wiki/sync.yaml` the dispatcher consumes.
 
@@ -141,6 +155,7 @@ class SyncConfig:
     extensions_skip: tuple[str, ...] = field(default_factory=tuple)
     resummarize: ResummarizeConfig | None = None
     transcript_dedup: TranscriptDedupConfig | None = None
+    summarize: SummarizeConfig | None = None
 
 
 class _NoAliasSafeLoader(yaml.SafeLoader):
@@ -223,7 +238,31 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
         extensions_skip=tuple(ext.get("skip") or ()),
         resummarize=_parse_resummarize(raw.get("resummarize")),
         transcript_dedup=_parse_transcript_dedup(raw.get("transcript_dedup")),
+        summarize=_parse_summarize(raw.get("summarize")),
     )
+
+
+def _parse_summarize(block: Any) -> SummarizeConfig | None:
+    """Build the typed `SummarizeConfig` from a schema-validated `summarize` block
+    (`None` when absent ≡ the P2 defaults). Already strict-validated, so the enum/types
+    are sound; apply the field defaults jsonschema does not inject."""
+    if not block:
+        return None
+    return SummarizeConfig(
+        profile=str(block.get("profile") or "auto"),
+        diagrams=bool(block.get("diagrams", False)),
+        extract_concepts=bool(block.get("extract_concepts", True)),
+        target_subdir=str(block.get("target_subdir") or ""),
+    )
+
+
+def load_summarize_raw(root: Path) -> dict[str, Any] | None:
+    """The RAW (un-parsed, schema-validated) ``summarize`` block of ``<root>/.wiki/sync.yaml``,
+    or ``None`` if absent. The per-folder cascade resolver deep-merges these RAW dicts
+    deepest-wins *before* applying defaults, so a folder override that sets only ``diagrams``
+    INHERITS the parent's ``profile`` (partial override). Reuses ``_load_validated_raw``."""
+    block = _load_validated_raw(root).get("summarize")
+    return block if isinstance(block, dict) else None
 
 
 def _parse_transcript_dedup(block: Any) -> TranscriptDedupConfig | None:
