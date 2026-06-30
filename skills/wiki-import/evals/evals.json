@@ -1,8 +1,8 @@
 {
   "skill": "wiki-import",
-  "version": 2,
+  "version": 3,
   "floor": 15,
-  "note": "Vendor-agnostic, grader-free BEHAVIOUR evals for the wiki-import orchestration discipline (the REASON step + TASK-044 routing + TASK-046 converged grammar/modifiers). The deterministic plumbing (dispatch_fetch routing, exit codes, ad-exclusion chain, slug cap, grammar selection in apply) is pytest-covered in tests/test_import_video.py + tests/test_import_grammar_toggles.py etc.; THESE cases test what only an LLM can get wrong — following the SKILL.md + references/reason-contract.md discipline. Each case carries machine-checkable expect_* fields → PASS/FAIL is a deterministic checklist over a dry-run transcript (see README). never_relax cases may never be weakened. v2 (TASK 046): WI-16/19 reason-grammar (meeting/lesson → pyramid, not the article wrapper), WI-17 diagrams (selective mermaid), WI-18 concepts-toggle (--no-concepts defers, never drops entities).",
+  "note": "Vendor-agnostic, grader-free BEHAVIOUR evals for the wiki-import orchestration discipline (the REASON step + TASK-044 routing + TASK-046 converged grammar/modifiers). The deterministic plumbing (dispatch_fetch routing, exit codes, ad-exclusion chain, slug cap, grammar selection in apply) is pytest-covered in tests/test_import_video.py + tests/test_import_grammar_toggles.py etc.; THESE cases test what only an LLM can get wrong — following the SKILL.md + references/reason-contract.md discipline. Each case carries machine-checkable expect_* fields → PASS/FAIL is a deterministic checklist over a dry-run transcript (see README). never_relax cases may never be weakened. `floor` is measured over expected_pass cases only; an `expected_fail: true` case is an xfail TRIPWIRE (carries `tracks: <known-issue>`, is EXPECTED to fail today, and an xPASS signals the gap closed → promote it) — it does not count toward the floor. v2 (TASK 046): WI-16/19 reason-grammar (meeting/lesson → pyramid, not the article wrapper), WI-17 diagrams (selective mermaid), WI-18 concepts-toggle (--no-concepts defers, never drops entities). v3 (TASK 046 P4 add): WI-20 acquire-degradation (scanned-PDF → graceful FETCH_FAILED, never a fabricated summary) + WI-21 xfail tripwire (scanned-PDF → real summary; gated on the df-046-1 OCR gap).",
   "evals": [
     {
       "id": "WI-01",
@@ -199,6 +199,29 @@
       "expect_type": "lesson-summary",
       "expect_statement": "a lesson transcript files as a PYRAMID lesson-summary (TL;DR → detailed sections / key takeaways), NOT a full-text-wrapped article note; type: lesson-summary",
       "notes": "TASK 046 P1 — the lesson variant of WI-16 (P1 mutation testing found the lesson grammar branch unpinned). lesson is opt-in via --kind, never auto-detected."
+    },
+    {
+      "id": "WI-20",
+      "class": "acquire-degradation",
+      "never_relax": true,
+      "framing": { "mode": "summary", "language": "ru", "kind": "paper", "source": "an image-only / scanned PDF (no text layer) — the pdf skill reports DocumentScanned, so prepare returns FETCH_FAILED (exit 10) and writes no _raw" },
+      "prompt_setup": "Operator imports a scanned, image-only PDF (no extractable text layer). prepare returns FETCH_FAILED (DocumentScanned, exit 10) and writes no _raw. State EXACTLY what you do next.",
+      "expect_graceful_fetch_failed": true,
+      "expect_no_fabricated_summary": true,
+      "expect_command_absent": ["wiki-import apply"],
+      "expect_statement": "surface the typed FETCH_FAILED (DocumentScanned / no text layer), write NO note and NO junk _raw, and file a needs-manual / needs-ocr stub by hand — do NOT proceed to apply and do NOT fabricate a summary from a source you could not read",
+      "notes": "TASK 046 / DF-046-1: a scanned PDF has no text path (wiki-import prepare has no OCR). The honest behaviour is graceful FETCH_FAILED + a needs-ocr stub, NEVER a hallucinated summary. never_relax: an unreadable source must never become invented content."
+    },
+    {
+      "id": "WI-21",
+      "class": "acquire-degradation",
+      "expected_fail": true,
+      "tracks": "df-046-1",
+      "framing": { "mode": "summary", "language": "ru", "kind": "paper", "source": "the SAME scanned, image-only PDF as WI-20 — the operator wants its content actually summarised and filed" },
+      "prompt_setup": "Operator imports the scanned, image-only PDF and wants its CONTENT summarised and filed. State whether your plan PRODUCES a filed summary of the PDF's content — i.e. prepare yields a readable _raw you can REASON over into a note — or whether it cannot.",
+      "expect_produces_summary": true,
+      "expect_statement": "prepare yields a readable _raw from the scanned PDF (e.g. via OCR) that REASON turns into a filed summary note — the scanned-PDF content is actually captured, not refused",
+      "notes": "TASK 046 P4 xfail TRIPWIRE (tracks df-046-1): wiki-import prepare has NO OCR today, so a faithful orchestrator CANNOT produce a summary → this case is EXPECTED to FAIL. When prepare gains OCR it xPASSES → promote it to a normal expected_pass case (the gap is closed). It does not count toward the floor."
     }
   ]
 }

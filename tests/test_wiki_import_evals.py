@@ -19,7 +19,8 @@ _CLASSES = {
     "reason-completeness", "reason-concepts", "reason-language",
     "security-injection", "mode-selection", "routing-video",
     "routing-embedded", "contract-apply",
-    "reason-grammar",  # TASK 046: pyramid-vs-article grammar + diagrams discipline
+    "reason-grammar",       # TASK 046: pyramid-vs-article grammar + diagrams discipline
+    "acquire-degradation",  # TASK 046 P4: scanned-PDF graceful FETCH_FAILED + the OCR xfail tripwire
 }
 # The closed vocabulary of expectation fields (a typo'd field would silently never be graded).
 _EXPECT_FIELDS = {
@@ -33,6 +34,8 @@ _EXPECT_FIELDS = {
     # TASK 046 converged-discipline fields
     "expect_pyramid", "expect_no_fulltext_wrapper", "expect_sections", "expect_type",
     "expect_mermaid_selective", "expect_no_decorative_diagrams", "expect_states_concepts_deferred",
+    # TASK 046 P4 acquire-degradation + xfail tripwire
+    "expect_graceful_fetch_failed", "expect_no_fabricated_summary", "expect_produces_summary",
 }
 _LIST_FIELDS = {"expect_no_minted_variant", "expect_entity_name_absent",
                 "expect_command_absent", "expect_command_substring", "expect_sections"}
@@ -40,7 +43,7 @@ _LIST_FIELDS = {"expect_no_minted_variant", "expect_entity_name_absent",
 _TYPES = {"meeting-summary", "lesson-summary", "article", "paper", "thread", "summary"}
 # never_relax cases (the regression + safety invariants + TASK 046 grammar invariants) must
 # always be present + flagged.
-_NEVER_RELAX = {"WI-01", "WI-07", "WI-13", "WI-16", "WI-19"}
+_NEVER_RELAX = {"WI-01", "WI-07", "WI-13", "WI-16", "WI-19", "WI-20"}
 
 
 def _load() -> dict:
@@ -50,10 +53,24 @@ def _load() -> dict:
 def test_parses_meets_floor_unique_ids() -> None:
     d = _load()
     cases = d["evals"]
-    assert len(cases) >= d["floor"] >= 12, "must meet the declared floor (>= 12)"
+    # floor is measured over expected_pass cases only — an xfail tripwire must not inflate it.
+    expected_pass = [c for c in cases if not c.get("expected_fail")]
+    assert len(expected_pass) >= d["floor"] >= 12, "expected_pass cases must meet the declared floor (>= 12)"
     ids = [c["id"] for c in cases]
     assert len(ids) == len(set(ids)), "case ids must be unique"
     assert d["skill"] == "wiki-import"
+
+
+def test_expected_fail_cases_are_tracked_and_not_never_relax() -> None:
+    """An xfail tripwire (expected_fail: true) MUST cite a tracked known-issue (`tracks`) and may NOT
+    be never_relax (a 'must always pass' that is 'expected to fail' is a contradiction). When the gap
+    closes the case xPASSES → promote it (drop expected_fail)."""
+    for c in _load()["evals"]:
+        if c.get("expected_fail"):
+            assert isinstance(c.get("tracks"), str) and c["tracks"].strip(), \
+                f"case {c['id']}: expected_fail must carry a non-empty 'tracks' known-issue ref"
+            assert c.get("never_relax") is not True, \
+                f"case {c['id']}: an expected_fail case cannot also be never_relax"
 
 
 def test_every_case_self_contained() -> None:
