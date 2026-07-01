@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from scripts.wiki_index.models import LogEvent
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 from scripts.wiki_index.rendering import (
+    MalformedAutoBlockError,
     apply_auto_block,
     atomic_write,
     extract_custom_sections,
@@ -49,13 +51,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _render_concept_mentions(
     repo: SQLiteRepository, vault_id: str, vault_root: Path,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """Regenerate every concept page's `BEGIN-AUTO:mentions` block. Only pages whose bytes
     actually change are rewritten + re-indexed (so `pages.file_hash` stays in sync → no spurious
     `hash-mismatch` drift). Idempotent — a second run with no new refs writes nothing.
-    Returns `(updated_slugs, missing_slugs)` (missing = DB row whose `.md` is absent on disk)."""
+    Returns `(updated_slugs, missing_slugs, malformed_slugs)`: missing = DB row whose `.md` is
+    absent/escapes the vault; malformed = a page whose AUTO markers are broken (unbalanced /
+    duplicate) so it is skipped rather than mangled (surfaced for operator repair)."""
     updated: list[str] = []
     missing: list[str] = []
+    malformed: list[str] = []
     for slug, _project, file_path in repo.concept_pages(vault_id):
         page_path = vault_root / file_path
         # H-6 / R-26 containment: the DB-stored `file_path` is untrusted on egress. Refuse a
@@ -70,14 +75,28 @@ def _render_concept_mentions(
         if page_path.is_symlink():
             missing.append(slug)
             continue
-        existing = page_path.read_text(encoding="utf-8")
+        # Read via O_NOFOLLOW so a symlink swapped in AFTER the is_symlink() check (the residual
+        # read-side TOCTOU) cannot leak out-of-vault content — parity with write_concept_page's
+        # M-5 read. ELOOP/ENOENT race → treat as missing (the atomic write below is rename(2),
+        # which never follows a dest symlink, so we also never write out of the vault).
+        try:
+            rd_fd = os.open(page_path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            missing.append(slug)
+            continue
+        with os.fdopen(rd_fd, "r", encoding="utf-8") as fh:
+            existing = fh.read()
         body = render_concept_mentions_body(repo, vault_id, slug)
-        new_md = apply_auto_block(existing, AUTO_MENTIONS_NAME, body)
+        try:
+            new_md = apply_auto_block(existing, AUTO_MENTIONS_NAME, body)
+        except MalformedAutoBlockError:
+            malformed.append(slug)
+            continue
         if new_md != existing:
             atomic_write(page_path, new_md)
             upsert_one(vault_id, page_path, vault_root, repo)   # re-index → refresh file_hash + refs
             updated.append(slug)
-    return updated, missing
+    return updated, missing, malformed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,15 +126,18 @@ def main(argv: list[str] | None = None) -> int:
                 return emit({"error": "NOT_SUPPORTED",
                              "message": "--concept-mentions requires a SQLite index"},
                             exit_code=6)
-            updated, missing = _render_concept_mentions(repo, args.vault, vault.root_path)
+            updated, missing, malformed = _render_concept_mentions(
+                repo, args.vault, vault.root_path)
             repo.append_log_event(LogEvent(
                 vault_id=args.vault, event_ts=datetime.now(), event_type="reindex",
                 subject="concept-mentions render",
                 pages_created_json=[], pages_updated_json=updated,
-                details_json={"updated_count": len(updated)},
+                details_json={"updated_count": len(updated),
+                              "malformed_count": len(malformed)},
             ))
             return emit({"action": "rendered-concept-mentions", "vault_id": args.vault,
-                         "updated": updated, "updated_count": len(updated), "missing": missing})
+                         "updated": updated, "updated_count": len(updated),
+                         "missing": missing, "malformed": malformed})
         # LOW-2 (critic-security): `--output` is the operator's EXPLICIT, typed
         # choice of where to write index.md — intentionally NOT vault-bounded
         # (unlike the config-driven auto_indexes[].output, which a shared/committed

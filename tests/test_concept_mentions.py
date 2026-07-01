@@ -24,7 +24,11 @@ import pytest
 
 from scripts.wiki_index.models import Page, PageRef, Vault
 from scripts.wiki_index.reindex import reindex_full
-from scripts.wiki_index.rendering import apply_auto_block, render_concept_mentions_body
+from scripts.wiki_index.rendering import (
+    MalformedAutoBlockError,
+    apply_auto_block,
+    render_concept_mentions_body,
+)
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 from scripts.wiki_skills._common import format_concept_mentions_body, wrap_auto_block
 from scripts.wiki_skills.wiki_index_render import main as render_main
@@ -248,6 +252,51 @@ def test_apply_auto_block_absent_inserts_before_custom_island():
     out2 = apply_auto_block(md2, "mentions", format_concept_mentions_body(["new"]))
     assert "<!-- BEGIN-AUTO:other -->\nX\n<!-- END-AUTO:other -->" in out2   # untouched
     assert "- [[new]]" in out2 and "- [[old]]" not in out2
+
+
+def test_apply_auto_block_dangling_begin_refuses():
+    # vdd-multi F1 (critic-logic): a truncated/merge-conflicted page with a lone BEGIN-AUTO and NO
+    # matching END must NOT take the "absent" branch and append a SECOND block (which would commit a
+    # two-BEGIN/one-END malformed state to disk + the DB hash). apply_auto_block refuses instead.
+    md = "# Broke\n\nDefinition.\n\n<!-- BEGIN-AUTO:mentions -->\n## Mentions across sources\n\n- [[old]]\n"
+    with pytest.raises(MalformedAutoBlockError):
+        apply_auto_block(md, "mentions", format_concept_mentions_body(["new"]))
+
+
+def test_apply_auto_block_duplicate_begin_refuses():
+    # vdd-multi F1 (critic-security SEC-INFO-2): an operator hand-typed a literal BEGIN-AUTO sentinel
+    # ABOVE the real block → two BEGIN, one END. The old non-greedy match would span from the fake
+    # BEGIN to the real END and SWALLOW the operator prose between. Refuse rather than lose prose.
+    md = ("<!-- BEGIN-AUTO:mentions -->\noperator typed this literally by mistake\n\n"
+          "<!-- BEGIN-AUTO:mentions -->\n## Mentions across sources\n\n- [[old]]\n<!-- END-AUTO:mentions -->\n")
+    with pytest.raises(MalformedAutoBlockError):
+        apply_auto_block(md, "mentions", format_concept_mentions_body(["new"]))
+
+
+def test_render_skips_malformed_page_without_mangling(vault):
+    # vdd-multi F1: a concept page with a broken AUTO marker set is SKIPPED (surfaced in `malformed`),
+    # NOT rewritten — the sweep never commits a mangled Class-A file, and one bad page doesn't abort
+    # the run. A well-formed sibling in the same sweep still renders normally.
+    root, db = vault
+    # a dangling-BEGIN (no END) concept page, written directly (bypassing the well-formed seeder)
+    broke = ("---\ntype: concept\nvault_id: cm-test\nslug: broke\nname: Broke\n"
+             "date: 2026-07-01\ntags: [concept]\nis_candidate: true\n---\n"
+             "# Broke\n\nA definition.\n\n<!-- BEGIN-AUTO:mentions -->\n## Mentions across sources\n\n- [[old]]\n")
+    (root / "_concepts" / "broke.md").write_text(broke, encoding="utf-8")
+    _write_concept(root, "fine", seeded_source="src-a")
+    _write_source(root, "src-a", ["fine"])
+    _index_dir(root, db, "_concepts")
+    _index_dir(root, db, "_sources")
+
+    before = (root / "_concepts" / "broke.md").read_text(encoding="utf-8")
+    out = _render(db, root)
+
+    assert "broke" in out["malformed"], out
+    assert "broke" not in out["updated"], out
+    # the mangled page is left byte-for-byte untouched (no appended second block, no re-index)
+    assert (root / "_concepts" / "broke.md").read_text(encoding="utf-8") == before
+    # the well-formed sibling still renders (one bad page didn't abort the sweep)
+    assert "- [[src-a]]" in _block_of(root, "fine")
 
 
 def test_reindex_full_rebuilds_concept_mentions(tmp_path):
