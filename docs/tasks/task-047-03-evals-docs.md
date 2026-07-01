@@ -22,9 +22,22 @@ Prove the derived Mentions ledger is Class-A/B-rebuildable; document it; dogfood
    identical AUTO blocks. Record the transcript.
 
 ## Acceptance
-- [ ] R-5 green (reindex --full + render reproduces the Mentions blocks deterministically).
-- [ ] R-8 green: full `pytest` + `mypy --strict` + the extract-concepts/import/sync/render eval pins pass.
-- [ ] Docs updated; dogfood recorded (two sources → one page listing both; idempotent; rebuildable; prose preserved).
+- [x] R-5 green — `test_reindex_full_rebuilds_concept_mentions` (`rm db → reindex --full → --concept-mentions`
+  reproduces the AUTO block byte-identically; `is_candidate`/`source_page` frontmatter survives).
+- [x] R-8 green — full suite **1762 passed / 5 skipped**, `mypy --strict` clean (60 files).
+- [x] Docs — `docs/architectures/functional-architecture.md` §2.3 (derived ledger + retired file-layer)
+  + ADR-007 "Extension (TASK 047)" + the P2 ARCHITECTURE/anatomy superseded banners.
+- [x] Dogfood (real CLIs on `samples/task047-dogfood`, karpathy vault) — recorded below.
+
+### Dogfood outcome (2026-07-01, `samples/task047-dogfood` — gitignored)
+`wiki-init --register-existing` → `wiki-reindex --full` (3 pages, refs from the `## Entities` footers)
+→ `wiki-index-render --concept-mentions`:
+- **Compounds:** the `defi` concept page's AUTO block grew from `- [[src-a]]` to `- [[src-a]]` +
+  `- [[src-b]]` once source B's `mentioned` ref was indexed.
+- **Idempotent:** a second render returned `updated: []` (byte-identical); an operator paragraph added
+  ABOVE the markers was byte-preserved.
+- **Rebuildable (R-5):** `rm db → reindex --full → --concept-mentions` reproduced the block
+  byte-identically, and the hand-edit persisted (Class A prose untouched; Class B block regenerated).
 
 ## Verification (whole task)
 - `pytest tests/` green; `mypy --strict scripts/` clean.

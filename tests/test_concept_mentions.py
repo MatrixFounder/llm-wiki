@@ -23,6 +23,7 @@ import frontmatter
 import pytest
 
 from scripts.wiki_index.models import Page, PageRef, Vault
+from scripts.wiki_index.reindex import reindex_full
 from scripts.wiki_index.rendering import apply_auto_block, render_concept_mentions_body
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 from scripts.wiki_skills._common import format_concept_mentions_body, wrap_auto_block
@@ -247,6 +248,48 @@ def test_apply_auto_block_absent_inserts_before_custom_island():
     out2 = apply_auto_block(md2, "mentions", format_concept_mentions_body(["new"]))
     assert "<!-- BEGIN-AUTO:other -->\nX\n<!-- END-AUTO:other -->" in out2   # untouched
     assert "- [[new]]" in out2 and "- [[old]]" not in out2
+
+
+def test_reindex_full_rebuilds_concept_mentions(tmp_path):
+    # R-5 (ADR-002 §D8 for the DERIVED ledger): the AUTO block is Class B. `wiki-reindex --full`
+    # rebuilds page_entity_refs from the SOURCE footers, then `--concept-mentions` reproduces each
+    # block BYTE-IDENTICALLY — the accumulation is not trapped in Class A. Frontmatter (is_candidate,
+    # source_page) and the source SET survive. (karpathy layout → reindex's walk finds _sources/_concepts.)
+    root = tmp_path / "vault"
+    (root / "_concepts").mkdir(parents=True)
+    (root / "_sources").mkdir(parents=True)
+    (root / "WIKI_SCHEMA.md").write_text(
+        f"---\nvault_id: {_VAULT}\nlayout: karpathy\nlanguage: en\n---\n", encoding="utf-8")
+    _write_concept(root, "defi", seeded_source="src-a")
+    _write_source(root, "src-a", ["defi"])
+    _write_source(root, "src-b", ["defi"])
+    db = tmp_path / "g.db"
+
+    def _reindex() -> None:
+        repo = SQLiteRepository(db)
+        repo.apply_schema()
+        repo.register_vault(Vault(vault_id=_VAULT, name=_VAULT, root_path=root,
+                                  schema_version="7.0", registered_at=datetime(2026, 7, 1)))
+        reindex_full(repo, _VAULT)
+        repo.close()
+
+    _reindex()
+    _render(db, root)
+    block_before = _block_of(root, "defi")
+    fm_before = frontmatter.loads((root / "_concepts" / "defi.md").read_text(encoding="utf-8")).metadata
+    assert "- [[src-a]]" in block_before and "- [[src-b]]" in block_before
+
+    # rm DB → re-register → reindex --full (rebuild refs from disk) → re-render.
+    db.unlink()
+    _reindex()
+    _render(db, root)
+    block_after = _block_of(root, "defi")
+    fm_after = frontmatter.loads((root / "_concepts" / "defi.md").read_text(encoding="utf-8")).metadata
+
+    assert block_after == block_before, f"AUTO block not byte-reproducible:\n{block_before!r}\nvs\n{block_after!r}"
+    assert "- [[src-a]]" in block_after and "- [[src-b]]" in block_after   # every source present
+    assert fm_after.get("is_candidate") is True is fm_before.get("is_candidate")   # lifecycle pin survives
+    assert fm_after.get("source_page") == fm_before.get("source_page")
 
 
 def test_mentioning_source_pages_excludes_derived_pages(vault):
