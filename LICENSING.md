@@ -43,7 +43,7 @@ holder. A commercial license can also grant, by negotiation:
 
 Commercial licenses are granted on a case-by-case basis. To request one, contact:
 
-- **Copyright holder:** Sergey K.
+- **Copyright holder:** Sergey Kuptsov
 - **Email:** kuptsov.sergey@gmail.com
 - **Subject:** `obsidian-llm-wiki commercial license`
 
