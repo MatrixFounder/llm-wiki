@@ -73,7 +73,7 @@ type_mapping:
   note:            {db_type: summary, tag: null}
   daily-note:      {db_type: summary, tag: daily}
   clipping:        {db_type: summary, tag: clipping}
-  # AI/meeting/lesson summaries (summarizing-meetings / wiki-enrich output) +
+  # AI/meeting/lesson summaries (summarizing-meetings / wiki-import output) +
   # conference MOC notes. WITHOUT these, a note carrying `type: lesson-summary`
   # (etc.) raises UnmappedTypeError and is SILENTLY dropped at reindex / flagged
   # skip:unmappable-type by wiki-sync — i.e. the compounding-knowledge loop is

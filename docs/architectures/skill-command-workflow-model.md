@@ -233,7 +233,7 @@ flowchart TB
   `wiki-append-log`, `wiki-alias`, `wiki-confirm`, `wiki-merge`, `wiki-graph`,
   `wiki-health`. Это одна CLI-команда без многошаговой оркестрации — рассуждать нечего.
 - **Оркестровые** (есть workflow + шаг рассуждения LLM): `wiki-import`, `wiki-sync`,
-  `wiki-query`, `wiki-enrich`, `wiki-extract-concepts`, `wiki-verify-multi`
+  `wiki-query`, `wiki-extract-concepts`, `wiki-verify-multi`
   (+ `wiki-verify-eval` — eval-харнесс). Именно у них Python-ядро остаётся
   детерминированным (**Decision-17, без `import anthropic`**), а единственный шаг
   «подумать» вынесен в workflow.

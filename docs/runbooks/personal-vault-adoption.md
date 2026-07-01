@@ -264,8 +264,9 @@ or remove the `curl`/`wget` deny if your flow needs egress.
      + 4 skip:empty-source; **0 ingest / 0 convert** — the course is already
      summarised and the gate (match: basename) correctly recognises it.
 2. Executor (only when there ARE raw sources to summarise) per `workflows/wiki-sync.md`:
-   de-timestamp (`.vtt`/`.srt`) → `summarizing-meetings` (behind the H-6 fence) →
-   `wiki-enrich` / `wiki-extract-concepts` → `wiki-index-upsert` → `wiki-sync record`.
+   de-timestamp (`.vtt`/`.srt`) → delegate each raw source to `wiki-import`
+   (convert → REASON via `summarizing-meetings` behind the H-6 fence → file note +
+   `_concepts/` → index) → ready `.md` via `wiki-index-upsert` → `wiki-sync record`.
 3. Smoke-test: `wiki-search "<known term>" --vaults personal --vault-root <V>`,
    `wiki-lint`, idempotency re-scan (every done raw → `skip:source_state`/`:provenance`).
 

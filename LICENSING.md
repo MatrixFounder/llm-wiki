@@ -6,8 +6,7 @@ under **either** of the two licenses below — pick whichever fits your use case
 > **Scope.** Both licenses below cover **only the code in this repository.** They
 > grant **no** rights to the separately-installed external skills this framework
 > integrates with (some of which are PROPRIETARY) — see
-> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The vendored `wiki-ingest`
-> component keeps its own Apache-2.0 license.
+> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 
@@ -44,7 +43,7 @@ holder. A commercial license can also grant, by negotiation:
 
 Commercial licenses are granted on a case-by-case basis. To request one, contact:
 
-- **Copyright holder:** Sergey K. — *update with the legal name/entity*
+- **Copyright holder:** Sergey Kuptsov
 - **Email:** kuptsov.sergey@gmail.com
 - **Subject:** `obsidian-llm-wiki commercial license`
 

@@ -118,7 +118,8 @@ def run_all_checks(
             vault_id=",".join(vault_ids),
             page_slug=slug,
             details={"vaults": vault_ids,
-                     "hint": "Consider promotion via wiki-ingest promote"},
+                     "hint": "Consider promoting to the shared root tier "
+                             "(relocate the page + wiki-reindex --delta; see WIKI_SCHEMA.md)"},
         ))
     return issues
 

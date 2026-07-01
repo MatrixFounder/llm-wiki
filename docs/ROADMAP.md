@@ -70,6 +70,11 @@ end-users via PyPI or plugin marketplaces.
 **Effort**: ~1 week focused work (well-bounded refactor: copy module +
 extract programmatic API + update one consumer + tests).
 
+_(Later retired — TASK 047: the vendored `wiki_ingest` module and `wiki-enrich`
+were dropped entirely. `wiki-import` is now the in-repo construct engine; there is
+no external/standalone `wiki-ingest` path to co-exist with. The publication path
+this unblocked still holds.)_
+
 ---
 
 ## P0 — Cleanup (small, do when convenient)
@@ -154,6 +159,9 @@ plan JSON — own bounded walk → classify → sha256 → `is_unchanged`) +
 Decision-17 orchestrator: convert→`_raw/.staging/` · `.vtt`/`.srt` de-timestamp ·
 **H-6 fence** · summarise · enrich · extract · upsert · skip · per-vault lock ·
 per-file isolation) + `skills/wiki-sync/SKILL.md` + `config/sync-config.schema.yaml`.
+_(The inline convert/summarise/enrich/extract stages were later retired — TASK 046
+made `wiki-sync` a pure DRIVER that delegates each distil source to `wiki-import`;
+TASK 047 retired `wiki-enrich` entirely.)_
 **Zero DDL** — idempotency rides a new `source_state` `source_kind='sync'`
 partition via two generic DAL methods (`get/set_source_state`); `user_version`
 stays 5. Hardened by **two adversarial gates**: the per-phase 3-critic pass (security:
@@ -182,7 +190,7 @@ The automation that actually **closes the 3→10–15 pages-per-ingest gap** on 
 **path** and only *indexes* `.md` that already exists; it cannot (a) bring in
 non-markdown sources operators actually drop into a collection folder
 (transcripts `.txt`/`.vtt`/`.srt`, office docs, PDFs), (b) decide per note whether
-to run a full LLM **ingest** (`wiki-enrich` → `_sources/_concepts/_entities/`) vs a
+to run a full LLM **import** (`wiki-import` → `_sources/_concepts/_entities/`) vs a
 plain **upsert** (index a ready note as-is), or (c) exclude content-defined noise
 (generated-view sidecars). `wiki-sync` is a thin **format-aware + content-aware
 dispatcher** layered over the existing idempotent CLIs.
@@ -200,7 +208,7 @@ dispatcher** layered over the existing idempotent CLIs.
 
 | Signal | Action |
 |---|---|
-| `#wiki/raw` (or file in `_raw/`) | full **ingest** via `wiki-enrich` (transcripts, webinars, clippings to distill) |
+| `#wiki/raw` (or file in `_raw/`) | full **import** via `wiki-import` (transcripts, webinars, clippings to distill) |
 | *(no wiki tag)* | **upsert** the ready note as-is |
 | `#wiki/skip` | never index (drafts, sensitive — manual override that always wins) |
 | `#wiki/keep` | opt-in index for zones excluded by default (e.g. `_daily/`) |
@@ -228,7 +236,7 @@ flowchart TD
     V -->|no| K{"#wiki/skip ?"}
     K -->|yes| SKIP
     K -->|no| R{"#wiki/raw ?"}
-    R -->|yes| ENR["wiki-enrich → _sources/_concepts/_entities<br/>(idempotent via source_state hash)"]
+    R -->|yes| ENR["wiki-import → _sources/_concepts/_entities<br/>(idempotent via source_state hash)"]
     R -->|no| UPS["wiki-index-upsert — ready note, as-is"]
     classDef raw fill:#fdeede,stroke:#e0a050;
     classDef act fill:#e8f0ff,stroke:#5577cc;
@@ -236,7 +244,7 @@ flowchart TD
     class UPS,SKIP,SKIPB act;
 ```
 
-**Builds on**: R-3 (`wiki-extract-concepts`), `wiki-enrich`, `wiki-index-upsert`
+**Builds on**: R-3 (`wiki-extract-concepts`), `wiki-import`, `wiki-index-upsert`
 (all idempotent via `source_state`/file-hash); the R-X1 layout engine + the
 multi-vault "search-only + enrich-zone" split (documented in
 `docs/manuals/obsidian-llm-wiki_manual.md` → *Mixed vault*); the operator's
@@ -249,7 +257,7 @@ scope** (future): indexing binary attachments at scale; dedup of repeated blocks
 across daily notes; **PDF-OCR completion** (lives in Universal-skills). **Trigger**:
 an operator runs a mixed vault where dropping a transcript / office doc into a
 collection folder should "just" become a compounding wiki without hand-invoking
-`wiki-enrich` per file. **Effort**: ~1 small TASK (Stub-First; mostly orchestration
+`wiki-import` per file. **Effort**: ~1 small TASK (Stub-First; mostly orchestration
 over existing CLIs + a shell-out conversion stage).
 
 </details>

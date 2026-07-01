@@ -143,7 +143,7 @@ from ._db import (  # noqa: E402
     build_manifest,
 )
 # TASK 016 bead 016-05: concept-page writing leaf re-export.
-from ._pages import write_concept_page, _format_source_quote_block  # noqa: E402
+from ._pages import write_concept_page  # noqa: E402
 
 
 def dispatch_to_indexer(

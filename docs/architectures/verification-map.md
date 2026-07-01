@@ -7,7 +7,7 @@
 | TASK Requirement | Architecture coverage | Test/AC reference |
 |---|---|---|
 | R-01 (config schema) | §3.2 Configuration Resolver, §10.3 | UC-01 AC (CLAUDE.md valid YAML) |
-| R-02 (SQLite + FTS5) | §6.3 Database, [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) | UC-01 AC `journal_mode=wal`; FTS5 contentless mode (post C-1 fix) |
+| R-02 (SQLite + FTS5) | §6.3 Database, [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) | UC-01 AC `journal_mode=wal`; FTS5 contentless mode (post C-1 fix) |
 | R-03 (iCloud-aware DB location) | §6.4 / §3.2 wiki-init, §7.2 Data Protection | UC-01 AC «DB path не содержит Mobile Documents/iCloud~» |
 | R-04 (DAL) | §3.2 IndexRepository (15 methods), SQLiteRepository | I-2.4 unit tests на minimal vault fixture |
 | R-05 (wiki-init) | §3.2 wiki-init component, §10.4 deployment step 7 | UC-01 entire |
@@ -51,7 +51,12 @@
 | R-42 (error handling, exit codes 0/1/2/4/5/6; CWE-117/209 envelope discipline) | §2.1 Exit-code envelope contract table; §2.1 Operational invariants; §9.1 Error Handling |
 | R-43 (tests: unit + integration + parametrised envelope shape; mypy --strict) | §10.2 CI/test gate; §2.1 Universal envelope invariant note |
 
-### wiki-ingest Vendoring Requirements (R-45..R-57)
+### wiki-ingest Vendoring Requirements (R-45..R-57) — ⚠️ Retired (TASK 047)
+
+> **Historical traceability.** R-45..R-57 tracked the vendored `scripts/wiki_ingest/` module and its
+> `wiki-enrich` on-ramp. TASK 047 **retired** the whole vendoring subsystem (the converged `wiki-import`
+> engine from TASK 046 replaced it), so these requirements no longer map to live code — the rows are kept
+> as the record of what was once verified, not as a current coverage claim.
 
 > Transport-layer concern only: the in-process import path collapses the subprocess hop in §1.5.2 to a Python call. No new DAL methods, no new DB tables, no new user-facing skills. All rows trace to §1.5.2 (flow diagram), §1.5.7 (vendored module anatomy), §2.1 Source Adapters (transport note), §7.4 (vendoring policy), or §10.4 (install simplification).
 

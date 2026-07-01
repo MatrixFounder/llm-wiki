@@ -5,7 +5,7 @@
 
 ### 4.1. Conceptual Data Model
 
-> **Полная DDL**: см. [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) (8 tables + 3 FTS5 virtual + 3 views + опц. vec0).
+> **Полная DDL**: см. [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) (8 tables + 3 FTS5 virtual + 3 views + опц. vec0).
 
 **Entities (high-level):**
 
@@ -106,7 +106,7 @@
 
 ### 4.2. Logical Data Model
 
-См. [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) для полного DDL.
+См. [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) для полного DDL.
 
 **Key indexes (для MVP performance — R-14)**:
 - `pages_fts` — FTS5 virtual table, BM25 ranking. Triggers держат в sync с `pages`.
@@ -204,7 +204,7 @@ erDiagram
 
 **Backward compatibility**:
 - Markdown — single source of truth → DB можно дропнуть и пересобрать в любой момент. Migration в worst case = `wiki-reindex --full`.
-- v1 → v2 migration описан в [MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md).
+- v1 → v2 migration описан в [MIGRATION-v1-to-v2.md](../archive/MIGRATION-v1-to-v2.md).
 - **v2 → v3 (TASK 005):** `entity_aliases` PK `(vault_id, alias, entity_slug)` → `(vault_id, alias)` (closes L-4). Because the DB is a Class B rebuildable cache, this is **not** an in-place `ALTER` — bump `PRAGMA user_version 2→3` (+ `schema_meta`) in the DDL and rebuild via `wiki-reindex --full`. Operators on an existing DB run one full reindex; aliases reconstruct from Class A frontmatter under the new PK, with any collisions surfaced per R-5.6. `apply_schema` (`CREATE TABLE IF NOT EXISTS`) cannot mutate an existing table's PK, so the rebuild path is mandatory — documented in the migration note + ADR-002 amendment (or ADR-003 stub). The same DDL revision **drops** the now-redundant `idx_aliases_lookup` and **adds** `idx_aliases_entity (vault_id, entity_slug)` (see §4.2).
 - **v3 → v4 (TASK 006 — consolidation/hardening):** three Class-B DDL hygiene changes — (a) **drop** the dead `idx_pages_vault_tags` functional index (P-5); (b) **drop** the unused `'log'` value from the `pages.type` CHECK enum (L-5; no code emits it); (c) `log_events.event_date` → `TEXT GENERATED ALWAYS AS (substr(event_ts,1,10)) STORED` (L-2 — schema-level guarantee; `append_log_event` stops setting it; the existing `idx_log_vault_date` indexes the STORED generated column; no FTS trigger touches `log_events`). Same Class-B contract: bump `PRAGMA user_version 3→4` (+ `schema_meta`), migrate via `wiki-reindex --full`, **no in-place `ALTER`** (a STORED generated column can't be ALTER-added to a populated table — the rebuild path is mandatory). SQLite ≥3.31 supports STORED generated columns (runtime is 3.51). Verified: no `CREATE TRIGGER` references `event_date`.
 - **v4 unchanged (TASK 007 — `wiki-query` RAG):** **no schema migration** — `pages.type='query'`, `page_entity_refs.ref_type='cited'`, `log_events.event_type='query'`, and the generic `source_state` table all pre-exist, so `PRAGMA user_version` stays **4** and there is no DDL/ALTER. The two structural changes are **code-only**: (1) `layout.py` adds `_queries` to `PAGE_SUBDIRS`/`SCAFFOLD_DIRS`/`_PATH_TYPE_FALLBACK`; (2) a type-aware reindex read-side parses a `type=query` page's `cites:` frontmatter into `ref_type='cited'` refs (R-6.5e — the §D8 durability fix, mirroring the R-5.3 `aliases:` read-side). Existing vaults without a `_queries/` dir reindex unchanged (additive).
@@ -219,7 +219,7 @@ erDiagram
 DDL) with its own partition: `source_kind='sync'`, `scope=<vault-relative source
 path>`, `key='source_hash'`, `value=sha256(file bytes)` (original binary bytes for
 `convert+ingest`). It is the **only** store keyed on the raw file `wiki-sync scan`
-discovers — distinct from the chain's own idempotency (`wiki-enrich`'s
+discovers — distinct from the chain's own idempotency (`wiki-import`'s
 `_sources/<slug>.md` frontmatter `source_hash:` footer, keyed by summary slug; and
 `wiki-extract-concepts`'s `source_kind='extract-concepts'` row, keyed by source-page
 slug — neither knowable at scan time). Written by the executor **only after the

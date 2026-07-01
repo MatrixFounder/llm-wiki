@@ -19,7 +19,7 @@
 
 ### 8.3. DB Optimization
 
-- **Indexes**: 9 indexes на `pages` / `entities` / `page_entity_refs` (см. [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql)).
+- **Indexes**: 9 indexes на `pages` / `entities` / `page_entity_refs` (см. [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql)).
 - **FTS5 BM25 ranking** — out-of-the-box, sub-50ms на 100K rows.
 - **JSON computed columns**: `idx_pages_frontmatter` ON `json_extract(frontmatter_json, '$.tags')` — fast tag queries.
 - **Partial indexes**: `idx_inter_pending` WHERE `extracted_at IS NULL` (для future LLM-extraction work-queue).

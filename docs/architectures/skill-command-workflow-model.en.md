@@ -234,7 +234,7 @@ flowchart TB
   `wiki-health`. A single CLI command with no multi-step orchestration — nothing to reason
   about.
 - **Orchestral** (have a workflow + an LLM reasoning step): `wiki-import`, `wiki-sync`,
-  `wiki-query`, `wiki-enrich`, `wiki-extract-concepts`, `wiki-verify-multi`
+  `wiki-query`, `wiki-extract-concepts`, `wiki-verify-multi`
   (+ `wiki-verify-eval` — an eval harness). For these the Python core stays deterministic
   (**Decision-17, no `import anthropic`**), and the single "think" step is lifted into the
   workflow.

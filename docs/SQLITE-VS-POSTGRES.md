@@ -1,6 +1,6 @@
 # SQLite vs PostgreSQL — выбор индексирующего движка для wiki-index
 
-> Этот документ — референс для решения «какой движок использовать под индексирующий слой LLM-Wiki». Главный архитектурный документ — [TASK-ref-v2.md](./TASK-ref-v2.md). Здесь — детальное обоснование выбора и реализация **обоих** backend'ов через единый `IndexRepository` интерфейс.
+> Этот документ — референс для решения «какой движок использовать под индексирующий слой LLM-Wiki». Главный архитектурный документ — [TASK-ref-v2.md](./archive/TASK-ref-v2.md). Здесь — детальное обоснование выбора и реализация **обоих** backend'ов через единый `IndexRepository` интерфейс.
 
 ---
 
@@ -50,7 +50,7 @@
 
 ### 3.1 Базовые таблицы (одинаковы, generic SQL)
 
-Таблицы `entities`, `entity_aliases`, `pages`, `page_entity_refs`, `interactions`, `extracted_items`, `batch_runs`, `source_state` — определены в [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) одинаковым ANSI SQL. Различия:
+Таблицы `entities`, `entity_aliases`, `pages`, `page_entity_refs`, `interactions`, `extracted_items`, `batch_runs`, `source_state` — определены в [SCHEMA-DRAFT.sql](./archive/SCHEMA-DRAFT.sql) одинаковым ANSI SQL. Различия:
 
 - В SQLite: `TEXT` для timestamps + `metadata_json` (validation в коде).
 - В Postgres: `TIMESTAMPTZ` + `JSONB` + check constraints.

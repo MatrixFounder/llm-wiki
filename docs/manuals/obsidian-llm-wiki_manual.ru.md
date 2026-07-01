@@ -34,7 +34,7 @@
   - [Регистрация готового саммари (не raw)](#регистрация-готового-саммари-не-raw)
   - [Кастомные layout'ы: движок layout](#кастомные-layoutы-движок-layout)
   - [Справочник: типы страниц и типы связей (модель знаний)](#справочник-типы-страниц-и-типы-связей-модель-знаний)
-  - [Смешанный vault: области только для поиска + course-зоны, доступные для enrich](#смешанный-vault-области-только-для-поиска--course-зоны-доступные-для-enrich)
+  - [Смешанный vault: области только для поиска + course-зоны, доступные для дистилляции](#смешанный-vault-области-только-для-поиска--course-зоны-доступные-для-дистилляции)
   - [Автоматизация смеси: `wiki-sync` (пофайловая маршрутизация, конвертация, OCR)](#автоматизация-смеси-wiki-sync-пофайловая-маршрутизация-конвертация-ocr)
 - [Использование wiki как внешнего ресурса для других агентов](#использование-wiki-как-внешнего-ресурса-для-других-агентов)
   - [Модель интеграции: JSON-конверты + коды выхода](#модель-интеграции-json-конверты--коды-выхода)
@@ -51,17 +51,17 @@
 
 **obsidian-llm-wiki** — это *слой index + инструментарий* для
 [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) в стиле
-Obsidian. Файловый слой (синтез страниц с помощью LLM) принадлежит навыку `wiki-ingest`,
-встроенному in-process; этот репозиторий считывает его вывод в index SQLite и
-обслуживает быстрые структурированные запросы, граф сущностей, RAG-ответы со ссылками
-и слой проверки.
+Obsidian. Файловый слой (синтез страниц с помощью LLM) — это встроенный in-process
+движок `wiki-import` (унифицированный construct-вход и per-source engine); этот
+репозиторий считывает его вывод в index SQLite и обслуживает быстрые структурированные
+запросы, граф сущностей, RAG-ответы со ссылками и слой проверки.
 
 | Свойство | Значение |
 |---|---|
 | **Тип** | Index базы знаний на множество vault + набор CLI-инструментов |
 | **Канонический источник** | Markdown в vault Obsidian (Class A) |
 | **Производный кэш** | Один глобальный SQLite-DB (FTS5 + WAL), партиционированный по `vault_id` (Class B/C) |
-| **Поверхность** | 18 CLI (`wiki-*`), каждая также является slash-командой `/wiki-*` внутри Claude Code |
+| **Поверхность** | 17 CLI (`wiki-*`), каждая также является slash-командой `/wiki-*` внутри Claude Code |
 | **Контракт ввода-вывода** | stdin/аргументы на вход → однострочный JSON-конверт в stdout + код возврата |
 | **Ключевой инвариант** | DB на 100% перестраивается из markdown (`wiki-reindex --full`) |
 | **Схема** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
@@ -74,17 +74,19 @@ Obsidian. Файловый слой (синтез страниц с помощь
 Стандартный паттерн RAG **не имеет состояния**: каждый вопрос заново выводит знание
 из сырых документов, и ничего не накапливается. llm-wiki Карпатого переворачивает это —
 LLM **инкрементально строит и поддерживает постоянную, взаимосвязанную wiki**, которая
-располагается между вами и сырыми источниками. Знание **накапливается**: каждый ingest
+располагается между вами и сырыми источниками. Знание **накапливается**: каждый импорт
 обогащает корпус, который читает следующий запрос.
 
-`wiki-ingest` выполняет *файловую* половину этого цикла (синтезирует страницы, сливает
-аддитивно, помечает противоречия). Этот репозиторий выполняет ту половину, которая делает
-накопление *применимым в масштабе*:
+`wiki-import` выполняет *файловую* половину этого цикла (дистиллирует источник,
+пишет заметку + `_concepts/`-страницы, помечает противоречия), а накопление концептов
+across-источников — это **производный Class-B рендер** (`wiki-index-render
+--concept-mentions`, TASK 047), а не body-merge. Этот репозиторий выполняет ту половину,
+которая делает накопление *применимым в масштабе*:
 
 ```mermaid
 flowchart LR
     SRC["raw source /<br/>external summary"] --> C
-    C["CONSTRUCT<br/>enrich · extract · upsert"] -->|"writes"| MD["MARKDOWN<br/>Class A — canonical"]
+    C["CONSTRUCT<br/>import · extract · upsert"] -->|"writes"| MD["MARKDOWN<br/>Class A — canonical"]
     MD -->|"index / reindex"| DB["SQLITE INDEX<br/>Class B/C — rebuildable"]
     DB -->|"rebuild (--full)"| MD
     DB -->|"retrieve"| ANS["ANSWER + VERIFY<br/>cited RAG (wiki-query / wiki-verify-multi)"]
@@ -167,7 +169,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 **3. Внутри сессии агента (Claude Code — рекомендуется для LLM-команд).**
 Те же команды доступны как slash-команды `/wiki-*`; агент автоматически предлагает их по
 триггерам SKILL.md. Для `wiki-query` / `wiki-verify-multi` / `wiki-extract-concepts`
-/ `wiki-enrich` это фактически *обязательная* поверхность, потому что в середине
+/ `wiki-import` это фактически *обязательная* поверхность, потому что в середине
 их контракта `prepare`/`apply` находится шаг рассуждения LLM, которым владеет orchestrator (см.
 [контракт `prepare`/`apply`](#the-prepare--apply-contract-decision-17)). Вы
 *можете* запускать их детерминированные половины вручную, но тогда вам придётся
@@ -190,7 +192,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 | Команда | Обычный терминал / плагин `Terminal` Obsidian | `/wiki-*` Claude Code | Gemini / pi / другие агенты |
 |---|---|---|---|
 | `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` · `sync scan` · `sync record` | ✅ запуск напрямую | ✅ | ✅ |
-| `query` · `verify-multi` · `extract-concepts` · `enrich` · `sync` *(исполнитель)* *(нужен шаг LLM)* | ⚠️ только детерминированные половины — рассуждение LLM придётся подавать вручную | ✅ **рекомендуется** | ✅ через `## Fallback` каждого workflow |
+| `query` · `verify-multi` · `extract-concepts` · `import` · `sync` *(исполнитель)* *(нужен шаг LLM)* | ⚠️ только детерминированные половины — рассуждение LLM придётся подавать вручную | ✅ **рекомендуется** | ✅ через `## Fallback` каждого workflow |
 
 > **Единственная дисциплина, которая важна:** после того как вы вручную правите markdown в Obsidian,
 > сообщите об этом index — `wiki-index-upsert` для одного файла, `wiki-reindex --delta` для
@@ -201,7 +203,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 
 ## Словарь команд по назначению
 
-18 CLI — это не плоский список: каждая играет роль в цикле выше. Ниже
+17 CLI — это не плоский список: каждая играет роль в цикле выше. Ниже
 каждая команда описана как *зачем она существует* и *когда к ней обращаться*, а не просто
 по её флагам (они живут в каждом [`SKILL.md`](../../skills/)).
 
@@ -211,10 +213,10 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 
 | Команда | Зачем существует / что делает |
 |---|---|
-| **`wiki-sync`** | **Диспетчер уровня зоны** (вход для множества файлов). `scan <zone>` классифицирует *каждый* файл по расширению + тегу `#wiki/*` + форме содержимого и выдаёт детерминированный **план** (convert / ingest / upsert / skip); [workflow `wiki-sync`](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) исполняет его идемпотентно (office/PDF→md, **OCR отсканированных PDF**, удаление таймстампов из `.vtt`, summarise→enrich→extract, upsert готовых заметок, пропуск sidecar-представлений). Обращайтесь к ней вместо ручной маршрутизации папки разнородных вбросов файл за файлом. Детерминированное ядро, без LLM; `wiki-sync record` — это per-file маркер фиксации. |
-| **`wiki-enrich`** | Вход для **сырого материала** (один файл). Передайте ей сырой файл-источник; она вызывает (встроенный) слой синтеза `wiki-ingest` (который **суммирует источник с помощью LLM**), затем зеркалит полученный манифест в index. ⚠️ `wiki-enrich` **всегда трактует `--source` как сырой** — режима «пропустить summary» нет. Если у вас *уже есть готовый summary*, **не** используйте `wiki-enrich`; вместо этого используйте [рецепт готового summary](#registering-a-pre-made-summary-not-raw). (`wiki-sync` под капотом компонует `wiki-enrich` для файлов, маршрутизированных на `ingest`.) |
+| **`wiki-sync`** | **Драйвер уровня зоны** (вход для множества файлов, TASK 046). `scan <zone>` классифицирует *каждый* файл по расширению + тегу `#wiki/*` + форме содержимого и выдаёт детерминированный **план** (distil / upsert / skip); [workflow `wiki-sync`](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) исполняет его идемпотентно, **делегируя каждый distil-источник в `wiki-import`** (которая сама делает fetch+convert → REASON → заметка + `_concepts/`), а готовые `.md` отправляя в `wiki-index-upsert` (пропуск sidecar-представлений). Никакого инлайн summarise/convert — только маршрутизация + делегирование. Обращайтесь к ней вместо ручной маршрутизации папки разнородных вбросов файл за файлом. Детерминированное ядро, без LLM в самом scan; `wiki-sync record` — это per-file маркер фиксации. |
+| **`wiki-import` (локальный raw)** | Вход для **сырого материала** (один файл) — та же `wiki-import`, но с *локальным* `--source ./путь`. Передайте ей сырой файл-источник; она делает fetch+convert → REASON (харнесс `summarizing-meetings`, накормленный `known_concepts` хранилища) → дистиллированную заметку + `_concepts/`-страницы, филёные по layout, → index. ⚠️ raw-режим **суммаризирует** источник с помощью LLM. Если у вас *уже есть готовый summary*, **не** гоняйте его через raw-путь — вместо этого используйте [рецепт готового summary](#registering-a-pre-made-summary-not-raw). (`wiki-sync` под капотом делегирует каждый distil-источник в `wiki-import`.) |
 | **`wiki-import`** | **Унифицированный construct-вход** (TASK 039/040; `wiki-import-article` — back-compat алиас). Импорт внешнего **URL / PDF / X-треда / транскрипта встречи / готового summary** в **хранилище любого layout**. Две ортогональные оси: **content-type** (`--kind`, автодетект) задаёт `type:` заметки + REASON-harness (всё → единый `summarizing-meetings`; готовый `summary` → регистрация), а **LAYOUT (конфиг)** решает, куда филить (Karpathy `_sources/`+корневой `_concepts/` vs PARA тематическая папка+соседний `_concepts/`, через `resolve_layout_config` — Karpathy = layout-YAML, не код-форк, ADR-007). `prepare` зовёт `html`/`pdf` + отдаёт **`known_concepts`** (переиспользуйте — дисциплина против повисших `[[вики-ссылок]]`); `apply` кладёт заметку + `_concepts/` с **защитой от коллизий** (`defi` не выбьет `Defi.md`). (Схемы — `docs/architectures/functional-architecture.md` §2.3.) |
-| **`wiki-extract-concepts`** | *Ретроспективный* вход. Для страницы-источника, уже находящейся в index, она извлекает концепты/сущности, которые та упоминает, но для которых ещё нет страницы, — превращая неявное знание в явные, связываемые страницы. Двухпроходный навык `prepare`/`apply` (см. [ниже](#the-prepare--apply-contract-decision-17)). Используйте её, чтобы *уплотнить* существующий корпус, или после импорта множества источников разом — **независимо от того, как страница-источник попала в index** (сырой ingest или ручная регистрация). |
+| **`wiki-extract-concepts`** | *Ретроспективный* вход. Для страницы-источника, уже находящейся в index, она извлекает концепты/сущности, которые та упоминает, но для которых ещё нет страницы, — превращая неявное знание в явные, связываемые страницы. Двухпроходный навык `prepare`/`apply` (см. [ниже](#the-prepare--apply-contract-decision-17)). Используйте её, чтобы *уплотнить* существующий корпус, или после импорта множества источников разом — **независимо от того, как страница-источник попала в index** (raw-импорт через `wiki-import` или ручная регистрация). Concept-страницы, которые она пишет, несут производный ledger `<!-- BEGIN-AUTO:mentions -->` (TASK 047). |
 | **`wiki-index-upsert`** | Примитив для одного файла. Индексирует один markdown-файл идемпотентно (совпадение file-hash — это no-op). Используйте её, когда вы написали вручную, отредактировали вручную **или подложили готовый summary из другого места** и хотите, чтобы index отразил это немедленно, без полного reindex — **без LLM, без обработки сырого материала**. |
 | **`wiki-append-log`** | Пишет структурированное событие в `log.md` *и* зеркалит его в таблицу `log_events` атомарно (flock + fsync, двунаправленный контракт M-2). Лог — это удобная для grep хронологическая память для будущих сессий агента: git diff — для людей, лог — для следующего LLM. |
 
@@ -225,7 +227,7 @@ Obsidian при этом даже не обязан быть открыт. Эт�
 | Команда | Зачем существует / что делает |
 |---|---|
 | **`wiki-search`** | Полнотекстовый поиск FTS5 BM25 по одному или многим vault, ранжированный, со snippet, по умолчанию расширяющийся через алиасы сущностей. **Поиск по умолчанию устойчив к словоформам** (TASK 028): одиночные термины автоматически приводятся к основе с префиксом (по письменности — кириллица→russian, латиница→english) и **сводят ё/е** в запросе и в теле, так что одна введённая форма находит свои словоформы, а `ещё`/`еще` — один токен. `--exact` (`--no-stem`) отключает стемминг для точного буквального поиска (свёртка ё/е сохраняется). Это быстрый поиск, заменяющий перечитывание сырых файлов. Он *также* выполняет **фильтрацию по метаданным**: `--status` / `--severity` / `--where 'field=value'` компилируются в предикат `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` (не полнотекстовый), так что **скалярные** значения с дефисами (`SEV-2`) и числовые (`priority=1`) сопоставляются по строке, А ТАКЖЕ совпадает **элемент списка** (TASK 033) — `--tag decision` (сахар для `--where 'tags=decision'`) перечисляет все страницы типизированного класса `decision` одной командой; опустите запрос для чистого *перечисления* по метаданным (перечисление по `--tag`/`tags=` с TASK 035 сужается через существующий индекс `pages_fts.tags` — результаты идентичны, ~4× быстрее на масштабе). Он *также* выполняет **временную фильтрацию** (TASK 034): `--as-of YYYY-MM-DD` возвращает только страницы, **активные на эту дату** — созданные не позже неё И ещё не вытесненные/аннулированные к этому моменту, *выводится* из `pages.date` + графа supersede/invalidate (без LLM, без ручного `valid_to`; `valid_from`/`valid_to` — необязательные override). Напр. `--tag decision --as-of 2026-04-15` отвечает «какие решения были активны на 2026-04-15». Свёртка ё/е в теле вступает в силу после ближайшей `wiki-reindex --full`; стемминг и свёртка ё/е в запросе — сразу. |
-| **`wiki-index-render`** | Перегенерирует `index.md` — *доступную только для чтения проекцию* DB — сохраняя любые блоки `<!-- BEGIN-CUSTOM:name -->`, созданные оператором. С `--auto-indexes` он также рендерит реестры Class-B «перестраиваемого markdown» (например, `KNOWN_ISSUES.md`, свёрнутый из файлов-источников по отдельным issue). Используйте его, чтобы обновить просматриваемый человеком каталог после ingest. |
+| **`wiki-index-render`** | Перегенерирует `index.md` — *доступную только для чтения проекцию* DB — сохраняя любые блоки `<!-- BEGIN-CUSTOM:name -->`, созданные оператором. С `--auto-indexes` он также рендерит реестры Class-B «перестраиваемого markdown» (например, `KNOWN_ISSUES.md`, свёрнутый из файлов-источников по отдельным issue). С `--concept-mentions` (TASK 047) он регенерирует в каждой concept-странице блок `<!-- BEGIN-AUTO:mentions -->` — производный ledger «Mentions across sources», который и даёт компаундинг концептов (не body-merge). Используйте его, чтобы обновить просматриваемый человеком каталог после импорта. |
 
 ### 3. Разрешение сущностей
 
@@ -322,9 +324,9 @@ wiki-init --register-existing --vault /path/to/MyVault \
 ├── WIKI_SCHEMA.md          # this vault's identity + conventions (REQUIRED — holds vault_id)
 ├── index.md                # read-only catalog projection (## Sources / ## Concepts / ## Entities)
 ├── log.md                  # chronological append-only journal (mirrors log_events)
-├── _sources/               # per-source summary pages         (type=summary)   ← wiki-ingest
-├── _concepts/              # abstract concepts                (entities)        ← wiki-ingest
-├── _entities/              # concrete people/companies/...     (entities)        ← wiki-ingest
+├── _sources/               # per-source summary pages         (type=summary)   ← wiki-import
+├── _concepts/              # abstract concepts                (entities)        ← wiki-import
+├── _entities/              # concrete people/companies/...     (entities)        ← wiki-import
 ├── _queries/               # filed RAG answers                (type=query)      ← wiki-query
 ├── _verifications/         # verdict pages                    (type=verification) ← wiki-verify-multi
 ├── _raw/                   # immutable raw source files (never modified)
@@ -338,8 +340,11 @@ wiki-init --register-existing --vault /path/to/MyVault \
 Ключевые различия:
 
 - **`_sources/` против `_concepts/`/`_entities/`.** Sources — это *неизменяемые
-  саммари одного входа*; concepts/entities — это *аддитивные, перекрёстно
-  связанные абстракции*, построенные из множества источников. Первое — это лист;
+  саммари одного входа*; concepts/entities — это *перекрёстно связанные абстракции*,
+  на которые ссылается множество источников. Компаундинг across-источников — это
+  **производный Class-B рендер** (блок `<!-- BEGIN-AUTO:mentions -->## Mentions across
+  sources … <!-- END-AUTO:mentions -->`, регенерируемый `wiki-index-render
+  --concept-mentions`, TASK 047), а не body-merge в теле страницы. Первое — это лист;
   второе — это граф.
 - **Vault-уровень против course-уровня.** Страница в корне vault имеет
   `pages.project = '_vault_'`. Страница под `Lessons/<Course>/` несёт slug
@@ -381,7 +386,7 @@ Risk-adjusted return: `(R_p − R_f) / σ_p`. [^src-hermes-trading-agent]
 ```
 
 Кликни по сноске → перейди к источнику. Именно это держит wiki аудируемым на
-50 ingest'ах вместо превращения в кучу шума.
+50 импортах вместо превращения в кучу шума.
 
 **2. Блок противоречий (инвариант «не выбирай победителя»).** Когда новый источник
 не согласуется с существующим утверждением, инструментарий вставляет блок
@@ -432,7 +437,7 @@ vault как страницу-источник, чтобы позже извле
 ```mermaid
 flowchart TD
     Q{"What do you have?"}
-    Q -->|"raw material in a KARPATHY vault<br/>(transcript, notes) — needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"raw material in a KARPATHY vault<br/>(transcript, notes) — needs summarising"| ENR["wiki-import --source &lt;local file&gt;<br/>= fetch+convert + REASON (LLM-summarise) → note + _concepts/ → index"]
     Q -->|"an EXTERNAL URL / PDF / X-thread / meeting<br/>(any layout)"| IMP["wiki-import: prepare → REASON → apply<br/>= fetch+convert + --kind detect, summarise (fed known_concepts),<br/>→ note + _concepts/ filed PER LAYOUT (config) → index"]
     Q -->|"a FINISHED summary<br/>(already distilled elsewhere)"| REG["1. place it at _sources/&lt;slug&gt;.md (with frontmatter)<br/>2. wiki-index-upsert --source &lt;abs path&gt;<br/>= indexed verbatim, NO LLM, NOT raw"]
     ENR --> IDX["source page is now indexed (type=summary)"]
@@ -450,8 +455,8 @@ flowchart TD
 > **Один вход, layout из конфига (TASK 039/040):** `wiki-import` филит ПО resolved-layout
 > хранилища — Karpathy `_sources/`+корневой `_concepts/`, PARA тематическая папка+соседний
 > `_concepts/` — через `LayoutConfig.write` (без layout-форка; ADR-007). Передаёт REASON-шагу
-> `known_concepts`, чтобы вики-ссылки резолвились. Легаси Karpathy-raw `wiki-enrich` → `wiki-ingest`
-> остаётся. Схемы — `docs/architectures/functional-architecture.md` §2.3.
+> `known_concepts`, чтобы вики-ссылки резолвились. Сырой Karpathy-материал (локальный файл)
+> идёт через ту же `wiki-import` с `--source ./путь`. Схемы — `docs/architectures/functional-architecture.md` §2.3.
 >
 > **Универсально + локализовано (харденинг 2026-06).** Саммари пишется **на языке хранилища**
 > (`WIKI_SCHEMA` `language`; фолбэк — английский) — заголовки/подписи локализованы, не
@@ -463,9 +468,9 @@ flowchart TD
 > Плохой ввод → чистый JSON-конверт (`INVALID_FOLDER` / `INVALID_VAULT_ROOT` / `FETCH_FAILED`),
 > а не трейсбек.
 
-`wiki-enrich` — **только** для raw-материала — он всегда вызывает `wiki-ingest`,
-чтобы *саммаризировать*. Для готового саммари полностью пропустите его и
-зарегистрируйте страницу напрямую. Полный рецепт:
+`wiki-import` с локальным `--source` — путь для raw-материала: он всегда прогоняет
+REASON-шаг, чтобы *саммаризировать*. Для готового саммари полностью пропустите
+дистилляцию и зарегистрируйте страницу напрямую. Полный рецепт:
 
 **Шаг 1 — Поместите саммари в `_sources/` с валидным frontmatter.** Layout
 karpathy *требует* `type:` (он не синтезирует его), и странице нужен `title`.
@@ -502,7 +507,7 @@ wiki-index-upsert --vault my-vault --source /abs/path/to/MyVault/_sources/my-art
 
 **Шаг 3 (опционально) — Извлеките из неё концепты.** Поскольку источник теперь
 проиндексирован, `wiki-extract-concepts` работает с ним ровно так же, как со
-страницей, прошедшей raw-ingest — ему всё равно, как страница попала сюда:
+страницей, прошедшей raw-импорт — ему всё равно, как страница попала сюда:
 
 ```bash
 wiki-extract-concepts prepare --vault my-vault --vault-root /abs/path/to/MyVault \
@@ -517,11 +522,11 @@ wiki-extract-concepts apply   --vault my-vault --vault-root /abs/path/to/MyVault
 `my-vault` (не саммаризируй заново), затем извлеки из него концепты»* — агент
 выполнит upsert и проведёт двухпроходный поток `wiki-extract-concepts`.
 
-> **Почему не просто навести `wiki-enrich` на него?** `wiki-enrich` передаст ваше
-> саммари в `wiki-ingest` как *raw-вход* и произведёт **саммари-вашего-саммари** —
-> дважды дистиллированное, с новыми slug'ами. Прямая регистрация сохраняет ваш
-> текст дословным и каноническим. Используйте `wiki-enrich` только тогда, когда
-> LLM *должна* выполнить дистилляцию.
+> **Почему не просто навести на него `wiki-import` с `--source`?** raw-путь
+> `wiki-import` трактует ваше саммари как *raw-вход* и произведёт
+> **саммари-вашего-саммари** — дважды дистиллированное, с новыми slug'ами. Прямая
+> регистрация сохраняет ваш текст дословным и каноническим. Гоняйте источник через
+> raw-путь `wiki-import` только тогда, когда LLM *должна* выполнить дистилляцию.
 
 ### Кастомные layout'ы: движок layout
 
@@ -830,17 +835,17 @@ wiki-search --tag execution --status failed --vaults V         # упавшие 
 wiki-query prepare "почему ушли от RabbitMQ?" --vault-root V --follow-edges  # цитируемый RAG, расширенный графом
 ```
 
-### Смешанный vault: области только для поиска + course-зоны, доступные для enrich
+### Смешанный vault: области только для поиска + course-зоны, доступные для дистилляции
 
 Большинство реальных личных vault'ов *смешанные*: основная масса — это готовые
 заметки, которые вы хотите только **искать**, но несколько подпапок — это
 **зоны-коллекторы**: вы кладёте туда транскрипты / raw-материал и хотите, чтобы
-система `enrich`'ила их в накапливающуюся wiki (например, `Webinars/` или папка на
-курс под `03 - Learning/`).
+система дистиллировала их (`wiki-import`) в накапливающуюся wiki (например, `Webinars/`
+или папка на курс под `03 - Learning/`).
 
-**Почему здесь нужны два vault'а, а не один layout.** `wiki-enrich` всегда
-производит виды страниц karpathy (`_sources/_concepts/_entities/`) — эти имена
-папок фиксированы вендоренным `wiki-ingest`, не настраиваемы — а личный layout
+**Почему здесь нужны два vault'а, а не один layout.** В karpathy-хранилище
+`wiki-import` производит виды страниц karpathy (`_sources/_concepts/_entities/`) — эти
+имена папок фиксированы grammar'ом layout'а karpathy, — а личный layout
 (`obsidian-personal`) их не индексирует. Так что один layout не может обслуживать
 обе половины. Чистая модель — это **два зарегистрированных vault'а, разделяющих
 одну глобальную БД** (ровно для этого и существует multi-vault-партиционирование);
@@ -851,7 +856,7 @@ flowchart TD
     OBS["your Obsidian vault (root)"] --> P["Vault P: personal<br/>layout = obsidian-personal<br/>SEARCH-ONLY"]
     OBS -->|"subtree: 03 - Learning/Courses/**"| L["Vault L: courses<br/>layout = karpathy<br/>ENRICH-able"]
     P -.->|"ignore: 03 - Learning/Courses/**"| X[" "]
-    RAW["transcript / raw material"] -->|"wiki-enrich"| L
+    RAW["transcript / raw material"] -->|"wiki-import --source"| L
     SUMM["ready summary (your Summaries/)"] -->|"wiki-index-upsert (no LLM)"| L
     Q["wiki-search / wiki-query --vaults personal,courses"] --> DB[("one global.db")]
     P --> DB
@@ -882,7 +887,7 @@ flowchart TD
 > сохранённый mtime; `--full` — универсальный фолбэк и средство от swap-класса).
 
 **Правило границы (единственный инвариант, который должен держаться):** vault для
-поиска должен `ignore`'ить зону enrich, а enrich-vault укоренён внутри этой зоны.
+поиска должен `ignore`'ить distil-зону, а distil-vault укоренён внутри этой зоны.
 Тогда каждый файл индексируется ровно один раз — без двойного обхода, без
 дублирующих строк.
 
@@ -894,19 +899,19 @@ flowchart TD
     └── Courses/                                ← P IGNORES this subtree
         └── AI Hard Fork 2026/                  ← Vault L (karpathy) — its own vault
             ├── _raw/         ← raw drops (transcripts, zoom_chat)
-            ├── _sources/     ← enrich writes summaries here (+ your ready notes → upsert)
-            ├── _concepts/    ← enrich builds concept pages
+            ├── _sources/     ← wiki-import writes summaries here (+ your ready notes → upsert)
+            ├── _concepts/    ← wiki-import builds concept pages
             └── _entities/    ← …and entity pages
 ```
 
-**Два способа сформировать зону enrich** (оба karpathy):
+**Два способа сформировать distil-зону** (оба karpathy):
 - **Vault-на-курс** — каждая папка курса — это свой `karpathy` vault_root с
   `_sources/_concepts/_entities/`. Простейшая ментальная модель; подходит для
   самодостаточной папки курса. Новый курс = новая папка + один
   `WIKI_SCHEMA.md (layout: karpathy)` + `wiki-init --register-existing`.
 - **Один vault курсов + course-уровень** — много курсов в одном vault_id, каждый
-  живёт под `Lessons/<Course>/_sources/…`; enrich маршрутизирует через
-  `--ingest-arg=--course="AI Hard Fork 2026"`. Меньше настройки на курс, когда вы
+  живёт под `Lessons/<Course>/_sources/…`; `wiki-import` маршрутизирует через
+  `--course="AI Hard Fork 2026"`. Меньше настройки на курс, когда вы
   продолжаете добавлять курсы.
 
 **Рецепт (сначала тестируйте на копии):**
@@ -921,10 +926,10 @@ wiki-init --register-existing --vault personal
 wiki-reindex --full --vault personal
 wiki-search "переговоры с поставщиком" --vaults personal
 
-# --- Vault L: a course (karpathy), enrich-able ---
+# --- Vault L: a course (karpathy), distil-able ---
 #  ".../Courses/AI Hard Fork 2026/WIKI_SCHEMA.md":  layout: karpathy
 wiki-init --register-existing --vault ai-hard-fork-2026
-wiki-enrich --vault ai-hard-fork-2026 \
+wiki-import --vault ai-hard-fork-2026 \
     --vault-root "samples/mixed-test/03 - Learning/Courses/AI Hard Fork 2026" \
     --source     ".../zoom_chat_20260224.txt"            # raw → summary + concepts
 wiki-index-upsert --vault ai-hard-fork-2026 \
@@ -938,13 +943,14 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 - **Вложенные vault root'ы** (L внутри P) разрешены на уровне БД (`root_path`
   UNIQUE); пересечение убирается через `ignore` у P. Проверьте на копии перед
   живым vault.
-- **enrich создаёт `_sources/_concepts/_entities/`** в папке курса — это ожидаемо
-  (это управляемая системой зона). Уже дистиллированные заметки (ваш `Summaries/`)
-  проходят через `wiki-index-upsert` (см. [готовое саммари](#registering-a-pre-made-summary-not-raw));
-  через `wiki-enrich` идёт только новый raw.
-- **HTML / office-источники**: `wiki-ingest` ожидает текст — сначала конвертируйте
-  `.html` в `.txt`/`.md`.
-- **Личный vault остаётся нетронутым** (только индексируется); enrich пишет
+- **`wiki-import` создаёт `_sources/_concepts/_entities/`** в папке курса — это
+  ожидаемо (это управляемая системой зона). Уже дистиллированные заметки (ваш
+  `Summaries/`) проходят через `wiki-index-upsert` (см. [готовое
+  саммари](#registering-a-pre-made-summary-not-raw)); через raw-путь `wiki-import`
+  идёт только новый raw.
+- **HTML / office-источники**: `wiki-import` делает fetch+convert сам (html / pdf /
+  office / `.vtt`-`.srt`) — конвертировать `.html` вручную не нужно.
+- **Личный vault остаётся нетронутым** (только индексируется); `wiki-import` пишет
   исключительно в зону курса.
 
 ---
@@ -954,9 +960,9 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 Рецепт с двумя vault выше делит работу *по папкам*. **`wiki-sync`** (TASK 018 /
 R-11) идёт на уровень тоньше: наведите его на **зону**, и он классифицирует
 **каждый файл** — по расширению, по пофайловому тегу `#wiki/*` и по форме контента
-— затем маршрутизирует каждый в **convert / ingest / upsert / skip**. Брошенный в
-папку курса транскрипт, `.docx` или даже *сканированный* PDF теперь «просто»
-становится накапливающимися страницами wiki, без ручного вызова `wiki-enrich` /
+— затем маршрутизирует каждый в **distil (→ `wiki-import`) / upsert / skip**. Брошенный
+в папку курса транскрипт, `.docx` или даже *сканированный* PDF теперь «просто»
+становится накапливающимися страницами wiki, без ручного вызова `wiki-import` /
 `wiki-index-upsert` на каждый файл.
 
 **Две фазы (Decision-17 — детерминированный план, исполнение во владении
@@ -968,16 +974,17 @@ orchestrator):**
   каждом действии + причине. Это та часть, которую вы проверяете перед тем, как
   что-либо будет записано.
 - **[`workflows/wiki-sync.md`](../../workflows/wiki-sync.md)** — *исполнитель*
-  orchestrator. По каждой записи плана он конвертирует / убирает таймстемпы /
-  **ставит H-6-fence** / саммаризирует / enrich'ит / извлекает / upsert'ит /
-  пропускает, затем пишет пофайловый **commit-маркер** (`wiki-sync record`), так
-  что повторный прогон становится no-op. (`/wiki-sync` управляет всем процессом.)
+  orchestrator. По каждой distil-записи плана он **делегирует источник в `wiki-import`**
+  (которая сама убирает таймстемпы, ставит H-6-fence, конвертирует, саммаризирует и
+  извлекает концепты); готовые заметки идут в `upsert`, остальное — `skip`. Затем он
+  пишет пофайловый **commit-маркер** (`wiki-sync record`), так что повторный прогон
+  становится no-op. (`/wiki-sync` управляет всем процессом.)
 
 ```mermaid
 flowchart TD
     F["file in the zone"] --> EXT{"extension<br/>(case-folded)"}
-    EXT -->|".docx .xlsx .pptx .pdf"| CONV["convert+ingest<br/>→ _raw/.staging/&lt;slug&gt;-&lt;ext&gt;.md<br/>(scanned PDF → OCR)"]
-    EXT -->|".txt .vtt .srt"| ING["ingest<br/>(.vtt/.srt → de-timestamp first)"]
+    EXT -->|".docx .xlsx .pptx .pdf"| CONV["distil → wiki-import<br/>(fetch+convert; scanned PDF → OCR)"]
+    EXT -->|".txt .vtt .srt"| ING["distil → wiki-import<br/>(.vtt/.srt → de-timestamp first)"]
     EXT -->|"image · .canvas · .excalidraw · .base"| SKb["skip (binary / view-artifact)"]
     EXT -->|".md"| TAG{"#wiki tag /<br/>wiki: field?"}
     TAG -->|"skip"| SKt["skip: wiki/skip"]
@@ -1001,8 +1008,8 @@ flowchart TD
 
 | Расширение | Действие |
 |---|---|
-| `.docx` `.xlsx` `.pptx` `.pdf` | **convert** → staged `_raw/.staging/<slug>-<ext>.md` (*необходаемая* директория) → **ingest** |
-| `.txt` `.vtt` `.srt` | **ingest** (`.vtt`/`.srt` сначала очищаются от таймстемпов) |
+| `.docx` `.xlsx` `.pptx` `.pdf` | **distil** → делегирование в `wiki-import` (fetch+convert; сканированный PDF → OCR) |
+| `.txt` `.vtt` `.srt` | **distil** → делегирование в `wiki-import` (`.vtt`/`.srt` сначала очищаются от таймстемпов) |
 | `.md` | правила по контенту (теги → view → type, ниже) |
 | images · `.canvas` · `.excalidraw.md` · `.base` · неизвестное | **skip** (бинарник / view-артефакт / неизвестное расширение) |
 
@@ -1014,7 +1021,7 @@ flowchart TD
 | Тег / сигнал | Эффект |
 |---|---|
 | `#wiki/skip` (или `wiki: skip`) | никогда не индексировать эту заметку |
-| `#wiki/raw` (или файл под `_raw/`) | трактовать как **raw** → полный ingest (саммаризация → концепты) |
+| `#wiki/raw` (или файл под `_raw/`) | трактовать как **raw** → **distil** через `wiki-import` (саммаризация → концепты) |
 | `#wiki/keep` | **спасти** `.md` из зоны `exclude:` (спасает только `keep` — не `raw`) |
 | *(нет тега)* | **отображаемый `type:`** → `upsert`; иначе `skip: unmappable-type` |
 
@@ -1028,7 +1035,7 @@ Folder (`database-plugin:` во frontmatter и/или блок ` ```yaml:dbfolde
 **Сканированные PDF проходят OCR** (подключено 2026-06-03): `.pdf` без текстового
 слоя (`pdf_extract.py` exit `10 DocumentScanned`) прогоняется через `pdf_ocr.py`
 скилла `pdf` (`ocrmypdf`, языки по умолчанию **`eng+rus`**) → текст с возможностью
-поиска → ingest. Если движок OCR не установлен
+поиска → distil (`wiki-import`). Если движок OCR не установлен
 (`bash <pdf-skill>/scripts/install.sh --with-ocr` + системные
 tesseract/ghostscript), файл помечается **`needs-ocr`** и пропускается — никогда
 не отбрасывается молча.
@@ -1044,7 +1051,7 @@ tesseract/ghostscript), файл помечается **`needs-ocr`** и про�
 # 1. PLAN — deterministic, writes nothing; review every action + reason
 wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 
-# 2. EXECUTE the plan — the orchestrator recipe (convert/ingest/upsert/skip per file).
+# 2. EXECUTE the plan — the orchestrator recipe (distil→wiki-import / upsert / skip per file).
 #    Invoke /wiki-sync, or follow workflows/wiki-sync.md step by step.
 
 # 3. RE-RUN — every recorded file now reports is_unchanged (a no-op).
@@ -1054,7 +1061,7 @@ wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 **Политика повторной саммаризации — не саммаризируй заново то, что уже
 саммаризировано** (TASK 019, opt-in). Добавьте блок `resummarize:` в
 `.wiki/sync.yaml`, и `wiki-sync` направит raw-источник в **`skip`** вместо
-`ingest`, когда для него уже существует саммари — так что повторный прогон scan по
+`distil`, когда для него уже существует саммари — так что повторный прогон scan по
 курсу, который вы уже саммаризировали, не сжигает токены на переделку. «Саммари
 существует» — это объединение трёх детекторов (от самого дешёвого): **`source_state`**
 (именно этот raw синхронизировался ранее) ∪ **provenance** (frontmatter некоторого
@@ -1102,7 +1109,7 @@ wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 
 > **`wiki-sync` против разделения на два vault:** они компонуются. Используйте
 > границу `ignore` с двумя vault, чтобы держать области только-для-поиска вне
-> машинерии enrich; используйте `wiki-sync` *внутри* зоны enrich, чтобы
+> distil-машинерии; используйте `wiki-sync` *внутри* distil-зоны, чтобы
 > маршрутизировать её разнородные дропы пофайлово. См. `skills/wiki-sync/SKILL.md`
 > для полного контракта план-JSON + кодов выхода.
 
@@ -1275,7 +1282,7 @@ flowchart TD
 ```
 
 - **`wiki-lint` — это ваш измеритель истины.** Запускайте его после партии
-  ingest-ов и периодически. Сортируйте в порядке приоритета:
+  импортов и периодически. Сортируйте в порядке приоритета:
   1. **Висящие ссылки** — `[[X]]` без страницы — это обещание, которое корпус не
      сдержал; создайте страницу или исправьте ссылку.
   2. **Противоречия** — операторские решения, ждущие принятия.
@@ -1328,8 +1335,8 @@ flowchart TD
 | `wiki-search` | Поиск FTS5 + по метаданным через vault-ы | [skills/wiki-search](../../skills/wiki-search/SKILL.md) |
 | `wiki-query` | RAG: retrieve → цитируемый синтез → запись ответа | [skills/wiki-query](../../skills/wiki-query/SKILL.md) |
 | `wiki-verify-multi` | Аудит записанного ответа 4 критиками | [skills/wiki-verify-multi](../../skills/wiki-verify-multi/SKILL.md) |
-| `wiki-sync` | Формато-зависимый диспетчер: `scan` зоны → план → convert/ingest/upsert/skip (+ OCR сканированных PDF); `record` = маркер коммита | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
-| `wiki-enrich` | Ingest сырого источника, затем его индексация | [skills/wiki-enrich](../../skills/wiki-enrich/SKILL.md) |
+| `wiki-sync` | Формато-зависимый драйвер: `scan` зоны → план → делегирование distil-источников в `wiki-import` / upsert готовых / skip (+ OCR сканированных PDF); `record` = маркер коммита | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
+| `wiki-import` | Унифицированный construct-вход: дистилляция источника (URL / PDF / office / транскрипт / локальный raw) → заметка + `_concepts/` → index (`wiki-import-article` — алиас) | [skills/wiki-import](../../skills/wiki-import/SKILL.md) |
 | `wiki-extract-concepts` | Двухпроходное извлечение концепций | [skills/wiki-extract-concepts](../../skills/wiki-extract-concepts/SKILL.md) |
 | `wiki-append-log` | Добавить структурированное событие в log | [skills/wiki-append-log](../../skills/wiki-append-log/SKILL.md) |
 | `wiki-confirm` | Повысить/понизить кандидатную сущность | [skills/wiki-confirm](../../skills/wiki-confirm/SKILL.md) |
@@ -1346,8 +1353,7 @@ flowchart TD
 
 - [`README.md`](../../README.md) — обзор, установка, указатель команд.
 - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — живая архитектура.
-- [`docs/adr/ADR-001-*`](../adr/ADR-001-wiki-ingest-integration.md) — wrap + index.
+- [`docs/adr/ADR-001-*`](../adr/ADR-001-wiki-ingest-integration.md) — wrap + index (исходное Option I; **superseded — TASK 047**: `wiki-enrich` + вендоренный `wiki_ingest` ретайрнуты, construct-путь унифицирован в `wiki-import`, компаундинг концептов — производный рендер).
 - [`docs/adr/ADR-002-*`](../adr/ADR-002-multi-vault-bottleneck-corrections.md) — multi-vault + контракт Class A/B/C.
-- [`docs/WIKI-INGEST-V1.1-CONTRACT.md`](../WIKI-INGEST-V1.1-CONTRACT.md) — контракт skill файлового слоя.
 - [`sql/wiki-index-v2.sql`](../../sql/wiki-index-v2.sql) — DDL схемы.
 - [`workflows/`](../../workflows/) — рецепты orchestrator-а для skill-ов `prepare`/`apply`.

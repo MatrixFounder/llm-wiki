@@ -14,7 +14,7 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**18 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**17 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
 
 - *Construct* — `wiki-import` (the unified external-source on-ramp **and per-source
   engine** — URL/HTML/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/thread/transcript →
@@ -23,8 +23,8 @@ event graph, cited RAG answers, and a verification layer.
   `--kind`** (meeting/lesson → pyramid digest, article/paper/thread → article wrapper)
   + `--diagrams`/`--no-concepts` modifiers; content-type via `--kind`, layout via config —
   orthogonal; `wiki-import-article` is a back-compat alias),
-  `wiki-enrich` (legacy Karpathy raw source → summary via the vendored `wiki-ingest`),
-  `wiki-extract-concepts` (densify an indexed source), `wiki-index-upsert` (index one
+  `wiki-extract-concepts` (densify an indexed source; concept pages carry a derived
+  `BEGIN-AUTO:mentions` ledger — TASK 047), `wiki-index-upsert` (index one
   file), `wiki-sync` (TASK 046 — a batch **DRIVER**: `scan` classifies a zone and
   delegates each distil source to `wiki-import` per a per-folder `.wiki/sync.yaml`
   `summarize:` config; ready notes → `wiki-index-upsert`; no inline summarise/convert),
@@ -136,10 +136,11 @@ state and user preferences, not domain knowledge.
   (PW-Q drift guard). Holds the deferred items (perf SEV-1 set, the R-X1-*
   residuals, R-X3-META-FILTER). Edit the per-issue files, never the ledger.
 - `docs/adr/ADR-001-wiki-ingest-integration.md` — Option I (Wrap + Index).
+  **Superseded (TASK 047):** `wiki-enrich` + the vendored `wiki_ingest` were retired;
+  `wiki-import` is the unified construct path and concept compounding is a derived
+  Class-B render (`wiki-index-render --concept-mentions`).
 - `docs/adr/ADR-002-multi-vault-bottleneck-corrections.md` — vault_id
   partitioning + Class A/B/C data layering contract.
-- `docs/WIKI-INGEST-V1.1-CONTRACT.md` — external `wiki-ingest` skill
-  contract; consumed by `wiki-enrich` (install globally before using).
 - `scripts/wiki_index/layout.py` — single source of truth for the **karpathy**
   layout constants (`PAGE_SUBDIRS` = `INGEST_SHARED_SUBDIRS` ∪ `HOST_ONLY_SUBDIRS`
   incl. `QUERIES_SUBDIR`, `COURSE_TIER_DIR`, `SYSTEM_FILES`,

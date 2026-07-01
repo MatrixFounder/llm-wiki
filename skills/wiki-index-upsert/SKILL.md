@@ -16,14 +16,14 @@ Lowest-level index operation: one markdown file → one DB row (with refs).
 
 - Operator manually edited a file and wants it indexed without a full
   reindex (cheaper).
-- Sub-step inside `wiki-enrich` (called once per `written[].path`).
+- Sub-step inside `wiki-import` (called once per `written[].path`).
 - `wiki-lint --fix` (future) for resolving missing-in-db drift.
 
 ## When NOT to use
 
 - Bulk reindex → use `/wiki-reindex --delta` or `--full`.
-- File is NOT yet on disk → use `/wiki-enrich` (which calls wiki-ingest
-  first to produce the file).
+- File is NOT yet on disk → use `/wiki-import` (which fetches + authors
+  the note first, then produces the file).
 
 ## Invocation
 

@@ -482,6 +482,48 @@ class SQLiteRepository(IndexRepository):
         sql += " ORDER BY page_slug, ref_type, COALESCE(line_start, 0)"
         return [self._ref_from_row(r) for r in conn.execute(sql, params).fetchall()]
 
+    def concept_pages(self, vault_id: str) -> list[tuple[str, str, str]]:
+        """TASK 047 — every concept page in the vault, as `(slug, project, file_path)`.
+        Concept/entity pages are written by `wiki-extract-concepts` with a hardcoded
+        `type: concept`, so a single indexed-type query enumerates them all (no N+1, no
+        per-layout `_concepts/` dir re-resolution — `file_path` is already resolved)."""
+        return [
+            (str(r["slug"]), str(r["project"]), str(r["file_path"]))
+            for r in self._connect().execute(
+                "SELECT slug, project, file_path FROM pages "
+                "WHERE vault_id=? AND type='concept' ORDER BY slug, project",
+                (vault_id,),
+            ).fetchall()
+        ]
+
+    # Page types that are NOT content "sources": the concept's own page (self / concept→concept),
+    # the auto-rendered index, and the DERIVED RAG/verdict artefacts (query, verification). The
+    # ledger lists genuine source content (summary / brief / research) that MENTIONS the concept.
+    _NON_SOURCE_PAGE_TYPES = ("concept", "index", "query", "verification")
+
+    def mentioning_source_pages(self, vault_id: str, entity_slug: str) -> list[str]:
+        """TASK 047 — the DISTINCT, sorted slugs of CONTENT-SOURCE pages that carry a
+        `ref_type='mentioned'` inbound ref to `entity_slug` (the "Mentions across sources" set).
+        The `mentioned`-only filter excludes typed-edge / `cited` / `verifies` backlinks; the
+        `pages.type NOT IN (concept, index, query, verification)` join excludes the concept's own
+        page (self-reference) + concept→concept cross-links + the derived index/RAG/verdict pages —
+        leaving the genuine source notes. This SET is the rebuild-stable invariant (`reindex --full`
+        re-derives the same `mentioned` refs from the source footers); per-ref quote/span are NOT
+        rendered (they differ between extract-time and reindex, so they are deliberately omitted)."""
+        placeholders = ",".join("?" * len(self._NON_SOURCE_PAGE_TYPES))
+        return [
+            str(r["page_slug"])
+            for r in self._connect().execute(
+                "SELECT DISTINCT r.page_slug FROM page_entity_refs r "
+                "JOIN pages p ON (p.vault_id=r.vault_id AND p.slug=r.page_slug "
+                "                 AND p.project=r.page_project) "
+                "WHERE r.vault_id=? AND r.entity_slug=? AND r.ref_type='mentioned' "
+                f"  AND p.type NOT IN ({placeholders}) "
+                "ORDER BY r.page_slug",
+                (vault_id, entity_slug, *self._NON_SOURCE_PAGE_TYPES),
+            ).fetchall()
+        ]
+
     def refs_from(
         self, vault_id: str, page_slug: str, page_project: str,
         ref_type: str | None = None,

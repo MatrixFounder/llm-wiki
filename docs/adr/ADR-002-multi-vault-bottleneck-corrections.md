@@ -503,7 +503,7 @@ pages + entities tables (Class B, derived from files)
 
 - [ADR-001](./ADR-001-wiki-ingest-integration.md) — Option I architecture pivot
 - [WIKI-INGEST-V1.1-CONTRACT.md](../WIKI-INGEST-V1.1-CONTRACT.md) — to be updated with `vault_id` requirements
-- [SCHEMA-DRAFT.sql](../SCHEMA-DRAFT.sql) — current schema (single-vault, will be v2.0'd)
+- [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) — current schema (single-vault, will be v2.0'd)
 - [SQLITE-VS-POSTGRES.md](../SQLITE-VS-POSTGRES.md) — DB decision (matrix re-validated for multi-vault)
 - [trade-agents/docs/wiki-ingest-promotion-spec.md](../../trade-agents/docs/wiki-ingest-promotion-spec.md) — two-tier vault model
 - `~/.claude/skills/wiki-ingest/SKILL.md` v1.0 — current global skill (4 modes)

@@ -6,10 +6,10 @@ description: Format-aware, tag-routed ingest dispatcher — scan a zone → plan
 Python: it walks a zone, classifies every file (by extension + `#wiki/*` tags +
 generated-view detection + a layout-general type check), and emits a strict
 **plan JSON** — NO LLM, network, or mutation. The orchestrator then executes the
-plan (convert office/PDF → staged `_raw/.staging/`, de-timestamp `.vtt`/`.srt`,
-H-6-fence the raw body, summarise → `wiki-enrich` → `wiki-extract-concepts`,
-or `wiki-index-upsert` a ready note), recording a per-file `source_state`
-commit-marker so a re-run is a no-op.
+plan (delegate each distil source whole to `wiki-import` — which owns
+fetch+convert, H-6 fencing, REASON, and concept filing — or `wiki-index-upsert`
+a ready note), recording a per-file `source_state` commit-marker so a re-run is a
+no-op.
 
 Execute the workflow at [`workflows/wiki-sync.md`](../workflows/wiki-sync.md).
 Do **not** hand-run the convert/summarise steps — follow the recipe (per-vault

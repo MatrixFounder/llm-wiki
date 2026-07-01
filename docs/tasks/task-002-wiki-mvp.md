@@ -4,11 +4,11 @@
 
 - **Task ID:** 001
 - **Slug:** `wiki-mvp`
-- **Source spec:** [docs/TASK-ref-v2.md](./TASK-ref-v2.md) (полная спецификация на 1745 строк — этот TASK — её MVP-нарезка)
+- **Source spec:** [docs/TASK-ref-v2.md](../archive/TASK-ref-v2.md) (полная спецификация на 1745 строк — этот TASK — её MVP-нарезка)
 - **Related artifacts:**
-  - [docs/SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) — SQLite DDL (готов)
+  - [docs/SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) — SQLite DDL (готов)
   - [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — backend сравнение (готов)
-  - [docs/MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md) — план миграции (готов)
+  - [docs/MIGRATION-v1-to-v2.md](../archive/MIGRATION-v1-to-v2.md) — план миграции (готов)
   - [docs/KNOWN_ISSUES.md](./KNOWN_ISSUES.md) — stub-файл создан (no known issues at start of project; entry format задан внутри).
 - **Mode:** Standard
 - **Status:** `PHASE-3A-COMPLETE` (2026-05-26) — all 34 atomic tasks landed; 293 tests pass; mypy --strict clean; rebuildability E2E gate green; VDD multi-adversarial + adversarial reviews passed (no Critical/High open); dogfooded on trade-agents (5 production bugs caught + fixed).
@@ -17,7 +17,7 @@
   - **Decision-3 (2026-05-26)**: **`vault_id` REQUIRED explicit** в `WIKI_SCHEMA.md` — no hash fallback. См. ADR-002 §D1.1.
   - **Decision-4 (2026-05-26)**: **Data Layering Contract** — Class A (vault canonical) / B (cache, rebuildable) / C (DB-only operational, only `vaults.registered_at`). См. ADR-002 §D8.
   - **Decision-5 (2026-05-27)**: **UC-06 / UC-07 superseded by `/wiki-enrich`** — the bridge skill (built 2026-05-25) covers transcript ingest AND arbitrary-markdown ingest through the wiki-ingest v1.1 manifest pipeline. R-06.3 and R-24 marked SUPERSEDED in the RTM below; original Use Case bodies retained for historical rationale but each carries a SUPERSEDED banner. Reasoning + onward plan: [docs/ROADMAP.md](./ROADMAP.md) §R-1.
-  - **Current schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql). [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) superseded.
+  - **Current schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql). [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) superseded.
   - **Three new requirements staged in Phase 3a**:
     - **R-27**: Multi-vault partitioning (vaults registry, vault_id discriminator, composite PKs, FTS5 vault_id column, vault_id format CHECK) ✅ DONE
     - **R-28**: Structured log_events table (bi-directional sync log.md ↔ log_events row, event_type CHECK enum, log_md_byte_offset round-trip) ✅ DONE
@@ -62,7 +62,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 | ID | Requirement | MVP? | Sub-features |
 |---|---|---|---|
 | **R-01** | Конфигурационный слой | ✅ | (R-01.1) JSON Schema для `wiki:` блока в CLAUDE.md и `.wiki.yaml`; (R-01.2) deep-merge root + project; (R-01.3) валидация при load с fail-fast |
-| **R-02** | SQLite-индекс с FTS5 | ✅ | (R-02.1) DDL из [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql); (R-02.2) WAL mode + foreign_keys; (R-02.3) trigger-sync для FTS5 |
+| **R-02** | SQLite-индекс с FTS5 | ✅ | (R-02.1) DDL из [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql); (R-02.2) WAL mode + foreign_keys; (R-02.3) trigger-sync для FTS5 |
 | **R-03** | iCloud-aware DB location | ✅ | (R-03.1) detect iCloud-путь vault'а; (R-03.2) force DB вне iCloud; (R-03.3) per-platform default path (macOS/Linux/Windows) |
 | **R-04** | DAL: `IndexRepository` interface + SQLite implementation | ✅ | (R-04.1) abstract base; (R-04.2) SQLiteRepository ~400 строк; (R-04.3) factory + config-driven instantiation |
 | **R-05** | `wiki-init` — bootstrap vault'а | ✅ | (R-05.1) детектит iCloud + interactive prompts; (R-05.2) создаёт SQLite + директории; (R-05.3) пишет initial CLAUDE.md из template |
@@ -98,7 +98,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 > Закладывает базис, на котором стоит всё остальное. Без этого ничего не работает.
 
 - **I-1.1** Реализовать `wiki-config.schema.yaml` (JSON Schema 2020-12 формат). Покрывает оба слоя: `WikiRootConfig` для `CLAUDE.md::wiki:`, `WikiProjectOverride` для `.wiki.yaml`. → R-01.
-- **I-1.2** Зафиксировать [docs/SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) как `sql/wiki-index.sql` в репо имплементации. Включает `vault_metadata` таблицу + `pages.project NOT NULL DEFAULT '_vault_'` sentinel (см. §6.1 C-2 fix). → R-02 + R-25.1 + R-26.1.
+- **I-1.2** Зафиксировать [docs/SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql) как `sql/wiki-index.sql` в репо имплементации. Включает `vault_metadata` таблицу + `pages.project NOT NULL DEFAULT '_vault_'` sentinel (см. §6.1 C-2 fix). → R-02 + R-25.1 + R-26.1.
 - **I-1.3** Реализовать `wiki-init` skill: detect iCloud, compute vault_hash, create SQLite (вместе с seed `vault_metadata` rows: vault_hash, vault_root_path, language, layout), mkdir directories, write CLAUDE.md template, interactive prompts (layout / auto_extract / automations / sources). → R-03 + R-05 + R-25.2.
 - **I-1.4** Skill `wiki-init` self-check: SQLite connect OK, FTS5 trigger OK, все paths созданы, vault_metadata seeded.
 
@@ -135,7 +135,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 > Read-side операции — то, ради чего пользователь работает с wiki.
 
 - **I-4.1** `wiki-search` skill — wraps `repo.search_pages(...)` + nice markdown output (BM25 score + snippet с `<b>...</b>` highlighters [пробрасываются явно в `snippet()` arguments] + co-occurrences для concept-type). → R-10.
-- **I-4.2** `wiki-lint` skill (lean mode) — 9 чеков из [TASK-ref-v2.md §13](./TASK-ref-v2.md), все через SQL. Для `flat` layout (sentinel project='_vault_') — `required_frontmatter` исключает `project` (см. §6.1). Markdown report + JSON sidecar. `--fix` для safe operations. → R-11.
+- **I-4.2** `wiki-lint` skill (lean mode) — 9 чеков из [TASK-ref-v2.md §13](../archive/TASK-ref-v2.md), все через SQL. Для `flat` layout (sentinel project='_vault_') — `required_frontmatter` исключает `project` (см. §6.1). Markdown report + JSON sidecar. `--fix` для safe operations. → R-11.
 - **I-4.3** `ingest-source` meta-workflow (markdown в `workflows/`) — dispatcher на `wiki-source-{kind}` (manual / transcript / light), цепочка `source → upsert → log → lint quick-pass`. Failure handling с partial-recovery. → R-12.
 
 #### Epic E5: Migration & Validation [MVP]
@@ -175,7 +175,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
    - Daily automation cron: `[y/N]` (default N)
    - Sources to enable: multi-select (default `manual + transcript`)
 7. System: Mkdir DB parent (`~/Library/Application Support/wiki-index/`).
-8. System: Создаёт SQLite файл из [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql), применяет PRAGMAs (WAL, foreign_keys, etc.).
+8. System: Создаёт SQLite файл из [SCHEMA-DRAFT.sql](../archive/SCHEMA-DRAFT.sql), применяет PRAGMAs (WAL, foreign_keys, etc.).
 9. System: Inserts seed `batch_runs` row (mode=full, status=success, notes='schema initialized').
 10. System: Mkdir vault-internal: `00-Vault-Index/`, `Summaries/`, `Sources/{email,telegram,web,manual}/`, `_raw/`, **`_raw/.locks/`** (used by UC-07 A8 concurrent-ingest flock), **`_raw/failed/`** (used by I-3.3 step c.1 partial-output cleanup).
 11. System: Записывает `CLAUDE.md` (если отсутствует) с заполненным `vault_hash`, language, layout, ответами prompts'ов.
@@ -616,7 +616,7 @@ MVP = **single-source wiki** на manual + transcript + light-summary ingestion 
 
 #### 5.1 Performance (numerical SLOs)
 
-Из [TASK-ref-v2.md §28](./TASK-ref-v2.md). MVP-минимум — measurable benchmark на synthetic vault (R-14):
+Из [TASK-ref-v2.md §28](../archive/TASK-ref-v2.md). MVP-минимум — measurable benchmark на synthetic vault (R-14):
 
 | Операция | 100 docs | 1000 docs | 10000 docs |
 |---|---|---|---|

@@ -92,8 +92,8 @@ TYPE_MAPPING: dict[str, tuple[str, str | None]] = {
     "lesson-summary": ("summary", "lesson-summary"),
     "meeting-summary": ("summary", "meeting-summary"),
     "concept": ("concept", None),
-    # wiki-ingest convention: _entities/*.md carry `type: external` (per
-    # WIKI-INGEST-V1.1-CONTRACT). Page-display-wise these are concept-like
+    # convention: _entities/*.md carry `type: external` (originally the wiki-ingest
+    # contract, retired TASK 047). Page-display-wise these are concept-like
     # (definition + properties); the entities table holds entity-specific
     # metadata. So pages.type=concept, tag the page with `external` for
     # downstream filters.

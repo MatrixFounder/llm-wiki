@@ -19,7 +19,7 @@
 > [006](./adr/ADR-006-derived-knowledge-health.md) derived knowledge health ·
 > [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML).
 >
-> **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
+> **Source spec** (historical): [docs/archive/TASK-ref-v2.md](./archive/TASK-ref-v2.md) — the original pre-implementation v2 reference spec (archived; the living architecture is this document + `docs/architectures/`).
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
 > **Layout constants** consolidated in [scripts/wiki_index/layout.py](../scripts/wiki_index/layout.py) — single source of truth for `PAGE_SUBDIRS`, `COURSE_TIER_DIR`, `VAULT_INDEX_DIR`, `LOG_SUBDIR`, `SCAFFOLD_DIRS`, `SYSTEM_FILES`, `GLOBAL_VAULT_SENTINEL`.
@@ -61,7 +61,13 @@
 
 ## 1.5. Project Anatomy
 
-Where things live in the repo: anatomy of one in-repo skill (template + symlink graph), `wiki-enrich` ↔ `wiki-ingest` integration flow (primary in-process path + subprocess fallback), dual-existence of `wiki-ingest` (Universal-skills standalone + this repo's vendored snapshot), and the vendored module's directory layout / sync policy / public API.
+Where things live in the repo: anatomy of one in-repo skill (template + symlink graph) and how the CLIs, DAL, and layout engine compose.
+
+> **Superseded (TASK 047):** the `wiki-enrich` ↔ vendored `wiki-ingest` integration flow (the
+> primary in-process path + subprocess fallback + the vendored-snapshot layout / sync policy)
+> described in the linked body was **retired** — `wiki-import` is the in-repo construct engine and
+> concept-page compounding is a derived Class-B render (`wiki-index-render --concept-mentions`).
+> Those §1.5.2/§1.5.3/§1.5.7 subsections are kept as accepted-then-superseded history.
 
 → [details](./architectures/project-anatomy.md)
 
@@ -110,7 +116,7 @@ intercepts the call (the R-2 invariant, guarded by `test_patch_target_lock_at_sk
 | `_validation.py` | Validators, sanitizers, candidate-schema, `classify_candidates`, `_preflight_sanitize`, `_parse_source_span`, regex/const allowlists | none |
 | `_sourcing.py` | `_read_file_bounded`, `_resolve_source_inside_sources`, `_all_concepts_dirs`, `_derive_source_project`, `_load_candidates`, `_path_is_absolute`, byte caps | none |
 | `_db.py` | `load_known_entities`, `upsert_extracted_entity`, `upsert_entity_refs`, `check_idempotency`, `update_idempotency_state`, `build_manifest`, `_lookup_entity_row` | **carve-out**: `load_known_entities` + `update_idempotency_state` are re-imported into the facade and called there as facade globals |
-| `_pages.py` | `write_concept_page`, `_format_source_quote_block`, name allowlist | none |
+| `_pages.py` | `write_concept_page` (seeds the derived `BEGIN-AUTO:mentions` block via the shared `_common.format_concept_mentions_body`; TASK 047 retired the embedded per-source quote-block), name allowlist | none |
 | `_errors.py` | `ExtractionParseError`, `_envelope_from_parse_error` | none |
 
 `python -m scripts.wiki_skills.wiki_extract_concepts` keeps working via a package
@@ -123,8 +129,8 @@ is the dependency sink. Leaves MAY depend on lower leaves: `_validation` → `_e
 `_sourcing` → `_errors`; `_pages` → `_validation` + `_errors`; `_db` → `_validation`
 (`upsert_entity_refs` calls `_parse_source_span`) + `_errors`. The facade → all leaves +
 `_manifest_consumer` + `factory`. No leaf may import the facade (that would both cycle and
-break the facade-global lock). `_format_source_quote_block` lives in `_pages` (its only
-caller is `write_concept_page`), resolving the TASK §3.1 dual-listing.
+break the facade-global lock). (TASK 047 deleted the dead `_format_source_quote_block` — the
+concept-page mentions ledger is now a derived Class-B AUTO block, links only.)
 
 **§2.2 Native-App Control Skill `obsidian-cli` (TASK 029 / R-12 — prompt-layer only).**
 The component is **skill text, not code**: `skills/obsidian-cli/` (SKILL.md +
@@ -577,7 +583,7 @@ Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceStat
 
 ## 5. Interfaces
 
-External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes; the TASK 007 `wiki-query` `prepare`/`apply` CLI surface + `check_query_state`/`record_query_state` DAL methods + error codes), and integrations (wiki-ingest manifest contract v1.1).
+External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes; the TASK 007 `wiki-query` `prepare`/`apply` CLI surface + `check_query_state`/`record_query_state` DAL methods + error codes), and the internal v1.1 concept-manifest contract (the external `wiki-ingest` consumer was retired in TASK 047; the manifest shape is now `wiki-extract-concepts --ingest` → `_manifest_consumer` only).
 
 → [details](./architectures/interfaces.md)
 
@@ -661,6 +667,6 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **List-membership metadata filter (TASK 033)**: `wiki-search --where` now matches list-valued frontmatter (`tags[]`) via `scalar = ? OR EXISTS(json_each … = ?)` — the proven `find_pages_citing_source` shape lifted into `search_pages` (Q-033-1), + a `--tag <value>` sugar flag (Q-033-2). Closes the ROADMAP R-13 residual (one clean per-typed-class command). Backward-compatible (scalar `--status`/`--severity` unchanged), injection posture preserved (allowlist + twice-bound params + no echo + dup-guard), **zero DDL** (`user_version` 6).
 - [x] **FTS-narrowed tag membership (TASK 035, ADR-005)**: closes the hot branch of R-X3-MF-SCAN measured on the real 2493-page vault. Metadata-only `--tag`/`tags=` membership now narrows via the already-existing `pages_fts.tags` index ("FTS narrows, `json_each` confirms" — Q-035-2) instead of a full-partition scan; result list byte-identical (superset + exact confirm, empirically 0 mismatches over 40 real tags), zero-token values fall back to the scan. The scalar/temporal/non-tags branches are left as a scan by design (P-5: their fields are sparse/absent — Q-035-1). **Zero DDL** (`user_version` stays 7), no new dep, no layering inversion, Karpathy byte-identity preserved.
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
-- [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional.
+- [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional. *(Both retired in TASK 047 — `wiki-import` is the in-repo construct engine; entry kept as shipped-history.)*
 - [x] **Obsidian deep-links (TASK 045)**: `wiki-search` JSON hits gain `file_path` (always present) + `obsidian_url` (`obsidian://open?vault=<folder-basename>&file=<encoded-path>`, null when vault unknown — Q-045-1). Vault cache built once per unique `vault_id` across hits (R-3). `--format markdown`: OSC 8 hyperlinks on iTerm2/VS Code terminal; plain URL fallback for pipe + Apple Terminal (detected via `TERM_PROGRAM=Apple_Terminal` — Q-045-2); chat agents show clean title/slug/snippet (obsidian:// not clickable in VS Code webview CSP). H-6 control-char sanitisation (`_term_safe`) applied to title/snippet before TTY output (CWE-150). Zero DDL, zero new deps.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

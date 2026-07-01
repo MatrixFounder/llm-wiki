@@ -50,8 +50,8 @@
 
 **obsidian-llm-wiki** is the *index + tooling layer* for an Obsidian-style
 [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). The
-file layer (LLM-driven page synthesis) is owned by the `wiki-ingest` skill,
-vendored in-process; this repo reads that output into a SQLite index and serves
+file layer (LLM-driven page synthesis) is owned by `wiki-import`, the in-repo
+construct engine; this repo reads that output into a SQLite index and serves
 fast, structured queries, an entity graph, cited RAG answers, and a verification
 layer.
 
@@ -60,7 +60,7 @@ layer.
 | **Type** | Multi-vault knowledge-base index + CLI toolkit |
 | **Canonical source** | Markdown in the Obsidian vault (Class A) |
 | **Derived cache** | One global SQLite DB (FTS5 + WAL), partitioned by `vault_id` (Class B/C) |
-| **Surface** | 18 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
+| **Surface** | 17 CLIs (`wiki-*`), each also a `/wiki-*` slash command inside Claude Code |
 | **I/O contract** | stdin/args in → one-line JSON envelope on stdout + exit code |
 | **Core invariant** | The DB is 100% rebuildable from markdown (`wiki-reindex --full`) |
 | **Schema** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
@@ -76,14 +76,15 @@ the LLM **incrementally builds and maintains a persistent, interlinked wiki** th
 sits between you and the raw sources. Knowledge **compounds**: each ingest enriches
 the corpus the next query reads.
 
-`wiki-ingest` does the *file-layer* half of that loop (synthesise pages, merge
-additively, flag contradictions). This repo does the half that makes the
+`wiki-import` does the *file-layer* half of that loop (fetch+convert → REASON →
+synthesise the source note + its `_concepts/` pages; concept compounding is a
+derived Class-B render, not a body-merge). This repo does the half that makes the
 compounding *usable at scale*:
 
 ```mermaid
 flowchart LR
     SRC["raw source /<br/>external summary"] --> C
-    C["CONSTRUCT<br/>enrich · extract · upsert"] -->|"writes"| MD["MARKDOWN<br/>Class A — canonical"]
+    C["CONSTRUCT<br/>import · extract · upsert"] -->|"writes"| MD["MARKDOWN<br/>Class A — canonical"]
     MD -->|"index / reindex"| DB["SQLITE INDEX<br/>Class B/C — rebuildable"]
     DB -->|"rebuild (--full)"| MD
     DB -->|"retrieve"| ANS["ANSWER + VERIFY<br/>cited RAG (wiki-query / wiki-verify-multi)"]
@@ -167,7 +168,7 @@ deterministic commands.)
 **3. Inside an agent session (Claude Code — recommended for the LLM commands).**
 The same commands are `/wiki-*` slash commands; the agent auto-suggests them on the
 SKILL.md triggers. For `wiki-query` / `wiki-verify-multi` / `wiki-extract-concepts`
-/ `wiki-enrich` this is effectively the *required* surface, because the middle of
+/ `wiki-import` this is effectively the *required* surface, because the middle of
 their `prepare`/`apply` contract is an LLM reasoning step the orchestrator owns (see
 [the `prepare`/`apply` contract](#the-prepare--apply-contract-decision-17)). You
 *can* run their deterministic halves by hand, but then you must do the
@@ -190,7 +191,7 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 | Command | Plain terminal / Obsidian `Terminal` plugin | Claude Code `/wiki-*` | Gemini / pi / other agents |
 |---|---|---|---|
 | `init` · `search` · `lint` · `reindex` · `index-upsert` · `index-render` · `confirm` · `alias` · `merge` · `append-log` · `sync scan` · `sync record` | ✅ run directly | ✅ | ✅ |
-| `query` · `verify-multi` · `extract-concepts` · `enrich` · `sync` *(executor)* *(need an LLM step)* | ⚠️ deterministic halves only — you'd supply the LLM reasoning by hand | ✅ **recommended** | ✅ via each workflow's `## Fallback` |
+| `query` · `verify-multi` · `extract-concepts` · `import` · `sync` *(executor)* *(need an LLM step)* | ⚠️ deterministic halves only — you'd supply the LLM reasoning by hand | ✅ **recommended** | ✅ via each workflow's `## Fallback` |
 
 > **The one discipline that matters:** after you hand-edit markdown in Obsidian,
 > tell the index — `wiki-index-upsert` for one file, `wiki-reindex --delta` for
@@ -201,7 +202,7 @@ non-Claude-Code path (inline the contract skill into the system context instead 
 
 ## The command vocabulary, by purpose
 
-The 18 CLIs are not a flat list — each plays a role in the loop above. Below,
+The 17 CLIs are not a flat list — each plays a role in the loop above. Below,
 each command is given as *why it exists* and *when to reach for it*, not just its
 flags (those live in each [`SKILL.md`](../../skills/)).
 
@@ -211,10 +212,9 @@ These turn raw material into compounding pages.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp). `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (convert / ingest / upsert / skip); the [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes it idempotently (office/PDF→md, **scanned-PDF OCR**, `.vtt` de-timestamp, summarise→enrich→extract, ready-note upsert, view-sidecar skip). Reach for it instead of hand-routing a folder of heterogeneous drops file-by-file. Deterministic core, no LLM; `wiki-sync record` is the per-file commit-marker. |
-| **`wiki-enrich`** | The **raw-material** on-ramp (single file). Hand it a raw source file; it invokes the (vendored) `wiki-ingest` synthesis layer (which **LLM-summarises** the source), then mirrors the produced manifest into the index. ⚠️ `wiki-enrich` **always treats `--source` as raw** — there is no "skip the summary" mode. If you *already have a finished summary*, do **not** use `wiki-enrich`; use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead. (`wiki-sync` composes `wiki-enrich` under the hood for `ingest`-routed files.) |
-| **`wiki-import`** | The **unified construct on-ramp** (TASK 039/040; `wiki-import-article` is a back-compat alias). Import an external **URL / PDF / X-thread / meeting transcript / finished summary** into **any layout's** vault. Two orthogonal axes: **content-type** (`--kind`, auto-detected) sets the note `type:` + the REASON harness (all content → the ONE universal `summarizing-meetings`; finished `summary` → register), and the vault **LAYOUT (config)** decides where it files (Karpathy `_sources/`+root `_concepts/` vs PARA topic-folder+sibling `_concepts/`, via `resolve_layout_config` — Karpathy is a layout YAML, not a code fork, ADR-007). `prepare` shells out to `html`/`pdf` + emits **`known_concepts`** (reuse them — the discipline that stops dangling `[[wikilinks]]`); `apply` files the note + `_concepts/` with the **collision guard** (a generic `defi` never evicts `Defi.md`). (Diagram: `docs/architectures/functional-architecture.md` §2.3.) |
-| **`wiki-extract-concepts`** | The *retroactive* on-ramp. Given a source page already in the index, it extracts the concepts/entities it mentions but that have no page yet — turning implicit knowledge into explicit, linkable pages. A two-pass `prepare`/`apply` skill (see [below](#the-prepare--apply-contract-decision-17)). Use it to *densify* an existing corpus, or after importing many sources at once — **regardless of how the source page got indexed** (raw-ingested or hand-registered). |
+| **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp, TASK 046). `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (distil / upsert / skip); the [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes it idempotently — each *distil* source is **delegated to `wiki-import`** (which owns fetch+convert, **scanned-PDF OCR**, `.vtt` de-timestamp, the REASON summary + `_concepts/` filing), ready notes go straight to `wiki-index-upsert`, and view-sidecars are skipped. Reach for it instead of hand-routing a folder of heterogeneous drops file-by-file. Deterministic driver, no inline summarise/convert; `wiki-sync record` is the per-file commit-marker. |
+| **`wiki-import`** | The **unified construct on-ramp AND per-source engine** (TASK 039/040/046/047; `wiki-import-article` is a back-compat alias). Hand it **one source** — an external **URL / PDF / office doc / X-thread / meeting transcript / finished summary**, OR a **local raw file** (`--source ./path` — the single-file raw on-ramp that used to be `wiki-enrich`) — and it does deterministic fetch+convert → REASON → a summary note **plus** its `_concepts/` pages → indexed, all in one `prepare`/`apply` loop. Two orthogonal axes: **content-type** (`--kind`, auto-detected) sets the note `type:` + the REASON harness (all content → the ONE universal `summarizing-meetings`; finished `summary` → register), and the vault **LAYOUT (config)** decides where it files (Karpathy `_sources/`+root `_concepts/` vs PARA topic-folder+sibling `_concepts/`, via `resolve_layout_config` — Karpathy is a layout YAML, not a code fork, ADR-007). If you *already have a finished summary* and want it verbatim, skip the REASON step and use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead. `prepare` shells out to `html`/`pdf` + emits **`known_concepts`** (reuse them — the discipline that stops dangling `[[wikilinks]]`); `apply` files the note + `_concepts/` with the **collision guard** (a generic `defi` never evicts `Defi.md`). (Diagram: `docs/architectures/functional-architecture.md` §2.3.) |
+| **`wiki-extract-concepts`** | The *retroactive* on-ramp. Given a source page already in the index, it extracts the concepts/entities it mentions but that have no page yet — turning implicit knowledge into explicit, linkable pages (each carrying the derived `<!-- BEGIN-AUTO:mentions -->` ledger, regenerated by `wiki-index-render --concept-mentions`, TASK 047). A two-pass `prepare`/`apply` skill (see [below](#the-prepare--apply-contract-decision-17)). Use it to *densify* an existing corpus, or after importing many sources at once — **regardless of how the source page got indexed** (imported or hand-registered). |
 | **`wiki-index-upsert`** | The single-file primitive. Indexes one markdown file idempotently (a file-hash match is a no-op). Use it when you've hand-written, hand-edited, **or dropped in a finished summary from elsewhere** and want the index to reflect it immediately without a full reindex — **no LLM, no raw processing**. |
 | **`wiki-append-log`** | Writes a structured event to `log.md` *and* mirrors it to the `log_events` table atomically (flock + fsync, bi-directional M-2 contract). The log is grep-friendly chronological memory for future agent sessions — git diff is for humans, the log is for the next LLM. |
 
@@ -225,7 +225,7 @@ The everyday read path — **search before you grep**.
 | Command | Why it exists / what it does |
 |---|---|
 | **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing* (the `--tag`/`tags=` listing narrows through the existing `pages_fts.tags` index since TASK 035 — identical results, ~4× faster at scale). It *also* does **temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15". The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
-| **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files). Use it to refresh the human-browsable catalog after ingests. |
+| **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files). With **`--concept-mentions` (TASK 047)** it regenerates each concept page's `<!-- BEGIN-AUTO:mentions -->## Mentions across sources … <!-- END-AUTO:mentions -->` block — a **derived** "which sources mention this concept" ledger, so concept compounding is a rebuildable render, not a body-merge. Use it to refresh the human-browsable catalog after imports. |
 
 ### 3. Resolve entities
 
@@ -322,9 +322,9 @@ convention — they sort to the top and signal "meta-content, not user notes":
 ├── WIKI_SCHEMA.md          # this vault's identity + conventions (REQUIRED — holds vault_id)
 ├── index.md                # read-only catalog projection (## Sources / ## Concepts / ## Entities)
 ├── log.md                  # chronological append-only journal (mirrors log_events)
-├── _sources/               # per-source summary pages         (type=summary)   ← wiki-ingest
-├── _concepts/              # abstract concepts                (entities)        ← wiki-ingest
-├── _entities/              # concrete people/companies/...     (entities)        ← wiki-ingest
+├── _sources/               # per-source summary pages         (type=summary)   ← wiki-import
+├── _concepts/              # abstract concepts                (entities)        ← wiki-import
+├── _entities/              # concrete people/companies/...     (entities)        ← wiki-import
 ├── _queries/               # filed RAG answers                (type=query)      ← wiki-query
 ├── _verifications/         # verdict pages                    (type=verification) ← wiki-verify-multi
 ├── _raw/                   # immutable raw source files (never modified)
@@ -429,7 +429,7 @@ explicitly:
 ```mermaid
 flowchart TD
     Q{"What do you have?"}
-    Q -->|"raw material in a KARPATHY vault<br/>(transcript, notes) — needs summarising"| ENR["wiki-enrich --source &lt;file&gt;<br/>= wiki-ingest LLM-summarises → _sources/ → index"]
+    Q -->|"a LOCAL raw file<br/>(transcript, notes) — needs summarising"| ENR["wiki-import --source &lt;file&gt;<br/>= REASON summarises → note + _concepts/ → index"]
     Q -->|"an EXTERNAL URL / PDF / X-thread / meeting<br/>(any layout)"| IMP["wiki-import: prepare → REASON → apply<br/>= fetch+convert + --kind detect, summarise (fed known_concepts),<br/>→ note + _concepts/ filed PER LAYOUT (config) → index"]
     Q -->|"a FINISHED summary<br/>(already distilled elsewhere)"| REG["1. place it at _sources/&lt;slug&gt;.md (with frontmatter)<br/>2. wiki-index-upsert --source &lt;abs path&gt;<br/>= indexed verbatim, NO LLM, NOT raw"]
     ENR --> IDX["source page is now indexed (type=summary)"]
@@ -447,8 +447,10 @@ flowchart TD
 > **One on-ramp, layout from config (TASK 039/040):** `wiki-import` files PER the vault's
 > resolved layout — Karpathy `_sources/`+root `_concepts/`, PARA topic-folder+sibling
 > `_concepts/` — via `LayoutConfig.write` (no layout-name fork; ADR-007). It feeds the REASON
-> step the vault's `known_concepts` so wikilinks resolve. Legacy Karpathy-raw `wiki-enrich` →
-> `wiki-ingest` still exists. Diagram: `docs/architectures/functional-architecture.md` §2.3.
+> step the vault's `known_concepts` so wikilinks resolve. The old Karpathy-raw `wiki-enrich`
+> and its vendored `wiki-ingest` synthesis layer were retired (TASK 047); `wiki-import` (hand
+> it a local `--source`) is now the single raw on-ramp. Diagram:
+> `docs/architectures/functional-architecture.md` §2.3.
 >
 > **Universal + localized (2026-06 hardening).** The summary is written **in the vault's
 > `language`** (`WIKI_SCHEMA`; English fallback) — headings/labels are localized, never
@@ -459,9 +461,9 @@ flowchart TD
 > Works on all four built-in layouts. Bad input fails with a clean JSON envelope
 > (`INVALID_FOLDER` / `INVALID_VAULT_ROOT` / `FETCH_FAILED`), never a traceback.
 
-`wiki-enrich` is **only** for raw material — it always invokes `wiki-ingest` to
-*summarise*. For a finished summary, skip it entirely and register the page
-directly. The full recipe:
+`wiki-import` runs the REASON step (`summarizing-meetings`) to *distil* whatever
+you hand it — raw file or external source. For a finished summary you want kept
+verbatim, skip that distillation and register the page directly. The full recipe:
 
 **Step 1 — Place the summary in `_sources/` with valid frontmatter.** The karpathy
 layout *requires* a `type:` (it does not synthesise one), and the page needs a
@@ -512,10 +514,10 @@ Inside a Claude Code session, just say *"register the summary at `<path>` into
 `my-vault` (don't re-summarise it), then extract its concepts"* — the agent runs
 the upsert and drives the two-pass `wiki-extract-concepts` flow.
 
-> **Why not just point `wiki-enrich` at it?** `wiki-enrich` would hand your summary
-> to `wiki-ingest` as *raw input* and produce a **summary-of-your-summary** —
+> **Why not just point `wiki-import` at it?** `wiki-import` would treat your summary
+> as *raw input* to the REASON step and produce a **summary-of-your-summary** —
 > double-distilled, with new slugs. Registering directly keeps your text verbatim
-> and canonical. Use `wiki-enrich` only when the LLM *should* do the distillation.
+> and canonical. Use `wiki-import` only when the LLM *should* do the distillation.
 
 ### Custom layouts: the layout engine
 
@@ -828,9 +830,9 @@ Most real personal vaults are *mixed*: the bulk is finished notes you only want 
 raw material there and want the system to `enrich` them into a compounding wiki
 (e.g. a `Webinars/` or a per-course folder under `03 - Learning/`).
 
-**Why this needs two vaults, not one layout.** `wiki-enrich` always produces the
-karpathy page kinds (`_sources/_concepts/_entities/`) — those folder names are fixed
-by the vendored `wiki-ingest`, not configurable — and a personal layout
+**Why this needs two vaults, not one layout.** In a karpathy vault `wiki-import`
+produces the karpathy page kinds (`_sources/_concepts/_entities/`) — those folder
+names come from the resolved layout, not the personal one — and a personal layout
 (`obsidian-personal`) does not index them. So one layout can't serve both halves.
 The clean model is **two registered vaults sharing the one global DB** (exactly what
 multi-vault partitioning is for); search is unified via `--vaults a,b`.
@@ -840,7 +842,7 @@ flowchart TD
     OBS["your Obsidian vault (root)"] --> P["Vault P: personal<br/>layout = obsidian-personal<br/>SEARCH-ONLY"]
     OBS -->|"subtree: 03 - Learning/Courses/**"| L["Vault L: courses<br/>layout = karpathy<br/>ENRICH-able"]
     P -.->|"ignore: 03 - Learning/Courses/**"| X[" "]
-    RAW["transcript / raw material"] -->|"wiki-enrich"| L
+    RAW["transcript / raw material"] -->|"wiki-import --source"| L
     SUMM["ready summary (your Summaries/)"] -->|"wiki-index-upsert (no LLM)"| L
     Q["wiki-search / wiki-query --vaults personal,courses"] --> DB[("one global.db")]
     P --> DB
@@ -880,8 +882,8 @@ every file is indexed exactly once — no double-walk, no duplicate rows.
     └── Courses/                                ← P IGNORES this subtree
         └── AI Hard Fork 2026/                  ← Vault L (karpathy) — its own vault
             ├── _raw/         ← raw drops (transcripts, zoom_chat)
-            ├── _sources/     ← enrich writes summaries here (+ your ready notes → upsert)
-            ├── _concepts/    ← enrich builds concept pages
+            ├── _sources/     ← wiki-import writes summaries here (+ your ready notes → upsert)
+            ├── _concepts/    ← wiki-import builds concept pages
             └── _entities/    ← …and entity pages
 ```
 
@@ -891,8 +893,8 @@ every file is indexed exactly once — no double-walk, no duplicate rows.
   course folder. New course = new folder + one `WIKI_SCHEMA.md (layout: karpathy)`
   + `wiki-init --register-existing`.
 - **One courses vault + course tier** — many courses in one vault_id, each living
-  under `Lessons/<Course>/_sources/…`; enrich routes with
-  `--ingest-arg=--course="AI Hard Fork 2026"`. Less per-course setup when you keep
+  under `Lessons/<Course>/_sources/…`; `wiki-import` routes with
+  `--course="AI Hard Fork 2026"`. Less per-course setup when you keep
   adding courses.
 
 **Recipe (test on a copy first):**
@@ -907,10 +909,10 @@ wiki-init --register-existing --vault personal
 wiki-reindex --full --vault personal
 wiki-search "переговоры с поставщиком" --vaults personal
 
-# --- Vault L: a course (karpathy), enrich-able ---
+# --- Vault L: a course (karpathy), import-able ---
 #  ".../Courses/AI Hard Fork 2026/WIKI_SCHEMA.md":  layout: karpathy
 wiki-init --register-existing --vault ai-hard-fork-2026
-wiki-enrich --vault ai-hard-fork-2026 \
+wiki-import --vault ai-hard-fork-2026 \
     --vault-root "samples/mixed-test/03 - Learning/Courses/AI Hard Fork 2026" \
     --source     ".../zoom_chat_20260224.txt"            # raw → summary + concepts
 wiki-index-upsert --vault ai-hard-fork-2026 \
@@ -924,12 +926,12 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 - **Nested vault roots** (L inside P) are allowed at the DB level (`root_path` is
   UNIQUE); the overlap is removed by P's `ignore`. Verify on a copy before the live
   vault.
-- **enrich creates `_sources/_concepts/_entities/`** in the course folder — expected
+- **`wiki-import` creates `_sources/_concepts/_entities/`** in the course folder — expected
   (that's the system-managed zone). Already-distilled notes (your `Summaries/`) go
-  through `wiki-index-upsert` (see [pre-made summary](#registering-a-pre-made-summary-not-raw)); only new raw goes through `wiki-enrich`.
-- **HTML / office sources**: `wiki-ingest` expects text — convert `.html` to
-  `.txt`/`.md` first.
-- The **personal vault stays untouched** (indexed only); enrich writes solely into
+  through `wiki-index-upsert` (see [pre-made summary](#registering-a-pre-made-summary-not-raw)); only new raw goes through `wiki-import` (hand it a local `--source`).
+- **HTML / office sources**: `wiki-import` handles these natively — its deterministic
+  fetch+convert step turns `.html` / `.pdf` / office docs into text before REASON.
+- The **personal vault stays untouched** (indexed only); `wiki-import` writes solely into
   the course zone.
 
 ---
@@ -939,9 +941,9 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 The two-vault recipe above splits work *by folder*. **`wiki-sync`** (TASK 018 / R-11)
 goes one level finer: point it at a **zone** and it classifies **every file** — by
 extension, by per-note `#wiki/*` tag, and by content shape — then routes each one to
-**convert / ingest / upsert / skip**. Dropping a transcript, a `.docx`, or even a
+**distil (delegate to `wiki-import`) / upsert / skip**. Dropping a transcript, a `.docx`, or even a
 *scanned* PDF into a course folder now "just" becomes compounding wiki pages, without
-hand-invoking `wiki-enrich` / `wiki-index-upsert` per file.
+hand-invoking `wiki-import` / `wiki-index-upsert` per file.
 
 **Two phases (Decision-17 — deterministic plan, orchestrator-owned execution):**
 
@@ -950,16 +952,17 @@ hand-invoking `wiki-enrich` / `wiki-index-upsert` per file.
   **No LLM, no network, no mutation.** `--dry-run` prints a human report of every
   action + reason. This is the part you review before anything is written.
 - **[`workflows/wiki-sync.md`](../../workflows/wiki-sync.md)** — the orchestrator
-  *executor.* Per plan entry it converts / de-timestamps / **H-6-fences** /
-  summarises / enriches / extracts / upserts / skips, then writes a per-file
+  *executor.* Per plan entry it **delegates each distil source to `wiki-import`**
+  (which owns the deterministic fetch+convert / de-timestamp / **H-6-fence** /
+  REASON+file steps) or upserts a ready `.md` / skips, then writes a per-file
   **commit-marker** (`wiki-sync record`) so a re-run is a no-op. (`/wiki-sync`
   drives the whole thing.)
 
 ```mermaid
 flowchart TD
     F["file in the zone"] --> EXT{"extension<br/>(case-folded)"}
-    EXT -->|".docx .xlsx .pptx .pdf"| CONV["convert+ingest<br/>→ _raw/.staging/&lt;slug&gt;-&lt;ext&gt;.md<br/>(scanned PDF → OCR)"]
-    EXT -->|".txt .vtt .srt"| ING["ingest<br/>(.vtt/.srt → de-timestamp first)"]
+    EXT -->|".docx .xlsx .pptx .pdf"| CONV["distil → delegate to wiki-import<br/>(fetch+convert + _raw/.staging/&lt;slug&gt;-&lt;ext&gt;.md,<br/>scanned PDF → OCR)"]
+    EXT -->|".txt .vtt .srt"| ING["distil → delegate to wiki-import<br/>(.vtt/.srt → de-timestamp first)"]
     EXT -->|"image · .canvas · .excalidraw · .base"| SKb["skip (binary / view-artifact)"]
     EXT -->|".md"| TAG{"#wiki tag /<br/>wiki: field?"}
     TAG -->|"skip"| SKt["skip: wiki/skip"]
@@ -983,8 +986,8 @@ flowchart TD
 
 | Extension | Action |
 |---|---|
-| `.docx` `.xlsx` `.pptx` `.pdf` | **convert** → staged `_raw/.staging/<slug>-<ext>.md` (a *non-walked* dir) → **ingest** |
-| `.txt` `.vtt` `.srt` | **ingest** (`.vtt`/`.srt` de-timestamped first) |
+| `.docx` `.xlsx` `.pptx` `.pdf` | **distil** → delegate to `wiki-import` (fetch+convert stages `_raw/.staging/<slug>-<ext>.md`, a *non-walked* dir) |
+| `.txt` `.vtt` `.srt` | **distil** → delegate to `wiki-import` (`.vtt`/`.srt` de-timestamped first) |
 | `.md` | content rules (tags → view → type, below) |
 | images · `.canvas` · `.excalidraw.md` · `.base` · unknown | **skip** (binary / view-artifact / unknown-ext) |
 
@@ -995,7 +998,7 @@ and a `<ns>:` field (`<ns>` = `tag_namespace`, default `wiki`):
 | Tag / signal | Effect |
 |---|---|
 | `#wiki/skip` (or `wiki: skip`) | never index this note |
-| `#wiki/raw` (or the file is under `_raw/`) | treat as **raw** → full ingest (summarise → concepts) |
+| `#wiki/raw` (or the file is under `_raw/`) | treat as **raw** → **distil** (delegate to `wiki-import`: summarise → note + concepts) |
 | `#wiki/keep` | **rescue** a `.md` from an `exclude:` zone (only `keep` rescues — not `raw`) |
 | *(no tag)* | a **mappable `type:`** → `upsert`; otherwise `skip: unmappable-type` |
 
@@ -1022,7 +1025,7 @@ error); an untrusted file is size-capped (256 KiB) + anchor-banned + symlink-ref
 # 1. PLAN — deterministic, writes nothing; review every action + reason
 wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 
-# 2. EXECUTE the plan — the orchestrator recipe (convert/ingest/upsert/skip per file).
+# 2. EXECUTE the plan — the orchestrator recipe (distil via wiki-import / upsert / skip per file).
 #    Invoke /wiki-sync, or follow workflows/wiki-sync.md step by step.
 
 # 3. RE-RUN — every recorded file now reports is_unchanged (a no-op).
@@ -1031,7 +1034,7 @@ wiki-sync scan "courses/AI Hard Fork 2026" --vault ai-hard-fork-2026 --dry-run
 
 **Re-summarization policy — don't re-summarise what's already summarised** (TASK 019,
 opt-in). Add a `resummarize:` block to `.wiki/sync.yaml` and `wiki-sync` will route a raw
-source to **`skip`** instead of `ingest` when a summary for it already exists — so re-running
+source to **`skip`** instead of **distil** when a summary for it already exists — so re-running
 a scan over a course you've already summarised doesn't burn tokens redoing it. "A summary
 exists" is the union of three detectors (cheapest-first): **`source_state`** (this exact raw
 was synced before) ∪ **provenance** (some summary's frontmatter `source:`/`sources:` cites
@@ -1288,8 +1291,8 @@ skill's `SKILL.md`. Quick index:
 | `wiki-search` | FTS5 + metadata search across vaults | [skills/wiki-search](../../skills/wiki-search/SKILL.md) |
 | `wiki-query` | RAG: retrieve → cited synth → file the answer | [skills/wiki-query](../../skills/wiki-query/SKILL.md) |
 | `wiki-verify-multi` | 4-critic audit of a filed answer | [skills/wiki-verify-multi](../../skills/wiki-verify-multi/SKILL.md) |
-| `wiki-sync` | Format-aware dispatcher: `scan` a zone → plan → convert/ingest/upsert/skip (+ scanned-PDF OCR); `record` = commit-marker | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
-| `wiki-enrich` | Ingest a raw source, then index it | [skills/wiki-enrich](../../skills/wiki-enrich/SKILL.md) |
+| `wiki-sync` | Format-aware batch driver: `scan` a zone → plan → distil (delegate to `wiki-import`) / upsert / skip (+ scanned-PDF OCR); `record` = commit-marker | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
+| `wiki-import` | Unified construct on-ramp + per-source engine: fetch+convert → REASON → note + `_concepts/` → index (hand it a URL / doc / transcript, or a local raw `--source`) | [skills/wiki-import](../../skills/wiki-import/SKILL.md) |
 | `wiki-extract-concepts` | Two-pass concept extraction | [skills/wiki-extract-concepts](../../skills/wiki-extract-concepts/SKILL.md) |
 | `wiki-append-log` | Append a structured log event | [skills/wiki-append-log](../../skills/wiki-append-log/SKILL.md) |
 | `wiki-confirm` | Promote/demote a candidate entity | [skills/wiki-confirm](../../skills/wiki-confirm/SKILL.md) |
@@ -1306,9 +1309,9 @@ Contract skills (LLM-side, no CLI; loaded by the orchestrator between
 
 - [`README.md`](../../README.md) — overview, installation, command index.
 - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — the living architecture.
-- [`docs/adr/ADR-001-*`](../adr/ADR-001-wiki-ingest-integration.md) — wrap + index.
+- [`docs/adr/ADR-001-*`](../adr/ADR-001-wiki-ingest-integration.md) — wrap + index (later retired — TASK 047: `wiki-enrich` + the vendored `wiki_ingest` gave way to `wiki-import` as the unified construct path).
 - [`docs/adr/ADR-002-*`](../adr/ADR-002-multi-vault-bottleneck-corrections.md) — multi-vault + Class A/B/C contract.
-- [`docs/WIKI-INGEST-V1.1-CONTRACT.md`](../WIKI-INGEST-V1.1-CONTRACT.md) — the file-layer skill contract.
+- [`docs/WIKI-INGEST-V1.1-CONTRACT.md`](../WIKI-INGEST-V1.1-CONTRACT.md) — the original file-layer skill contract (historical — retired TASK 047; `wiki-import` is the in-repo engine).
 - [`sql/wiki-index-v2.sql`](../../sql/wiki-index-v2.sql) — the schema DDL.
 - [`workflows/`](../../workflows/) — the orchestrator recipes for the `prepare`/`apply` skills.
 </content>

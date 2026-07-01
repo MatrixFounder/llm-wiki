@@ -17,7 +17,7 @@
 #
 # Safe + idempotent: creates a MISSING link, REPAIRS a stale link that already points into
 # THIS repo, and SKIPS (never clobbers) a real file/dir or a link owned by another tool
-# (e.g. ~/.claude/skills/wiki-ingest → the Universal-skills repo). Never deletes data.
+# (e.g. ~/.claude/skills/summarizing-meetings → the Universal-skills repo). Never deletes data.
 #
 # Prereqs: this repo's venv (`python3 -m venv .venv && pip install -r requirements.txt`).
 # After running: ensure `~/.local/bin` is on PATH; then `/wiki-*` + `wiki-* ` work anywhere.
@@ -82,12 +82,40 @@ done
 echo ""
 echo "global install: ${n_new} new, ${n_repaired} repaired, ${n_ok} already-ok, ${n_skip} skipped"
 
+# Pin the resolved EXTERNAL acquire-skill bins (html/pdf/pptx/transcript) into a skills.env that
+# the wiki-* CLIs AUTO-LOAD at startup (no manual sourcing). Resolution is vendor-agnostic and
+# discovers skill dirs across ANY harness — this file just pins the result (fast + editable).
+# Non-fatal: a resolver hiccup must not abort the install.
+echo ""
+echo "external acquire skills (vendor-agnostic resolve):"
+SKILLS_ENV="${XDG_CONFIG_HOME:-$HOME/.config}/obsidian-llm-wiki/skills.env"
+mkdir -p "$(dirname "$SKILLS_ENV")"
+if PYTHONPATH="$REPO" "$REPO/.venv/bin/python" - "$SKILLS_ENV" <<'PY'
+import os, sys
+from pathlib import Path
+from scripts.wiki_skills.wiki_import_article._fetch import resolve_skill_bin, _SKILL_BIN_SPEC
+# Re-discover FRESH: drop any pin auto-loaded from an existing skills.env so a re-install that
+# runs after the operator moved/switched harnesses re-resolves instead of echoing stale paths.
+for _ev, *_rest in _SKILL_BIN_SPEC.values():
+    os.environ.pop(_ev, None)
+lines = ["# wiki-import external acquire-skill bins. Auto-LOADED by the CLIs at startup",
+         "# (no manual sourcing). A value exported in your shell overrides the pin here.\n"]
+for key, (env_var, _dirs, _rel) in _SKILL_BIN_SPEC.items():
+    p = resolve_skill_bin(key)
+    ok = Path(p).exists()
+    print(f"  {'ok ' if ok else 'MISS'}  {env_var}={p}")
+    if ok:
+        lines.append(f'export {env_var}="{p}"')
+Path(sys.argv[1]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+then
+  echo "  → wrote $SKILLS_ENV  (auto-loaded by the wiki-* CLIs; see config/skills.env.example to pin/override)"
+else
+  echo "  ⚠ could not resolve skill bins (non-fatal); the CLIs still auto-scan + accept --*-bin flags"
+fi
+
 # PATH check
 case ":$PATH:" in
   *":$BIN_DIR:"*) echo "✓ $BIN_DIR is on PATH" ;;
   *) echo "⚠ $BIN_DIR is NOT on PATH — add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-
-# wiki-ingest is a SEPARATE skill (not in this repo) that /wiki-enrich needs.
-command -v wiki-ingest >/dev/null 2>&1 || \
-  echo "⚠ \`wiki-ingest\` not on PATH — \`/wiki-enrich\` needs it; see docs/WIKI-INGEST-V1.1-CONTRACT.md."

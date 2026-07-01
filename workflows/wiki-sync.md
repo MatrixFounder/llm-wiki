@@ -166,7 +166,7 @@ TASK 046 P3; default `kind:auto`, `diagrams:false`, `concepts:true`). Run the wi
    Both then short-circuit `is_unchanged` next scan. (An opt-in `resummarize` provenance gate is a
    secondary defence; this capture-marker is the primary, always-on fix.)
 
-> **Why no inline `wiki-enrich`/`summarizing-meetings`/`wiki-extract-concepts` here anymore:** the
+> **Why no inline `summarizing-meetings`/`wiki-extract-concepts` here anymore:** the
 > overlap between `wiki-sync` ingest and `wiki-import` is retired (ARCHITECTURE §2.3.4 / Q-046-1).
 > The classifier's `entry.converter`/`entry.normalize` remain in the plan only as the
 > **detected-format hint**; wiki-import `prepare` re-detects and does the actual conversion.
@@ -200,7 +200,16 @@ Pass `entry.source_hash` from the plan **verbatim**. For a delegated import you 
 wiki-import's capture (`prepare.raw_path`) — else the next scan re-ingests it (Step 4 item 4). A
 partial failure records nothing → the file is re-planned next scan (no half-done state survives).
 
-## Step 5 — Final report
+## Step 5 — Refresh the derived mentions ledger (TASK 047)
+
+After the batch (≥1 delegated import or upsert that changed refs), run once for the vault:
+`wiki-index-render --concept-mentions --vault <id> [--vault-root <abs>] [--db-path …]`. It
+regenerates each concept page's `BEGIN-AUTO:mentions` block (the sources referencing it, from
+`page_entity_refs`) and re-indexes each rewritten page (so no `hash-mismatch` drift). Idempotent
+— skip it only on a fully no-op run. It is part of the Class-B rebuild path
+(`wiki-reindex --full → --concept-mentions`).
+
+## Step 6 — Final report
 
 Emit `plan.summary{}` augmented with the per-entry `result`
 (`done` / `skipped:<reason>` / `unchanged` / `error:<msg>`, plus the delegated-import
@@ -213,7 +222,7 @@ cited by it — skipped`, carry it into the report as an operator action item �
 collapsed onto an already-summarised N:1 key without provenance. The skip is intentional
 (behaviour-preserving), but the operator must decide merge-vs-split per the runbook below.
 
-## Step 6 — Re-summarization curation (merge / split / supersede)
+## Step 7 — Re-summarization curation (merge / split / supersede)
 
 `sources:` (provenance) is the **authoritative** record of which raws back which summary;
 the regex key is only the *default* grouping. Resolve a merge/split WARN with one lever:

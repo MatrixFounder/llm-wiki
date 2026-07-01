@@ -33,13 +33,108 @@ _MAX_PDF_BYTES = 64 * 1024 * 1024  # 64 MiB cap on a downloaded PDF (DoS guard)
 _HTML_TIMEOUT = 180
 _PDF_TIMEOUT = 240
 _OFFICE_TIMEOUT = 240  # TASK 046: LibreOffice headless convert
-# TASK 046: the transcript-fetcher skill (already a dependency via _DEFAULT_TRANSCRIPT) owns the
-# canonical WebVTT de-timestamper; reuse it by path rather than re-implement caption parsing.
-_DEFAULT_VTT_CLEANER = "~/.claude/skills/transcript-fetcher/scripts/sources/_vtt_to_text.py"
-# TASK 046: the office skills ship a HARDENED soffice wrapper (throw-away UserInstallation profile
-# → no "office already running" lock contention, AF_UNIX sandbox shim, soffice-location fallback).
-# Reuse it (ADR-001 "Wrap + Index") rather than re-implement a fragile `soffice --headless` call.
-_DEFAULT_SOFFICE_WRAPPER = "~/.claude/skills/pptx/scripts/_soffice.py"
+# --- Vendor-agnostic external-skill binary resolution (no hardcoded harness list) ----
+# The acquire skills (html/pdf/pptx/transcript-fetcher) are EXTERNAL — installed by the
+# operator's harness into a per-harness skills dir. wiki-import must not assume Claude
+# Code, NOR a fixed roster of harnesses (there are many, and new ones appear). A default
+# bin path resolves via  $WIKI_<BIN> env  →  DISCOVERED skill roots (every `<dotdir>/skills`
+# under $HOME + XDG dirs + $WIKI_SKILLS_DIRS — so claude/pi/codex/hermes/openclaw/… AND
+# future harnesses are found with NO code change)  →  (later, in `require_bin`) PATH  →
+# DEPENDENCY_MISSING. The scan also handles per-skill NAMING (the html skill dir is `html`
+# on Claude but `html2md` on pi). A `--*-bin` flag and $WIKI_<BIN> (installer-populated
+# skills.env) override everything below.
+# key → (env var, candidate skill-dir names [first = canonical], entry path inside the skill)
+_SKILL_BIN_SPEC: dict[str, tuple[str, tuple[str, ...], str]] = {
+    "html":            ("WIKI_HTML_BIN",        ("html", "html2md"),      "scripts/html2md.py"),
+    "pdf_extract":     ("WIKI_PDF_EXTRACT_BIN", ("pdf",),                 "scripts/pdf_extract.py"),
+    "soffice_wrapper": ("WIKI_SOFFICE_WRAPPER", ("pptx",),               "scripts/_soffice.py"),
+    "transcript":      ("WIKI_TRANSCRIPT_BIN",  ("transcript-fetcher",), "scripts/fetch.py"),
+    "vtt_cleaner":     ("WIKI_VTT_CLEANER",     ("transcript-fetcher",), "scripts/sources/_vtt_to_text.py"),
+}
+
+
+def _discover_skill_roots() -> list[Path]:
+    """Discover external-skill root dirs UNIVERSALLY — no hardcoded harness list. Order:
+    explicit ``$WIKI_SKILLS_DIRS`` (os.pathsep-separated) first, then every ``<dotdir>/skills``
+    under ``$HOME`` (any harness — ~/.claude, ~/.pi, ~/.codex, ~/.hermes, ~/.openclaw, …
+    present OR future), then ``*/skills`` under ``$XDG_CONFIG_HOME``/``$XDG_DATA_HOME``.
+    De-duplicated, existing dirs only (glob returns only what is on disk).
+    """
+    roots: dict[str, None] = {}
+    for d in (os.environ.get("WIKI_SKILLS_DIRS") or "").split(os.pathsep):
+        d = d.strip()
+        if d:
+            roots.setdefault(str(Path(d).expanduser()), None)
+    home = Path.home()
+    for p in sorted(home.glob(".*/skills")):
+        roots.setdefault(str(p), None)
+    for base in (os.environ.get("XDG_CONFIG_HOME") or str(home / ".config"),
+                 os.environ.get("XDG_DATA_HOME") or str(home / ".local/share")):
+        bp = Path(base).expanduser()
+        if bp.is_dir():
+            for p in sorted(bp.glob("*/skills")):
+                roots.setdefault(str(p), None)
+    return [Path(r) for r in roots]
+
+
+def resolve_skill_bin(key: str) -> str:
+    """Resolve the default path to an external acquire-skill binary, vendor-agnostically.
+
+    Precedence: ``$WIKI_<BIN>`` env var → first EXISTING match while scanning the DISCOVERED
+    skill roots (× per-skill dir-name candidates, e.g. ``html``/``html2md``) → a best-effort
+    path for a clear ``DEPENDENCY_MISSING`` message. A ``--*-bin`` CLI flag overrides entirely.
+    """
+    env_var, dir_names, rel = _SKILL_BIN_SPEC[key]
+    override = os.environ.get(env_var)
+    if override:
+        return str(Path(override).expanduser())
+    roots = _discover_skill_roots()
+    for root in roots:
+        for dname in dir_names:
+            cand = root / dname / rel
+            if cand.exists():
+                return str(cand)
+    # Nothing on disk → a best-effort default so `require_bin` can emit an actionable error
+    # (absence → PATH miss → DEPENDENCY_MISSING with "install the skill / set $WIKI_<BIN> /
+    # pass --*-bin"): under a discovered root if any exist, else the bare entry name.
+    return str(roots[0] / dir_names[0] / rel) if roots else Path(rel).name
+
+
+def _load_skills_env() -> None:
+    """Auto-load the installer-written env pins so the acquire bins are picked up WITHOUT the
+    operator sourcing anything by hand (this is what makes ``WIKI_*`` "automatic").
+
+    Reads ``$XDG_CONFIG_HOME/obsidian-llm-wiki/skills.env`` (default ``~/.config/…``) and applies
+    each ``WIKI_*`` assignment via ``setdefault`` — so a value already exported in the SHELL always
+    wins over the file. Only ``WIKI_``-prefixed keys are honored (no arbitrary env import); an
+    absent/malformed file is a silent no-op. Precedence end-to-end: ``--flag`` → shell ``$WIKI_*``
+    → this file → harness-dir auto-scan → legacy fallback.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    env_file = Path(base) / "obsidian-llm-wiki" / "skills.env"
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, sep, val = line.partition("=")
+        key = key.strip()
+        if not sep or not key.startswith("WIKI_"):
+            continue
+        os.environ.setdefault(key, val.strip().strip('"').strip("'"))
+
+
+_load_skills_env()  # populate os.environ from skills.env BEFORE the _DEFAULT_* below resolve
+
+# TASK 046: the transcript-fetcher skill owns the canonical WebVTT de-timestamper; reuse it by
+# path. TASK 046: the office skills ship a HARDENED soffice wrapper (throw-away UserInstallation
+# profile, AF_UNIX sandbox shim, soffice-location fallback) — reuse it (ADR-001 "Wrap + Index").
+# TASK 048: both now resolve vendor-agnostically via resolve_skill_bin (single source — no dup).
+_DEFAULT_VTT_CLEANER = resolve_skill_bin("vtt_cleaner")
+_DEFAULT_SOFFICE_WRAPPER = resolve_skill_bin("soffice_wrapper")
 # Browser-like UA: many PDF hosts (CDNs, hubfs, journal sites) reject non-browser
 # agents with 403. Operator-supplied URL — this fetches a document the operator asked
 # for (not detection-evasion); mirrors what the html skill's fetch already sends.

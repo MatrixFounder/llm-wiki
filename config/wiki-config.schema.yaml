@@ -7,10 +7,11 @@ description: >
   requires vault_id per ADR-002 §D1.1) and WikiProjectOverride (per-project
   .wiki.yaml — all fields optional, no vault_id allowed at this scope).
 
-  Phase 3a stub: additionalProperties is permissive (true) for forward-compat
-  with future Phase 3b extensions (transcript, light_summary, wiki-ingest
-  config block). Tightening to additionalProperties:false is part of
-  task-001-13 once config_loader.py is wired.
+  additionalProperties is permissive (true) for forward-compat with the optional
+  extension blocks (transcript, light_summary). (The originally-planned `wiki-ingest`
+  config block was retired in TASK 047 — transcript ingestion converged into `wiki-import`;
+  the transcript/light_summary stubs are kept for config back-compat, exercised by
+  `tests/fixtures/configs/valid-root-config.yaml`.)
 
 $defs:
   # ----------------------------------------------------------------------------
@@ -98,8 +99,10 @@ $defs:
     additionalProperties: true
 
   # ----------------------------------------------------------------------------
-  # TranscriptConfig — Phase 3b (wiki-source-transcript wraps wiki-ingest).
-  # Stubbed here so the schema is forward-compatible; activation in 3b.
+  # TranscriptConfig — optional `transcript:` tuning stub. (The original
+  # "wiki-source-transcript wraps wiki-ingest" design was superseded: transcript
+  # ingestion is handled by `wiki-import` → transcript-fetcher, TASK 044/046.
+  # Kept for config back-compat; a fixture validates against it.)
   # ----------------------------------------------------------------------------
   TranscriptConfig:
     type: object

@@ -5,6 +5,14 @@
 - **Consulted**: VDD adversarial review (`docs/reviews/TASK-vdd-adversarial-2026-05-25*.md`)
 - **Supersedes**: §6.1 "Karpathy-deviation (MVP intentional gap)" in [TASK 002 wiki-mvp](../tasks/task-002-wiki-mvp.md) — obsolete since Phase 3a archived.
 
+> **Superseded (TASK 047, 2026-07-01):** The Option-I wrap+index integration described
+> below — `wiki-enrich` as the raw-source on-ramp over the vendored `wiki_ingest` file
+> layer — was **retired**. `wiki-import` is now the unified construct path (deterministic
+> fetch+convert → `summarizing-meetings` REASON → note + concept pages, config-driven per
+> layout), and the additive concept-compounding that `wiki_ingest` used to provide is now a
+> derived Class-B render (`wiki-index-render --concept-mentions`, TASK 047 P1). This ADR is
+> kept as accepted-then-superseded history; the decision below is no longer live.
+
 ## Context
 
 При планировании MVP TASK.md изначально декомпозировал работу на:

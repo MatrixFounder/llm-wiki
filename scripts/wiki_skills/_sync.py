@@ -393,9 +393,8 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
     """`(frontmatter_dict, body, unparseable)` — never raises (bead 09). A file
     with malformed frontmatter is treated as no-frontmatter (route by path)."""
     # Strip a leading UTF-8 BOM (Windows/office editors prepend it) so the `---`
-    # frontmatter delimiter is recognised — mirrors the indexer's read path
-    # (`wiki_ingest._frontmatter`); without it a valid note is mis-skipped as
-    # `unmappable-type` (critic-logic MED, W-1 fidelity).
+    # frontmatter delimiter is recognised — same BOM-strip the indexer read path does;
+    # without it a valid note is mis-skipped as `unmappable-type` (critic-logic MED, W-1 fidelity).
     if text.startswith("﻿"):
         text = text[1:]
     try:
@@ -450,10 +449,10 @@ def _strip_fenced_blocks(body: str) -> str:
 
 
 def _detect_view(fm: dict[str, Any], body: str, path: Path) -> str | None:
-    """A generated-view sidecar kind, or None. RC-5 decision: we do NOT reuse the
-    vendored `wiki_ingest._classify._count_md_structure` — it is `lru_cache`-keyed
-    by `Path` (process-lifetime), which would return stale structure for a file
-    re-written within one process (e.g. across test/scan re-runs), and it counts
+    """A generated-view sidecar kind, or None. RC-5 decision: we do NOT use an
+    `lru_cache`-keyed-by-`Path` structure counter (process-lifetime), which would
+    return stale structure for a file re-written within one process (e.g. across
+    test/scan re-runs), and it counts
     structure for primary-picking, not view-shape. A small local matcher is used.
     """
     if isinstance(fm, dict) and "database-plugin" in fm:

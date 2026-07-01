@@ -59,6 +59,12 @@
 
 ### 7.4. Vendoring Policy
 
+> **⚠️ Superseded (TASK 047).** The vendored `scripts/wiki_ingest/` module, its `wiki-enrich`
+> on-ramp, and the `scripts/sync_wiki_ingest.sh` snapshot-sync were **retired** — the converged
+> `wiki-import` engine (TASK 046) replaced them, so there is no longer a vendored copy to sync or
+> a drift surface to guard. The policy below is preserved as the historical record of Decision-11/12;
+> it no longer describes a live subsystem.
+
 Snapshot-based vendoring is used for the `wiki_ingest` Python module to eliminate the external PATH dependency (Decision-11). Key policy points:
 
 **Rationale for snapshot over live link:** A snapshot copy (vs git-submodule or pip dependency) minimises install friction for end-users (target: single-step `pip install obsidian-llm-wiki`), avoids network fetches at runtime, and gives the repo a stable import surface. The trade-off is manual sync, which is bounded and operator-controlled.

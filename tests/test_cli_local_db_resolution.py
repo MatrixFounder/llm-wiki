@@ -215,31 +215,9 @@ def test_validate_index_db_value_is_pure(tmp_path, monkeypatch):
     assert validate_index_db_value(str(tmp_path / "abs.db"), vault) == tmp_path / "abs.db"
 
 
-def test_enrich_threads_local_db_path(tmp_path, monkeypatch):
-    """TASK 022 (M-2): wiki-enrich passes the RESOLVED local index_db down to
-    index_from_manifest (not args.db_path=None) → no split-brain (ingest writes local)."""
-    import scripts.wiki_skills.wiki_enrich as we
-    vid = "enrich-loc-vault"
-    root = tmp_path / vid
-    root.mkdir()
-    (root / "WIKI_SCHEMA.md").write_text(
-        f"---\nvault_id: {vid}\nschema_version: '2.0'\nlanguage: en\n"
-        f"layout: karpathy\nindex_db: .wiki/index.db\n---\n", encoding="utf-8")
-    src = root / "note.txt"
-    src.write_text("hello", encoding="utf-8")
-    captured: dict = {}
-    monkeypatch.setattr(we, "_VENDORED_AVAILABLE", True)
-    monkeypatch.setattr(we, "_vendored_ingest",
-                        lambda **k: {"manifest_version": "1.1", "pages": []})
-    monkeypatch.setattr(we, "validate_manifest", lambda *a, **k: None)
-
-    def _fake_ifm(manifest, vault, vault_root, *, db_path):
-        captured["db_path"] = db_path
-        return {"failed": [], "indexed": []}
-    monkeypatch.setattr(we, "index_from_manifest", _fake_ifm)
-
-    we.main(["--source", str(src), "--vault", vid, "--vault-root", str(root)])
-    assert captured["db_path"] == str(root / ".wiki" / "index.db")
+# test_enrich_threads_local_db_path DELETED (TASK 047 P2): `wiki-enrich` + the vendored
+# `wiki_ingest` were retired. Local-index_db threading is still covered for the other CLIs
+# below (wiki-reindex --all-vaults island, wiki-index-upsert, etc.).
 
 
 def test_all_vaults_island(tmp_path):
