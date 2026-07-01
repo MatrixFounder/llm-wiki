@@ -18,8 +18,8 @@ Bi-directional sync between human-readable `log.md` (one per month, under
 - After a manual ingest / cleanup / promotion action that's not already
   logged by another wiki-* CLI.
 - Audit trail entries.
-- Sub-step inside `wiki-enrich` (the `log_event` block from the
-  wiki-ingest manifest is mirrored via this path).
+- Sub-step inside `wiki-import` (the `log_event` block from the
+  concept manifest is mirrored via this path).
 
 ## Invocation
 

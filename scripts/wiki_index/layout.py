@@ -27,21 +27,18 @@ QUERIES_SUBDIR: str = "_queries"
 VERIFICATIONS_SUBDIR: str = "_verifications"
 RAW_SUBDIR: str = "_raw"
 
-# Subdirs shared with the vendored wiki-ingest file-synthesis layer
-# (`scripts/wiki_ingest/_vault.DEFAULT_SUBDIRS`). The vendored ingest module
-# produces ONLY these page kinds (source / concept / entity). These MUST stay
-# byte-identical to the vendored copy — §7.4 Vendoring Policy (upstream-first
-# on any rename); `tests/test_layout_invariants.py` guards the equality.
+# The file-synthesis page-kinds subset (source / concept / entity). Historically
+# this was byte-identical to the vendored wiki-ingest `_vault.DEFAULT_SUBDIRS`
+# (retired in TASK 047); it is now a pure host constant. `test_layout_invariants.py`
+# still guards the host role-split (PAGE_SUBDIRS == shared ∪ host-only).
 INGEST_SHARED_SUBDIRS: tuple[str, ...] = (
     SOURCES_SUBDIR, CONCEPTS_SUBDIR, ENTITIES_SUBDIR,
 )
 
-# Host-only page-bearing subdirs the wiki-ingest synthesis layer does NOT
-# produce. `_queries` (TASK 007 / R-6): RAG answer pages written by
-# `wiki-query`. `_verifications` (TASK 008 / R-8): multi-critic verdict pages
-# written by `wiki-verify-multi`. The vendored ingest snapshot legitimately
-# knows nothing about these (they are not raw-source synthesis output), so they
-# are NOT part of the INGEST_SHARED_SUBDIRS contract.
+# Host-only page-bearing subdirs NOT part of the file-synthesis subset.
+# `_queries` (TASK 007 / R-6): RAG answer pages written by `wiki-query`.
+# `_verifications` (TASK 008 / R-8): multi-critic verdict pages written by
+# `wiki-verify-multi`. They are NOT part of the INGEST_SHARED_SUBDIRS contract.
 #
 # Forward note (ROADMAP R-X1 "universalise layout engine"): the shared-vs-
 # host-only split modelled here is the seam R-X1 will fold into the per-vault

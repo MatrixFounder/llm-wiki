@@ -104,7 +104,7 @@ full-text-wrapped article note for a meeting/lesson.
 ## 🔴 Hard rules (the load-bearing discipline)
 1. **Inject `known_concepts`.** When an entity matches an existing concept, reuse its
    **`name`** verbatim — never mint a variant ("AMM" vs "Автоматический маркет-мейкер").
-   This is the discipline `wiki-ingest` enforces (SKILL.md:34); skipping it is what caused
+   This is the core additive-merge discipline; skipping it is what caused
    the dangling `[[wikilinks]]` + slug collisions in the ad-hoc DAO/#01 imports (TASK 038 §1).
 2. **Verbatim quotes — author body-first, THEN quote.** Produce the prose **in order**:
    (1) finalize the `body` (full/thread) or `summary_bullets`/`tldr` (summary); (2) **then** fill

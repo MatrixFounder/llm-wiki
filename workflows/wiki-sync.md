@@ -166,7 +166,7 @@ TASK 046 P3; default `kind:auto`, `diagrams:false`, `concepts:true`). Run the wi
    Both then short-circuit `is_unchanged` next scan. (An opt-in `resummarize` provenance gate is a
    secondary defence; this capture-marker is the primary, always-on fix.)
 
-> **Why no inline `wiki-enrich`/`summarizing-meetings`/`wiki-extract-concepts` here anymore:** the
+> **Why no inline `summarizing-meetings`/`wiki-extract-concepts` here anymore:** the
 > overlap between `wiki-sync` ingest and `wiki-import` is retired (ARCHITECTURE §2.3.4 / Q-046-1).
 > The classifier's `entry.converter`/`entry.normalize` remain in the plan only as the
 > **detected-format hint**; wiki-import `prepare` re-detects and does the actual conversion.

@@ -49,8 +49,9 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
   `entities[]` but skip filing the `_concepts/` pages (defer to `/wiki-extract-concepts`).
 
 ## When NOT to use
-- Re-index an existing note → `wiki-index-upsert`. The legacy Karpathy-raw on-ramp `wiki-enrich`
-  → `wiki-ingest` still exists (external); `wiki-import` is the config-driven successor.
+- Re-index an existing note → `wiki-index-upsert`. `wiki-import` is THE construct path; the
+  legacy `wiki-enrich` → vendored `wiki-ingest` on-ramp was retired (TASK 047) and the additive
+  concept-compounding it provided is now a derived Class-B render (`wiki-index-render --concept-mentions`).
 
 ## The loop (prepare → REASON → apply)
 
@@ -156,7 +157,7 @@ translation into the target language; **summary** = thorough digest (`body` null
 > existing concept's `name`** whenever an entity matches one — do NOT mint a new variant
 > ("AMM" vs "Автоматический маркет-мейкер"). The list is **already in the `prepare` envelope** —
 > match against it in-context; don't run a separate command to enumerate the vault's concepts.
-> This is the exact discipline `wiki-ingest` enforces (SKILL.md:34). Skipping it is what produced
+> This is the core additive-merge discipline. Skipping it is what produced
 > dangling `[[wikilinks]]` and slug collisions in the ad-hoc DAO/#01 imports. Each
 > `entities[].quote` MUST be copied **verbatim** from the target-language text you produce —
 > **author the body first, then copy quotes out of it** (never quote the raw source).
@@ -233,4 +234,4 @@ write contention).
 ## Related
 - [`references/reason-contract.md`](references/reason-contract.md) — the canonical REASON-step contract (schema + depth + hard rules)
 - `docs/TASK.md` (TASK 039 — unified path) + `docs/tasks/task-038-…` (origin) · ARCHITECTURE §2.3 · open-questions §11d/§11e
-- `wiki-enrich` (Karpathy analog) · `wiki-extract-concepts` (concept filing) · `wiki-index-upsert`
+- `wiki-extract-concepts` (concept filing) · `wiki-index-upsert` (re-index) · `wiki-index-render --concept-mentions` (derived concept compounding)

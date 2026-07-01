@@ -17,8 +17,8 @@ content harness) is yours, the orchestrator. **No `import anthropic`.**
 
 ## Prerequisites
 - Vault registered (`/wiki-init --register-existing`). **Any layout** — the filing target is
-  read from config; you do not choose Karpathy-vs-PARA here. (Legacy Karpathy-raw `wiki-enrich`
-  still exists but `wiki-import` is the config-driven successor.)
+  read from config; you do not choose Karpathy-vs-PARA here. (`wiki-import` is THE construct
+  path; the legacy Karpathy-raw `wiki-enrich` on-ramp was retired in TASK 047.)
 - `html` + `pdf` skills installed (`~/.claude/skills/{html,pdf}/scripts/…`); override
   with `--html-bin` / `--pdf-extract-bin`.
 

@@ -1,9 +1,10 @@
 """Neutral manifest-consumer module — sub-layer below the skills tier.
 
 Created by TASK 003 / I-7.0 to break cross-skill coupling (Decision-16).
-Both ``wiki_enrich.py`` (back-compat re-export) and ``wiki_extract_concepts.py``
-(new in TASK 003 v2) import from this module so no skill depends on another
-skill at IMPORT TIME for v1.1 manifest validation and SQLite-index mirroring.
+``wiki_extract_concepts.py`` imports from this module (via ``wiki-index-upsert``'s
+``upsert_one``) so no skill depends on another skill at IMPORT TIME for manifest
+validation and SQLite-index mirroring. (Historically ``wiki_enrich.py`` also imported
+it; that on-ramp was retired in TASK 047.)
 TASK 015 / R-015-2 (H-PERF-3 + P-8): ``index_from_manifest`` now imports
 ``upsert_one`` at module load and accepts an optional ``repo`` parameter.
 When provided, the caller's connection is reused (no new open/close cycle).
@@ -14,12 +15,11 @@ Public surface (the "integration contract"):
     - index_from_manifest() — mirror manifest.written[] into SQLite +
                               insert manifest.log_event row
 
-Function bodies moved verbatim from ``scripts.wiki_skills.wiki_enrich`` in
-the TASK 003 I-7.0 refactor (Decision-16). The only semantic difference is
-the rename ``_validate_manifest`` → ``validate_manifest`` (no leading
-underscore — promoted to public). ``wiki_enrich.py`` preserves
-``_validate_manifest = validate_manifest`` as a back-compat alias for one
-release cycle.
+Function bodies originated in the ``wiki_enrich`` bridge (retired in TASK 047),
+extracted here in the TASK 003 I-7.0 refactor (Decision-16); the only semantic
+difference was the rename ``_validate_manifest`` → ``validate_manifest`` (promoted
+to public). The module is retained: `wiki-extract-concepts --ingest` still mirrors a
+concept manifest into the index through it.
 """
 from __future__ import annotations
 

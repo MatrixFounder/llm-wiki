@@ -30,7 +30,7 @@
       "name": "genuinely-absent-no-hallucination",
       "setup": "Same vault. No page mentions 'квантовая криптография' in any spelling/inflection — so even the default stemmed+folded query returns nothing.",
       "prompt": "what does my wiki say about квантовой криптографии?",
-      "expected_behavior": "The default (stemmed `квантов*`/`криптограф*`) search is already broad and still returns empty; the agent states plainly that no page in the wiki matches the term and offers `/wiki-enrich` to add a source.",
+      "expected_behavior": "The default (stemmed `квантов*`/`криптограф*`) search is already broad and still returns empty; the agent states plainly that no page in the wiki matches the term and offers `/wiki-import` to add a source.",
       "must_not": [
         "fabricate a definition or any domain fact about the term",
         "present an ungrounded answer as if it came from the vault"

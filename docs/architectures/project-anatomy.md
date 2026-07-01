@@ -2,8 +2,15 @@
 
 > Part of [docs/ARCHITECTURE.md](../ARCHITECTURE.md).
 
+> **Superseded (TASK 047):** the `wiki-enrich` ↔ vendored `wiki-ingest` integration flow
+> (§1.5.2 / §1.5.3 / §1.5.7 below — the in-process/subprocess two-path design, the
+> dual-existence + vendored-snapshot layout, the sync policy, the `WIKI_ENRICH_NO_VENDORED`
+> branch) was **retired**: `wiki-enrich` + `scripts/wiki_ingest/` were deleted, `wiki-import` is
+> the in-repo construct engine, and concept-page compounding is a derived Class-B render
+> (`wiki-index-render --concept-mentions`). Those subsections are kept as history — read them as
+> "how it used to work," not the current repo.
 
-This section maps **where things live** in the repository, the symlink graph through which Claude Code resolves a slash command into a Python entry point, and how this repo's anatomy compares to the external `wiki-ingest` skill it integrates with. Lives here so subagents and operators don't have to reconstruct the layout from `ls` walks.
+This section maps **where things live** in the repository and the symlink graph through which Claude Code resolves a slash command into a Python entry point. Lives here so subagents and operators don't have to reconstruct the layout from `ls` walks.
 
 ### 1.5.1. Anatomy of one in-repo skill (template, shown via `/wiki-search`)
 

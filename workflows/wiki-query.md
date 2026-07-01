@@ -12,7 +12,7 @@ reasoning in its own context window via the `wiki-query-synthesis` prompt skill.
 ## Prerequisites
 
 - The repo's `bin/` is on `PATH` (so `wiki-query` resolves — `bin/install-globally.sh`).
-- Vault registered + indexed (`wiki-init` + `wiki-reindex`/`wiki-enrich`).
+- Vault registered + indexed (`wiki-init` + `wiki-reindex`/`wiki-import`).
 - The `wiki-query-synthesis` skill is loadable.
 
 ## Steps

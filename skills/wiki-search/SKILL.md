@@ -132,7 +132,7 @@ path:
 **Grounding (MANDATORY — core-principles).** An answer about the vault's content MUST
 be grounded in pages you actually retrieved (cite the `slug`). If, after broadening,
 retrieval is genuinely empty, say so plainly — *"no page in the wiki matches `<term>`"*
-— and offer `/wiki-enrich` to add a source. **NEVER invent a definition/expansion of an
+— and offer `/wiki-import` to add a source. **NEVER invent a definition/expansion of an
 unknown term** (e.g. guessing what an acronym "probably" stands for). A fabricated answer
 is worse than "not found": it silently defeats the whole point of a compounding wiki.
 

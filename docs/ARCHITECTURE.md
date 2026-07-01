@@ -61,7 +61,13 @@
 
 ## 1.5. Project Anatomy
 
-Where things live in the repo: anatomy of one in-repo skill (template + symlink graph), `wiki-enrich` ↔ `wiki-ingest` integration flow (primary in-process path + subprocess fallback), dual-existence of `wiki-ingest` (Universal-skills standalone + this repo's vendored snapshot), and the vendored module's directory layout / sync policy / public API.
+Where things live in the repo: anatomy of one in-repo skill (template + symlink graph) and how the CLIs, DAL, and layout engine compose.
+
+> **Superseded (TASK 047):** the `wiki-enrich` ↔ vendored `wiki-ingest` integration flow (the
+> primary in-process path + subprocess fallback + the vendored-snapshot layout / sync policy)
+> described in the linked body was **retired** — `wiki-import` is the in-repo construct engine and
+> concept-page compounding is a derived Class-B render (`wiki-index-render --concept-mentions`).
+> Those §1.5.2/§1.5.3/§1.5.7 subsections are kept as accepted-then-superseded history.
 
 → [details](./architectures/project-anatomy.md)
 

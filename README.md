@@ -17,8 +17,8 @@ from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 > batch **driver** that delegates to it). The unified on-ramp **`wiki-import`**
 > is hardened across **all four built-in layouts** and **language-agnostic** (output
 > follows the vault's `language`; English fallback) — validated by a 14-round adversarial
-> `/vdd-multi`. Schema **v7** (`user_version = 7`). **1793 pytest passed / 5 skipped,
-> `mypy --strict` clean on 84 source files.** The repo's own `docs/` is
+> `/vdd-multi`. Schema **v7** (`user_version = 7`). **pytest suite green / 5 skipped,
+> `mypy --strict` clean on 60 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -36,8 +36,7 @@ from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
   - [B. Install for development of this repo](#b-install-for-development-of-this-repo)
 - [Quick start: put a vault under the index](#quick-start-put-a-vault-under-the-index)
 - [The `prepare` / `apply` pattern (agent-driven skills)](#the-prepare--apply-pattern-agent-driven-skills)
-- [CLI reference — all 18 commands](#cli-reference--all-18-commands)
-- [External dependency: `wiki-ingest`](#external-dependency-wiki-ingest)
+- [CLI reference — all 17 commands](#cli-reference--all-17-commands)
 - [Repo layout](#repo-layout)
 - [Development](#development)
 - [Pointers](#pointers)
@@ -80,29 +79,30 @@ will clobber.
 Two ADRs define the shape:
 
 - **ADR-001** ([Option I — wrap + index](docs/adr/ADR-001-wiki-ingest-integration.md)):
-  the **file layer** (LLM-driven page synthesis) is owned by an external skill,
-  `wiki-ingest`; **this repo owns the index layer** — it reads that skill's output
-  and serves fast queries. (As of TASK 004 `wiki-ingest` is *vendored* in-process,
-  so no external install is required — see [below](#external-dependency-wiki-ingest).)
+  *originally* the **file layer** (LLM page synthesis) lived in an external `wiki-ingest`
+  skill wrapped by `wiki-enrich`; this repo owned the index layer. **Superseded (TASK 047):**
+  the construct path is now the in-repo **`wiki-import`** engine (fetch+convert → REASON →
+  file + index + concepts), and concept-page compounding is a derived Class-B render — the
+  vendored `wiki_ingest` + `wiki-enrich` were retired.
 - **ADR-002** ([multi-vault + data layering](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)):
   one global SQLite DB partitioned by `vault_id`, with a three-class data contract.
 
 ```
                       Operator / Claude agent
                               │
+                    wiki-import   (the construct engine)
+        fetch+convert → REASON (summarizing-meetings) → apply
+                              │
           ┌───────────────────┴───────────────────┐
           ▼ FILE LAYER (Class A)                   ▼ INDEX LAYER (Class B/C)
-   wiki-ingest (vendored)                     this repo
-   concept/entity synthesis,                  IndexRepository DAL
-   additive merge, log.md                     SQLite + FTS5 + WAL
-          │                                          │
-          ▼  writes canonical markdown                ▼  reads / writes rebuildable cache
-   _sources/  _concepts/  _entities/          pages · entities · aliases · refs · log_events
-   index.md   log.md   WIKI_SCHEMA.md                │
-          │                                          │
-          └──── manifest JSON ──► wiki-enrich ───────┘
-                                       │
-                       wiki-search · wiki-query · wiki-lint · …
+   canonical markdown                         IndexRepository DAL
+   _sources/  _concepts/  _entities/          SQLite + FTS5 + WAL
+   (concept pages carry a DERIVED             pages · entities · aliases · refs · log_events
+    BEGIN-AUTO:mentions ledger, TASK 047)             │
+          │                                           │
+          └──── wiki-index-upsert / wiki-reindex ─────┘
+                              │
+              wiki-search · wiki-query · wiki-graph · wiki-lint · …
 ```
 
 The code is split into clean layers under `scripts/`:
@@ -111,9 +111,8 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 18 thin entry points (16 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` and `wiki_import_article/` packages — the latter is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
+| **CLIs** | `scripts/wiki_skills/` | 17 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` and `wiki_import_article/` packages — the latter is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
-| **Vendored file layer** | `scripts/wiki_ingest/` | In-process snapshot of the external `wiki-ingest` skill (TASK 004). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
 | **Skills / commands / workflows** | `skills/`, `commands/`, `workflows/` | Canonical definitions, symlinked into `.claude/` and `.agent/` for vendor compatibility. |
 
@@ -233,12 +232,11 @@ pip install -r requirements.txt
 # 3. Symlink wrappers, skills, and commands into user-global Claude Code dirs
 bash bin/install-globally.sh
 
-# Done — /wiki-enrich works in-process via the vendored wiki_ingest module.
-# (Optional: install upstream wiki-ingest to enable the subprocess fallback.)
+# Done — all 17 wiki-* CLIs are on PATH + linked as /wiki-* slash commands.
 ```
 
 `bin/install-globally.sh` is **safe + idempotent** — it creates what's missing, repairs its own
-stale symlinks, **never clobbers a foreign link** (e.g. a `wiki-ingest` from another repo), and
+stale symlinks, **never clobbers a foreign link** (e.g. a `summarizing-meetings` from another repo), and
 prints a per-item report. It links every:
 
 | Source | Target |
@@ -269,8 +267,7 @@ bash bin/install-project-symlinks.sh         # repo-local wiki-* skills
 
 # 3. Run tests + type-check
 pytest tests/           # full suite green (~32s; see the status block for the current count)
-mypy --strict scripts/  # clean on 84 source files (vendored package excluded
-                        # via mypy.ini override per Decision-14)
+mypy --strict scripts/  # clean on 60 source files (the contract for scripts/)
 ```
 
 Optionally also run `bin/install-globally.sh` to dogfood the wrappers from other
@@ -385,7 +382,7 @@ inside Claude Code, the agent drives all three steps for you.
 
 ---
 
-## CLI reference — all 18 commands
+## CLI reference — all 17 commands
 
 Each command has a `SKILL.md` under [`skills/`](skills/) with the full contract,
 exit codes, and JSON-envelope schema, plus a slash-command wrapper under
@@ -434,7 +431,6 @@ binaries.
 |---|---|
 | `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file; `#wiki/raw\|skip\|keep` tags; generated-view sidecars auto-skipped). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it as a pure **batch DRIVER** (TASK 046): each distil entry carries a `delegate` and is handed to **`wiki-import`** (which owns convert + de-timestamp + REASON + file + index + concepts) — there is no inline summarise/enrich/extract/convert; ready notes → `wiki-index-upsert`. A per-folder `.wiki/sync.yaml` `summarize:` block (profile/diagrams/extract_concepts/target_subdir) drives the delegate knobs; per-file idempotency via a dual `wiki-sync record` commit-marker. A **re-summarization policy** (TASK 019, opt-in `resummarize:` in `.wiki/sync.yaml`, per-folder overridable) skips a raw source whose summary already exists (`source_state` ∪ provenance ∪ filesystem mirror) unless `--force`; a new raw sharing an already-summarised N:1 key is skipped + a **merge/split WARN** (TASK 021) names the levers (`--force` to merge / finer key to split). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
 | `wiki-import prepare/apply … [--kind auto]` | The **unified external-source on-ramp** (any layout) and the per-source **engine**: deterministic fetch+convert of a URL/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/X-thread/transcript → hand the orchestrator the cleaned text + the vault's `known_concepts` for a REASON step (the `summarizing-meetings` harness) → file a note + its `_concepts/` per the resolved layout's **write-grammar** (config-driven, [ADR-007](docs/adr/ADR-007-config-driven-write-grammar.md)). **Grammar by `--kind`** (meeting/lesson → a pyramid digest; article/paper/thread → the article wrapper); modifiers `--diagrams` (selective mermaid) + `--no-concepts` (defer concept filing). Content-type (`--kind`) and layout (config) are orthogonal. `wiki-import-article` is a back-compat alias. |
-| `wiki-enrich --vault <vid> --source <file>` | Legacy Karpathy raw-file bridge: invoke (vendored) `wiki-ingest` on a raw source, then mirror its manifest into the index. |
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
 
@@ -467,34 +463,18 @@ files+SQLite can't reach — and keep the index coherent after.*
 
 ---
 
-## External dependency: `wiki-ingest`
+## Decision-17: no `import anthropic`
 
-**Optional since TASK 004.** `wiki-enrich` composes with the `wiki-ingest` skill (v1.1+), which owns the
-LLM-driven file layer (page synthesis, additive merge, `log.md` append,
-contradiction detection). Since TASK 004 that module is **vendored** into
-`scripts/wiki_ingest/` and called in-process by default — **no external install
-required** for normal operation. Two paths:
+The LLM-shaped skills (`wiki-query`, `wiki-verify-multi`, `wiki-extract-concepts`,
+`wiki-import`, `wiki-sync`) carry **no `import anthropic`**: their Python halves are
+deterministic `prepare`/`apply`, and the **calling orchestrator owns the reasoning step** —
+there is no `ANTHROPIC_API_KEY` to set. Every other CLI (`wiki-search`, `wiki-lint`,
+`wiki-reindex`, …) is self-contained. `wiki-extract-concepts`'s `--ingest` auto-dispatch uses
+the neutral `_manifest_consumer` module in-process.
 
-- **Primary (default):** in-process call into the vendored `scripts.wiki_ingest`
-  package. No subprocess, no `PATH` dependency. Active when the vendored import
-  succeeds and `WIKI_ENRICH_NO_VENDORED` is unset.
-- **Fallback (subprocess):** legacy path via a `wiki-ingest` binary on `PATH`.
-  Active when the vendored import fails, or `WIKI_ENRICH_NO_VENDORED=1` is set
-  (escape hatch for debugging/comparison/standalone users).
-
-Provenance + sync workflow:
-[`scripts/wiki_ingest/VENDORED_FROM.md`](scripts/wiki_ingest/VENDORED_FROM.md);
-refresh via `bash scripts/sync_wiki_ingest.sh [--dry-run]`. Contract:
-[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md). License
-notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Other CLIs (`wiki-search`, `wiki-lint`, `wiki-reindex`, …) are self-contained and
-need no `wiki-ingest`. The LLM-shaped skills (`wiki-query`, `wiki-verify-multi`,
-`wiki-extract-concepts`, `wiki-import`, `wiki-sync`) carry **no `import anthropic`**
-(Decision-17): the Python halves are deterministic `prepare`/`apply`, and the **calling
-orchestrator owns the reasoning step** — there is no `ANTHROPIC_API_KEY` to set.
-`wiki-extract-concepts`'s `--ingest` auto-dispatch uses the neutral `_manifest_consumer`
-module in-process.
+(TASK 047 retired the last external-file-layer dependency: `wiki-enrich` + the vendored
+`wiki_ingest` are gone — `wiki-import` is the in-repo construct engine and concept-page
+compounding is a derived Class-B render, `wiki-index-render --concept-mentions`.)
 
 ---
 
@@ -513,11 +493,9 @@ scripts/
   wiki_index/               DAL: repository, sqlite_repository, lint, reindex, rendering,
                             normalization, security, layout, layout_config, sync_config
   wiki_index/layouts/       karpathy.yaml, dev-project.yaml, obsidian-personal.yaml, cybos.yaml
-  wiki_skills/              18 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
+  wiki_skills/              17 CLI entry points + _sync/_common/_retrieval/_manifest_consumer
   wiki_source/              source adapters (base, manual, parsing)
-  wiki_ingest/              vendored file layer (snapshot of external wiki-ingest)
   benchmark.py              synthetic-vault SLO harness
-  sync_wiki_ingest.sh       refresh the vendored snapshot
 
 skills/                     canonical SKILL.md dirs (wiki-* + concept-extraction + obsidian-cli)
 commands/wiki-*.md          slash-command wrappers (Claude Code; one per CLI)
@@ -536,7 +514,7 @@ samples/                    gitignored scratch tree for dogfooding vaults
 ```bash
 source .venv/bin/activate
 pytest tests/           # 1630+ passed (see the status block / git log for the current count)
-mypy --strict scripts/  # clean on 84 source files (the contract for scripts/)
+mypy --strict scripts/  # clean on 60 source files (the contract for scripts/)
 
 # Performance SLO gate (TASK 030 / Q-030-1) — run before shipping indexer hot-path changes:
 WIKI_BENCH_SLO=1 pytest tests/test_benchmark_slo_gate.py   # n=1000, enforced
@@ -572,7 +550,6 @@ Conventions:
 - **[docs/tasks/](docs/tasks/)** + **[docs/plans/](docs/plans/)** — archived task/plan specs (lockstep).
 - **[docs/adr/ADR-001-wiki-ingest-integration.md](docs/adr/ADR-001-wiki-ingest-integration.md)** — Option I (wrap + index).
 - **[docs/adr/ADR-002-multi-vault-bottleneck-corrections.md](docs/adr/ADR-002-multi-vault-bottleneck-corrections.md)** — `vault_id` partitioning + Class A/B/C contract.
-- **[docs/WIKI-INGEST-V1.1-CONTRACT.md](docs/WIKI-INGEST-V1.1-CONTRACT.md)** — external `wiki-ingest` skill contract.
 - **[sql/wiki-index-v2.sql](sql/wiki-index-v2.sql)** — the schema DDL.
 - **[scripts/wiki_index/layout.py](scripts/wiki_index/layout.py)** — single source of truth for the `karpathy` layout constants.
 - **[CLAUDE.md](CLAUDE.md)** — project agent instructions + the full per-task ship log.
@@ -598,11 +575,9 @@ The code **in this repository** is **dual-licensed** — see
 > skills, some of which are under PROPRIETARY (closed-source) licenses.** Those
 > skills are **not** vendored here and are **not** covered by this repo's ELv2
 > grant — they are installed and invoked separately, and their own license terms
-> apply. Without them, parts of the construct/REASON pipeline (e.g. `wiki-import`,
-> `wiki-enrich`) are not fully operational. Notices for the vendored `wiki-ingest`
-> (Apache-2.0, an independent component that keeps its own license) and the
-> proprietary/external skill set (`summarizing-meetings`, `transcript-fetcher`,
-> `html`, `pdf`, `docx`, …) are in
+> apply. Without them, parts of the construct/REASON pipeline (e.g. `wiki-import`)
+> are not fully operational. Notices for the proprietary/external skill set
+> (`summarizing-meetings`, `transcript-fetcher`, `html`, `pdf`, `docx`, …) are in
 > [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Consult each skill's license
 > before redistribution or commercial use.
 

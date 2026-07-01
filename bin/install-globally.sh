@@ -17,7 +17,7 @@
 #
 # Safe + idempotent: creates a MISSING link, REPAIRS a stale link that already points into
 # THIS repo, and SKIPS (never clobbers) a real file/dir or a link owned by another tool
-# (e.g. ~/.claude/skills/wiki-ingest → the Universal-skills repo). Never deletes data.
+# (e.g. ~/.claude/skills/summarizing-meetings → the Universal-skills repo). Never deletes data.
 #
 # Prereqs: this repo's venv (`python3 -m venv .venv && pip install -r requirements.txt`).
 # After running: ensure `~/.local/bin` is on PATH; then `/wiki-*` + `wiki-* ` work anywhere.
@@ -87,7 +87,3 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) echo "✓ $BIN_DIR is on PATH" ;;
   *) echo "⚠ $BIN_DIR is NOT on PATH — add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-
-# wiki-ingest is a SEPARATE skill (not in this repo) that /wiki-enrich needs.
-command -v wiki-ingest >/dev/null 2>&1 || \
-  echo "⚠ \`wiki-ingest\` not on PATH — \`/wiki-enrich\` needs it; see docs/WIKI-INGEST-V1.1-CONTRACT.md."

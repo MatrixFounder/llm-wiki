@@ -5,7 +5,7 @@ description: >-
   Deterministic concept-extraction skill (v3.1). Two subcommands —
   `prepare` (recon + idempotency check) and `apply` (consume operator-
   synthesised candidates JSON; write _concepts/<slug>.md pages, upsert
-  entity rows, emit a wiki-ingest v1.1 manifest, optionally dispatch
+  entity rows, emit a concept manifest, optionally dispatch
   in-process via --ingest). The orchestrator owns the synthesis step
   (Decision-17): there is no `import anthropic` in this skill.
   Triggers: "extract concepts from", "populate entity layer for".
@@ -187,8 +187,9 @@ echo "$CANDIDATES" | wiki-extract-concepts apply \
   `scripts.wiki_skills._manifest_consumer` and calls them directly.
   No subprocess.
 - **Decision-16** (preserved): the neutral module exists so this skill
-  does not depend on `wiki_enrich` (which would have been a
-  skill-to-skill coupling smell).
+  never coupled directly to the raw-source on-ramp (which would have been a
+  skill-to-skill coupling smell). That on-ramp (`wiki-enrich`) was retired in
+  TASK 047; the neutral `_manifest_consumer` module stands on its own.
 - **Decision-17** (NEW in v3.1): the synthesis step lives outside the
   Python skill. The orchestrator runs `prepare`, loads the
   `concept-extraction` skill into its own context, reads the source
@@ -229,6 +230,5 @@ Decision-17 reversed.
 - [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) §2.1 Concept Extractor + §3.4 UC-08 sequence
 - [`docs/adr/ADR-001-wiki-ingest-integration.md`](../../docs/adr/ADR-001-wiki-ingest-integration.md) — Option I (clarified by Decision-8)
 - [`docs/adr/ADR-002-multi-vault-bottleneck-corrections.md`](../../docs/adr/ADR-002-multi-vault-bottleneck-corrections.md) — Class A/B/C layering
-- [`docs/WIKI-INGEST-V1.1-CONTRACT.md`](../../docs/WIKI-INGEST-V1.1-CONTRACT.md) — manifest schema this skill emits
-- `wiki-enrich` — the bridge skill for raw-source ingestion (different layer)
+- `wiki-import` — the unified construct path that authors + files concepts on import (different layer)
 - `wiki-search` — query the resulting entity layer via FTS5
