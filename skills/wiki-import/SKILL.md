@@ -222,8 +222,10 @@ write contention).
   frontmatter scalars are newline/control-stripped + quoted (H-6 frontmatter-injection
   guard); the note body is orchestrator-authored markdown (kept structural); concept pages
   are markdown-sanitized by `wiki-extract-concepts`.
-- `html`/`pdf`/`transcript-fetcher` are external skill **binaries**
-  (`--html-bin`/`--pdf-extract-bin`/`--transcript-bin`, fail-fast if absent) — not Python deps.
+- `html`/`pdf`/`transcript-fetcher`/office are external skill **binaries**, not Python deps.
+  You rarely pass them: each is **auto-resolved** across the harness's skill dir (works on Claude
+  Code, pi, codex, … alike). Pass `--html-bin`/`--pdf-extract-bin`/`--transcript-bin`/`--soffice-wrapper`
+  only to point at a non-standard install; a truly missing skill fails fast (exit 6) with remediation.
 - **Untrusted-content egress bound (H-6):** `--embedded-videos` discovers embed URLs from an
   untrusted page body, but only **allowlisted video hosts** (youtube/vimeo) are ever fetched — a
   page cannot drive a fetch to an arbitrary host; ad-network embeds are denylisted; the raw-HTML

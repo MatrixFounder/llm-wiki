@@ -61,7 +61,12 @@ from ._authoring import (
 )
 from ._detect import KINDS, detect_kind, harness_for
 from ._errors import EXIT_BAD_ARG, EXIT_DEP_MISSING, EXIT_FETCH_FAILED, ImportArticleError
-from ._fetch import _parse_frontmatter, dispatch_fetch, ensure_source_frontmatter
+from ._fetch import (
+    _parse_frontmatter,
+    dispatch_fetch,
+    ensure_source_frontmatter,
+    resolve_skill_bin,
+)
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
 _KIND_NOTE_TYPE = {
@@ -92,12 +97,14 @@ _LOSSY_SKIP_REASONS = frozenset(_LOSSY_DROP_HINTS)
 
 __version__ = "1.0"
 
-_DEFAULT_HTML = "~/.claude/skills/html/scripts/html2md.py"  # `html` skill; html2md.py is the combined URL→md command
-_DEFAULT_PDF_EXTRACT = "~/.claude/skills/pdf/scripts/pdf_extract.py"
-# TASK 046: office→text reuses the office skills' hardened soffice wrapper (throw-away profile +
-# sandbox shim + location fallback), imported by path — not a bare `soffice` bin.
-_DEFAULT_SOFFICE_WRAPPER = "~/.claude/skills/pptx/scripts/_soffice.py"
-_DEFAULT_TRANSCRIPT = "~/.claude/skills/transcript-fetcher/scripts/fetch.py"  # TASK 044 (Q-044-1); absent → exit 6
+# TASK 048: the acquire-skill bin defaults resolve VENDOR-AGNOSTICALLY (env var → harness-dir
+# scan → legacy ~/.claude fallback) via resolve_skill_bin — so a pi/codex/hermes-only operator
+# (no ~/.claude, and whose html skill is named `html2md`) works out of the box. A `--*-bin` flag
+# still overrides. Single source of truth in _fetch.py (no per-file hardcode duplication).
+_DEFAULT_HTML = resolve_skill_bin("html")            # `html` skill; html2md.py is the URL→md command
+_DEFAULT_PDF_EXTRACT = resolve_skill_bin("pdf_extract")
+_DEFAULT_SOFFICE_WRAPPER = resolve_skill_bin("soffice_wrapper")  # office→text (docx/pptx/xlsx)
+_DEFAULT_TRANSCRIPT = resolve_skill_bin("transcript")  # TASK 044 (Q-044-1); absent → exit 6
 _EXT_RE = re.compile(r"\.(md|markdown|txt|html?|pdf|aspx?)$", re.IGNORECASE)
 # MINTING strategy for NEW slugs (the _raw filename + concept candidates): always a valid
 # lowercase-kebab slug, decoupled from the vault's layout `slug_strategy` (karpathy's
@@ -753,7 +760,8 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
     pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
-                    help="path to the `html` skill combined command (default: the deployed symlink)")
+                    help=f"path to the `html` skill's combined URL→md command, run via python3 "
+                         f"(default: {_DEFAULT_HTML})")
     pp.add_argument("--pdf-extract-bin", default=_DEFAULT_PDF_EXTRACT)
     pp.add_argument("--soffice-wrapper", dest="soffice_wrapper", default=_DEFAULT_SOFFICE_WRAPPER,
                     help="Path to the office skills' soffice wrapper (office→text for docx/pptx/xlsx)")

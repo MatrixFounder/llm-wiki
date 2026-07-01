@@ -7,18 +7,22 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 046**
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 047**
 > (typed knowledge classes + event graph [`wiki-graph`, graph-aware RAG], the
 > list-membership `--where`/`--tag` filter + temporal `wiki-search --as-of`, derived
 > knowledge-health [`wiki-health`], and the **config-driven write-grammar** [ADR-007]
-> that unifies the Karpathy/PARA construct path; **TASK 046** then *converged* it —
+> that unifies the Karpathy/PARA construct path; **TASK 046** *converged* it —
 > `wiki-import` is the per-source **engine** [+ office/`.vtt` acquire, grammar by
 > `--kind` (meeting/lesson → pyramid), `--diagrams`/`--no-concepts`] and `wiki-sync` a
-> batch **driver** that delegates to it). The unified on-ramp **`wiki-import`**
-> is hardened across **all four built-in layouts** and **language-agnostic** (output
-> follows the vault's `language`; English fallback) — validated by a 14-round adversarial
-> `/vdd-multi`. Schema **v7** (`user_version = 7`). **pytest suite green / 5 skipped,
-> `mypy --strict` clean on 60 source files.** The repo's own `docs/` is
+> batch **driver** that delegates to it; **TASK 047** retired the legacy `wiki-enrich`
+> + vendored `wiki_ingest` on-ramp — concept-page compounding is now a **derived
+> Class-B "Mentions across sources" render** [`wiki-index-render --concept-mentions`]).
+> The external acquire skills (html/pdf/office/transcript) resolve **vendor-agnostically**
+> across any harness (Claude Code / pi / codex / …) — no hardcoded paths. The unified
+> on-ramp **`wiki-import`** is hardened across **all four built-in layouts** and
+> **language-agnostic** (output follows the vault's `language`; English fallback) —
+> validated by adversarial `/vdd-multi`. Schema **v7** (`user_version = 7`).
+> **pytest suite green / 5 skipped, `mypy --strict` clean on 60 source files.** The repo's own `docs/` is
 > registered as a live `dev-project` vault and dogfoods the toolchain. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
 > [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
@@ -51,7 +55,8 @@ is answered against an ever-richer corpus instead of re-reading raw material.
 This repo is the **index + tooling layer** for that pattern:
 
 - **Ingest** a raw source (transcript, article, meeting note) → LLM-synthesised
-  concept/entity pages, additive merge, contradiction flagging, a `log.md` entry.
+  concept/entity pages that **compound across sources** (a derived "Mentions across
+  sources" ledger), contradiction flagging, a `log.md` entry.
 - **Search** the whole corpus with FTS5 BM25 ranking + frontmatter-metadata
   filters, across one vault or many. Default search is **inflection-tolerant**
   (per-term script-aware stemming — Cyrillic→russian, Latin→english) and
@@ -71,12 +76,15 @@ with no semantic loss. That means you can delete the `.db` at any time and rebui
 it, and that hand-edits to markdown are first-class — not something the tooling
 will clobber.
 
-![Overview-infographic](Images/overview-infographic.png)
+![Overview-architecture](Images/llm-wiki-architecture.png)
 ---
 
 ## Anatomy: how the system is layered
 
-Two ADRs define the shape:
+The shape is a spine of ADRs: **ADR-001/002** fix the load-bearing structure, and
+**ADR-003…008** elaborate it (typed knowledge classes · the typed event graph ·
+FTS-narrowed membership · derived-knowledge health · the config-driven write-grammar ·
+active-note resolution). The two foundational ones:
 
 - **ADR-001** ([Option I — wrap + index](docs/adr/ADR-001-wiki-ingest-integration.md)):
   *originally* the **file layer** (LLM page synthesis) lived in an external `wiki-ingest`
@@ -88,21 +96,28 @@ Two ADRs define the shape:
   one global SQLite DB partitioned by `vault_id`, with a three-class data contract.
 
 ```
-                      Operator / Claude agent
-                              │
-                    wiki-import   (the construct engine)
-        fetch+convert → REASON (summarizing-meetings) → apply
-                              │
-          ┌───────────────────┴───────────────────┐
-          ▼ FILE LAYER (Class A)                   ▼ INDEX LAYER (Class B/C)
-   canonical markdown                         IndexRepository DAL
-   _sources/  _concepts/  _entities/          SQLite + FTS5 + WAL
-   (concept pages carry a DERIVED             pages · entities · aliases · refs · log_events
-    BEGIN-AUTO:mentions ledger, TASK 047)             │
-          │                                           │
-          └──── wiki-index-upsert / wiki-reindex ─────┘
-                              │
-              wiki-search · wiki-query · wiki-graph · wiki-lint · …
+                 Operator / any-harness LLM agent
+                             │
+  wiki-sync ─(batch driver: classify a zone → delegate each source)─┐
+                             │                                       │
+                             ▼                                       ▼
+                    wiki-import  —  the per-source construct engine
+       fetch+convert  →  REASON (summarizing-meetings)  →  apply
+            │  fetch+convert COMPOSES external acquire skills,
+            │  resolved vendor-agnostically for ANY harness:
+            │      html · pdf · pptx/office · transcript-fetcher
+            ▼
+     ┌───────────────────────┴────────────────────────┐
+     ▼ FILE LAYER (Class A)                            ▼ INDEX LAYER (Class B/C)
+  canonical markdown, per layout                  IndexRepository DAL
+  (karpathy _sources/_concepts/_entities;         SQLite + FTS5 + WAL
+   PARA / dev-project trees otherwise);           pages · entities · aliases ·
+  concept pages carry a derived                    refs (+ typed event-graph
+  BEGIN-AUTO:mentions ledger                        edges) · log_events
+     │                                                     │
+     └────────── wiki-index-upsert / wiki-reindex ─────────┘
+                             │
+   wiki-search · wiki-query · wiki-graph · wiki-health · wiki-lint · …
 ```
 
 The code is split into clean layers under `scripts/`:
@@ -111,7 +126,8 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 17 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` and `wiki_import_article/` packages — the latter is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) wrapping the DAL + helper modules (`_common`, `_retrieval`, `_manifest_consumer`). |
+| **CLIs** | `scripts/wiki_skills/` | 17 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` and `wiki_import_article/` packages — the latter is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) over the DAL + shared helpers (`_common`, `_retrieval`, `_sync`, `_resummarize`, `_manifest_consumer`). |
+| **External acquire skills** | installed per-harness (not vendored) | Composed by `wiki-import` for deterministic fetch+convert — `html` (URL/HTML), `pdf`, `pptx`/office, `transcript-fetcher` (video/`.vtt`). Resolved **vendor-agnostically** (`$WIKI_<BIN>` → dynamic `~/.<harness>/skills` discovery → PATH), so Claude Code / pi / codex / … all work; the one LLM step is the `summarizing-meetings` REASON harness. |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
 | **Skills / commands / workflows** | `skills/`, `commands/`, `workflows/` | Canonical definitions, symlinked into `.claude/` and `.agent/` for vendor compatibility. |
@@ -242,8 +258,18 @@ prints a per-item report. It links every:
 | Source | Target |
 |---|---|
 | `bin/wiki-*` (executable wrappers) | `~/.local/bin/wiki-*` (or `$WIKI_INSTALL_BIN`) |
-| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` |
+| `skills/wiki-*/` | `~/.claude/skills/wiki-*/` **and** `~/.pi/skills/wiki-*/` |
 | `commands/wiki-*.md` | `~/.claude/commands/wiki-*.md` |
+
+**Vendor-agnostic acquire skills.** `wiki-import` shells out to the external `html`/`pdf`/`pptx`/
+`transcript-fetcher` skills but does **not** assume Claude Code or a fixed roster of harnesses: each
+bin resolves `$WIKI_<BIN>` env → **dynamic discovery** of skill dirs (every `~/.<harness>/skills`,
+XDG dirs, and `$WIKI_SKILLS_DIRS`) → `PATH`. Discovery is a glob, so **any** harness — claude/pi/
+codex/hermes/openclaw and future ones — is found with no code change, and it handles per-harness
+naming (the html skill dir is `html` on Claude, `html2md` on pi). The installer pins the resolved
+set to `~/.config/obsidian-llm-wiki/skills.env`, which the CLIs **auto-load** at startup (a value in
+your shell overrides it). The override vars are documented in
+[`config/skills.env.example`](config/skills.env.example) — copying it is optional (discovery works without it).
 
 **Re-run it after adding a new `bin/wiki-*`, `skills/wiki-*/`, or `commands/wiki-*.md`** — new
 entries are not auto-propagated. Ensure `~/.local/bin` is on your `PATH` (the installer warns
@@ -485,6 +511,7 @@ docs/                       ARCHITECTURE.md, ROADMAP, ADRs, schemas, tasks/, pla
   adr/                      ADR-001 (wrap+index), ADR-002 (multi-vault + Class A/B/C)
   KNOWN_ISSUES.md           auto-rendered Class-B ledger over docs/issues/*.md
 config/                     layout-config / wiki-config / sync-config schema.yaml (the 3 config systems)
+                            + skills.env.example (optional acquire-skill bin overrides)
 sql/wiki-index-v2.sql       the SQLite DDL (user_version = 7)
 templates/                  WIKI_SCHEMA.md.tmpl + per-vendor agent files (CLAUDE.md/GEMINI.md/AGENTS.md) + pi/claude settings
                             mapped in agent-files.yaml — for new/registered vaults
