@@ -51,7 +51,12 @@
 | R-42 (error handling, exit codes 0/1/2/4/5/6; CWE-117/209 envelope discipline) | §2.1 Exit-code envelope contract table; §2.1 Operational invariants; §9.1 Error Handling |
 | R-43 (tests: unit + integration + parametrised envelope shape; mypy --strict) | §10.2 CI/test gate; §2.1 Universal envelope invariant note |
 
-### wiki-ingest Vendoring Requirements (R-45..R-57)
+### wiki-ingest Vendoring Requirements (R-45..R-57) — ⚠️ Retired (TASK 047)
+
+> **Historical traceability.** R-45..R-57 tracked the vendored `scripts/wiki_ingest/` module and its
+> `wiki-enrich` on-ramp. TASK 047 **retired** the whole vendoring subsystem (the converged `wiki-import`
+> engine from TASK 046 replaced it), so these requirements no longer map to live code — the rows are kept
+> as the record of what was once verified, not as a current coverage claim.
 
 > Transport-layer concern only: the in-process import path collapses the subprocess hop in §1.5.2 to a Python call. No new DAL methods, no new DB tables, no new user-facing skills. All rows trace to §1.5.2 (flow diagram), §1.5.7 (vendored module anatomy), §2.1 Source Adapters (transport note), §7.4 (vendoring policy), or §10.4 (install simplification).
 

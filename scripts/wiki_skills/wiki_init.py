@@ -460,7 +460,7 @@ def register_existing(args: argparse.Namespace) -> int:
         return _emit({
             "error": "MISSING_WIKI_SCHEMA",
             "expected_path": str(schema_path),
-            "hint": "Run wiki-ingest init or use --scaffold-new",
+            "hint": "Run wiki-init --scaffold-new (or --register-existing) to create WIKI_SCHEMA.md",
         }, exit_code=6)
     fm = _split_frontmatter(schema_path.read_text(encoding="utf-8"))
     vault_id = fm.get("vault_id")

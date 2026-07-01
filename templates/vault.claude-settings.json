@@ -10,7 +10,6 @@
       "Bash(wiki-reindex *)",
       "Bash(wiki-index-upsert *)",
       "Bash(wiki-index-render *)",
-      "Bash(wiki-enrich *)",
       "Bash(wiki-extract-concepts *)",
       "Bash(wiki-append-log *)",
       "Bash(wiki-confirm *)",

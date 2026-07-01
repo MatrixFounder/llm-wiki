@@ -111,9 +111,9 @@ The error envelope never echoes untrusted file content (CWE-209/117).
 (write, used by the executor as the post-success commit marker). These generalise the
 query-specific `check_query_state`/`record_query_state` (which are keyed
 `source_kind='query'` and cannot represent a raw `sync` drop). The **executor**
-(`workflows/wiki-sync.md`) composes the *existing* CLIs — `wiki-enrich`,
-`wiki-index-upsert`, `wiki-extract-concepts` — + the harness `docx`/`pdf`/`pptx`/`xlsx`
-convert skills + the transcript-fetcher `.vtt` cleaner. **No new `pages.type`; zero
+(`workflows/wiki-sync.md`) composes the *existing* CLIs — `wiki-import`
+(the converged per-source engine, TASK 046), `wiki-index-upsert`, `wiki-extract-concepts`
+— + the harness `docx`/`pdf`/`pptx`/`xlsx` convert skills + the transcript-fetcher `.vtt` cleaner. **No new `pages.type`; zero
 DDL** (`user_version` 5; the new `source_kind='sync'` partition is data on the
 existing `source_state` table).
 

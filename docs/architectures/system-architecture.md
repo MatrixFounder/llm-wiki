@@ -378,7 +378,7 @@ Calling Agent (Claude Opus 4.7 / Gemini / etc. — runs in OPERATOR'S LLM contex
   │          │           → repo.upsert_entity(is_candidate=1, SQL MIN() downgrade-guard)
   │          ├─ upsert_entity_refs(repo, V, S, project, all_candidates)
   │          │     → repo.replace_refs (atomic; trust_level='medium'; parsed line spans)
-  │          ├─ build_manifest → wiki-ingest v1.1-compatible JSON
+  │          ├─ build_manifest → v1.1 concept-manifest JSON (internal; the external `wiki-ingest` consumer was retired, TASK 047)
   │          ├─ (if --ingest) dispatch_to_indexer:
   │          │     ├─ validate_manifest from _manifest_consumer
   │          │     ├─ index_from_manifest from _manifest_consumer (in-process)
@@ -578,8 +578,9 @@ consumer**, applied **only to operator-custom patterns**.
 #### Byte-identity strategy (the load-bearing invariant)
 
 `karpathy.yaml` is a **validated projection of `layout.py`** (constants NOT deleted —
-scaffolding, `SYSTEM_FILES`, and the vendored `wiki_ingest.DEFAULT_SUBDIRS` drift
-guard still depend on them). The invariant test
+scaffolding and `SYSTEM_FILES` still depend on them; the vendored
+`wiki_ingest.DEFAULT_SUBDIRS` drift guard that also referenced them was retired in
+TASK 047). The invariant test
 `test_karpathy_config_matches_layout_constants` ties the two. **Three slug surfaces
 stay distinct**: page slug = `slug_strategy: identity` (verbatim `path.stem`); course
 project = loose `slugify`; concept-tag slug = `_slugify_concept` (strict, **untouched**).

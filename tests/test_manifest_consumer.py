@@ -1,10 +1,9 @@
 """Unit tests for `scripts.wiki_skills._manifest_consumer`.
 
 TASK 003 v2 / I-7.0 — exercises the public surface of the neutral
-manifest-consumer module directly (not through `wiki_enrich` back-compat
-re-export). The four tests below mirror the equivalent cases in
-`test_wiki_enrich.py` so the contract is asserted from both import paths
-during the back-compat-alias release cycle.
+manifest-consumer module directly. (Its former co-consumer `wiki_enrich` and the
+`test_wiki_enrich.py` back-compat mirror were retired in TASK 047; the module now
+serves `wiki-extract-concepts --ingest` only.)
 """
 from __future__ import annotations
 

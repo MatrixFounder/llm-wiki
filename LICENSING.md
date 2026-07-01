@@ -6,8 +6,7 @@ under **either** of the two licenses below — pick whichever fits your use case
 > **Scope.** Both licenses below cover **only the code in this repository.** They
 > grant **no** rights to the separately-installed external skills this framework
 > integrates with (some of which are PROPRIETARY) — see
-> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The vendored `wiki-ingest`
-> component keeps its own Apache-2.0 license.
+> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

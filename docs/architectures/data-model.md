@@ -219,7 +219,7 @@ erDiagram
 DDL) with its own partition: `source_kind='sync'`, `scope=<vault-relative source
 path>`, `key='source_hash'`, `value=sha256(file bytes)` (original binary bytes for
 `convert+ingest`). It is the **only** store keyed on the raw file `wiki-sync scan`
-discovers — distinct from the chain's own idempotency (`wiki-enrich`'s
+discovers — distinct from the chain's own idempotency (`wiki-import`'s
 `_sources/<slug>.md` frontmatter `source_hash:` footer, keyed by summary slug; and
 `wiki-extract-concepts`'s `source_kind='extract-concepts'` row, keyed by source-page
 slug — neither knowable at scan time). Written by the executor **only after the
