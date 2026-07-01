@@ -4,7 +4,7 @@
 > **Версия**: v2.0 (преемник [TASK-ref.md](./TASK-ref.md) v1.0).
 > **Связанные документы**:
 > - [SCHEMA-DRAFT.sql](./SCHEMA-DRAFT.sql) — DDL индексирующего слоя.
-> - [SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — выбор backend'а + DAL.
+> - [SQLITE-VS-POSTGRES.md](../SQLITE-VS-POSTGRES.md) — выбор backend'а + DAL.
 > - [MIGRATION-v1-to-v2.md](./MIGRATION-v1-to-v2.md) — переход с v1.
 
 ## Что нового по сравнению с v1
@@ -20,7 +20,7 @@ v1 — анализ соответствия Karpathy-канону + план р
 7. **MCP fallback chain** (§24).
 8. **Daily automation** (§22 + §26 решение #10).
 9. **Performance budget & SLOs** — численные таргеты на 100/1000/10000 документов (§28).
-10. **Postgres как opt-in** через DAL — для корпусов > 100K (§13 v1, документ [SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md)).
+10. **Postgres как opt-in** через DAL — для корпусов > 100K (§13 v1, документ [SQLITE-VS-POSTGRES.md](../SQLITE-VS-POSTGRES.md)).
 
 Все правки сохраняют идею Karpathy: markdown — единственный source-of-truth; SQLite — derivative cache, который пересобирается из markdown. Выбросы: `index.md` как mutable file (теперь read-only projection из БД).
 
@@ -193,7 +193,7 @@ claude
 
 ### 6.4 SQLite database location vs iCloud (NEW)
 
-**Критическое правило**: SQLite-файл **никогда** не лежит в iCloud-vault'е. Иначе через 2–4 недели — гарантированная коррупция (см. [SQLITE-VS-POSTGRES.md §5](./SQLITE-VS-POSTGRES.md#5-critical-workaround-sqlite--icloud)).
+**Критическое правило**: SQLite-файл **никогда** не лежит в iCloud-vault'е. Иначе через 2–4 недели — гарантированная коррупция (см. [SQLITE-VS-POSTGRES.md §5](../SQLITE-VS-POSTGRES.md#5-critical-workaround-sqlite--icloud)).
 
 Default paths по платформам:
 
@@ -1590,7 +1590,7 @@ verify:
 | 4 | Project taxonomy override | Полный override разрешён. |
 | 5 | Privacy на `wiki-research` | Гибрид: frontmatter `private: true` + tag-list `[confidential]` + vault-wide allowlist. |
 | 6 | Concept-page extraction | On-demand + per-project YAML override. Default `auto_extract: false`. |
-| **7 (NEW)** | **Index backend** | **SQLite default + Postgres opt-in через DAL.** См. [SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md). |
+| **7 (NEW)** | **Index backend** | **SQLite default + Postgres opt-in через DAL.** См. [SQLITE-VS-POSTGRES.md](../SQLITE-VS-POSTGRES.md). |
 | **8 (NEW)** | **DB location** | **Вне vault'а, обязательно.** macOS `~/Library/Application Support/wiki-index/`, Linux `~/.local/share/wiki-index/`, Windows `%LOCALAPPDATA%\wiki-index\`. |
 | **9 (NEW)** | **Source adapters** | **Pluggable.** Контракт §15.bis. На старте: manual + transcript. Фаза 2: email + telegram + web. |
 | **10 (NEW)** | **MCP strategy** | **Fallback chains в config.** `web_research: [exa, perplexity, parallel-search, firecrawl]`. Credentials в `~/.config/wiki-mcp/keys.env`. |
@@ -1623,7 +1623,7 @@ verify:
 
 ### 27.2 IndexRepository interface
 
-См. [SQLITE-VS-POSTGRES.md §4.1](./SQLITE-VS-POSTGRES.md#41-python-рекомендуется-для-wiki--скиллов).
+См. [SQLITE-VS-POSTGRES.md §4.1](../SQLITE-VS-POSTGRES.md#41-python-рекомендуется-для-wiki--скиллов).
 
 Методы:
 - Pages: `upsert_page`, `get_page`, `search_pages`, `search_pages_vector`, `delete_page`.
@@ -1648,7 +1648,7 @@ verify:
 
 ### 27.4 Entity resolution algorithm
 
-См. [SQLITE-VS-POSTGRES.md §4.2-4.3](./SQLITE-VS-POSTGRES.md#42-sqlite-реализация-default).
+См. [SQLITE-VS-POSTGRES.md §4.2-4.3](../SQLITE-VS-POSTGRES.md#42-sqlite-реализация-default).
 
 Multi-stage matching (cybos-портированный):
 - Stage 0: User identity (`wiki.user.aliases`)
@@ -1679,7 +1679,7 @@ Multi-stage matching (cybos-портированный):
 
 ## 28. Performance budget & SLOs
 
-См. [SQLITE-VS-POSTGRES.md §6](./SQLITE-VS-POSTGRES.md#6-performance-budget) для подробных таргетов SQLite vs Postgres.
+См. [SQLITE-VS-POSTGRES.md §6](../SQLITE-VS-POSTGRES.md#6-performance-budget) для подробных таргетов SQLite vs Postgres.
 
 **Сводная таблица для verification**:
 

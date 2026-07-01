@@ -127,7 +127,7 @@ itself stays vault-free.)
 
 ## Data model
 
-![data-model-infopraphic](Images/data-model-infopraphic.png)
+![data-model-infopraphic](Images/data-model-infopraphic_v2.png)
 
 One global DB (`sql/wiki-index-v2.sql`, `user_version = 7`), every table
 partitioned by `vault_id`. The three-class contract (ADR-002 §D8):

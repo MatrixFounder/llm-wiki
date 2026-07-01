@@ -111,8 +111,9 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 
 **Прочие полезные**
 ```bash
-wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index сырого источника
-# импорт внешнего URL/PDF/треда/транскрипта (любой layout; шаг REASON между — работа оркестратора).
+# импорт внешнего URL/PDF/треда/транскрипта — ИЛИ локального сырого файла (--source ./raw.md);
+# wiki-import дистиллирует его, раскладывает заметку + страницы _concepts/ и индексирует (любой
+# layout; шаг REASON между — работа оркестратора).
 # prepare отдаёт `language` (язык хранилища из WIKI_SCHEMA, фолбэк en) → суммаризируйте НА этом языке:
 wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
@@ -158,7 +159,8 @@ claude        # or your Claude Code launcher
 
 Для частых действий есть и слэш-команды: `/wiki-search`, `/wiki-query`, `/wiki-sync`,
 `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-import` (единый on-ramp для внешних
-источников, любой layout), `/wiki-enrich` (legacy Karpathy-raw). Агент держит вас в курсе всего, что пишет
+источников и per-source движок — URL/PDF/тред/транскрипт или локальный сырой файл, любой
+layout). Агент держит вас в курсе всего, что пишет
 (саммари, новые заметки), и безопасен к повторному запуску (идемпотентность по файлам).
 
 ---

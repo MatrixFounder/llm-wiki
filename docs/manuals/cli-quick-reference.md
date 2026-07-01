@@ -108,8 +108,9 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 
 **Other handy ones**
 ```bash
-wiki-enrich --vault personal --vault-root . --source "./raw.md"   # Karpathy: ingest+index a raw source
-# import an external URL/PDF/thread/transcript (any layout; the REASON step between is the orchestrator's).
+# import an external URL/PDF/thread/transcript — OR a local raw file (--source ./raw.md);
+# wiki-import distils it, files the note + _concepts/ pages, and indexes (any layout;
+# the REASON step between is the orchestrator's).
 # prepare emits `language` (the vault's WIKI_SCHEMA language, en fallback) → summarise IN that language:
 wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
@@ -155,7 +156,8 @@ Then, for example:
 
 Slash commands also exist for the common verbs: `/wiki-search`, `/wiki-query`,
 `/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-import` (unified
-external-source on-ramp, any layout), `/wiki-enrich` (legacy Karpathy-raw). The agent keeps you in
+external-source on-ramp and per-source engine — URL/PDF/thread/transcript or a local raw
+file, any layout). The agent keeps you in
 the loop on anything that writes (summaries, new notes) and is safe to re-run
 (per-file idempotency).
 

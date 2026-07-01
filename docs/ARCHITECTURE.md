@@ -19,7 +19,7 @@
 > [006](./adr/ADR-006-derived-knowledge-health.md) derived knowledge health ·
 > [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML).
 >
-> **Source spec**: [docs/TASK-ref-v2.md](./TASK-ref-v2.md) — full v2 reference specification.
+> **Source spec** (historical): [docs/archive/TASK-ref-v2.md](./archive/TASK-ref-v2.md) — the original pre-implementation v2 reference spec (archived; the living architecture is this document + `docs/architectures/`).
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
 > **Backend choice**: [docs/SQLITE-VS-POSTGRES.md](./SQLITE-VS-POSTGRES.md) — SQLite default, Postgres opt-in via DAL.
 > **Layout constants** consolidated in [scripts/wiki_index/layout.py](../scripts/wiki_index/layout.py) — single source of truth for `PAGE_SUBDIRS`, `COURSE_TIER_DIR`, `VAULT_INDEX_DIR`, `LOG_SUBDIR`, `SCAFFOLD_DIRS`, `SYSTEM_FILES`, `GLOBAL_VAULT_SENTINEL`.
