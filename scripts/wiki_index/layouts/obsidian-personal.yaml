@@ -49,6 +49,16 @@ paths:
   # page's own frontmatter (`type: concept`) → db_type concept via type_mapping.
   - {glob: "_concepts/**/*.md", project: "_concepts"}
   - {glob: "_entities/**/*.md", project: "_entities"}
+  # --- DF-049-1: the RAG write surfaces. `wiki-query apply` / `wiki-verify-multi
+  # apply` file to <root>/_queries/ + <root>/_verifications/ on EVERY layout (the
+  # karpathy constants), and self-index with project `_vault_` (derive_slug).
+  # Without these globs the walk never sees the filed page and the next reindex
+  # PRUNES its row (the filed answer stops being retrievable; a TASK-049
+  # classification-leak finding over it vanishes). type comes from the page's own
+  # frontmatter (`type: query|verification` — always stamped by apply);
+  # path_type_fallback is the defensive net.
+  - {glob: "_queries/**/*.md",       project: "_vault_"}
+  - {glob: "_verifications/**/*.md", project: "_vault_"}
 
   # --- Numbered top-level: "NN - Area/Sub/.../X.md" → project "Area/Sub" ---
   - glob: "[0-9][0-9] - */*/**/*.md"
@@ -105,6 +115,9 @@ type_mapping:
   company:  {db_type: concept, tag: company}
   product:  {db_type: concept, tag: product}
   group:    {db_type: concept, tag: group}
+  # DF-049-1: the filed RAG answer/verdict classes (mirror karpathy).
+  query:        {db_type: query,        tag: null}
+  verification: {db_type: verification, tag: null}
 
 # TASK 037: a `_concepts/`/`_entities/` page that somehow lacks a `type:` infers
 # its class from the dir name (defensive — generated pages always stamp
@@ -112,6 +125,8 @@ type_mapping:
 path_type_fallback:
   _concepts: concept
   _entities: external
+  _queries: query
+  _verifications: verification
 
 # Most Obsidian notes have no frontmatter — title from first H1 ∥ filename stem.
 frontmatter_synthesis:

@@ -119,10 +119,16 @@ type_mapping:
 # ⚠ Supplying `paths` REPLACES the entire built-in grammar (it does NOT merge, unlike
 # ignore/type_mapping). You MUST re-declare the base rules verbatim + your deeper rule.
 # Scoped to Learning here → other areas keep the 2-level area/sub granularity.
+# ⚠ DF-049-1: that re-declaration MUST include the `_queries/**` + `_verifications/**`
+# rules below — they are how a filed `wiki-query`/`wiki-verify-multi` answer survives
+# reindex. Dropping them silently prunes every filed RAG answer on the next
+# `wiki-reindex` (the row goes; the Class-A file stays; `is_unchanged` breaks).
 paths:
   - {glob: "_daily/**/*.md",     type: daily-note, project: "_daily",     default_tags: [daily]}
   - {glob: "_clippings/**/*.md", type: clipping,   project: "_clippings", default_tags: [clipping]}
   - {glob: "_inbox/**/*.md",     type: note,       project: "_inbox",     default_tags: [inbox, draft]}
+  - {glob: "_queries/**/*.md",       project: "_vault_"}   # DF-049-1: filed RAG answers
+  - {glob: "_verifications/**/*.md", project: "_vault_"}   # DF-049-1: filed verdicts
   - glob: "[0-9][0-9] - Learning/*/*/*/**/*.md"     # Learning 4-level
     type: note
     project_pattern: '^(?P<num>\d+)\s*-\s*Learning/(?P<sub>[^/]+)/(?P<subsub>[^/]+)/(?P<mod>[^/]+)/'

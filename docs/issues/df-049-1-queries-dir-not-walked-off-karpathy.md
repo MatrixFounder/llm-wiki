@@ -1,7 +1,7 @@
 ---
 id: DF-049-1
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-07-07
 category: correctness
 severity: SEV-2
@@ -41,3 +41,13 @@ slug: df-049-1-queries-dir-not-walked-off-karpathy
   → warn "filed page will not survive reindex".
 - **Workaround**: karpathy vaults unaffected; on other layouts add the two globs to the
   vault's `.wiki/layout.yaml` `paths:` override.
+- **Fixed (2026-07-07, same-day)**: fix-plan (a)+(b) shipped — `_queries/**` +
+  `_verifications/**` path rules + `query`/`verification` type_mapping entries (+
+  `path_type_fallback` for obsidian-personal) added to all three non-karpathy
+  built-in layouts, `project: _vault_` mirroring `derive_slug` so apply-written rows
+  stay byte-identical to the `--full` rebuild (§D8); adoption-runbook paths-override
+  snippet now carries the two rules + a loud warning. Guarded by
+  `tests/test_filed_pages_survive_reindex.py` (full + delta survival + the R-6.5e
+  `cited`-ref rebuild, parametrized over all four built-ins). Fix-plan (c) (a lint
+  guard for walk-invisible filed pages) NOT built — the existing `missing-in-db`
+  drift category already surfaces the class, and the layouts now cover it.

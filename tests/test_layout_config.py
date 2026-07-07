@@ -315,6 +315,8 @@ def test_cybos_config_loads_and_validates(tmp_path: Path) -> None:
         "summary", "article-summary", "meeting-summary", "lesson-summary",
         # wiki-import concept/entity pages (TASK-037 pattern)
         "concept", "external", "person", "company", "product", "group",
+        # DF-049-1 — the filed RAG answer/verdict classes (mirror karpathy)
+        "query", "verification",
     }
     # ref extraction: wiki-link + markdown-link + id-ref (built-in → stdlib re)
     assert {r.kind for r in cfg.ref_extraction} == {"wiki-link", "markdown-link", "id-ref"}

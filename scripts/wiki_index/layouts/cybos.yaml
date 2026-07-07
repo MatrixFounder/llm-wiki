@@ -56,6 +56,16 @@ paths:
   - {glob: "capabilities/**/*.md", type: capability,  project: "_vault_"}
   - {glob: "executions/**/*.md",   type: execution,   project: "_vault_"}
   - {glob: "patterns/**/*.md",     type: pattern,     project: "_vault_"}
+  # --- DF-049-1: the RAG write surfaces. `wiki-query apply` / `wiki-verify-multi
+  # apply` file to <root>/_queries/ + <root>/_verifications/ on EVERY layout (the
+  # karpathy constants), and self-index with project `_vault_` (derive_slug).
+  # Without these globs the walk never sees the filed page and the next reindex
+  # PRUNES its row (the filed answer stops being retrievable; a TASK-049
+  # classification-leak finding over it vanishes). type comes from the page's own
+  # frontmatter (`type: query|verification` — always stamped by apply);
+  # path_type_fallback is the defensive net.
+  - {glob: "_queries/**/*.md",       type: query,        project: "_vault_"}
+  - {glob: "_verifications/**/*.md", type: verification, project: "_vault_"}
 
 # Tag-route: each raw knowledge-class type → an existing db_type CHECK enum value + a
 # filterable tag (db_type rationale: research = analysis/finding; brief = concise spec;
@@ -100,6 +110,9 @@ type_mapping:
   company:  {db_type: concept, tag: company}
   product:  {db_type: concept, tag: product}
   group:    {db_type: concept, tag: group}
+  # DF-049-1: the filed RAG answer/verdict classes (mirror karpathy).
+  query:        {db_type: query,        tag: null}
+  verification: {db_type: verification, tag: null}
 
 path_type_fallback: {}              # cybos types come from paths[].type
 
