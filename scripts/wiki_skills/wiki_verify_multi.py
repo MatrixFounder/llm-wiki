@@ -39,6 +39,13 @@ import frontmatter
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import VAULT_TIER_PROJECT, VERIFICATIONS_SUBDIR
 from scripts.wiki_index.models import LogEvent
+from scripts.wiki_index.policy import (
+    PolicyError,
+    PolicyProfile,
+    allowed_levels,
+    effective_level,
+    resolve_policy,
+)
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
@@ -104,15 +111,26 @@ def _answer_hash(answer_body: str) -> str:
     return hashlib.sha256(answer_body.encode("utf-8")).hexdigest()
 
 
-def _verify_hash(answer_hash: str, examined: list[dict[str, str]]) -> str:
+def _verify_hash(
+    answer_hash: str, examined: list[dict[str, str]],
+    audience: str | None = None,
+) -> str:
     """Q-008-b idempotency key: sha256 over the answer_hash + the ordered
     examined ``project/slug`` **set** — re-triggers a re-verify when the answer
     body changes OR the cited-source *set* changes (add/remove a cite). Like
     TASK 007's `question_hash`, it keys on the slug set, NOT each source's body
     content; an in-place rewrite of a cited source that keeps its slug does not
-    change this hash (documented in KNOWN_ISSUES L-008-2, vdd-multi L-5)."""
+    change this hash (documented in KNOWN_ISSUES L-008-2, vdd-multi L-5).
+
+    TASK 049 (vdd-multi logic-MED): the audience folds in ONLY when a profile
+    is active — OFF keeps the hash bytes unchanged (NFR-1). Combined with
+    `apply --verify-hash`, a prepare/apply audience drift fails loudly as
+    `VERIFY_CONTEXT_CHANGED` instead of silently re-deriving a differently-
+    scoped examined set."""
     parts = [answer_hash]
     parts.extend(f"{e['project']}/{e['slug']}" for e in examined)
+    if audience is not None:
+        parts.append("\x00audience:" + audience)
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -138,14 +156,22 @@ def _load_query_page(
 
 def _gather_examined(
     repo: IndexRepository, vault_id: str, vault_root: Path, cites: list[str],
-) -> tuple[list[dict[str, str]], list[str]]:
+    profile: PolicyProfile | None = None,
+) -> tuple[list[dict[str, str]], list[str], int]:
     """Resolve each cited ``project/slug`` to its page + body (read via
     ``pages.file_path``). A cite with no `pages` row (or unreadable) is EXCLUDED
     from the examined set and recorded in ``missing`` (plan-review m-3) — so a
     verdict finding citing it correctly trips `FINDING_SOURCE_NOT_EXAMINED` in
-    `apply`. Returns (examined, missing)."""
+    `apply`. TASK 049 (R-5): under an active policy `profile` an out-of-tier
+    cite is excluded BEFORE its body is read and only COUNTED (never named —
+    CWE-209 posture); the gate lives in this SHARED helper so prepare and apply
+    derive the same examined set (an asymmetric gate would break the grounding
+    gate, same reason as the `_MAX_CITES` cap). Returns
+    (examined, missing, restricted_count)."""
     examined: list[dict[str, str]] = []
     missing: list[str] = []
+    restricted = 0
+    allowed = allowed_levels(profile) if profile is not None else None
     # Defense-in-depth cap (vdd-multi P-2): a query cites a handful of sources;
     # bound the get_page + file-read work against a pathologically large `cites:`
     # (e.g. a hand-edited Class-A page). Applied in the SHARED helper so prepare
@@ -167,6 +193,12 @@ def _gather_examined(
         if sp is None:
             missing.append(c)
             continue
+        if (allowed is not None and profile is not None
+                and effective_level(sp.frontmatter_json, profile.default_level)
+                not in allowed):
+            # Out-of-tier: never read the body, never name the cite.
+            restricted += 1
+            continue
         try:
             body = frontmatter.loads(_read_page_text(vault_root, sp.file_path)).content
         except (PathTraversalError, OSError, _PageTooLarge):
@@ -176,7 +208,7 @@ def _gather_examined(
             "project": proj, "slug": slug, "title": sp.title,
             "body_excerpt": body[:_EXCERPT_CHARS],
         })
-    return examined, missing
+    return examined, missing, restricted
 
 
 # -----------------------------------------------------------------------------
@@ -194,6 +226,13 @@ def prepare(args: argparse.Namespace) -> int:
     except OSError:
         return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                      "reason": "does not exist"}, 2)
+    # TASK 049 (R-5): resolve the policy profile — MUST match apply's (the
+    # examined set feeds verify_hash; the gate lives in the shared helper).
+    try:
+        profile = resolve_policy(vault_root, args.audience)
+    except PolicyError as exc:
+        err = "INVALID_AUDIENCE" if exc.field == "audience" else "INVALID_POLICY"
+        return emit({"error": err, "field": exc.field, "reason": str(exc)}, 2)
 
     config = build_repo_config(  # TASK 022: vault_root already resolved (required flag)
         args.vault, vault_root=vault_root, db_path_flag=args.db_path)
@@ -210,7 +249,8 @@ def prepare(args: argparse.Namespace) -> int:
                          "reason": "the query page cites nothing; refusing to "
                                    "verify an answer with no sources"}, 2)
 
-        examined, missing = _gather_examined(repo, args.vault, vault_root, cites)
+        examined, missing, restricted = _gather_examined(
+            repo, args.vault, vault_root, cites, profile)
         if not examined:
             # cites was non-empty but EVERY entry is malformed or points at an
             # unindexed/unreadable page → there is nothing to verify against;
@@ -228,9 +268,11 @@ def prepare(args: argparse.Namespace) -> int:
         # to a distinct `verify-<query-slug>` slug (found-in-dev fix, operator-
         # approved). `verifies:` still points at the query (`_vault_/<query-slug>`).
         verification_slug = args.slug or f"verify-{args.query_slug}"
-        v_hash = _verify_hash(a_hash, examined)
+        v_hash = _verify_hash(
+            a_hash, examined,
+            audience=profile.audience if profile is not None else None)
         is_unchanged = repo.check_verify_state(args.vault, verification_slug) == v_hash
-        return emit({
+        env: dict[str, Any] = {
             "vault_id": args.vault,
             "query_slug": args.query_slug,
             "question": question,
@@ -242,7 +284,13 @@ def prepare(args: argparse.Namespace) -> int:
             "examined": examined,
             "examined_count": len(examined),
             "missing_cites": missing,
-        })
+        }
+        if profile is not None:
+            # TASK 049: count only, never content/slugs (CWE-209); emitted
+            # ONLY when a profile is active (NFR-1 — OFF envelope unchanged).
+            env["restricted_count"] = restricted
+            env["audience"] = profile.audience
+        return emit(env)
     finally:
         repo.close()
 
@@ -384,6 +432,13 @@ def apply(args: argparse.Namespace) -> int:
     except OSError:
         return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                      "reason": "does not exist"}, 2)
+    # TASK 049 (R-5): same-profile resolution as prepare — the shared
+    # _gather_examined gate keeps the examined set symmetric.
+    try:
+        profile = resolve_policy(vault_root, args.audience)
+    except PolicyError as exc:
+        err = "INVALID_AUDIENCE" if exc.field == "audience" else "INVALID_POLICY"
+        return emit({"error": err, "field": exc.field, "reason": str(exc)}, 2)
 
     config = build_repo_config(  # TASK 022: vault_root already resolved (required flag)
         args.vault, vault_root=vault_root, db_path_flag=args.db_path)
@@ -400,9 +455,24 @@ def apply(args: argparse.Namespace) -> int:
                          "reason": "the answer changed since prepare; re-run "
                                    "wiki-verify-multi (no auto-retry)"}, 2)
 
-        # 2. Re-derive the examined set (Q-008-c — from cites:, as prepare did).
-        examined, _missing = _gather_examined(repo, args.vault, vault_root, cites)
+        # 2. Re-derive the examined set (Q-008-c — from cites:, as prepare did;
+        # same profile → same gate → symmetric set).
+        examined, _missing, restricted = _gather_examined(
+            repo, args.vault, vault_root, cites, profile)
         examined_keys = {f"{e['project']}/{e['slug']}" for e in examined}
+        # 2b. TASK 049 (vdd-multi logic-MED): --verify-hash is the loud
+        # prepare/apply symmetry gate (mirrors wiki-query's QUESTION_CHANGED).
+        # When the orchestrator passes prepare's verify_hash (the documented
+        # loop does), a drifted audience OR a changed examined set is rejected
+        # here — BEFORE any verdict content is filed under the wrong scope.
+        recomputed_v_hash = _verify_hash(
+            args.answer_hash, examined,
+            audience=profile.audience if profile is not None else None)
+        if args.verify_hash is not None and args.verify_hash != recomputed_v_hash:
+            return emit({"error": "VERIFY_CONTEXT_CHANGED", "field": "verify-hash",
+                         "reason": "the examined set / audience changed since "
+                                   "prepare; re-run wiki-verify-multi (no "
+                                   "auto-retry)"}, 2)
 
         # 3. Load + parse the verdict JSON (bounded, vault-inside, O_NOFOLLOW).
         try:
@@ -497,7 +567,7 @@ def apply(args: argparse.Namespace) -> int:
 
         # 8. Self-index (R-8.4) + record verify-state (R-8.6) + one `verify` log
         # event — all on the repo's single connection (direct DAL, no N+1).
-        v_hash = _verify_hash(args.answer_hash, examined)
+        v_hash = recomputed_v_hash
         indexed = False
         if changed:
             _index_verification_page(repo, args.vault, vault_root, page_path)
@@ -527,6 +597,9 @@ def apply(args: argparse.Namespace) -> int:
             "page_indexed": indexed,
             "action": "filed" if changed else "unchanged",
         }
+        if profile is not None:
+            env["restricted_count"] = restricted
+            env["audience"] = profile.audience
         # The verdict is the machine signal: exit 6 on FAIL (the page IS still
         # filed — a SUCCESS envelope, no `error` key). Deliberate divergence from
         # the family's `6 = error` convention (SEC-4); callers branch on stdout
@@ -551,6 +624,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--slug", default=None,
                     help="Override the derived verification slug (kebab-case; "
                          "default: the query slug).")
+    pp.add_argument("--audience", default=None, metavar="LEVEL",
+                    help="TASK 049 (ADR-009): least-privilege critics — an "
+                         "out-of-tier cited source is excluded from the "
+                         "envelope (counted in restricted_count, never named). "
+                         "MUST match the value passed to `apply` (the examined "
+                         "set feeds verify_hash + the grounding gate).")
     pp.add_argument("--db-path", default=None)
     pp.set_defaults(func=prepare)
 
@@ -563,9 +642,17 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--answer-hash", required=True,
                     help="The answer_hash prepare emitted, verbatim (64 hex). "
                          "Recomputed here; mismatch → ANSWER_CHANGED.")
+    ap.add_argument("--verify-hash", default=None,
+                    help="TASK 049: the verify_hash prepare emitted. Recomputed "
+                         "here from the re-derived examined set (+ audience); "
+                         "mismatch → VERIFY_CONTEXT_CHANGED (exit 2). Optional "
+                         "for back-compat; the documented loop passes it.")
     g_v = ap.add_mutually_exclusive_group(required=True)
     g_v.add_argument("--verdict-stdin", action="store_true")
     g_v.add_argument("--verdict-file", default=None)
+    ap.add_argument("--audience", default=None, metavar="LEVEL",
+                    help="TASK 049: MUST match the value passed to `prepare` "
+                         "(same gate in the shared examined-set helper).")
     ap.add_argument("--fail-on", default="high",
                     choices=["critical", "high", "medium", "low", "none"],
                     help="Verdict severity threshold (Q-008-e). FAIL iff any "

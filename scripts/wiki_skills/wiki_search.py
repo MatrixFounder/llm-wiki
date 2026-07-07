@@ -13,6 +13,7 @@ from urllib.parse import quote as _url_quote
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.models import PageHit, Vault
+from scripts.wiki_index.policy import PolicyError, allowed_levels, resolve_policy
 from scripts.wiki_index.repository import validate_filter_field
 from scripts.wiki_index.query_normalizer import fold_yo as _fold_yo
 from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
@@ -85,6 +86,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         "broadening (precise literal terms). The always-on ё/е "
                         "fold still applies (the corpus is folded). Omit for "
                         "default inflection-tolerant search.")
+    p.add_argument("--audience", default=None, metavar="LEVEL",
+                   help="TASK 049 (ADR-009): retrieval-scope policy — return only "
+                        "pages whose classification level is visible to this "
+                        "audience (the vault's policy.levels ladder, or the "
+                        "built-in public<internal<restricted). Filtered in SQL "
+                        "BEFORE the limit; unknown labels fail closed. Omit (and "
+                        "declare no policy.default_audience) for today's "
+                        "unfiltered behavior.")
     p.add_argument("--vault-root", default=None,
                    help="Vault root (resolve a local index_db); walks up from CWD when omitted.")
     p.add_argument("--db-path", default=None)
@@ -187,14 +196,51 @@ def main(argv: list[str] | None = None) -> int:
 
     metadata_only = not query_arg
 
+    cli_vault_root = resolve_vault_root_for_cli(args)
+
     # When --vaults is not narrowed to a specific id, use the _global_ sentinel
     # (ADR-002 §D1.1) — factory accepts it without inventing a fake vault name.
     factory_vault = vaults_list[0] if vaults_list else GLOBAL_VAULT_SENTINEL
     config = build_repo_config(  # TASK 022
-        factory_vault, vault_root=resolve_vault_root_for_cli(args),
+        factory_vault, vault_root=cli_vault_root,
         db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
+        # TASK 049 (R-3 / ADR-009): resolve the policy profile — flag > vault
+        # policy.default_audience > OFF. The ladder comes from the STANDING
+        # vault (CWD walk-up / --vault-root); when the caller stands OUTSIDE
+        # any vault but names exactly ONE vault, that vault's REGISTERED root
+        # supplies the policy (vdd-multi SEC-1 — otherwise `--vaults X` from
+        # outside X's dir would silently skip X's declared default_audience).
+        # A bad value / malformed or unreadable-with-declared-policy block →
+        # exit 2 WITHOUT echoing the value (CWE-209/117).
+        policy_root = cli_vault_root
+        # The probe result seeds the R-3 per-hit vault cache below so the
+        # "one get_vault per unique vault" contract still holds.
+        probed_vault: tuple[str, Vault | None] | None = None
+        if (policy_root is None and vaults_list is not None
+                and len(vaults_list) == 1):
+            v_home = repo.get_vault(vaults_list[0])
+            probed_vault = (vaults_list[0], v_home)
+            if v_home is not None:
+                policy_root = v_home.root_path
+        try:
+            profile = resolve_policy(policy_root, args.audience)
+        except PolicyError as exc:
+            err = ("INVALID_AUDIENCE" if exc.field == "audience"
+                   else "INVALID_POLICY")
+            return emit({"error": err, "field": exc.field,
+                         "reason": str(exc)}, 2)
+        allowed = allowed_levels(profile) if profile is not None else None
+        cls_default = profile.default_level if profile is not None else None
+        # SEC-2: the default_level fallback is scoped to the HOME vault (the
+        # one whose policy block was used); a foreign vault's unclassified
+        # pages fail closed. Unresolvable/unregistered root → None → uniform
+        # default (documented — the built-in-ladder / outside-a-vault case).
+        home_vault: str | None = None
+        if profile is not None and policy_root is not None:
+            hv = repo.get_vault_by_root_path(policy_root)
+            home_vault = hv.vault_id if hv is not None else None
         wf = where_fields or None
         if metadata_only:
             # TASK 013 non-FTS path: no MATCH term → no alias expansion, no
@@ -202,6 +248,9 @@ def main(argv: list[str] | None = None) -> int:
             hits = repo.search_pages(
                 None, vaults=vaults_list, types=types_list,
                 project=args.project, where_fields=wf, as_of=as_of,
+                allowed_classifications=allowed,
+                classification_default=cls_default,
+                classification_home_vault=home_vault,
                 limit=args.limit,
             )
         else:
@@ -218,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
                 return repo.search_pages(
                     q, vaults=vaults_list, types=types_list,
                     project=args.project, where_fields=wf, as_of=as_of,
+                    allowed_classifications=allowed,
+                    classification_default=cls_default,
+                    classification_home_vault=home_vault,
                     limit=args.limit,
                 )
 
@@ -241,10 +293,15 @@ def main(argv: list[str] | None = None) -> int:
         # R-3: resolve each unique vault_id once (cache — not once per hit).
         # The _global_ sentinel never appears as a pages.vault_id in practice,
         # but guard it explicitly so get_vault is never called with a sentinel.
-        vault_cache: dict[str, Vault | None] = {
-            vid: (None if vid == GLOBAL_VAULT_SENTINEL else repo.get_vault(vid))
-            for vid in {h.page.vault_id for h in hits}
-        }
+        # Seeded with the TASK-049 policy probe (if any) so the one-call-per-
+        # unique-vault contract holds.
+        vault_cache: dict[str, Vault | None] = {}
+        if probed_vault is not None:
+            vault_cache[probed_vault[0]] = probed_vault[1]
+        for vid in {h.page.vault_id for h in hits}:
+            if vid not in vault_cache:
+                vault_cache[vid] = (None if vid == GLOBAL_VAULT_SENTINEL
+                                    else repo.get_vault(vid))
         results = [{
             "vault_id": h.page.vault_id, "slug": h.page.slug,
             "project": h.page.project, "type": h.page.type,
@@ -256,8 +313,14 @@ def main(argv: list[str] | None = None) -> int:
             ),
         } for h in hits]
         if args.format == "json":
-            return emit({"action": "searched", "query": query_arg,
-                         "hits": results, "count": len(results)})
+            payload: dict[str, object] = {
+                "action": "searched", "query": query_arg,
+                "hits": results, "count": len(results)}
+            if profile is not None:
+                # TASK 049: echoed ONLY when a profile is active — the OFF
+                # envelope stays byte-identical (NFR-1).
+                payload["audience"] = profile.audience
+            return emit(payload)
         # Metadata-only listings have no FTS query — describe the filter instead.
         filter_bits = [f"{f}={v}" for f, v in where_fields]
         if as_of:

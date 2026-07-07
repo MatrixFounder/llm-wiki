@@ -213,6 +213,21 @@ def ensure_source_frontmatter(raw_text: str, source: str) -> str:
     return f'---\nsource: "{src}"\n---\n\n{raw_text}'
 
 
+def inject_classification(raw_text: str, level: str) -> str:
+    """TASK 049 (R-7): stamp ``classification: <level>`` into the `_raw`
+    capture's frontmatter — a DEDICATED injection, deliberately NOT riding
+    ``ensure_source_frontmatter`` (whose already-cites-source early-return
+    would silently skip the stamp — plan-review F3). Idempotent: an existing
+    ``classification`` key is left untouched. ``level`` is argparse-shape-
+    validated (``[a-z][a-z0-9_-]{0,15}``) so it is safe as a bare YAML scalar."""
+    if "classification" in _parse_frontmatter(raw_text):
+        return raw_text
+    if _FM_RE.match(raw_text):                       # existing FM at the very start
+        return re.sub(r"\A---\n", f"---\nclassification: {level}\n",
+                      raw_text, count=1)
+    return f"---\nclassification: {level}\n---\n\n{raw_text}"
+
+
 # ---- helpers ---------------------------------------------------------------
 
 def _parse_frontmatter(md: str) -> dict[str, str]:

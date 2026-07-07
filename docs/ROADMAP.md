@@ -10,7 +10,11 @@ the installer + real-vault adoption surface (TASK 025/026/027), and
 query-side stemming + ё/е folding (TASK 028) have all shipped. **No active
 task at HEAD** — every remaining roadmap item is **trigger-gated** (see the
 priority legend). **R-12 (`obsidian-cli` skill) SHIPPED 2026-06-12 as TASK 029**
-(native Obsidian CLI control layer; see the P1 entry below). Archived specs
+(native Obsidian CLI control layer; see the P1 entry below). **2026-07-07:
+Enterprise-readiness theme added (R-16…R-19)** — the Karp/Palantir
+ontology-layer gap-closure set headed by
+[ADR-009](adr/ADR-009-policy-before-model.md) (policy-before-model);
+analysis/roadmap only, no active TASK. Archived specs
 under [tasks/](tasks/) + [plans/](plans/).
 
 Status legend:
@@ -18,6 +22,10 @@ Status legend:
 - **P1** — natural next step; medium effort
 - **P2** — useful, larger scope, no urgent driver
 - **P3** — situational / wait-for-need
+
+_(NB on numbering: parenthetical refs like "(R-18, partial)" / "(R-19)" inside
+old DONE entries cite the **archived v2 pre-implementation spec**, not these
+roadmap IDs — R-16…R-19 below are new, collision-free roadmap entries.)_
 
 ---
 
@@ -633,6 +641,172 @@ small TASK (rides existing `wiki-lint`); A2 ≈ 1 small TASK (new CLI, reuses A1
 layout rule pattern). **Files**: `repository.py`/`sqlite_repository.py` (new `find_lifecycle_drift`
 / `find_coverage_gaps`), `lint.py`, new `scripts/wiki_skills/wiki_health.py` + `bin/wiki-health`,
 `layout_config.py` + `config/layout-config.schema.yaml` + `layouts/cybos.yaml`.
+
+---
+
+## P1–P2 — Enterprise-readiness (ontology-layer hardening)
+
+Theme added 2026-07-07 from the Karp/Palantir "ontology layer" gap audit —
+headed by **[ADR-009](adr/ADR-009-policy-before-model.md)** (Proposed), whose
+Context section carries the full pillar-by-pillar mapping. Verdict in one line:
+pillars **1** (knowledge outside the model, transient context) and **4**
+(swappable model / durable layer) are already complete and mechanically
+enforced (Decision-17); pillar **2** (objects + typed links over sources) is
+substantial with two gaps (R-18 freshness, R-19 formal ontology); pillar **3**
+(policy **before** the model) is absent (R-16, + R-17 auditability). Hard
+invariants for every entry: **zero DDL** (`frontmatter_json` + existing
+columns), **vendor-agnostic** (flags/env/config — identical under
+claude/codex/gemini/pi/hermes), **derive-don't-author** (optional keys only;
+defaults derived), **default OFF** (no config ⇒ byte-identical behavior),
+markdown stays Class-A canonical. Honest boundary (verbatim in ADR-009): these
+scope **what a model invocation sees** — least-privilege for cooperating
+agents and durable-artifact/cross-vault leak containment — NOT security
+against the machine's owner; real multi-user authZ stays trigger-gated to the
+Postgres migration (P3 below). Recommended order: R-16 → R-17 → R-18 → R-19
+(R-17 shares R-16's scope-flag plumbing; R-18/R-19 are independent).
+
+### R-16. Policy-before-model retrieval scoping — ✅ SHIPPED (TASK 049, 2026-07-07) → ADR-009 (Accepted)
+
+**Shipped as specced below** (one TASK through the full pipeline; task-reviewer +
+architecture-reviewer + plan-reviewer gates green; 1900+ pytest, mypy strict, zero DDL —
+`user_version` 7 untouched). Delivered: `scripts/wiki_index/policy.py` (profile resolution,
+Q-049-1 precedence); the `search_pages` pre-LIMIT classification predicate (all three query
+shapes, fail-closed, both-or-neither library-caller guard); `--audience` on
+`wiki-search`/`wiki-query prepare|apply` (hash fold only-when-active, `_follow_edges` gate)/
+`wiki-verify-multi prepare|apply` (`restricted_count`, body never read); `wiki-lint`
+`classification-leak` (`--strict` rail) + `invalid-classification` + `invalid-policy`;
+`wiki-import --classification` (dedicated `_raw` injection + note stamp — the H-6
+"`_raw/` second-class" mitigation, now implemented); `$defs/PolicyConfig` +
+`WikiProjectOverride` policy ban; `WIKI_SCHEMA.md.tmpl` policy block. Envelope keys
+(`audience`/`restricted_count`) emitted ONLY when a profile is active — OFF is byte-identical
+(equivalence + hash-stability tests). Design rationale: Q-049-1..4 (§11i); security contract:
+ARCHITECTURE §7.6.
+
+**What**: optional `classification: <level>` page key + vault `policy:` block
+(`levels`/`default_level`/`default_audience` in `WIKI_SCHEMA.md` via
+`load_root_config`) + `--audience <level>` scope flag. Enforcement = ONE bound
+SQL predicate `COALESCE(CAST(json_extract($.classification) AS TEXT), ?) IN (…)` appended to
+the shared `search_pages` `clause_parts` **pre-LIMIT** (the `exclude_types`
+precedent) — a filtered page never enters the `wiki-search`/`wiki-query`
+envelope, so it can never reach any model. Dedicated gates for the three
+bypass paths: `_follow_edges` (before `_MAX_EDGE_PULLED`), `question_hash`
+(audience folded ONLY when a profile is active — back-compat), `wiki-verify-multi`
+`_gather_examined` → `restricted_count` (count only, never content). Unknown
+levels fail **closed**. Lint: `classification-leak` (lower page cites higher —
+contradiction ⇒ `--strict` rail, ADR-006 posture) + `invalid-classification`
+warning. H-6 synergy: `wiki-import --classification restricted` implements the
+KNOWN_ISSUES H-6 "`_raw/` second-class" mitigation with this same primitive.
+**YAGNI** (recorded in ADR-009): users/roles/identity store, crypto, RLS,
+field-level redaction, an MCP policy server.
+**Trigger**: mixed-sensitivity content lands in a live vault (personal-vault
+adoption), or subagent critics start running against a sensitive vault.
+**Effort**: M (one TASK). **Files**: new `scripts/wiki_index/policy.py`;
+`repository.py`/`sqlite_repository.py` (predicate in `clause_parts`);
+`wiki_search.py`, `wiki_query.py` (flag + hash fold + `_follow_edges` gate),
+`wiki_verify_multi.py`, `lint.py` (+ DAL `find_classification_leaks`);
+`config/wiki-config.schema.yaml` (`$defs/PolicyConfig`),
+`templates/WIKI_SCHEMA.md.tmpl`; `skills/wiki-query-synthesis/SKILL.md`
+(same-flags list). Acceptance headline: **OFF ≡ byte-identical** (ADR-005-D2
+style equivalence test).
+
+### R-17. Read-side audit completeness + derived trust tier (P1)
+
+**What**: (i) drop the `if changed:` gate on the `wiki-query apply` log event
+and record the **cited source slugs** (not a count) + the active audience in
+`details_json` — zero DDL, `query` is already in the `event_type` CHECK enum;
+(ii) optional `WIKI_ACTOR_ID` env threaded into `details_json` on all write
+CLIs (generalizes `--orchestrator-id`); (iii) opt-in retrieval logging
+(`wiki-query prepare --log-retrieval` / `wiki-search --log-access`) recording
+the retrieved slug set — Class-C DB-only rows exempt from the M-2 `log.md`
+mirror (precedent: `record_query_state`), closing the "reads are unlogged"
+gap for operators who want it; (iv) **derived per-hit `trust` field**
+(`external` | `verified` | `internal`) in the `wiki-query prepare` envelope —
+computed from `$.source` URL / `_raw/` path / inbound `verifies` refs, **no
+new authored field** — replacing the synthesis contract's `_raw/` path
+heuristic with machine-readable signal; optional `--min-trust` retrieval
+floor (a scope flag folded into `question_hash` like R-16's audience).
+**Why**: without read-audit, no policy increment is verifiable; trust-tier
+operationalizes H-6 provenance ("the layer knows where a page came from").
+**Trigger**: R-16 lands (audit is its verification substrate) — or first
+compliance-flavored "what did the model read" question. **Effort**: S.
+**Files**: `wiki_query.py` (event + envelope), `wiki_search.py`,
+`wiki_append_log.py`/DAL (Class-C access rows), `skills/wiki-query-synthesis/SKILL.md`.
+
+### R-18. Source freshness — the connector substrate (P2)
+
+**What**: make "keep sources current" cheap without becoming a live query
+proxy (the wiki is a **pull-refreshed knowledge cache**; Class A/B layering
+and the H-6 trust model forbid query-time fetch-through — freshness SLA =
+fetcher cadence, stated plainly). Three slices: **(a)** `resummarize.mode:
+if-changed` in the `wiki-sync` policy gate (`_resummarize.apply_policy` +
+`config/sync-config.schema.yaml` enum) — skip only when a summary exists AND
+the recorded `source_state` hash matches the file; staleness derived from
+existing Class-C state, ~30 LOC, closes the gap where a *changed* raw is
+skipped under `if-missing` and only `--force`/`always` (re-LLM every scan)
+refresh. **(b)** `is_unchanged` short-circuit in `wiki-import prepare`
+(hash the pre-existing `_raw/<slug>.md` before overwrite; orchestrator stops
+on `is_unchanged` — the exact envelope precedent of extract-concepts/query),
+so a scheduled re-poll of an unchanged URL costs one hash, not one REASON
+pass. **(c)** the **connector contract as docs + one template**: a connector
+= any executable that materializes one file per business object into a
+`wiki-sync` zone with a **stable filename = stable external key**
+(`PROJ-123.md` → stable slug → in-place updates, stable wikilinks) + a
+zone-local `.wiki/sync.yaml` (`mode: if-changed` + per-zone `summarize:`
+profile). Fetchers stay operator-owned PATH executables (the
+`resolve_skill_bin` discovery pattern); an MCP tool MAY wrap one, but MCP is
+not the contract. Source notes refresh **in place**; `supersedes` chains stay
+reserved for knowledge-class pages (the `--as-of` temporal layer) — a
+refreshed source is "the current snapshot", not a new event.
+**YAGNI**: live SQL federation / fetch-through, an MCP server surface,
+building IMAP/GramJS adapters now (Epic 6 trigger stands), authored
+`freshness` frontmatter (git + `source_state` own history), webhook/push
+daemon (adds a writer to single-writer SQLite — Postgres trigger).
+**Why**: turns Epic 6 from "N adapters to build" into "any exporter + a zone
+config"; unblocks scheduled refresh loops. **Trigger**: first recurring
+external source (newsletter/Jira/channel) an operator actually re-polls.
+**Effort**: S (a+b code, c docs). **Files**: `scripts/wiki_skills/_resummarize.py`,
+`scripts/wiki_index/sync_config.py` + `config/sync-config.schema.yaml`,
+`scripts/wiki_skills/wiki_import_article/__init__.py` (prepare),
+`skills/wiki-import/SKILL.md` + `workflows/`, a `templates/` zone-`sync.yaml`
+example + a connector-contract section in `docs/architectures/functional-architecture.md`.
+
+### R-19. Formal ontology spec — declared, validated type/edge/property contract (P2)
+
+**What**: an OPTIONAL `ontology:` block in the layout YAML (per-vault override
+via `.wiki/layout.yaml`, STRICT schema like everything else in
+`config/layout-config.schema.yaml`), promoting the ontology from convention
+to declared contract: `closed_types: true` (the type roster **is derived from
+`type_mapping` keys** — no second roster, derive-don't-author);
+`edges: [{edge, from[], to[]}]` — domain/range per stored ref_type (finally
+declaring e.g. `implements: decision→requirement`, which today nothing
+checks); `properties: [{class, field, enum[]}]` — lifting the `status` value
+enums out of `templates/page-types/*.md` comments into validated config.
+Load-gate `_validate_ontology` (sibling of `_validate_health_rules`: edges ∈
+`reindex._INVERSE_REF_TYPE`, classes ∈ `type_mapping` keys, fields through
+`validate_filter_field` — a typo is exit 6, not a silent never-fires rule).
+DAL `find_ontology_violations` (clone of `find_lifecycle_drift`; forward
+ref_types only; orphan/entity targets skipped via the COUNT=1 guard). Surfaced
+as `wiki-lint` category `ontology-violation` — a violation is a
+*contradiction* ⇒ advisory, gates `--strict` (ADR-006 D-036-2); optional
+`wiki-health ontology` subcommand (always exit 0). Reference block ships in
+`cybos.yaml` only; other layouts ship none ⇒ zero behavior change.
+**Deliberately NOT a write gate**: reindex keeps indexing violating pages —
+markdown is canonical, Class B must never be lossy vs Class A (this is
+Palantir's ontology-*schema* without its ontology-*enforcement*, the right
+trade for a markdown-canonical system).
+**YAGNI**: OWL/RDF/SHACL/reasoner, cardinality constraints (`coverage_rules`
+already cover "at least one"), edge-property schemas (rejected authored-state
+anti-pattern, Q-036), cross-vault ontology (R-X5's territory), any DDL.
+**Why**: closes the pillar-2 "ontology is tribal convention" gap — allowed
+classes, edge domain/range, and status vocabularies become a diffable,
+per-vault, machine-checked YAML an orchestrator can also be *fed* as context.
+**Trigger**: a second typed vault appears, or template↔reality drift bites in
+a live cybos/dev vault. **Effort**: M. **Builds on** R-13/R-14/R-15 machinery
+end-to-end. **Files**: `config/layout-config.schema.yaml` (+`$defs`),
+`scripts/wiki_index/layout_config.py` (`_validate_ontology` + dataclasses in
+`models.py`), `repository.py`/`sqlite_repository.py`
+(`find_ontology_violations`), `lint.py`, `scripts/wiki_skills/wiki_health.py`,
+`scripts/wiki_index/layouts/cybos.yaml`.
 
 ---
 

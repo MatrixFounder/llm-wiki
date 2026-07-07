@@ -47,6 +47,11 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
   should file as a pyramid `lesson-summary`). The vault is registered (`/wiki-init --register-existing`).
 - `--diagrams` (opt-in) → ask the REASON step for selective mermaid diagrams; `--no-concepts` → author
   `entities[]` but skip filing the `_concepts/` pages (defer to `/wiki-extract-concepts`).
+- `--classification <level>` (TASK 049 / ADR-009, opt-in) → stamp `classification: <level>` into the
+  `_raw/` capture (**prepare**) AND the authored note (**apply** — pass the same value to both). This
+  is the H-6 quarantine for hostile external content: a `restricted`-stamped import never enters a
+  lower-`--audience` retrieval envelope (`wiki-search`/`wiki-query`/`wiki-verify-multi`). Shape
+  `[a-z][a-z0-9_-]{0,15}`; an out-of-ladder value is flagged by `wiki-lint` (`invalid-classification`).
 
 ## When NOT to use
 - Re-index an existing note → `wiki-index-upsert`. `wiki-import` is THE construct path; the

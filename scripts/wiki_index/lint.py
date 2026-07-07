@@ -109,6 +109,11 @@ def run_all_checks(
         issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path, config=config))
         issues.extend(
             check_lifecycle_drift(repo, vid, v.root_path, strict=strict, config=config))
+        # TASK 049 (R-6): classification-leak + invalid-classification — gated
+        # on the vault actually declaring a `policy:` block (no block ⇒ no DAL
+        # call, no output — the R-15 no-op precedent).
+        issues.extend(
+            check_classification_policy(repo, vid, v.root_path, strict=strict))
 
     # Cross-vault duplicates (R-29)
     for slug, vault_ids in repo.find_cross_vault_concept_duplicates():
@@ -205,6 +210,65 @@ def check_lifecycle_drift(
             details={"project": hit.page_project, "class": hit.page_class,
                      "edge": hit.edge, "status": hit.status,
                      "expected": hit.expected},
+        ))
+    return out
+
+
+def check_classification_policy(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
+) -> list[LintIssue]:
+    """TASK 049 (R-6): two categories over the vault's declared `policy:` block.
+
+    - ``classification-leak`` — a page's ``cited``/``verifies`` ref targets a
+      page of a HIGHER level (a filed answer/verdict republishing restricted
+      content). A genuine contradiction ⇒ warning, **error under --strict**
+      (ADR-006 D-036-2 rail, like lifecycle-drift).
+    - ``invalid-classification`` — an authored value outside the declared
+      ladder (or non-string): the page fails closed out of every scoped
+      retrieval. An authoring slip, not a graph contradiction ⇒ warning, never
+      strict-gated. The offending VALUE is never echoed (CWE-209/NFR-4).
+    - ``invalid-policy`` — the block itself is malformed (warning; the scoped
+      CLIs fail loud on it with INVALID_POLICY, lint just surfaces it).
+
+    A vault with NO ``policy:`` block (or no readable ``WIKI_SCHEMA.md``) is a
+    silent no-op — no DAL call (the R-15 empty-rules precedent)."""
+    from scripts.wiki_index.policy import PolicyError, load_vault_policy
+
+    try:
+        block = load_vault_policy(vault_root)
+    except PolicyError:
+        return [LintIssue(
+            category="invalid-policy", severity="warning", vault_id=vault_id,
+            details={"hint": "the vault's policy: block is malformed; scoped "
+                             "CLIs will refuse it (INVALID_POLICY)"},
+        )]
+    if block is None:
+        return []
+    levels, default_level, _audience = block
+    out: list[LintIssue] = []
+    sev: Severity = "error" if strict else "warning"
+    for leak in repo.find_classification_leaks(
+            vault_id, list(levels), default_level):
+        out.append(LintIssue(
+            category="classification-leak", severity=sev, vault_id=vault_id,
+            page_slug=leak.page_slug,
+            details={"project": leak.page_project,
+                     "page_level": leak.page_level,
+                     "target": leak.target_slug,
+                     "target_level": leak.target_level,
+                     "ref_type": leak.ref_type,
+                     "hint": "a lower-classified page cites/verifies a "
+                             "higher-classified one — the filed artifact "
+                             "republishes restricted content"},
+        ))
+    for bad in repo.find_invalid_classifications(vault_id, list(levels)):
+        out.append(LintIssue(
+            category="invalid-classification", severity="warning",
+            vault_id=vault_id, page_slug=bad.page_slug,
+            details={"project": bad.page_project,
+                     "hint": "authored classification is not one of the "
+                             "vault's policy.levels (value withheld); the "
+                             "page fails closed out of scoped retrieval"},
         ))
     return out
 

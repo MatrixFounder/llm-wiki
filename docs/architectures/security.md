@@ -16,6 +16,7 @@
 - **At rest**: Markdown в iCloud Obsidian — encrypted iCloud sync. SQLite — local FS, **не** в iCloud (R-03). No additional encryption (vault уже под user permissions).
 - **In transit**: HTTPS для всех external API calls (Anthropic).
 - **PII**: `wiki.research.private_concepts` + `private_tags: [confidential]` — fail-fast в research/external-share. MVP не имеет research/external-share, но schema готова.
+- **Policy-before-model**: [ADR-009](../adr/ADR-009-policy-before-model.md) / ROADMAP R-16 / TASK 049 — опциональный `classification:` + `--audience` retrieval-scope гейт (SQL-предикат ДО попадания контента в model-context/envelope). Least-privilege для model-инвокаций и subagent'ов, НЕ multi-user authZ (см. Out-of-scope ниже + §7.6).
 - **Backups**: Vault уже git-versionable (рекомендация); SQLite — derivative, всегда rebuildable. **Скиллы не делают бэкапы** (per TASK §22 v2).
 
 ### 7.3. Attack Protection (OWASP-aligned)
@@ -53,8 +54,11 @@
 - **A10 SSRF**: `wiki-source-light` отправляет только в Anthropic API (hard-coded host). Не принимает user-supplied URL.
 
 **Out-of-scope для MVP** (per TASK):
-- Multi-user RBAC.
-- Audit logs beyond `log.md`.
+- Multi-user RBAC. _(Единственный запланированный шаг в эту сторону —
+  single-operator retrieval scoping, [ADR-009](../adr/ADR-009-policy-before-model.md)
+  Proposed / ROADMAP R-16: скоупит что видит **модель**, не пользователь;
+  настоящий multi-user authZ остаётся trigger-gated → Postgres, ROADMAP P3.)_
+- Audit logs beyond `log.md`. _(Read-side полнота аудита — ROADMAP R-17.)_
 - Encryption at rest (vault encryption — responsibility пользователя).
 
 ### 7.4. Vendoring Policy
@@ -145,3 +149,40 @@ conversion), so its security posture is explicit:
   `wiki-sync` adds no network or credential surface (no `import anthropic`).
 
 ---
+
+## 7.6. Policy-before-model retrieval scoping (TASK 049 / ADR-009 / R-16)
+
+The classification layer adds a **capability-scoping control for model invocations**,
+not an authZ boundary. Its security contract:
+
+- **Threat model addressed:** (1) accidental exposure of sensitive vault content into a
+  model context / third-party API during routine RAG — especially subagent/critic
+  contexts run least-privilege (`wiki-verify-multi --audience`); (2) leakage into
+  **durable Class-A artifacts** (filed `_queries/*.md` answers, verification pages)
+  that get committed/synced/read downstream — blocked mechanically by the pre-LIMIT SQL
+  filter + the existing `CITATION_NOT_RETRIEVED` grounding gate; (3) cross-vault bleed
+  under `--vaults all` (home-vault ladder applies; foreign labels fail closed); (4) H-6
+  blast-radius reduction — `wiki-import --classification restricted` quarantines a
+  hostile `_raw/` capture from every lower-audience synthesis (the KNOWN_ISSUES H-6
+  "`_raw/` second-class" mitigation, implemented).
+- **Explicit NON-goals (never claim otherwise):** a malicious local operator or
+  orchestrator (they own the files and can open the SQLite DB directly — the DB
+  contains the content), tampered CLIs, or an operator passing the highest audience.
+  The profile is **self-declared** (flag > vault `default_audience` > OFF). Real
+  multi-user authZ stays trigger-gated to the Postgres/multi-tenant migration
+  (ROADMAP P3 / R-9 trigger).
+- **Enforcement is deterministic, not prompt-layer:** one bound SQL predicate in
+  `search_pages` (pre-LIMIT, all three query shapes, all values bound — the no-f-string
+  posture holds) + per-page gates on the two `get_page` bypass paths
+  (`_follow_edges`, `_gather_examined`). Unknown level strings are excluded
+  (fail-closed `IN`). No level/label VALUE is ever echoed in an error (CWE-209/117);
+  `wiki-verify-multi` reports excluded cites as a **count only**.
+- **H-6 interplay:** policy is an *ingress-to-context* gate, orthogonal to and
+  compounding the prompt-armor + egress sanitizers — content that IS allowed through
+  remains untrusted data; `sanitize_markdown_text` and the fenced-sentinel rules are
+  unchanged.
+- **Defense-in-depth (documentation-level, vendor-specific):** operators MAY add
+  `Read`-deny globs for restricted folders in `templates/vault.claude-settings.json` /
+  `vault.pi-permissions.json` to also block an orchestrator's direct file reads on
+  harnesses that support permissions — documented as belt-and-braces, never the
+  boundary.

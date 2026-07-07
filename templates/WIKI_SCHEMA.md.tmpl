@@ -26,6 +26,26 @@ travels with the vault, an absolute path from a cloned/synced vault could otherw
 vault is an **island**: `--vault all` spans only its own DB; a nested sub-vault with its own
 `index_db` routes to a different DB (nearest WIKI_SCHEMA.md wins).
 
+**Optional `policy:` (TASK 049 / ADR-009)** — retrieval-scope classification: pages above
+the caller's audience level never enter a model context (`wiki-search`/`wiki-query`/
+`wiki-verify-multi --audience`; filtered in SQL BEFORE the limit). Add to the frontmatter above:
+
+```yaml
+policy:
+  levels: [public, internal, restricted]   # ordered low→high; your own names OK
+  default_level: public                    # assumed for pages with no classification: key
+  default_audience: internal               # OPTIONAL — declaring it ACTIVATES the layer
+```
+
+Mark pages with `classification: <level>` (unmarked = `default_level`). Without a
+`--audience` flag AND without `default_audience` the layer is **OFF** (byte-identical
+behavior). ⚠️ Declaring `default_audience` on an existing vault re-keys filed-query
+hashes once (`is_unchanged=false` on the next re-query — expected, not an error).
+Unknown level labels **fail closed** (excluded); `wiki-lint` flags them
+(`invalid-classification`) and flags a lower page citing a higher one
+(`classification-leak`, gates `--strict`). This scopes what the MODEL sees — it is
+least-privilege for agents, NOT protection from someone with file/DB access.
+
 ## Optional per-vault config (override the built-in `${layout}` layout)
 
 Two optional files under `<vault>/.wiki/` let a real mixed vault tune behaviour

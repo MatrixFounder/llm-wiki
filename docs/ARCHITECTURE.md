@@ -17,7 +17,9 @@
 > [004](./adr/ADR-004-event-graph-typed-edges.md) event graph ·
 > [005](./adr/ADR-005-fts-narrowed-membership-filter.md) FTS-narrowed membership ·
 > [006](./adr/ADR-006-derived-knowledge-health.md) derived knowledge health ·
-> [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML).
+> [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML) ·
+> [008](./adr/ADR-008-active-note-resolution.md) active-note resolution ·
+> [009](./adr/ADR-009-policy-before-model.md) policy-before-model retrieval scoping (**Proposed** — heads ROADMAP R-16…R-19 enterprise-readiness).
 >
 > **Source spec** (historical): [docs/archive/TASK-ref-v2.md](./archive/TASK-ref-v2.md) — the original pre-implementation v2 reference spec (archived; the living architecture is this document + `docs/architectures/`).
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
@@ -563,6 +565,35 @@ layouts and any output language**:
   report). **Run them after adding a new `bin/wiki-*`, `skills/wiki-*/`, or `commands/wiki-*.md`**
   — new entries are not auto-propagated.
 
+**§2.4 Policy-before-model retrieval scoping (TASK 049 / R-16 — realizes ADR-009).**
+The retrieval layer gains an **optional, default-OFF** classification gate: an ordered
+per-vault level ladder (`policy:` block in `WIKI_SCHEMA.md`, read via the existing
+`load_root_config` overlay path) + an optional page frontmatter key `classification:`
+(absent ⇒ vault `default_level` — derive-don't-author) + a `--audience <level>` scope
+flag on `wiki-search` / `wiki-query prepare|apply` / `wiki-verify-multi prepare|apply`
+(+ `wiki-import --classification` as the H-6 `_raw/`-quarantine stamp). Enforcement is
+**deterministic and pre-envelope** (Karp pillar 3 — policy before the model, never
+prompt-armor): ONE bound SQL predicate
+`COALESCE(CAST(json_extract($.classification) AS TEXT), ?) IN (…)` appended to
+`search_pages`' shared `clause_parts` **before LIMIT** (all three query shapes — the
+`exclude_types` precedent), plus per-page Python gates on the two `get_page` paths that
+bypass search (`wiki-query _follow_edges` — before the `_MAX_EDGE_PULLED` truncation;
+`wiki-verify-multi _gather_examined` — excluded cites become a count-only
+`restricted_count`). The audience folds into `question_hash` **only when a profile is
+active** (OFF ⇒ hash bytes unchanged; a prepare/apply mismatch fails loudly as
+`QUESTION_CHANGED`); the existing `CITATION_NOT_RETRIEVED` gate then mechanically
+prevents citing an out-of-tier page in a filed answer. Unknown/foreign level strings
+**fail closed** (the `IN` property; cross-vault scope uses the HOME vault's ladder).
+Lint gains `classification-leak` (lower page cites/verifies higher — contradiction ⇒
+`--strict` rail, ADR-006 posture) + `invalid-classification` (warning). **Honest
+boundary (ADR-009):** scopes what a model invocation sees — least-privilege for
+cooperating agents + leak containment for filed Class-A artifacts — NOT authZ against
+the machine's owner. Zero impact on §4 Data Model (**zero DDL** — rides
+`frontmatter_json` on the ADR-005-accepted unindexed path; `user_version` 7); §5 gains
+only flags + one new pure module (`scripts/wiki_index/policy.py`) + two DAL params +
+`find_classification_leaks`; §6 unchanged (no deps). Design rationale: Q-049-1..4
+(§11i); enforcement-point inventory in Q-049-4.
+
 ---
 
 ## 3. System Architecture
@@ -583,7 +614,7 @@ Conceptual entities (Vault, Page, Entity, EntityAlias, PageEntityRef, SourceStat
 
 ## 5. Interfaces
 
-External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes; the TASK 007 `wiki-query` `prepare`/`apply` CLI surface + `check_query_state`/`record_query_state` DAL methods + error codes), and the internal v1.1 concept-manifest contract (the external `wiki-ingest` consumer was retired in TASK 047; the manifest shape is now `wiki-extract-concepts --ingest` → `_manifest_consumer` only).
+External APIs (CLI surface, JSON-envelope shape), internal interfaces (`IndexRepository` ABC + concrete `SQLiteRepository`, incl. the TASK 005 entity-resolution methods + `merge_entities` + alias-aware `find_orphan_links`, and `wiki-confirm`/`wiki-alias`/`wiki-merge` error codes; the TASK 007 `wiki-query` `prepare`/`apply` CLI surface + `check_query_state`/`record_query_state` DAL methods + error codes), and the internal v1.1 concept-manifest contract (the external `wiki-ingest` consumer was retired in TASK 047; the manifest shape is now `wiki-extract-concepts --ingest` → `_manifest_consumer` only). **TASK 049** adds ONE pure module (`scripts/wiki_index/policy.py`), two optional `search_pages` DAL params (`allowed_classifications`/`classification_default`), two read-only DAL methods (`find_classification_leaks`/`find_invalid_classifications`), and the `--audience`/`--classification` flags (§2.4) — no new CLI, no envelope change under OFF.
 
 → [details](./architectures/interfaces.md)
 
@@ -669,4 +700,5 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **ADR-001 clarification**: Source Adapters component preserves the single-indexer invariant while allowing derivative page writes (concept pages) by downstream skills.
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional. *(Both retired in TASK 047 — `wiki-import` is the in-repo construct engine; entry kept as shipped-history.)*
 - [x] **Obsidian deep-links (TASK 045)**: `wiki-search` JSON hits gain `file_path` (always present) + `obsidian_url` (`obsidian://open?vault=<folder-basename>&file=<encoded-path>`, null when vault unknown — Q-045-1). Vault cache built once per unique `vault_id` across hits (R-3). `--format markdown`: OSC 8 hyperlinks on iTerm2/VS Code terminal; plain URL fallback for pipe + Apple Terminal (detected via `TERM_PROGRAM=Apple_Terminal` — Q-045-2); chat agents show clean title/slug/snippet (obsidian:// not clickable in VS Code webview CSP). H-6 control-char sanitisation (`_term_safe`) applied to title/snippet before TTY output (CWE-150). Zero DDL, zero new deps.
+- [x] **Policy-before-model retrieval scoping (TASK 049 / ADR-009 / R-16)**: optional default-OFF classification layer — `policy:` ladder + `classification:` key + `--audience` on wiki-search/wiki-query/wiki-verify-multi (+ `wiki-import --classification` H-6 quarantine). ONE bound pre-LIMIT SQL predicate in `search_pages` shared `clause_parts` (all three shapes; fail-closed; both-or-neither guard) + per-page gates on the two `get_page` bypass paths (`_follow_edges` pre-truncation, `_gather_examined` count-only). Hash fold + envelope keys only-when-active (OFF ≡ byte-identical, equivalence-tested). Lint `classification-leak` (`--strict` rail, ADR-006) + `invalid-classification`; COUNT=1 leak-join guard (Q-049-3). Honest boundary documented (§7.6): scopes the MODEL, not the operator. **Zero DDL** (`user_version` 7), vendor-agnostic, derive-don't-author (optional keys only). Design: §2.4 + Q-049-1..4.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

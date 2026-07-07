@@ -65,8 +65,22 @@ from ._fetch import (
     _parse_frontmatter,
     dispatch_fetch,
     ensure_source_frontmatter,
+    inject_classification,
     resolve_skill_bin,
 )
+
+# TASK 049 (R-7): --classification value shape — same ≤16 cap as a policy
+# level (policy._LEVEL_RE). argparse.ArgumentTypeError keeps the offending
+# VALUE out of the error text (CWE-209).
+_CLASSIFICATION_RE = re.compile(r"[a-z][a-z0-9_-]{0,15}")
+
+
+def _classification_arg(value: str) -> str:
+    if not _CLASSIFICATION_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "must be a level name matching [a-z][a-z0-9_-]{0,15}")
+    return value
+
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
 _KIND_NOTE_TYPE = {
@@ -274,6 +288,13 @@ def prepare(args: argparse.Namespace) -> int:
     # Guarantee the _raw carries a link to the original (PDFs/text dumps lack a frontmatter;
     # some captures lack `source:`) — inject `source:` from the import source if missing.
     raw_md = ensure_source_frontmatter(result.raw_text, args.source)
+    # TASK 049 (R-7): opt-in classification stamp — a DEDICATED injection (not
+    # riding ensure_source_frontmatter's already-cites-source early-return) so
+    # a capture that already carries `source:` still gets the stamp. This is
+    # the H-6 "_raw/ second-class" quarantine: a hostile capture classified
+    # `restricted` never enters a lower-audience retrieval envelope.
+    if getattr(args, "classification", None):
+        raw_md = inject_classification(raw_md, args.classification)
     raw_bytes = raw_md.encode("utf-8")
     source_hash = hashlib.sha256(raw_bytes).hexdigest()  # _raw hash → import idempotency ONLY
     n_images = 0
@@ -615,7 +636,8 @@ def apply(args: argparse.Namespace) -> int:
             source_url=args.source_url or str(note.get("URL", "")),
             source_lang=args.source_lang, today=today, note_type=note_type,
             san_names=names, fname=slug_fname, mint_strategy=mint, lang=note_lang,
-            grammar=grammar)
+            grammar=grammar,
+            classification=getattr(args, "classification", None))
 
     # Build the note once (footer = every filable entity), then reconcile that footer
     # with what concept-filing will actually materialize (below).
@@ -759,6 +781,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
+    pp.add_argument("--classification", type=_classification_arg, default=None,
+                    metavar="LEVEL",
+                    help="TASK 049 (ADR-009): stamp `classification: <level>` into the "
+                         "_raw capture's frontmatter (the H-6 quarantine for hostile "
+                         "external content). Pass the SAME value to `apply` so the "
+                         "authored note is stamped too.")
     pp.add_argument("--html-bin", dest="html_bin", default=_DEFAULT_HTML,
                     help=f"path to the `html` skill's combined URL→md command, run via python3 "
                          f"(default: {_DEFAULT_HTML})")
@@ -802,6 +830,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--raw-rel", required=True,
                     help="Vault-rel path of the _raw original (use prepare's raw_path verbatim)")
     ap.add_argument("--source-lang", default="en")
+    ap.add_argument("--classification", type=_classification_arg, default=None,
+                    metavar="LEVEL",
+                    help="TASK 049: stamp `classification: <level>` into the authored "
+                         "note's frontmatter (pass the same value given to `prepare`).")
     ap.add_argument("--today", default=None, help="ISO date stamp (default: today)")
     # TASK 046: orthogonal generation modifiers. --diagrams signals the REASON harness to
     # include selective mermaid (the body already carries it on the CLI side; recorded in the

@@ -446,3 +446,33 @@ class CoverageGap:
     page_class: str
     kind: str
     detail: str
+
+
+@dataclass(frozen=True)
+class ClassificationLeakHit:
+    """TASK 049 (R-6): a page whose ``cited``/``verifies`` ref targets a page
+    of a HIGHER effective classification level than its own — a filed answer
+    or verdict that would republish restricted content. Levels here are the
+    vault's own declared ladder names (operator config, safe to surface in a
+    lint report); pages with an out-of-ladder label are skipped (the
+    ``invalid-classification`` check flags those separately)."""
+
+    vault_id: str
+    page_slug: str
+    page_project: str
+    page_level: str
+    target_slug: str
+    target_level: str
+    ref_type: str
+
+
+@dataclass(frozen=True)
+class InvalidClassificationHit:
+    """TASK 049 (R-6): a page whose authored ``classification`` is present but
+    not one of the vault's declared ``policy.levels`` (or is non-string) —
+    such a page FAILS CLOSED out of every scoped retrieval, so surface it.
+    The offending VALUE is deliberately not carried (CWE-209/NFR-4)."""
+
+    vault_id: str
+    page_slug: str
+    page_project: str

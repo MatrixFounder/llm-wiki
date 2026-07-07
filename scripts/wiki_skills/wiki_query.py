@@ -29,6 +29,14 @@ import frontmatter
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import QUERIES_SUBDIR
 from scripts.wiki_index.models import LogEvent, PageHit
+from scripts.wiki_index.policy import (
+    FOREIGN_UNCLASSIFIED_SENTINEL,
+    PolicyError,
+    PolicyProfile,
+    allowed_levels,
+    effective_level,
+    resolve_policy,
+)
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
@@ -84,13 +92,23 @@ def _derive_query_slug(question: str) -> str:
     return s or "query"
 
 
-def _question_hash(question: str, hits: list[PageHit]) -> str:
+def _question_hash(
+    question: str, hits: list[PageHit], audience: str | None = None,
+) -> str:
     """Q-A6 binding shape: sha256 over the question + the ordered retrieved
     ``project/slug`` set, so a re-query after the corpus changed re-synthesises
     (defines `is_unchanged` semantics + whether the compounding loop picks up
-    new sources). BM25 order is preserved (search_pages returns ranked hits)."""
+    new sources). BM25 order is preserved (search_pages returns ranked hits).
+
+    TASK 049: the audience level folds in ONLY when a policy profile is active
+    (``audience is not None``) — OFF keeps the hash bytes unchanged, so filed
+    queries recorded pre-049 still match (NFR-1). A prepare/apply audience
+    mismatch therefore fails loudly as QUESTION_CHANGED. The ``\\x00`` prefix
+    cannot collide with a ``project/slug`` line (slugs are kebab-case)."""
     parts = [question]
     parts.extend(f"{h.page.project}/{h.page.slug}" for h in hits)
+    if audience is not None:
+        parts.append("\x00audience:" + audience)
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -184,7 +202,11 @@ _MAX_EDGE_DEPTH = 3
 _MAX_EDGE_PULLED = 50
 
 
-def _follow_edges(repo: IndexRepository, hits: list[PageHit], depth: int) -> list[PageHit]:
+def _follow_edges(
+    repo: IndexRepository, hits: list[PageHit], depth: int,
+    allowed: list[str] | None = None, cls_default: str | None = None,
+    home_vault: str | None = None,
+) -> list[PageHit]:
     """Expand the FTS hit set along typed edges (ADR-004 D5 / Q-032-4). For each hit,
     take its one-hop typed-edge neighbors (both directions), resolve each to a real
     page, exclude `query`/`verification`, dedup against the running set, and append in
@@ -226,10 +248,30 @@ def _follow_edges(repo: IndexRepository, hits: list[PageHit], depth: int) -> lis
             key = (vid, nproj, nslug)
             if key in seen:
                 continue
+            # Mark BEFORE the fetch (vdd-multi perf MED): a key rejected by any
+            # skip below is never appended to pulled/nxt regardless, so marking
+            # it early changes NOTHING about the pulled set/order (question_hash
+            # C1 holds) — it only stops re-get_page'ing the same rejected page
+            # from every other frontier neighbor / deeper level.
+            seen.add(key)
             page = repo.get_page(vid, nslug, nproj)
             if page is None or page.type in ("query", "verification"):
                 continue
-            seen.add(key)
+            # TASK 049 (R-4): under an active policy profile an out-of-tier
+            # neighbor is skipped exactly like the type-skip above — inside the
+            # canonically-sorted stream, BEFORE the _MAX_EDGE_PULLED truncation,
+            # so the expansion stays deterministic and identical across
+            # prepare/apply (the question_hash C1 invariant). SEC-2: the
+            # default_level applies only to HOME-vault pages — a foreign
+            # unclassified neighbor fails closed (sentinel), matching the SQL
+            # CASE-scoped default.
+            if allowed is not None and cls_default is not None:
+                page_default = (cls_default
+                                if home_vault is None or vid == home_vault
+                                else FOREIGN_UNCLASSIFIED_SENTINEL)
+                if effective_level(page.frontmatter_json, page_default) \
+                        not in allowed:
+                    continue
             hit = PageHit(page=page, bm25_score=0.0, snippet="",
                           via_edge={"from": frm, "ref_type": rt})
             pulled.append(hit)
@@ -238,14 +280,22 @@ def _follow_edges(repo: IndexRepository, hits: list[PageHit], depth: int) -> lis
     return pulled
 
 
-def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) -> list[PageHit]:
+def _retrieve(
+    repo: IndexRepository, question: str, args: argparse.Namespace,
+    profile: PolicyProfile | None = None,
+) -> list[PageHit]:
     """Alias-expanded keyword FTS retrieval shared by `prepare` AND `apply` — so
     `apply` reproduces `prepare`'s exact retrieval to recompute `question_hash`
     (the QUESTION_CHANGED TOCTOU check). Raises `_InvalidQuery` on an
     un-parseable expression after the DF-1 quoted-phrase fallback. TASK 032 (R-032-6):
     with `--follow-edges`, the FTS hits are deterministically expanded along typed
-    edges (`_follow_edges`) — folded into `question_hash`, so prepare/apply agree."""
+    edges (`_follow_edges`) — folded into `question_hash`, so prepare/apply agree.
+    TASK 049: an active `profile` threads the classification filter into the FTS
+    path AND the DF-1 fallback (one closure) AND the edge expansion — a
+    restricted page can never enter the envelope on any branch."""
     vaults_list, types_list = _scope(args)
+    allowed = allowed_levels(profile) if profile is not None else None
+    cls_default = profile.default_level if profile is not None else None
     match_query = _build_match_query(
         repo, question, vaults_list, not args.no_expand_aliases,
         not args.exact)  # TASK 028: --exact disables stemming (fold stays)
@@ -264,10 +314,19 @@ def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) ->
     # SHARED path so `prepare` and `apply` compute the same question_hash.
     exclude = ["query"] if types_list is None else None
 
+    # SEC-2: --vault is the profile's HOME vault (its policy block resolved
+    # the profile) — the default_level fallback is scoped to it in SQL and in
+    # the edge gate; a foreign vault's unclassified pages fail closed.
+    home_vault = args.vault if profile is not None else None
+
     def _search(q: str) -> list[PageHit]:
         return repo.search_pages(
             q, vaults=vaults_list, types=types_list, exclude_types=exclude,
-            project=args.project, limit=args.limit,
+            project=args.project,
+            allowed_classifications=allowed,
+            classification_default=cls_default,
+            classification_home_vault=home_vault,
+            limit=args.limit,
         )
 
     try:
@@ -280,7 +339,9 @@ def _retrieve(repo: IndexRepository, question: str, args: argparse.Namespace) ->
         except sqlite3.OperationalError as exc:
             raise _InvalidQuery() from exc
     if getattr(args, "follow_edges", False):
-        hits = hits + _follow_edges(repo, hits, getattr(args, "edge_depth", 1))
+        hits = hits + _follow_edges(
+            repo, hits, getattr(args, "edge_depth", 1),
+            allowed=allowed, cls_default=cls_default, home_vault=home_vault)
     return hits
 
 
@@ -343,8 +404,18 @@ def prepare(args: argparse.Namespace) -> int:
         args.vault, vault_root=resolve_vault_root_for_cli(args), db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
+        # TASK 049 (R-4): resolve the policy profile at the TOP of prepare —
+        # the hash fold + envelope echo live here, not in _retrieve (Q-049-4).
+        # Home-vault ladder; flag > declared default_audience > OFF.
         try:
-            hits = _retrieve(repo, question, args)
+            profile = resolve_policy(_derive_vault_root(args, repo), args.audience)
+        except PolicyError as exc:
+            err = ("INVALID_AUDIENCE" if exc.field == "audience"
+                   else "INVALID_POLICY")
+            return emit({"error": err, "field": exc.field,
+                         "reason": str(exc)}, 2)
+        try:
+            hits = _retrieve(repo, question, args, profile)
         except _InvalidQuery:
             return emit({"error": "INVALID_QUERY", "field": "question",
                          "reason": "not a valid FTS5 expression; quote terms "
@@ -356,9 +427,11 @@ def prepare(args: argparse.Namespace) -> int:
                                    "refusing to synthesise from no/low context"}, 2)
 
         query_slug = args.slug or _derive_query_slug(question)
-        q_hash = _question_hash(question, hits)
+        q_hash = _question_hash(
+            question, hits,
+            audience=profile.audience if profile is not None else None)
         is_unchanged = repo.check_query_state(args.vault, query_slug) == q_hash
-        return emit({
+        payload: dict[str, object] = {
             "vault_id": args.vault,
             "question": question,
             "query_slug": query_slug,
@@ -366,7 +439,11 @@ def prepare(args: argparse.Namespace) -> int:
             "is_unchanged": is_unchanged,
             "retrieved_count": len(hits),
             "hits": [_hit_dict(h) for h in hits],
-        })
+        }
+        if profile is not None:
+            # Echoed ONLY when active — the OFF envelope stays byte-identical.
+            payload["audience"] = profile.audience
+        return emit(payload)
     finally:
         repo.close()
 
@@ -479,13 +556,26 @@ def apply(args: argparse.Namespace) -> int:
         except OSError:
             return emit({"error": "INVALID_VAULT_ROOT", "field": "vault-root",
                          "reason": "does not exist"}, 2)
+        # TASK 049 (R-4): resolve the policy profile at the TOP of apply, from
+        # the SAME home vault root — --audience MUST match prepare's (the hash
+        # fold below turns a mismatch into a loud QUESTION_CHANGED).
+        try:
+            profile = resolve_policy(vault_root, args.audience)
+        except PolicyError as exc:
+            err = ("INVALID_AUDIENCE" if exc.field == "audience"
+                   else "INVALID_POLICY")
+            return emit({"error": err, "field": exc.field,
+                         "reason": str(exc)}, 2)
         # 1. Reproduce prepare's retrieval → recompute hash (TOCTOU / R-6.7).
         try:
-            hits = _retrieve(repo, question, args)
+            hits = _retrieve(repo, question, args, profile)
         except _InvalidQuery:
             return emit({"error": "INVALID_QUERY", "field": "question",
                          "reason": "not a valid FTS5 expression"}, 2)
-        if _question_hash(question, hits) != args.question_hash:
+        recomputed = _question_hash(
+            question, hits,
+            audience=profile.audience if profile is not None else None)
+        if recomputed != args.question_hash:
             return emit({"error": "QUESTION_CHANGED", "field": "question-hash",
                          "reason": "retrieval set changed since prepare; re-run "
                                    "wiki-query (no auto-retry)"}, 2)
@@ -591,13 +681,17 @@ def apply(args: argparse.Namespace) -> int:
             ))
             indexed = True
 
-        return emit({
+        out: dict[str, object] = {
             "vault_id": args.vault,
             "query_slug": args.query_slug,
             "cites": citations,
             "page_indexed": indexed,
             "action": "filed" if changed else "unchanged",
-        })
+        }
+        if profile is not None:
+            # Echoed ONLY when active — the OFF envelope stays byte-identical.
+            out["audience"] = profile.audience
+        return emit(out)
     finally:
         repo.close()
 
@@ -636,6 +730,12 @@ def _build_parser() -> argparse.ArgumentParser:
                          "→ QUESTION_CHANGED.")
     pp.add_argument("--edge-depth", type=int, default=1,
                     help="TASK 032: edge-follow hop depth (default 1, capped at 3).")
+    pp.add_argument("--audience", default=None, metavar="LEVEL",
+                    help="TASK 049 (ADR-009): retrieval-scope policy level — "
+                         "pages above this level never enter the envelope "
+                         "(filtered in SQL before the limit; edge expansion "
+                         "gated too). MUST match the value passed to `apply` "
+                         "or the question_hash diverges → QUESTION_CHANGED.")
     pp.add_argument("--slug", default=None,
                     help="Override the derived query slug (kebab-case).")
     pp.add_argument("--min-hits", type=int, default=1)
@@ -668,6 +768,9 @@ def _build_parser() -> argparse.ArgumentParser:
                          "→ same question_hash).")
     ap.add_argument("--edge-depth", type=int, default=1,
                     help="TASK 032: MUST match `prepare` (default 1, capped at 3).")
+    ap.add_argument("--audience", default=None, metavar="LEVEL",
+                    help="TASK 049: MUST match the value passed to `prepare` "
+                         "(retrieval must reproduce → same question_hash).")
     g_ans = ap.add_mutually_exclusive_group(required=True)
     g_ans.add_argument("--answer-stdin", action="store_true")
     g_ans.add_argument("--answer-file", default=None)

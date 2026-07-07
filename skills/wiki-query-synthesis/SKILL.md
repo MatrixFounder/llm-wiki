@@ -133,8 +133,16 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
   answers (avoids circular citation; keeps re-querying idempotent). An operator
   who explicitly wants to search prior answers passes `--types query`.
 - **`apply` must receive the SAME retrieval-scope flags** (`--vaults`/`--types`/
-  `--project`/`--limit`/`--no-expand-aliases`) the operator passed to `prepare`,
-  so it reproduces the identical retrieval and `question_hash`.
+  `--project`/`--limit`/`--no-expand-aliases`/`--exact`/`--follow-edges`/
+  `--edge-depth`/`--audience`) the operator passed to `prepare`, so it
+  reproduces the identical retrieval and `question_hash`.
+- **`--audience <level>` (TASK 049 / ADR-009) scopes what YOU see**: pages
+  above the level never enter `hits` (filtered in SQL before the limit; edge
+  expansion gated too), so you cannot cite them — `CITATION_NOT_RETRIEVED`
+  enforces it. When active, the envelope echoes `"audience"` and the level is
+  folded into `question_hash` (a prepare/apply mismatch fails as
+  `QUESTION_CHANGED`). Never work around a missing source by reading vault
+  files directly — absence under a profile is intentional.
 
 ## Out of scope
 

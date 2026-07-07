@@ -27,9 +27,11 @@ from scripts.wiki_index.models import (
     AliasCollision,
     BatchMode,
     BatchRun,
+    ClassificationLeakHit,
     CoverageGap,
     CoverageRule,
     DriftHit,
+    InvalidClassificationHit,
     DriftReport,
     DriftRule,
     Entity,
@@ -162,6 +164,9 @@ class IndexRepository(abc.ABC):
         project: str | None = None,
         where_fields: list[tuple[str, str]] | None = None,
         as_of: str | None = None,
+        allowed_classifications: list[str] | None = None,
+        classification_default: str | None = None,
+        classification_home_vault: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
         """FTS5 + BM25 search, optionally filtered by frontmatter metadata.
@@ -220,6 +225,29 @@ class IndexRepository(abc.ABC):
                 dates compare lexicographically (ISO strings = chronological).
                 Composes (AND) with ``query``/``where_fields``/``types``; valid on
                 its own. None = no temporal filter (today's behaviour).
+            allowed_classifications: TASK 049 (R-2 / ADR-009) — the policy
+                visibility filter. When not None, only pages whose effective
+                classification is IN this list are returned: ``COALESCE(
+                CAST(json_extract(p.frontmatter_json, '$.classification') AS
+                TEXT), <classification_default>) IN (...)`` — applied in SQL
+                **before the LIMIT** (the ``exclude_types`` rationale) on ALL
+                query shapes, all values bound. Unknown/foreign labels fail
+                CLOSED (excluded). None = no policy filter (today's behaviour,
+                byte-identical — NFR-1). MUST be non-empty when provided and
+                MUST be accompanied by ``classification_default`` (both-or-
+                neither; ``ValueError`` otherwise — library-caller defense, so
+                an unclassified page can never silently vanish via
+                ``COALESCE(NULL, NULL)``).
+            classification_default: the vault ``policy.default_level`` assumed
+                for a page with no (or null/non-string) authored
+                ``classification`` key. Paired with ``allowed_classifications``.
+            classification_home_vault: TASK 049 (SEC-2) — when provided, the
+                ``classification_default`` fallback applies ONLY to this
+                vault's pages (SQL ``CASE WHEN p.vault_id = ? THEN ? END``);
+                a FOREIGN vault's unclassified page fails CLOSED (its own
+                vault may intend a higher default). ``None`` = the default
+                applies uniformly (single-vault scope, or no home known —
+                built-in ladder outside any vault).
             limit: max hits to return.
         """
         ...
@@ -347,6 +375,33 @@ class IndexRepository(abc.ABC):
         → the frontmatter scalar ``$.<field>`` is absent/empty (e.g. a ``fact`` with an
         empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
         coverage`` (a gap is data, not a failure → always exit 0)."""
+        ...
+
+    @abc.abstractmethod
+    def find_classification_leaks(
+        self, vault_id: str, levels: list[str], default_level: str,
+    ) -> list[ClassificationLeakHit]:
+        """TASK 049 (R-6) — pages whose ``cited``/``verifies`` ref targets a
+        page with a HIGHER effective classification than their own (rank =
+        position in ``levels``, low→high; absent/null classification =
+        ``default_level``). The target join goes through the project-less
+        ``entity_slug`` and is guarded by the COUNT=1 same-slug pattern
+        (Q-049-3 — mirrors the ``--as-of`` successor walk) so an unrelated
+        same-slug page in another project can never flag a phantom leak. Pages
+        carrying an out-of-ladder label are SKIPPED here (rank-incomparable;
+        ``find_invalid_classifications`` flags them). Rank comparison happens
+        in Python; SQL fetches candidate rows only. Read-only; zero DDL."""
+        ...
+
+    @abc.abstractmethod
+    def find_invalid_classifications(
+        self, vault_id: str, levels: list[str],
+    ) -> list[InvalidClassificationHit]:
+        """TASK 049 (R-6) — pages whose authored ``classification`` is present
+        (non-null) but is NOT one of the declared ``levels`` (out-of-ladder
+        string, or any non-string value). Such a page fails closed out of
+        every scoped retrieval — surface it as an authoring slip. Absent key /
+        YAML null are NOT flagged (null ≡ absent). Read-only; zero DDL."""
         ...
 
     # =========================================================================

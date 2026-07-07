@@ -1324,3 +1324,69 @@
   on-ramp) is NOT retired here — a separate task. **Design settled (operator-directed); staged
   P1/P1b/P2/P3 — see docs/TASK.md + docs/PLAN.md.**
 
+
+### 11i. TASK 049 — policy-before-model retrieval scoping (design rationale; full record in ADR-009)
+
+- **Q-049-1 (RESOLVED) — activation precedence.** `--audience` flag → active; else
+  `policy.default_audience` **if declared** → active — *even when it equals the highest
+  level* (a declared audience always activates the layer and folds `question_hash`; a
+  "max-level = OFF" special case was rejected because adding a new top level later would
+  silently flip OFF→ON semantics for existing vaults); else OFF (`resolve_policy` →
+  `None`, provably byte-identical). ADR-009's "defaults to highest ⇒ layer OFF" is
+  thereby pinned as "absent `default_audience` ⇒ OFF without a flag". The
+  `WIKI_SCHEMA.md.tmpl` example shows a MID level and warns that declaring
+  `default_audience` on an existing vault causes a one-time `is_unchanged=false` /
+  query-hash re-key. A flag with no resolvable `policy:` block uses the built-in
+  `public < internal < restricted` ladder (flag usable out of the box).
+
+- **Q-049-2 (RESOLVED) — whole-page filtering, not section-level.** Section markers
+  stripped in `normalize_body_for_fts` would launder only the snippet: the synthesis
+  contract explicitly lets the orchestrator `Read` a cited body from disk, so stripped
+  sections still reach the model — false confidence, no single enforcement point.
+  Whole-page = one bound SQL clause in the shared `clause_parts`, deterministic,
+  hash-compatible, byte-testable. **Accepted limitation:** query pages carry no audience
+  marker — a lower-audience re-query re-files the same `_queries/<slug>.md` (loud, not
+  silent: content-hash skip + `QUESTION_CHANGED` on stale hashes).
+
+- **Q-049-3 (RESOLVED) — leak-check target join needs the COUNT=1 same-slug guard.**
+  `find_classification_leaks` joins `page_entity_refs (ref_type IN ('cited','verifies'))`
+  source×target through the project-less `entity_slug` — exactly the ambiguity the
+  `--as-of` successor-walk and `_derive_inverse_edges` already guard with
+  `(SELECT COUNT(*) FROM pages WHERE slug = entity_slug) = 1`. Without it, an unrelated
+  same-slug page in another project could flag a phantom leak. Rank comparison happens
+  in Python (partitions are small; SQL rank gymnastics rejected — P-5 posture).
+
+- **Q-049-4 (RESOLVED) — enforcement-point inventory (why one choke point + one gate).**
+  Every model-feeding surface reaches content through exactly two paths: (a)
+  `search_pages` (wiki-search both branches; wiki-query `_retrieve` incl. the DF-1
+  fallback — shared by prepare AND apply) → ONE pre-LIMIT SQL clause in the shared
+  `clause_parts` covers all three query shapes with zero drift risk; (b) direct
+  `get_page` loads that bypass search — `wiki-query _follow_edges` and `wiki-verify-multi
+  _gather_examined` — each gets a per-page Python gate via `policy.effective_level`,
+  placed before the deterministic truncation (`_MAX_EDGE_PULLED`) / inside the shared
+  helper so prepare/apply stay symmetric. `wiki-graph` deliberately unscoped (structure/
+  titles, not bodies — TASK 049 Out-of-scope). Fail-closed on unknown labels is a free
+  property of the `IN`-clause.
+
+- **Q-049-5 (RESOLVED) — post-review hardening (the TASK 049 `/vdd-multi` round: 3 critics
+  + code-reviewer; 0 CRITICAL/HIGH, 4 MED fixed, 4 LOW fixed/accepted).** Fixed:
+  (SEC-1) `wiki-search --vaults X` from outside X's directory now resolves X's
+  REGISTERED root for policy, so a declared `default_audience` activates regardless of
+  CWD; (SEC-2) the `default_level` fallback is HOME-vault-scoped — SQL
+  `CASE WHEN p.vault_id = ? THEN ? END` + the `FOREIGN_UNCLASSIFIED_SENTINEL` in the
+  edge gate — a foreign vault's unclassified pages fail closed under cross-vault scope;
+  (SEC-3/logic-MED) an unreadable config that VISIBLY declares `policy:` raises
+  `INVALID_POLICY` (raw-scan fallback), never silent OFF — and `UnicodeDecodeError`
+  joined the handled set; (logic-MED) `wiki-verify-multi apply --verify-hash` +
+  the audience fold in `verify_hash` turn a prepare/apply scope drift into a loud
+  `VERIFY_CONTEXT_CHANGED`; (perf-MED) `_follow_edges` marks a key seen BEFORE
+  `get_page` (identical pulled set/order — question_hash C1 holds — while eliminating
+  re-fetch churn of rejected neighbors). Accepted residuals (recorded, not silent):
+  in-vault `wiki-search` now always reads the root config once per invocation even
+  under OFF (sub-ms; I/O-only, results byte-identical); `inject_classification`
+  inherits the LF-only frontmatter regex of `ensure_source_frontmatter` (CRLF/BOM
+  captures are normalized by the ensure-pass running first); the verify envelope's
+  count-only privacy holds in isolation — a holder of the `cites:` list can derive
+  restricted membership by elimination (honest-boundary-consistent, documented in the
+  SKILL); the leak-check's COUNT=1 guard conservatively SKIPS same-slug-multi-project
+  targets (under-report, never phantom-flag — the enforcement layer is unaffected).

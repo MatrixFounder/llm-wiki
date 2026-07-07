@@ -32,6 +32,7 @@ wiki-query prepare "<question>" \
     --vault-root <path> \
     [--vaults <id,id|all>] [--types <t,t>] [--project <p>] \
     [--limit <N>] [--no-expand-aliases] [--slug <kebab>] \
+    [--audience <level>] \
     [--min-hits <N>] [--db-path <override>]
 ```
 
@@ -74,12 +75,19 @@ echo "$ANSWER" | wiki-query apply \
     --question-hash <hash-from-prepare> \
     --answer-stdin \
     --citations-file <path-to-cites.json> \
-    [--vaults … --types … --project … --limit … --no-expand-aliases] \
+    [--vaults … --types … --project … --limit … --no-expand-aliases --audience …] \
     [--orchestrator-id <id>] [--force] [--db-path <override>]
 ```
 
 Grounding-checked write-back + self-index. No LLM call.
 
+- **`--audience <level>` (TASK 049 / ADR-009)** — retrieval-scope policy: pages
+  classified above the level never enter `hits` (SQL-filtered before the limit;
+  `--follow-edges` expansion gated identically), so they can never be cited
+  (`CITATION_NOT_RETRIEVED` enforces it). Folded into `question_hash` **only when
+  active** — MUST match between `prepare` and `apply` (mismatch → `QUESTION_CHANGED`).
+  Default OFF (no flag + no vault `policy.default_audience` ⇒ byte-identical).
+  Bad value → `INVALID_AUDIENCE` exit 2 (never echoed).
 - `--question-hash HEX` — **required**; the value `prepare` emitted, verbatim
   (64 lowercase hex). `apply` re-runs the same retrieval and recomputes it;
   mismatch → `QUESTION_CHANGED` (exit 2 — corpus changed mid-pipeline; re-run).

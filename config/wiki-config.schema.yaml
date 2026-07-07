@@ -129,6 +129,42 @@ $defs:
     additionalProperties: true
 
   # ----------------------------------------------------------------------------
+  # PolicyConfig — TASK 049 (ADR-009): the optional retrieval-scope policy
+  # ladder. STRICT (additionalProperties: false) — a misspelled key must fail,
+  # not silently no-op. This schema is defense-in-depth: the authoritative
+  # validation (incl. membership + duplicate checks) lives in
+  # scripts/wiki_index/policy.py::parse_policy_block, because load_root_config
+  # alone does not schema-validate.
+  # ----------------------------------------------------------------------------
+  PolicyConfig:
+    type: object
+    description: >
+      TASK 049 — ordered classification ladder for policy-before-model
+      retrieval scoping. `levels` low→high; `default_level` is assumed for
+      pages with no `classification:` key (defaults to the lowest);
+      `default_audience`, WHEN DECLARED, activates the layer for every scoped
+      CLI without a flag (Q-049-1 — declaring it re-keys existing filed-query
+      hashes once). Absent block + no --audience flag = the layer is OFF.
+    required:
+      - levels
+    properties:
+      levels:
+        type: array
+        minItems: 1
+        maxItems: 16
+        uniqueItems: true
+        items:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,15}$'
+      default_level:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,15}$'
+      default_audience:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,15}$'
+    additionalProperties: false
+
+  # ----------------------------------------------------------------------------
   # WikiRootConfig — root CLAUDE.md::wiki: block.
   # vault_id is REQUIRED (ADR-002 §D1.1 fail-fast — no hash fallback).
   # ----------------------------------------------------------------------------
@@ -168,6 +204,8 @@ $defs:
           WIKI_SCHEMA.md frontmatter only). Relative → contained under vault_root;
           absolute/~ → explicit operator escape (cloud vaults). Path semantics are
           validated in config_loader.resolve_index_db_path, NOT here (this is DiD).
+      policy:
+        $ref: '#/$defs/PolicyConfig'
     additionalProperties: true
 
   # ----------------------------------------------------------------------------
@@ -195,7 +233,9 @@ $defs:
         $ref: '#/$defs/LightSummaryConfig'
     # vault_id is intentionally NOT listed in properties; presence at this
     # scope is a configuration error (caught in task-001-13 config_loader).
-    # index_db (TASK 022) is identity too → also banned here. The single
+    # index_db (TASK 022) is identity too → also banned here. policy (TASK 049)
+    # is likewise banned — a subdir override must never weaken (or fork) the
+    # vault's classification ladder. The single
     # `not: required: [vault_id, index_db]` would only reject having BOTH, so each
     # ban is its own `not` under allOf.
     allOf:
@@ -205,6 +245,9 @@ $defs:
       - not:
           required:
             - index_db
+      - not:
+          required:
+            - policy
     additionalProperties: true
 
 # Top-level: this document is a *library of definitions*, not a directly-

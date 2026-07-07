@@ -39,6 +39,7 @@ wiki-search "<query>" \
     [--where 'field=value' ...] [--status <v>] [--severity <v>] [--tag <v>] \
     [--as-of YYYY-MM-DD] \
     [--exact | --no-stem] \
+    [--audience <level>] \
     [--format json|markdown] \
     [--db-path <override>]
 ```
@@ -68,6 +69,16 @@ listing is returned.
   every typed-class decision page (one clean command). Hyphenated (`SEV-2`) / numeric
   (`priority=1`) scalar values match by string-rep. Omit the query for a pure listing.
   At most one predicate per field (a dup → `INVALID_FILTER`, exit 2, value never echoed).
+- **Policy scope (TASK 049 / ADR-009)** — `--audience <level>` returns only pages whose
+  `classification:` level (absent = the vault `policy.default_level`) is visible to that
+  audience, filtered **in SQL before the limit** — an excluded page can never consume a
+  result slot. Ladder = the STANDING vault's `policy.levels` (CWD walk-up / `--vault-root`); from outside any vault, a single named `--vaults X` uses X's registered root (so X's `default_audience` still activates), else the built-in
+  `public<internal<restricted`. Unknown/foreign labels **fail closed**, and the
+  `default_level` fallback applies only to the HOME vault's pages — a foreign
+  vault's UNCLASSIFIED pages are excluded under an active profile. Default OFF
+  (no flag + no declared `policy.default_audience` ⇒ byte-identical behavior). Bad
+  level → `INVALID_AUDIENCE` exit 2 (value never echoed). Active profile echoes
+  `"audience"` in the JSON envelope.
   A query-less `--tag`/`tags=` listing now **narrows through the `pages_fts.tags` index**
   (TASK 035 — ~4× faster at 2.5k pages); behaviour/results are **identical** (it is a
   transparent optimization, zero schema change).

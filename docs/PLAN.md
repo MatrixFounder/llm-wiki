@@ -1,111 +1,137 @@
-# PLAN 047 — Derived concept-mentions ledger + retire `wiki-enrich`/`wiki_ingest`
+# PLAN 049 — Policy-before-model retrieval scoping
 
-Phases by dependency: **P1 → P2 → P3** (P2's delete needs nothing from P1 — the derived design ports
-no `wiki_ingest` code — but is sequenced after so the suite stays green through the filing change).
-Stub-first within each phase (RED → GREEN). RTM IDs (R-1…R-9) from `docs/TASK.md`.
+Phases by dependency: **P1 (foundation) → P2 (enforcement) → P3 (lint + import) → P4
+(docs)**. Stub-first within each phase (signatures + RED tests → GREEN). RTM IDs
+(R-1…R-8, NFR-1…5) from `docs/TASK.md`. Single developer pass; every bead ends with
+the full suite green (`pytest -q`) + `mypy --strict scripts/`.
 
-> **Pivoted from body-merge to a derived/rendered ledger** (`docs/reviews/plan-047-review.md`): the
-> Mentions section is Class-B, regenerated from `page_entity_refs` — so Decision-17 / Class-A-B /
-> zero-DDL / H-6 / the TASK 039 guard all hold trivially, and the round-2 blockers don't exist.
+## P1 — Foundation (R-1, R-2, NFR-1, NFR-3)
 
----
+**049-01 `policy.py` module** — new `scripts/wiki_index/policy.py`:
+`PolicyError(ValueError)`, frozen `PolicyProfile(levels: tuple[str, ...],
+default_level: str, audience: str)`, `BUILTIN_LEVELS = ("public", "internal",
+"restricted")`, `_LEVEL_RE = [a-z][a-z0-9_-]{0,15}` (≤16), `parse_policy_block(raw:
+object) -> tuple[levels, default_level, default_audience|None]` (strict shape
+validation, no value echo — messages name the field only), `resolve_policy(vault_root:
+Path | None, audience_flag: str | None) -> PolicyProfile | None` (precedence per
+Q-049-1: flag > declared `default_audience` > OFF; flag-without-block ⇒ built-in
+ladder; reads the block via `config_loader.load_root_config`, absent/unreadable
+`WIKI_SCHEMA.md` ⇒ no block), `allowed_levels(profile) -> list[str]`,
+`effective_level(fm: dict | None, default_level: str) -> str` (non-str/None ⇒
+default — null ≡ absent). Tests `tests/test_policy.py`: precedence matrix (8 cases),
+bad ladder (dup/empty/shape/oversize), flag ∉ levels, default_level ∉ levels, CWE-209
+message shape, effective_level null/absent/non-str.
 
-## P1 — derived concept-mentions renderer → [task-047-01](tasks/task-047-01-mentions-render.md)
+**049-02 DAL predicate** — `repository.py` ABC + `sqlite_repository.py`
+`search_pages`: new kwargs `allowed_classifications: list[str] | None = None`,
+`classification_default: str | None = None`; both-or-neither guard (`ValueError`);
+clause appended to the shared `clause_parts`:
+`AND COALESCE(CAST(json_extract(p.frontmatter_json, '$.classification') AS TEXT), ?)
+IN (…placeholders…)` — params `[default, *levels]`. Tests
+`tests/test_search_classification.py` (new): fixture vault with
+public/internal/restricted/unlabeled/null-labeled/foreign-labeled pages; assert (a)
+FTS path, (b) metadata-scan path, (c) FTS-narrowed `--tag` path all filter identically;
+(d) LIMIT-window: restricted page must not evict a visible hit (limit=1 test); (e)
+unknown/foreign label excluded; (f) null ≡ absent ≡ default_level; (g) both-or-neither
+ValueError; (h) **OFF-equivalence**: `allowed_classifications=None` ⇒ results
+byte-identical to a pre-change golden (reuse the ADR-005 D2 equivalence pattern —
+same query, both modes, assert equal lists).
 
-**Issue:** each concept page must show a `BEGIN-AUTO:mentions` block listing every source that
-references the concept, regenerated from `page_entity_refs` (`get_backlinks`), preserving the rest.
+## P2 — Enforcement surfaces (R-3, R-4, R-5, NFR-1, NFR-4)
 
-- **B1 [STUB+RED]** — `tests/test_concept_mentions.py` (RED), driving the **full import→render path**
-  (two sources mention one concept): R-1 the AUTO block lists BOTH as `- [[source]]` (deduped, sorted,
-  **no** quote/span) + a typed-edge backlink to the same slug is EXCLUDED; R-2 re-render no-new-ref →
-  byte-identical (no `GENERATED-AT`), +1 `mentioned` ref → +1 entry; R-3 name/definition/prose/
-  `BEGIN-CUSTOM` islands byte-preserved; R-4 still renders after `wiki-confirm` (`is_candidate: false`);
-  R-9 after `--concept-mentions` the page is NOT flagged `hash-mismatch` (re-indexed), and `write_concept_page`
-  create emits the AUTO markers, NOT the legacy `## Mentions` quote-block.
-- **B2 [RENDERER]** — `scripts/wiki_index/rendering.py`: `render_concept_mentions_block(repo, vault,
-  entity_slug) -> str` — `get_backlinks(vault, slug, ref_type='mentioned')` → **distinct source slugs**,
-  sorted → `- [[source]]` (`sanitize_markdown_text`), empty block if none, exclude self. Plus
-  `apply_auto_block(existing_md, block_name, body) -> str` — a **NEW** non-greedy `BEGIN-AUTO:<name>`…
-  `END-AUTO:<name>` replace (distinct from `_CUSTOM_BLOCK_RE`), preserve everything else, insert after
-  the definition / before any `BEGIN-CUSTOM` if absent, **no timestamp**. Add a **single** DAL query
-  enumerating a vault's concept-page entity slugs (avoid N+1). Deterministic, no `import anthropic`.
-- **B3 [WIRE render mode + write_concept_page]** — `wiki-index-render --concept-mentions`: sweep concept
-  pages, regenerate each AUTO block, atomic-write, **re-index each rewritten page (update `pages.file_hash`)**
-  so no spurious `hash-mismatch` drift, log. `write_concept_page` create path emits the
-  `BEGIN-AUTO:mentions`/`END-AUTO:mentions` markers (seeded with the create source) **in place of** the
-  legacy `## Mentions <quote-block>`. **Update the karpathy concept-page byte-identity golden anchor +
-  affected eval pins** for the new format (one-time re-baseline, called out).
-- **B4 [WIRE recipes]** — `workflows/wiki-import.md` + `workflows/wiki-sync.md`: after a batch apply,
-  run `wiki-index-render --concept-mentions`; rebuild path = `reindex --full` → `--concept-mentions`.
-  (Recipe edit verified by the B11 dogfood, not a pytest — noted in RTM.)
-- **B5 [GREEN]** — B1 green; existing `test_extract_concepts*`, `test_import_*`, `test_render*`,
-  `test_wiki_*_evals` (incl. the updated karpathy anchor) pass; `mypy --strict` clean.
+**049-03 `wiki-search --audience`** — flag; resolve profile
+(`resolve_vault_root_for_cli` → `resolve_policy`); `PolicyError` →
+`INVALID_AUDIENCE` exit 2 (no value echo); thread allowed/default into BOTH
+`search_pages` calls; envelope gains `"audience": <level>` **only when active**.
+Tests: CLI e2e under profile (restricted page absent), OFF envelope has no `audience`
+key, bad flag exit 2, flag-without-vault-root uses built-in ladder, `--vaults all`
+home-profile (UC-7).
 
-**Exit (R-8 gate):** R-1/R-2/R-3/R-4/R-9 green; full suite + mypy clean.
+**049-04 `wiki-query --audience`** — flag on `prepare` + `apply` subparsers (epilog:
+MUST match, like `--exact`/`--follow-edges`); **profile resolved at the top of
+`prepare` and of `apply`** (plan-review F2 — `_question_hash` and the envelope echo
+live there, `:359`/`:488`), then threaded down: allowed/default into `_retrieve` →
+the `_search` closure (covers FTS + DF-1 fallback); `_follow_edges`
+gains `allowed`/`default` params — per-page skip after `get_page` (like the
+type-skip), before `_MAX_EDGE_PULLED` truncation; `_question_hash(question, hits,
+audience=None)` — appends `"\x00audience:" + audience` only when not None; prepare and
+apply envelopes echo `audience` only when active. Tests
+`tests/test_wiki_query_audience.py` (new): e2e prepare→apply round-trip under profile
+(hash matches, filed page cites only visible sources); prepare@internal /
+apply@(none) ⇒ `QUESTION_CHANGED`; out-of-tier citation ⇒ `CITATION_NOT_RETRIEVED`;
+edge-gate determinism (restricted neighbor skipped identically in prepare+apply,
+truncation stable); OFF ⇒ hash identical to a no-flag golden (NFR-1 hash-stability).
 
----
+**049-05 `wiki-verify-multi --audience`** — flag on `prepare` + `apply` (MUST-match
+note); resolve profile in both; `_gather_examined(..., allowed, default)` — excluded
+cite → counted, not appended (shared helper keeps prepare/apply symmetric); envelope
+`"restricted_count": N` only when active. Tests: symmetric examined set, field
+presence/absence, no slug/content leak in envelope, verify_hash stability across
+prepare/apply under the same audience.
 
-## P2 — retire `wiki-enrich` + vendored `wiki_ingest` (clean delete) → [task-047-02](tasks/task-047-02-retire-enrich.md)
+## P3 — Lint + import (R-6, R-7)
 
-**Issue:** the legacy on-ramp + vendored tree are dead weight; the derived design ports nothing from
-them, so this is a pure delete + reference cleanup.
+**049-06 DAL `find_classification_leaks`** — ABC + impl: SQL over `page_entity_refs r
+JOIN pages src` (composite src key) `WHERE r.vault_id=? AND r.ref_type IN
+('cited','verifies')` + target join `pages tgt ON tgt.vault_id=r.vault_id AND
+tgt.slug=r.entity_slug` **guarded by COUNT=1 same-slug** (Q-049-3); SELECT both sides'
+`json_extract($.classification)`; return raw rows; **rank comparison in Python** in a
+small helper. Returns typed hits (src slug/project/level, tgt slug/level, ref_type).
+All values bound. **In-bead RED tests** (plan-review F4): direct DAL unit tests —
+leak found, same-slug-two-projects skipped (COUNT=1), no-refs ⇒ empty — land in this
+bead, before the lint consumer (049-07).
 
-- **B6 [REMOVE-CODE]** — `git rm` `bin/wiki-enrich`, `commands/wiki-enrich.md`, `skills/wiki-enrich/`,
-  `workflows/wiki-enrich.md`, `scripts/wiki_skills/wiki_enrich.py`, the whole `scripts/wiki_ingest/`
-  tree + any `.claude/`/`.agent/` symlinks. Verify nothing in `scripts/`/`bin/` imports
-  `scripts.wiki_ingest` or shells `wiki-enrich`.
-- **B7 [TESTS]** — delete the vendored-only tests (`test_vendored_ingest_api.py`,
-  `test_vendored_import.py`, `test_wiki_enrich.py`, `test__page_merge.py`, `test__markdown.py`, the
-  vendored half of `test_layout_invariants.py`). Add `test_no_wiki_ingest_imports.py` (R-6). Confirm
-  no host code lost coverage (the derived renderer has its own tests from P1; nothing depended on the
-  vendored masking).
-- **B8 [DOCS]** — README (CLI 18→17, drop `wiki-enrich` row + ADR-001 Option-I diagram),
-  `THIRD_PARTY_NOTICES.md` (drop `wiki_ingest`), `CLAUDE.md` (drop `wiki-enrich`/vendored `wiki-ingest`
-  + WIKI-INGEST contract pointer + §7.4 vendoring policy), archive `docs/WIKI-INGEST-V1.1-CONTRACT.md`
-  (ADR-001-superseded note), `.AGENTS.md` (both trees).
+**049-07 lint checks** — `lint.py`: `check_classification_policy(repo, vid,
+vault_root, strict)` (name it one check, two categories): reads the vault `policy:`
+via `load_root_config` in try/except (no block / unreadable ⇒ `[]`, no DAL call —
+R-15 no-op precedent); emits `classification-leak` (warning → **error under
+--strict**) per leak (details: src/tgt slugs + levels — these are operator-declared
+level names + slugs, not content) and `invalid-classification` (warning, never
+strict-gated) for pages whose text-valued `$.classification` ∉ ladder (SQL:
+`json_type='text' AND NOT IN`, bound). Wire into `run_all_checks` per-vault. Tests
+`tests/test_lint_classification.py`: leak via `cites:`, leak via `verifies:`,
+same-slug-two-projects NOT flagged (COUNT=1), invalid value flagged, null/absent not
+flagged, policy-less vault silent, `--strict` severity flip for leak only.
 
-**Exit (R-8 gate):** R-6/R-7 green; `grep -rn 'wiki_ingest' scripts/ bin/` shows no code import; suite green.
+**049-08 `wiki-import --classification`** — flag on **BOTH `prepare` and `apply`
+subparsers** (plan-review F3 — the two artifacts are written in different passes):
+shape-validate `[a-z][a-z0-9_-]{0,15}` → exit 2 `INVALID_CLASSIFICATION` (no echo);
+stamp `classification: <level>` into (a) the `_raw/<slug>.md` frontmatter via a
+**dedicated injection** — NOT riding `ensure_source_frontmatter`, whose early-return
+skips captures that already carry `source:`/`url:` (`_fetch.py:208-209`) — and (b)
+the authored note frontmatter (`_authoring.assemble_note` fm block). Tests: both
+files carry the key (incl. a capture that already had `source:`); bad shape exit 2;
+omitted flag ⇒ byte-identical output (NFR-1 for the construct path).
 
----
+## P4 — Docs + closure (R-8, NFR-2)
 
-## P3 — evals + docs + dogfood → [task-047-03](tasks/task-047-03-evals-docs.md)
+**049-09 config schema + template** — `config/wiki-config.schema.yaml`:
+`$defs/PolicyConfig` (levels/default_level/default_audience, STRICT
+additionalProperties: false) + `policy: $ref` on `WikiRootConfig` + `not: required:
+[policy]` added to the `WikiProjectOverride` allOf bans; `templates/WIKI_SCHEMA.md.tmpl`
+documents the optional block (mid-level `default_audience` example + one-time
+hash-re-key warning). Schema tests: PolicyConfig validates; `.wiki.yaml` with `policy`
+rejected.
 
-- **B9 [EVAL/UNIT]** — R-5 `test_reindex_full_rebuilds_concept_mentions`: import two sources → render →
-  delete DB → `wiki-init --register-existing` → `wiki-reindex --full` → `--concept-mentions` →
-  byte-identical Mentions blocks (Class A/B; H-6-safe quotes). Optionally a wiki-import eval case for
-  the rendered-compounding discipline.
-- **B10 [DOCS]** — `docs/ARCHITECTURE.md` + functional-architecture §2.3 (the derived concept-mentions
-  ledger; the AUTO-block pattern; rebuildability); extend ADR-007 with the decision (+ the rejected
-  body-merge alternative, pointer to `plan-047-review.md`).
-- **B11 [DOGFOOD]** — `samples/` vault: source A → concept page with AUTO block listing A; source B →
-  render → lists A+B; re-render idempotent; a hand-edit above the markers survives; `--full` rebuild
-  reproduces. Record the transcript.
+**049-10 docs sweep** — `skills/wiki-query-synthesis/SKILL.md` same-flags list +
+`--audience`; SKILL.md flag docs for wiki-search / wiki-query / wiki-verify-multi /
+wiki-import; ADR-009 → **Accepted** with body reconciliation (Q-049-1 pin replaces
+"highest⇒OFF"; `restricted_cites[]`→`restricted_count`; CAST in the SQL snippet;
+"index.md renders" claim narrowed); ROADMAP R-16 → SHIPPED one-liner; ARCHITECTURE
+Quality-Checklist entry (**§2.4/§7.6/§11i Q-049-1..4 already landed in the
+Architecture phase** — remaining delta is the checklist row + the §5 interfaces
+summary clause); `docs/issues/h-6-*.md` mitigation note (+ re-render the
+KNOWN_ISSUES ledger if the renderer applies to this repo's docs — else note-only).
+Final gates: full `pytest -q`, `mypy --strict scripts/`, grep `import anthropic` → ∅,
+`user_version` untouched, **`wiki-reindex --full` round-trip green on a sample vault
+with classified pages** (NFR-3), **`requirements.txt` unchanged / no new imports**
+(NFR-2).
 
-**Exit (R-8 gate):** R-5 green; dogfood recorded; full gate (pytest + mypy + eval pins) clean.
+## Bead order & risk
 
----
-
-## RTM → Bead map
-
-| RTM | Bead(s) | Phase | Acceptance |
-|-----|---------|-------|------------|
-| R-1 | B1, B2, B3 | P1 | `test_concept_mentions_lists_all_sources` + `test_concept_mentions_excludes_typed_edges` |
-| R-2 | B1, B2 | P1 | `test_concept_mentions_render_idempotent` |
-| R-3 | B1, B2 | P1 | `test_concept_mentions_preserves_rest` |
-| R-4 | B1, B2 | P1 | `test_concept_mentions_renders_after_confirm` |
-| R-5 | B9 | P3 | `test_reindex_full_rebuilds_concept_mentions` |
-| R-6 | B6, B7 | P2 | `test_no_wiki_ingest_imports` + grep |
-| R-7 | B8 | P2 | doc-lint / `wiki-lint` |
-| R-8 | exit gate | all | `pytest` + `mypy` + eval pins (incl. updated karpathy anchor) at every phase boundary |
-| R-9 | B1, B3 | P1 | `test_concept_mentions_no_drift_after_render` + `test_write_concept_page_emits_auto_block_not_legacy` |
-| (B4 recipe wiring) | B4 | P1 | non-pytest — verified by the B11 dogfood (recipe contains the render call) |
-
-## Sequencing
-1. **P1** (B1→B2→B3→B4→B5) — the derived renderer + `write_concept_page` AUTO-block + re-index-on-render + recipe wiring.
-2. **P2** (B6→B7→B8) — clean delete of the on-ramp + vendored tree + references (no port).
-3. **P3** (B9→B10→B11) — rebuildability proof, docs, dogfood.
-
-Per-phase adversarial review (the TASK 046 rhythm). **B2/B3 are the highest-risk**: (a) the AUTO-block
-replace must touch ONLY its region — a greedy/mis-anchored regex could eat the definition or a
-`BEGIN-CUSTOM` island (mutation spot-check preserve-rest); (b) the re-index-on-render must update
-`pages.file_hash` or every render leaves spurious drift.
+01 → 02 → 03 → 04 → 05 → 06 → 07 → 08 → 09 → 10. The risky slice is **049-04**
+(hash fold + edge gate determinism) — it lands only after 01/02 are green and carries
+the densest test set. NFR-1 is enforced twice: the DAL OFF-equivalence golden (049-02h)
+and the wiki-query hash-stability golden (049-04). No bead touches
+`sql/wiki-index-v2.sql`, `reindex.py`, or any layout YAML — Karpathy byte-identity is
+structurally untouched.

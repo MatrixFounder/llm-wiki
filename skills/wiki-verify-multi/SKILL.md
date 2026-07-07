@@ -33,7 +33,7 @@ no `--model`. End-to-end recipe: [`workflows/wiki-verify-multi.md`](../../workfl
 ```bash
 wiki-verify-multi prepare <query-slug> \
     --vault <vault-id> --vault-root <path> \
-    [--slug <kebab>] [--db-path <override>]
+    [--slug <kebab>] [--audience <level>] [--db-path <override>]
 ```
 
 Loads the audited `type=query` page (vault-tier) + its `cites:` source bodies —
@@ -52,6 +52,20 @@ is_unchanged, verification_slug, examined[], examined_count, missing_cites[]}`.
 with no sources). A cited slug with no indexed `pages` row is excluded from
 `examined` and reported in `missing_cites`.
 
+**Policy scope (TASK 049 / ADR-009)** — `--audience <level>` runs the critics
+least-privilege: a cited source classified ABOVE the level is excluded from
+`examined` **before its body is read** and only counted in a `restricted_count`
+envelope field (never named — the critics must not learn what was withheld).
+MUST match the value passed to `apply` (the examined set feeds `verify_hash` +
+the grounding gate); pass prepare's `verify_hash` to `apply --verify-hash` — a
+drifted audience/examined set then fails loudly as `VERIFY_CONTEXT_CHANGED`
+(exit 2) instead of filing a verdict under the wrong scope. Absent under OFF;
+all cites restricted → `NO_SOURCES`. Note the "count only, never slugs" claim
+holds for the envelope IN ISOLATION: a party that also holds the query page's
+`cites:` list can derive the restricted members by set difference — acceptable
+within the honest boundary (the orchestrator owns the vault), but a
+least-privilege critic given only the envelope cannot.
+
 ## `apply` subcommand
 
 ```bash
@@ -60,8 +74,10 @@ wiki-verify-multi apply \
     --verification-slug <slug-from-prepare> \
     --query-slug <query-slug> \
     --answer-hash <hash-from-prepare> \
+    --verify-hash <hash-from-prepare> \
     (--verdict-stdin | --verdict-file <path>) \
     [--fail-on {critical,high,medium,low,none}] \
+    [--audience <level>] \
     [--orchestrator-id <id>] [--force] [--db-path <override>]
 ```
 
@@ -92,6 +108,7 @@ frontmatter (R-8.5e).
 | 1 | — (argparse) | missing flag / no subcommand |
 | 2 | `QUERY_NOT_FOUND` / `NO_SOURCES` | no `type=query` page / it cites nothing |
 | 2 | `ANSWER_CHANGED` / `INVALID_ANSWER_HASH` / `INVALID_SLUG` / `INVALID_VAULT_ROOT` | answer moved mid-pipeline / bad hash / bad slug / bad root |
+| 2 | `VERIFY_CONTEXT_CHANGED` / `INVALID_AUDIENCE` / `INVALID_POLICY` | TASK 049: examined set / audience drifted since prepare / bad level / malformed vault policy block |
 | 4 | `INVALID_VERDICT` / `VERDICT_PARSE_ERROR` / `VERDICT_TOO_LARGE` | verdict JSON malformed / not JSON / over-cap |
 | 4 | `FINDING_SOURCE_NOT_EXAMINED` | a finding cites a source not in the examined set (grounding gate) |
 | 4 | `INVALID_VERIFICATION_PAGE` | target `_verifications/<slug>.md` is a symlink (refused) |

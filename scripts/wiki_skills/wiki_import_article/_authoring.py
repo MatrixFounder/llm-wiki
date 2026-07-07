@@ -186,6 +186,7 @@ def assemble_note(
     mint_strategy: str = "preserve-unicode",
     lang: str = "en",
     grammar: str = "article",
+    classification: str | None = None,
 ) -> tuple[str, str]:
     """Build (filename, full note text) for the given mode/grammar. `san_names` are the
     already-sanitized entity names used for the entity-index wikilinks.
@@ -251,7 +252,11 @@ def assemble_note(
     fm = (
         "---\n"
         f"type: {note_type}\n"
-        f'title: "{title.replace(chr(34), chr(39))}"\n'
+        # TASK 049 (R-7): opt-in policy stamp. The value is argparse-shape-
+        # validated ([a-z][a-z0-9_-]{0,15}) — safe as a bare YAML scalar; the
+        # key is absent when the flag is omitted (NFR-1 byte-identity).
+        + (f"classification: {classification}\n" if classification else "")
+        + f'title: "{title.replace(chr(34), chr(39))}"\n'
         f'URL: "{url.replace(chr(34), chr(39))}"\n'
         + (f'author: "{author.replace(chr(34), chr(39))}"\n' if author else "")
         + (f'published: "{published.replace(chr(34), chr(39))}"\n' if published else "")

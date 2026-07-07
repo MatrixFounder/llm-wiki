@@ -26,12 +26,14 @@ from scripts.wiki_index.models import (
     AliasCollision,
     BatchMode,
     BatchRun,
+    ClassificationLeakHit,
     CoverageGap,
     CoverageRule,
     DriftHit,
     DriftReport,
     DriftRule,
     Entity,
+    InvalidClassificationHit,
     LogEvent,
     MergeReport,
     OrphanLink,
@@ -601,6 +603,9 @@ class SQLiteRepository(IndexRepository):
         project: str | None = None,
         where_fields: list[tuple[str, str]] | None = None,
         as_of: str | None = None,
+        allowed_classifications: list[str] | None = None,
+        classification_default: str | None = None,
+        classification_home_vault: str | None = None,
         limit: int = 20,
         _use_fts_narrowing: bool = True,
     ) -> list[PageHit]:
@@ -648,6 +653,52 @@ class SQLiteRepository(IndexRepository):
         if project is not None:
             clause_parts.append(" AND p.project = ?")
             clause_params.append(project)
+        if (allowed_classifications is None) != (classification_default is None):
+            # TASK 049: both-or-neither (library-caller defense, arch-review
+            # MED-2) — a lone allowed-list would make an UNCLASSIFIED page
+            # vanish via COALESCE(NULL, NULL) instead of falling back to the
+            # vault default_level.
+            raise ValueError(
+                "allowed_classifications and classification_default must be "
+                "provided together")
+        if allowed_classifications is not None:
+            if not allowed_classifications:
+                raise ValueError("allowed_classifications must be non-empty")
+            # TASK 049 (R-2 / ADR-009): the policy visibility filter. Fixed
+            # literal JSON path; default + every level bound; applied via the
+            # shared clause_parts so it lands on all three query shapes BEFORE
+            # the LIMIT (exclude_types rationale — a filtered page must never
+            # consume a top-limit slot). CAST normalizes a numeric/boolean
+            # authored value to text (the where_fields scalar-branch rationale).
+            # Unknown/foreign labels are excluded automatically — fail-closed.
+            placeholders = ",".join("?" * len(allowed_classifications))
+            if classification_home_vault is not None:
+                # vdd-multi SEC-2: the default_level fallback applies ONLY to
+                # the profile's HOME vault — a foreign vault's UNCLASSIFIED
+                # page must not inherit it (its own vault may intend a higher
+                # default). CASE yields NULL for foreign rows → COALESCE stays
+                # NULL → `NULL IN (...)` is not true → fail closed; a foreign
+                # page explicitly labeled with an in-ladder level still passes.
+                clause_parts.append(
+                    " AND COALESCE(CAST(json_extract(p.frontmatter_json,"
+                    " '$.classification') AS TEXT),"
+                    " CASE WHEN p.vault_id = ? THEN ? END)"
+                    f" IN ({placeholders})"
+                )
+                clause_params.append(classification_home_vault)
+                clause_params.append(classification_default)
+            else:
+                # No known home vault (built-in ladder outside any vault, or
+                # an unregistered root): the default applies uniformly —
+                # documented; matches the single-vault case where every page
+                # IS the home vault's.
+                clause_parts.append(
+                    " AND COALESCE(CAST(json_extract(p.frontmatter_json,"
+                    " '$.classification') AS TEXT), ?)"
+                    f" IN ({placeholders})"
+                )
+                clause_params.append(classification_default)
+            clause_params.extend(allowed_classifications)
         for field, value in where_fields or []:
             # TASK 013 (R-X3-META-FILTER) + TASK 033 (R-1, list membership):
             # library-caller defense — re-validate the field name (CLI validates
@@ -974,6 +1025,79 @@ class SQLiteRepository(IndexRepository):
                     page_class=rule.page_class, kind=kind, detail=detail,
                 ))
         return out
+
+    def find_classification_leaks(
+        self, vault_id: str, levels: list[str], default_level: str,
+    ) -> list[ClassificationLeakHit]:
+        # TASK 049 (R-6) — SQL fetches candidate ('cited','verifies') ref pairs
+        # with both sides' classification; RANK COMPARISON IS IN PYTHON (the
+        # partitions are small; SQL rank gymnastics rejected — P-5 posture).
+        # The target join through the project-less entity_slug carries the
+        # COUNT=1 same-slug guard (Q-049-3 — mirrors the --as-of successor walk
+        # + _derive_inverse_edges) so an unrelated same-slug page in another
+        # project can never flag a phantom leak. The ref_type pair is a fixed
+        # literal (an enum constant, same style as the as-of walk); vault_id is
+        # bound. Read-only; zero DDL.
+        conn = self._connect()
+        rank = {lvl: i for i, lvl in enumerate(levels)}
+        sql = (
+            "SELECT r.page_slug, r.page_project, r.ref_type, "
+            "CAST(json_extract(src.frontmatter_json, '$.classification') AS TEXT)"
+            " AS src_cls, "
+            "t.slug AS tgt_slug, "
+            "CAST(json_extract(t.frontmatter_json, '$.classification') AS TEXT)"
+            " AS tgt_cls "
+            "FROM page_entity_refs r "
+            "JOIN pages src ON src.vault_id = r.vault_id "
+            "               AND src.slug = r.page_slug "
+            "               AND src.project = r.page_project "
+            "JOIN pages t ON t.vault_id = r.vault_id AND t.slug = r.entity_slug "
+            "WHERE r.vault_id = ? AND r.ref_type IN ('cited', 'verifies') "
+            "AND (SELECT COUNT(*) FROM pages tc WHERE tc.vault_id = r.vault_id "
+            "     AND tc.slug = r.entity_slug) = 1 "
+            "ORDER BY r.page_project, r.page_slug, t.slug, r.ref_type"
+        )
+        out: list[ClassificationLeakHit] = []
+        for row in conn.execute(sql, (vault_id,)).fetchall():
+            src = row["src_cls"] if row["src_cls"] is not None else default_level
+            tgt = row["tgt_cls"] if row["tgt_cls"] is not None else default_level
+            if src not in rank or tgt not in rank:
+                # Out-of-ladder label — rank-incomparable; the
+                # invalid-classification check surfaces it separately.
+                continue
+            if rank[tgt] > rank[src]:
+                out.append(ClassificationLeakHit(
+                    vault_id=vault_id, page_slug=row["page_slug"],
+                    page_project=row["page_project"], page_level=src,
+                    target_slug=row["tgt_slug"], target_level=tgt,
+                    ref_type=row["ref_type"],
+                ))
+        return out
+
+    def find_invalid_classifications(
+        self, vault_id: str, levels: list[str],
+    ) -> list[InvalidClassificationHit]:
+        # TASK 049 (R-6) — an authored, non-null classification that is not a
+        # declared level (out-of-ladder string OR any non-string value) fails
+        # closed out of every scoped retrieval; surface the page (NEVER the
+        # value — CWE-209/NFR-4). Absent / JSON-null extract to SQL NULL and
+        # are skipped (null ≡ absent). All level values bound.
+        conn = self._connect()
+        placeholders = ",".join("?" * len(levels))
+        sql = (
+            "SELECT p.slug, p.project FROM pages p "
+            "WHERE p.vault_id = ? "
+            "AND json_extract(p.frontmatter_json, '$.classification') IS NOT NULL "
+            "AND (json_type(p.frontmatter_json, '$.classification') <> 'text' "
+            f"     OR CAST(json_extract(p.frontmatter_json, '$.classification') "
+            f"        AS TEXT) NOT IN ({placeholders})) "
+            "ORDER BY p.project, p.slug"
+        )
+        return [
+            InvalidClassificationHit(
+                vault_id=vault_id, page_slug=r["slug"], page_project=r["project"])
+            for r in conn.execute(sql, [vault_id, *levels]).fetchall()
+        ]
 
     def find_pages_missing_in_index(
         self, vault_id: str, vault_root: Path

@@ -214,3 +214,46 @@ def test_override_bans_index_db(override_validator):
     assert list(override_validator.iter_errors({"index_db": "x"})), "override index_db banned"
     assert list(override_validator.iter_errors({"vault_id": "v"})), "override vault_id banned"
     assert list(override_validator.iter_errors({})) == []
+
+
+# =============================================================================
+# TASK 049 — PolicyConfig ($defs) + the WikiProjectOverride policy ban
+# =============================================================================
+
+
+def test_policy_block_accepted_on_root(validator, valid_root_config):
+    cfg = dict(valid_root_config)
+    cfg["policy"] = {"levels": ["public", "internal", "restricted"],
+                     "default_level": "public",
+                     "default_audience": "internal"}
+    assert list(validator.iter_errors(cfg)) == []
+
+
+def test_policy_minimal_levels_only(validator, valid_root_config):
+    cfg = dict(valid_root_config)
+    cfg["policy"] = {"levels": ["lo", "hi"]}
+    assert list(validator.iter_errors(cfg)) == []
+
+
+def test_policy_rejects_malformed(validator, valid_root_config):
+    for bad in (
+        {"levels": []},                                  # empty
+        {"levels": ["public", "public"]},                # duplicate
+        {"levels": ["Public"]},                          # uppercase
+        {"levels": ["x" * 17]},                          # over 16 chars
+        {"levels": ["public"], "unknown_key": 1},        # STRICT
+        {"default_level": "public"},                     # levels required
+        "not-a-mapping",
+    ):
+        cfg = dict(valid_root_config)
+        cfg["policy"] = bad
+        assert list(validator.iter_errors(cfg)), f"should reject: {bad!r}"
+
+
+def test_override_bans_policy(override_validator):
+    """TASK 049: a subdir `.wiki.yaml` must never weaken/fork the vault's
+    classification ladder — `policy` is banned at override scope (the
+    vault_id/index_db precedent)."""
+    assert list(override_validator.iter_errors(
+        {"policy": {"levels": ["public"]}})), "override policy banned"
+    assert list(override_validator.iter_errors({})) == []
