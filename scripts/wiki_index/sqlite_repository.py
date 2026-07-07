@@ -606,6 +606,7 @@ class SQLiteRepository(IndexRepository):
         allowed_classifications: list[str] | None = None,
         classification_default: str | None = None,
         classification_home_vault: str | None = None,
+        min_trust: str | None = None,
         limit: int = 20,
         _use_fts_narrowing: bool = True,
     ) -> list[PageHit]:
@@ -699,6 +700,42 @@ class SQLiteRepository(IndexRepository):
                 )
                 clause_params.append(classification_default)
             clause_params.extend(allowed_classifications)
+        if min_trust is not None:
+            # TASK 050 (R-6): derived-trust floor, pre-LIMIT on all three query
+            # shapes. Predicates are FIXED LITERALS (no params) test-pinned to
+            # policy.trust_tier (Q-050-3): `_` is a LIKE wildcard so the _raw
+            # segment is ESCAPE'd; the http(s):// prefix is exact (never bare
+            # 'http' — httpx:// must not match); LIKE's default ASCII-ci fold
+            # matches the Python .lower() on both halves; json_extract of a
+            # non-scalar yields '['/'{' text, which the prefix LIKE rejects —
+            # non-scalar sources are NOT external on either side.
+            if min_trust not in ("external", "internal", "verified"):
+                raise ValueError(
+                    "min_trust must be one of external|internal|verified")
+            # COALESCE to '' — an absent key json_extract's to SQL NULL, and
+            # `FALSE OR NULL` = NULL would make `NOT (<ext>)` exclude EVERY
+            # unadorned page (three-valued logic); '' LIKE 'http://%' is a
+            # clean FALSE.
+            _J = ("COALESCE(CAST(json_extract(p.frontmatter_json, '$.{k}')"
+                  " AS TEXT), '')")
+            _EXT = (
+                "(p.file_path LIKE '\\_raw/%' ESCAPE '\\'"
+                " OR p.file_path LIKE '%/\\_raw/%' ESCAPE '\\'"
+                + "".join(
+                    f" OR {_J.format(k=k)} LIKE '{scheme}://%'"
+                    for k in ("source", "URL", "url")
+                    for scheme in ("http", "https"))
+                + ")"
+            )
+            if min_trust in ("internal", "verified"):
+                clause_parts.append(f" AND NOT {_EXT}")
+            if min_trust == "verified":
+                clause_parts.append(
+                    " AND EXISTS (SELECT 1 FROM page_entity_refs vr"
+                    "             WHERE vr.vault_id = p.vault_id"
+                    "               AND vr.entity_slug = p.slug"
+                    "               AND vr.ref_type = 'verifies')")
+            # min_trust == 'external' imposes no clause (the lowest floor).
         for field, value in where_fields or []:
             # TASK 013 (R-X3-META-FILTER) + TASK 033 (R-1, list membership):
             # library-caller defense — re-validate the field name (CLI validates
@@ -1098,6 +1135,39 @@ class SQLiteRepository(IndexRepository):
                 vault_id=vault_id, page_slug=r["slug"], page_project=r["project"])
             for r in conn.execute(sql, [vault_id, *levels]).fetchall()
         ]
+
+    def find_verified_slugs(
+        self, pairs: list[tuple[str, str]],
+    ) -> set[tuple[str, str]]:
+        # TASK 050 (R-5) — batched inbound-`verifies` membership, grouped BY
+        # VAULT (vdd-multi perf-MED): the `vault_id = ? AND entity_slug IN
+        # (...)` shape is guaranteed to seek idx_refs_entity(vault_id,
+        # entity_slug), whereas a row-value `(a,b) IN (VALUES ...)` plan is
+        # cost-model-dependent and could degrade to an O(refs) scan on the
+        # UNCONDITIONAL prepare path. Chunk 400 slugs: well under both the
+        # 999-variable cap AND (for the record — vdd-multi logic-LOW) the
+        # SQLITE_MAX_COMPOUND_SELECT=500 limit that bounds long VALUES lists.
+        # Read-only; zero DDL.
+        if not pairs:
+            return set()
+        conn = self._connect()
+        by_vault: dict[str, list[str]] = {}
+        for vid, slug in pairs:
+            by_vault.setdefault(vid, []).append(slug)
+        out: set[tuple[str, str]] = set()
+        chunk = 400
+        for vid, slugs in by_vault.items():
+            for i in range(0, len(slugs), chunk):
+                part = slugs[i:i + chunk]
+                placeholders = ",".join("?" * len(part))
+                rows = conn.execute(
+                    "SELECT DISTINCT r.entity_slug FROM page_entity_refs r "
+                    "WHERE r.vault_id = ? AND r.ref_type = 'verifies' "
+                    f"AND r.entity_slug IN ({placeholders})",
+                    [vid, *part],
+                ).fetchall()
+                out.update((vid, row["entity_slug"]) for row in rows)
+        return out
 
     def find_pages_missing_in_index(
         self, vault_id: str, vault_root: Path

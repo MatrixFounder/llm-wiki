@@ -7,10 +7,31 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+# TASK 050 (R-2): the ONE identity-token shape, shared by the --orchestrator-id
+# validators (wiki-query / wiki-verify-multi / wiki-extract-concepts) and the
+# WIKI_ACTOR_ID env — a single constant so the former four copies cannot drift.
+ORCH_ID_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+
+
+def actor_id() -> str | None:
+    """TASK 050 (R-2): the optional human/agent identity from ``WIKI_ACTOR_ID``.
+
+    Complementary to ``--orchestrator-id`` (which names the MODEL/tool): a
+    multi-agent setup exports e.g. ``WIKI_ACTOR_ID=critic-security`` and every
+    knowledge-write log event carries ``details_json.actor``. Ambient env must
+    never fail a CLI, so an unset OR invalid value (shape ``ORCH_ID_RE``) is
+    **silently None** — documented, not an error (CWE-209: the value is never
+    echoed anywhere)."""
+    raw = os.environ.get("WIKI_ACTOR_ID")
+    if raw is None or not ORCH_ID_RE.fullmatch(raw):
+        return None
+    return raw
 
 
 def emit(payload: dict[str, Any], exit_code: int = 0) -> int:

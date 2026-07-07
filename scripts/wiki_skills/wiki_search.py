@@ -7,16 +7,22 @@ import os
 import sqlite3
 import sys
 from datetime import date as _date_cls
+from datetime import datetime as _datetime
 from typing import cast
 from urllib.parse import quote as _url_quote
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
-from scripts.wiki_index.models import PageHit, Vault
+from scripts.wiki_index.models import LogEvent, PageHit, Vault
 from scripts.wiki_index.policy import PolicyError, allowed_levels, resolve_policy
 from scripts.wiki_index.repository import validate_filter_field
 from scripts.wiki_index.query_normalizer import fold_yo as _fold_yo
-from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
+from scripts.wiki_skills._common import (
+    actor_id,
+    build_repo_config,
+    emit,
+    resolve_vault_root_for_cli,
+)
 from scripts.wiki_skills._retrieval import build_search_query as _build_search_query
 from scripts.wiki_skills._retrieval import fts_quote as _fts_quote
 
@@ -86,6 +92,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "broadening (precise literal terms). The always-on ё/е "
                         "fold still applies (the corpus is folded). Omit for "
                         "default inflection-tolerant search.")
+    p.add_argument("--log-access", dest="log_access", action="store_true",
+                   default=False,
+                   help="TASK 050 (R-4): opt-in read-audit — append one DB-only "
+                        "`query` event (subject 'search') recording the capped "
+                        "query text + hit identities (+ audience/actor when "
+                        "active). Best-effort: a failed insert reports "
+                        "access_logged: false, never a crash.")
     p.add_argument("--audience", default=None, metavar="LEVEL",
                    help="TASK 049 (ADR-009): retrieval-scope policy — return only "
                         "pages whose classification level is visible to this "
@@ -312,6 +325,44 @@ def main(argv: list[str] | None = None) -> int:
                 vault_cache.get(h.page.vault_id), h.page.file_path
             ),
         } for h in hits]
+        access_logged: bool | None = None
+        if args.log_access:
+            # TASK 050 (R-4): opt-in read-audit — ONE Class-C DB-only `query`
+            # event. Log target: the single named vault, else the `_global_`
+            # sentinel (plan-review MED-1 — NOT factory_vault, which is `[0]`
+            # for ANY list and would mis-attribute `--vaults a,b`). The query
+            # text is control-stripped + capped (CWE-117). Best-effort:
+            # telemetry never fails a read path (sqlite3.Error covers the FK
+            # IntegrityError of an unregistered vault row).
+            log_vault = (vaults_list[0]
+                         if vaults_list is not None and len(vaults_list) == 1
+                         else GLOBAL_VAULT_SENTINEL)
+            # Metadata-only search: no FTS term — describe the predicates so
+            # the audit answers "what was searched" (vdd-multi logic-LOW).
+            q_desc = query_arg or " ".join(
+                [f"{f}={v}" for f, v in where_fields]
+                + ([f"as-of {as_of}"] if as_of else []))
+            details: dict[str, object] = {
+                "access": True,
+                "q": _term_safe(q_desc)[:200],
+                "hits": [f"{h.page.vault_id}:{h.page.project}/{h.page.slug}"
+                         for h in hits],
+            }
+            if profile is not None:
+                details["audience"] = profile.audience
+            _actor = actor_id()
+            if _actor is not None:
+                details["actor"] = _actor
+            try:
+                repo.append_log_event(LogEvent(
+                    vault_id=log_vault, event_ts=_datetime.now(),
+                    event_type="query", subject="search",
+                    pages_created_json=[], pages_updated_json=[],
+                    details_json=details,
+                ))
+                access_logged = True
+            except sqlite3.Error:
+                access_logged = False
         if args.format == "json":
             payload: dict[str, object] = {
                 "action": "searched", "query": query_arg,
@@ -320,6 +371,9 @@ def main(argv: list[str] | None = None) -> int:
                 # TASK 049: echoed ONLY when a profile is active — the OFF
                 # envelope stays byte-identical (NFR-1).
                 payload["audience"] = profile.audience
+            if access_logged is not None:
+                # TASK 050: echoed ONLY when --log-access was given.
+                payload["access_logged"] = access_logged
             return emit(payload)
         # Metadata-only listings have no FTS query — describe the filter instead.
         filter_bits = [f"{f}={v}" for f, v in where_fields]
@@ -335,6 +389,11 @@ def main(argv: list[str] | None = None) -> int:
         _is_tty = sys.stdout.isatty()
         _osc8 = _is_tty and os.environ.get("TERM_PROGRAM") != "Apple_Terminal"
         lines = [f'## {heading} — {len(results)} hits', ""]
+        if access_logged is False:
+            # vdd-multi logic-LOW: the markdown path must not silently drop a
+            # failed telemetry insert the operator explicitly asked for.
+            lines.append("_note: --log-access insert failed (access_logged: false)_")
+            lines.append("")
         for r in results:
             obs_url = cast("str | None", r["obsidian_url"])
             if obs_url is not None:

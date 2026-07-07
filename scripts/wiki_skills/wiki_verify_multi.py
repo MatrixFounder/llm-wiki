@@ -49,6 +49,8 @@ from scripts.wiki_index.policy import (
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
+    ORCH_ID_RE,
+    actor_id,
     atomic_write_text,
     build_repo_config,
     emit,
@@ -61,7 +63,7 @@ _MAX_VERDICT_BYTES = 256 * 1024  # 256 KiB
 _EXCERPT_CHARS = 1500
 _SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-_ORCH_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+_ORCH_RE = ORCH_ID_RE  # TASK 050: shared shape (no copy to drift)
 
 # Q-008-e: the PASS/FAIL rule is severity-based and enforced in Python (not
 # trusted to the LLM). FAIL iff any `factual`/`security` finding has severity
@@ -79,7 +81,7 @@ class _PageTooLarge(Exception):
 def _orchestrator_id(value: str) -> str:
     """argparse validator for --orchestrator-id (defends a library caller too;
     the CLI default 'orchestrator' passes)."""
-    if not _ORCH_RE.match(value):
+    if not _ORCH_RE.fullmatch(value):  # fullmatch: `$` alone admits a trailing \n
         raise argparse.ArgumentTypeError("must match ^[a-z0-9._:@-]{1,64}$")
     return value
 
@@ -572,13 +574,20 @@ def apply(args: argparse.Namespace) -> int:
         if changed:
             _index_verification_page(repo, args.vault, vault_root, page_path)
             repo.record_verify_state(args.vault, args.verification_slug, v_hash)
+            verify_details: dict[str, Any] = {
+                "verdict": derived,
+                "verifies": f"{VAULT_TIER_PROJECT}/{args.query_slug}",
+                "orchestrator_id": args.orchestrator_id,
+            }
+            # TASK 050 (R-2): optional actor identity from WIKI_ACTOR_ID.
+            _actor = actor_id()
+            if _actor is not None:
+                verify_details["actor"] = _actor
             repo.append_log_event(LogEvent(
                 vault_id=args.vault, event_ts=_datetime.now(),
                 event_type="verify", subject=args.verification_slug,
                 pages_created_json=[], pages_updated_json=[],
-                details_json={"verdict": derived,
-                              "verifies": f"{VAULT_TIER_PROJECT}/{args.query_slug}",
-                              "orchestrator_id": args.orchestrator_id},
+                details_json=verify_details,
             ))
             indexed = True
         elif repo.check_verify_state(args.vault, args.verification_slug) != v_hash:

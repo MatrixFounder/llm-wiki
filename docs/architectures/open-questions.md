@@ -1390,3 +1390,57 @@
   restricted membership by elimination (honest-boundary-consistent, documented in the
   SKILL); the leak-check's COUNT=1 guard conservatively SKIPS same-slug-multi-project
   targets (under-report, never phantom-flag — the enforcement layer is unaffected).
+
+### 11j. TASK 050 — read-side audit + derived trust tier (design rationale)
+
+- **Q-050-1 (RESOLVED) — trust-tier precedence: origin taints.** Ordered tiers
+  `external(0) < internal(1) < verified(2)`, assigned by MIN-rule: a page that is BOTH
+  external-origin (external `source`/`URL`/`url` or a `_raw/` path segment) AND carries
+  an inbound `verifies` ref stays `external` — verification audited a filed answer, it
+  does not launder an external capture's origin (H-6). Known imprecision, accepted for
+  an ADVISORY tier: `entity_slug` is project-less, so a cross-project same-slug inbound
+  `verifies` over-classifies (no COUNT=1 guard here — unlike `--as-of`/leak-check, a
+  wrong `verified` label misleads a prompt, it does not retire or flag a page).
+
+- **Q-050-2 (RESOLVED) — audit events are Class-C DB-only, exempt from the M-2 mirror.**
+  `log.md` is the operator's curated event journal (Class A, flock-appended, monthly
+  rotation); retrieval/audit telemetry is high-volume operational state that would spam
+  it. The DB-only shape (`log_md_byte_offset` NULL) rides the established precedent of
+  the existing apply/verify events. CORRECTED at arch-review (F1 — the first draft
+  claimed the trail already survived `--full`; FALSE: `reindex_full` wiped `log_events`
+  wholesale and re-parsed only `log.md`, so every DB-only event died on every rebuild).
+  TASK 050 D5 fixes the wipe to `... AND log_md_byte_offset IS NOT NULL`: mirrored rows
+  keep round-tripping through `log.md` (authoritative for the mirror, no dupes); Class-C
+  DB-only rows now genuinely survive a Class-B rebuild — consistent with how
+  `source_state`/query-state already behave (ADR-002 §D8). Only deleting the DB file
+  loses the audit trail.
+
+- **Q-050-3 (RESOLVED) — SQL↔Python trust alignment contract.** `--min-trust` filters in
+  SQL (pre-LIMIT, the exclude_types/R-16 posture); the envelope `trust` annotation is
+  Python. Both derive from the SAME definition and are test-pinned against each other
+  (the R-16 `effective_level`↔COALESCE lesson): SQL `LIKE '\_raw/%' ESCAPE '\'` (an
+  unescaped `_` is a wildcard — would silently over-match `Xraw/`), `http`-prefix on
+  `$.source`/`$.URL`/`$.url`, `EXISTS(verifies)` correlated on `r.vault_id = p.vault_id`;
+  Python mirrors each. "Active" = the `--min-trust` flag is PRESENT — all three values
+  fold into `question_hash` (incl. the no-clause `external` floor), so prepare/apply
+  symmetry is enforced by the existing `QUESTION_CHANGED` gate.
+
+- **Q-050-4 (RESOLVED) — post-review hardening (TASK 050 `/vdd-multi`: 3 critics +
+  code-reviewer; 0 CRITICAL/HIGH).** Fixed: (logic-MED) read-telemetry events no longer
+  advance the `--delta` cutoff (`MAX(event_ts)` now excludes `details.access=true` and
+  `action=unchanged` rows — a read-log after a file edit could otherwise silently mask
+  it until `--full`; regression-tested); (perf-MED) `find_verified_slugs` grouped
+  per-vault (`vault_id = ? AND entity_slug IN (...)` — guaranteed
+  `idx_refs_entity` seek; the row-value `IN (VALUES ...)` plan was cost-model-dependent
+  on the UNCONDITIONAL prepare path); (sec-LOW) all three `--orchestrator-id`
+  validators moved to `fullmatch` (bare `$` admits a trailing newline); apply's audit
+  insert made best-effort like the D3 read paths; the markdown `--log-access` path
+  surfaces a failed insert; metadata-only searches log their predicate description as
+  `q`. Documented (security.md §7.6 addendum): the trust tier is ADVISORY — verifier
+  tier/classification/project are not validated (a `type: verification`-authoring
+  injection can confer `verified`; a restricted verifier leaks a 1-bit existence
+  signal; non-canonical frontmatter keys evade `external`) — prompt-side signal and
+  hygiene, never access control. Accepted: the 6× `json_extract` in the `_EXT`
+  predicate (default-OFF, FTS-candidate-set-bounded, ADR-005 posture; latent
+  metadata-path cost noted); unbounded `log_events` growth under machine re-query
+  loops (retention = P3).

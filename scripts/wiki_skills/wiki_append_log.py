@@ -20,7 +20,12 @@ from scripts.wiki_index.logfile import (
     rotate_log_path,
 )
 from scripts.wiki_index.models import LogEvent
-from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
+from scripts.wiki_skills._common import (
+    actor_id,
+    build_repo_config,
+    emit,
+    resolve_vault_root_for_cli,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -66,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
                          "vault_id": args.vault}, exit_code=6)
         now = datetime.now()
         log_path = rotate_log_path(vault.root_path, now)
+        details = _parse_details(args.details_json)
+        # TASK 050 (R-2): optional actor identity; an explicit operator-supplied
+        # `actor` key in --details-json wins over the ambient env.
+        _actor = actor_id()
+        if _actor is not None and "actor" not in details:
+            details["actor"] = _actor
         event = LogEvent(
             vault_id=args.vault,
             event_ts=now,
@@ -73,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             subject=args.subject,
             pages_created_json=[],
             pages_updated_json=[],
-            details_json=_parse_details(args.details_json),
+            details_json=details,
             log_md_path=str(log_path.relative_to(vault.root_path)),
         )
         event_id = repo.append_log_event(event)

@@ -595,8 +595,18 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
     slug_collisions: list[dict[str, Any]] = []          # TASK 020 / 021 (cross-batch)
     seen_keys: dict[tuple[str, str], str] = {}
     try:
+        # TASK 050 (vdd-multi logic-MED): pure READ-telemetry rows must not
+        # advance the delta cutoff — a `--log-retrieval`/`--log-access` event
+        # (details.access=true) or an idempotent-apply trail (action=unchanged)
+        # writes NO file/index state, so letting its event_ts become the cutoff
+        # would silently skip a file modified just before it (stale index until
+        # --full). Write-accompanied events (ingest/filed-apply/verify/reindex)
+        # keep advancing it, as pre-050.
         row = repo._connect().execute(
-            "SELECT MAX(event_ts) AS m FROM log_events WHERE vault_id = ?",
+            "SELECT MAX(event_ts) AS m FROM log_events WHERE vault_id = ? "
+            "AND COALESCE(json_extract(details_json, '$.access'), 0) != 1 "
+            "AND COALESCE(json_extract(details_json, '$.action'), '') "
+            "    != 'unchanged'",
             (vault_id,),
         ).fetchone()
         cutoff = (datetime.fromisoformat(row["m"]) if row and row["m"]
@@ -853,8 +863,17 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
         # Step 1: wipe existing rows in a short atomic transaction.
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for tbl in ("page_entity_refs", "pages", "entities", "log_events"):
+            for tbl in ("page_entity_refs", "pages", "entities"):
                 conn.execute(f"DELETE FROM {tbl} WHERE vault_id = ?", (vault_id,))
+            # TASK 050 (R-6b / Q-050-2): spare Class-C DB-ONLY audit events.
+            # Mirrored rows (log_md_byte_offset set) are wiped + re-parsed from
+            # log.md below (log.md stays authoritative for the mirror, no
+            # dupes); a NULL offset means the row NEVER had a log.md line (the
+            # apply/verify/--log-* audit shape) — a Class-B rebuild must not
+            # destroy Class-C state (the source_state/query-state precedent).
+            conn.execute(
+                "DELETE FROM log_events WHERE vault_id = ? "
+                "AND log_md_byte_offset IS NOT NULL", (vault_id,))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

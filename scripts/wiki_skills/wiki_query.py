@@ -31,15 +31,19 @@ from scripts.wiki_index.layout import QUERIES_SUBDIR
 from scripts.wiki_index.models import LogEvent, PageHit
 from scripts.wiki_index.policy import (
     FOREIGN_UNCLASSIFIED_SENTINEL,
+    TRUST_TIERS,
     PolicyError,
     PolicyProfile,
     allowed_levels,
     effective_level,
     resolve_policy,
+    trust_tier,
 )
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import (
+    ORCH_ID_RE,
+    actor_id,
     atomic_write_text,
     build_repo_config,
     emit,
@@ -56,13 +60,13 @@ _MAX_CITATIONS_BYTES = 64 * 1024  # 64 KiB
 _MAX_CITATIONS = 50
 _SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-_ORCH_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+_ORCH_RE = ORCH_ID_RE  # TASK 050: shared shape (no copy to drift)
 
 
 def _orchestrator_id(value: str) -> str:
     """argparse validator for --orchestrator-id (007-05 spec regex). Defends a
     library caller too; the CLI default 'orchestrator' passes."""
-    if not _ORCH_RE.match(value):
+    if not _ORCH_RE.fullmatch(value):  # fullmatch: `$` alone admits a trailing \n
         raise argparse.ArgumentTypeError(
             "must match ^[a-z0-9._:@-]{1,64}$")
     return value
@@ -94,6 +98,7 @@ def _derive_query_slug(question: str) -> str:
 
 def _question_hash(
     question: str, hits: list[PageHit], audience: str | None = None,
+    min_trust: str | None = None,
 ) -> str:
     """Q-A6 binding shape: sha256 over the question + the ordered retrieved
     ``project/slug`` set, so a re-query after the corpus changed re-synthesises
@@ -109,16 +114,22 @@ def _question_hash(
     parts.extend(f"{h.page.project}/{h.page.slug}" for h in hits)
     if audience is not None:
         parts.append("\x00audience:" + audience)
+    if min_trust is not None:
+        # TASK 050 (R-6): folds whenever the FLAG IS PRESENT — including the
+        # no-clause `external` floor — so prepare/apply symmetry is unambiguous.
+        parts.append("\x00min_trust:" + min_trust)
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def _hit_dict(h: PageHit) -> dict[str, object]:
+def _hit_dict(h: PageHit, trust: str | None = None) -> dict[str, object]:
     d: dict[str, object] = {
         "vault_id": h.page.vault_id, "slug": h.page.slug,
         "project": h.page.project, "type": h.page.type,
         "title": h.page.title, "bm25_score": h.bm25_score,
         "snippet": h.snippet,
     }
+    if trust is not None:  # TASK 050: derived provenance tier (always-on in prepare)
+        d["trust"] = trust
     if h.via_edge is not None:  # TASK 032: graph-RAG edge provenance
         d["via_edge"] = h.via_edge
     return d
@@ -205,7 +216,7 @@ _MAX_EDGE_PULLED = 50
 def _follow_edges(
     repo: IndexRepository, hits: list[PageHit], depth: int,
     allowed: list[str] | None = None, cls_default: str | None = None,
-    home_vault: str | None = None,
+    home_vault: str | None = None, min_trust: str | None = None,
 ) -> list[PageHit]:
     """Expand the FTS hit set along typed edges (ADR-004 D5 / Q-032-4). For each hit,
     take its one-hop typed-edge neighbors (both directions), resolve each to a real
@@ -241,6 +252,14 @@ def _follow_edges(
                     nslug, nproj, inbound = r.page_slug, r.page_project, 1    # inbound
                 cand.append((inbound, vid, nproj, nslug, h.page.slug, r.ref_type))
         nxt: list[PageHit] = []
+        # TASK 050 (R-6, pinned contract): the verified-floor membership is
+        # resolved ONCE per depth level over the candidate (vid, slug) pairs
+        # from neighbors() — no extra get_page, no per-neighbor N+1; consumed
+        # as order-independent membership below.
+        level_verified: set[tuple[str, str]] = set()
+        if min_trust == "verified" and cand:
+            level_verified = repo.find_verified_slugs(
+                sorted({(c[1], c[3]) for c in cand}))
         for inbound, vid, nproj, nslug, frm, rt in sorted(
                 cand, key=lambda c: (c[2], c[3], c[0], c[5])):
             if len(pulled) >= _MAX_EDGE_PULLED:  # deterministic sorted truncation
@@ -271,6 +290,14 @@ def _follow_edges(
                                 else FOREIGN_UNCLASSIFIED_SENTINEL)
                 if effective_level(page.frontmatter_json, page_default) \
                         not in allowed:
+                    continue
+            if min_trust is not None:
+                # TASK 050 (R-6): same floor as the SQL predicate — inside the
+                # sorted stream, BEFORE the cap break (question_hash C1).
+                tier = trust_tier(
+                    page.frontmatter_json, page.file_path,
+                    (vid, nslug) in level_verified)
+                if TRUST_TIERS.index(tier) < TRUST_TIERS.index(min_trust):
                     continue
             hit = PageHit(page=page, bm25_score=0.0, snippet="",
                           via_edge={"from": frm, "ref_type": rt})
@@ -319,6 +346,8 @@ def _retrieve(
     # the edge gate; a foreign vault's unclassified pages fail closed.
     home_vault = args.vault if profile is not None else None
 
+    min_trust: str | None = getattr(args, "min_trust", None)
+
     def _search(q: str) -> list[PageHit]:
         return repo.search_pages(
             q, vaults=vaults_list, types=types_list, exclude_types=exclude,
@@ -326,6 +355,7 @@ def _retrieve(
             allowed_classifications=allowed,
             classification_default=cls_default,
             classification_home_vault=home_vault,
+            min_trust=min_trust,
             limit=args.limit,
         )
 
@@ -341,7 +371,8 @@ def _retrieve(
     if getattr(args, "follow_edges", False):
         hits = hits + _follow_edges(
             repo, hits, getattr(args, "edge_depth", 1),
-            allowed=allowed, cls_default=cls_default, home_vault=home_vault)
+            allowed=allowed, cls_default=cls_default, home_vault=home_vault,
+            min_trust=min_trust)
     return hits
 
 
@@ -429,8 +460,15 @@ def prepare(args: argparse.Namespace) -> int:
         query_slug = args.slug or _derive_query_slug(question)
         q_hash = _question_hash(
             question, hits,
-            audience=profile.audience if profile is not None else None)
+            audience=profile.audience if profile is not None else None,
+            min_trust=args.min_trust)
         is_unchanged = repo.check_query_state(args.vault, query_slug) == q_hash
+        # TASK 050 (R-5): derived per-hit trust tier — ONE batched DAL call
+        # over the final hit list (never per-hit N+1). Always-on: the ONLY
+        # unconditional envelope addition of TASK 050 (additive key; the
+        # is_unchanged hash does not include it).
+        verified_pairs = repo.find_verified_slugs(
+            sorted({(h.page.vault_id, h.page.slug) for h in hits}))
         payload: dict[str, object] = {
             "vault_id": args.vault,
             "question": question,
@@ -438,11 +476,40 @@ def prepare(args: argparse.Namespace) -> int:
             "question_hash": q_hash,
             "is_unchanged": is_unchanged,
             "retrieved_count": len(hits),
-            "hits": [_hit_dict(h) for h in hits],
+            "hits": [_hit_dict(h, trust=trust_tier(
+                h.page.frontmatter_json, h.page.file_path,
+                (h.page.vault_id, h.page.slug) in verified_pairs))
+                for h in hits],
         }
         if profile is not None:
             # Echoed ONLY when active — the OFF envelope stays byte-identical.
             payload["audience"] = profile.audience
+        if args.min_trust is not None:
+            payload["min_trust"] = args.min_trust
+        if getattr(args, "log_retrieval", False):
+            # TASK 050 (R-3): opt-in retrieval audit — ONE Class-C DB-only
+            # `query` event with the retrieved slug set. Best-effort: telemetry
+            # must never fail a read path (sqlite3.Error covers the FK
+            # IntegrityError of an unregistered-vault --db-path DB).
+            details: dict[str, object] = {
+                "access": True,
+                "retrieved": [f"{h.page.project}/{h.page.slug}" for h in hits],
+            }
+            if profile is not None:
+                details["audience"] = profile.audience
+            actor = actor_id()
+            if actor is not None:
+                details["actor"] = actor
+            try:
+                repo.append_log_event(LogEvent(
+                    vault_id=args.vault, event_ts=_datetime.now(),
+                    event_type="query", subject=query_slug,
+                    pages_created_json=[], pages_updated_json=[],
+                    details_json=details,
+                ))
+                payload["access_logged"] = True
+            except sqlite3.Error:
+                payload["access_logged"] = False
         return emit(payload)
     finally:
         repo.close()
@@ -574,7 +641,8 @@ def apply(args: argparse.Namespace) -> int:
                          "reason": "not a valid FTS5 expression"}, 2)
         recomputed = _question_hash(
             question, hits,
-            audience=profile.audience if profile is not None else None)
+            audience=profile.audience if profile is not None else None,
+            min_trust=args.min_trust)
         if recomputed != args.question_hash:
             return emit({"error": "QUESTION_CHANGED", "field": "question-hash",
                          "reason": "retrieval set changed since prepare; re-run "
@@ -663,23 +731,42 @@ def apply(args: argparse.Namespace) -> int:
         if changed:
             atomic_write_text(page_path, content)
 
-        # 7. Self-index (R-6.4) + record idempotency state (R-6.6) + one `query`
-        # log event (Q6) — all on the repo's single connection.
+        # 7. Self-index (R-6.4) + record idempotency state (R-6.6) — write-side
+        # work stays gated on `changed`; the AUDIT event does not (below).
         indexed = False
         if changed:
             _index_query_page(repo, args.vault, vault_root, page_path)
             repo.record_query_state(args.vault, args.query_slug, args.question_hash)
+            indexed = True
+        # TASK 050 (R-1): the `query` audit event fires on EVERY successful
+        # apply — an idempotent re-query leaves an `action: unchanged` trail —
+        # and records the CITED SLUGS (not just a count) + the active audience
+        # + the WIKI_ACTOR_ID actor. Class-C DB-only (no log.md line; the
+        # `log_md_byte_offset` stays NULL — Q-050-2); survives `--full` via the
+        # R-6b reindex carve-out.
+        details: dict[str, object] = {
+            "cites": len(citations),               # back-compat count
+            "cited": list(citations),
+            "action": "filed" if changed else "unchanged",
+            "orchestrator_id": args.orchestrator_id,
+        }
+        if profile is not None:
+            details["audience"] = profile.audience
+        actor = actor_id()
+        if actor is not None:
+            details["actor"] = actor
+        try:
             repo.append_log_event(LogEvent(
                 vault_id=args.vault, event_ts=_datetime.now(),
                 event_type="query", subject=args.query_slug,
                 pages_created_json=[], pages_updated_json=[],
-                # Provenance: record which orchestrator filed the answer (the
-                # 007-05 spec's intent for --orchestrator-id; was previously
-                # inert — vdd-multi-verify LOW).
-                details_json={"cites": len(citations),
-                              "orchestrator_id": args.orchestrator_id},
+                details_json=details,
             ))
-            indexed = True
+        except sqlite3.Error:
+            # Best-effort, consistent with the D3 read paths: the Class A
+            # write already happened — an audit-insert failure (e.g. missing
+            # vault FK row on a bare --db-path DB) must not raw-traceback.
+            pass
 
         out: dict[str, object] = {
             "vault_id": args.vault,
@@ -691,6 +778,8 @@ def apply(args: argparse.Namespace) -> int:
         if profile is not None:
             # Echoed ONLY when active — the OFF envelope stays byte-identical.
             out["audience"] = profile.audience
+        if args.min_trust is not None:
+            out["min_trust"] = args.min_trust
         return emit(out)
     finally:
         repo.close()
@@ -738,6 +827,20 @@ def _build_parser() -> argparse.ArgumentParser:
                          "or the question_hash diverges → QUESTION_CHANGED.")
     pp.add_argument("--slug", default=None,
                     help="Override the derived query slug (kebab-case).")
+    pp.add_argument("--min-trust", dest="min_trust", default=None,
+                    choices=["external", "internal", "verified"],
+                    help="TASK 050 (R-6): derived-trust retrieval floor — "
+                         "'internal' excludes external-origin pages (_raw/ "
+                         "captures, http(s) sources); 'verified' additionally "
+                         "requires an inbound verifies ref. Filtered in SQL "
+                         "before the limit; folds into question_hash whenever "
+                         "PRESENT (incl. 'external') — MUST match `apply`.")
+    pp.add_argument("--log-retrieval", dest="log_retrieval", action="store_true",
+                    default=False,
+                    help="TASK 050 (R-3): opt-in read-audit — append one DB-only "
+                         "`query` event recording the retrieved project/slug set "
+                         "(+ audience/actor when active). Best-effort: a failed "
+                         "insert reports access_logged: false, never a crash.")
     pp.add_argument("--min-hits", type=int, default=1)
     pp.add_argument("--db-path", default=None)
     pp.set_defaults(func=prepare)
@@ -771,6 +874,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--audience", default=None, metavar="LEVEL",
                     help="TASK 049: MUST match the value passed to `prepare` "
                          "(retrieval must reproduce → same question_hash).")
+    ap.add_argument("--min-trust", dest="min_trust", default=None,
+                    choices=["external", "internal", "verified"],
+                    help="TASK 050: MUST match the value passed to `prepare` "
+                         "(folds into question_hash whenever present).")
     g_ans = ap.add_mutually_exclusive_group(required=True)
     g_ans.add_argument("--answer-stdin", action="store_true")
     g_ans.add_argument("--answer-file", default=None)

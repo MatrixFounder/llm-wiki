@@ -186,3 +186,18 @@ not an authZ boundary. Its security contract:
   `vault.pi-permissions.json` to also block an orchestrator's direct file reads on
   harnesses that support permissions — documented as belt-and-braces, never the
   boundary.
+
+**TASK 050 addendum — the derived trust tier is ADVISORY, not an authorization
+boundary.** `--min-trust verified` keys on inbound `verifies` refs, which are minted by
+any page routed to `type: verification` (normally only `wiki-verify-multi apply` writes
+those); the derivation validates neither the VERIFIER's own tier/classification nor its
+project (Q-050-1). Within the §7.6 trust scope this means: (i) content that can author a
+`type: verification` page (e.g. an H-6 prompt-injection subverting an import REASON
+step) can confer `verified` — the tier raises the bar, it does not gate writes; (ii) a
+page verified only by a RESTRICTED verification page still shows `verified` to a lower
+audience — a 1-bit existence signal, no content; (iii) a hand-authored page citing an
+external source under a non-canonical frontmatter key (`Source:`, list-valued `source:`)
+evades the `external` tier — the framework's own writers use the canonical keys and the
+`_raw/` path anchor. All three are accepted advisory-tier imprecision, consistent with
+the operator-trusted boundary; treat `trust` as a prompt-side signal and
+`--min-trust` as hygiene, never as access control (that is `--audience`'s job).

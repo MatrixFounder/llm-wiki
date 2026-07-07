@@ -709,7 +709,19 @@ adoption), or subagent critics start running against a sensitive vault.
 (same-flags list). Acceptance headline: **OFF ≡ byte-identical** (ADR-005-D2
 style equivalence test).
 
-### R-17. Read-side audit completeness + derived trust tier (P1)
+### R-17. Read-side audit completeness + derived trust tier — ✅ SHIPPED (TASK 050, 2026-07-08)
+
+**Shipped as specced** (full pipeline, all three reviewer gates green; 1919+ pytest,
+mypy strict, zero DDL). Delivered: apply-side audit on EVERY success (`cited` slugs +
+`action` + `audience?` + `actor?`); `WIKI_ACTOR_ID` (shared `ORCH_ID_RE` shape — the
+four regex copies deduped) threaded into query/verify/append-log/ingest events; opt-in
+`wiki-query prepare --log-retrieval` + `wiki-search --log-access` (best-effort,
+`access_logged` echo, CWE-117 capped `q`); **D5**: `reindex_full` now spares NULL-offset
+Class-C `log_events` rows (pre-050 every DB-only event died on every `--full` — the
+arch-review F1 correction); derived per-hit `trust` (`external<internal<verified`,
+MIN-rule Q-050-1, batched `find_verified_slugs`, SQL↔Python alignment Q-050-3) +
+`--min-trust` pre-LIMIT floor folded into `question_hash` when present. Design:
+§2.4.1 + Q-050-1..3 (§11j).
 
 **What**: (i) drop the `if changed:` gate on the `wiki-query apply` log event
 and record the **cited source slugs** (not a count) + the active audience in

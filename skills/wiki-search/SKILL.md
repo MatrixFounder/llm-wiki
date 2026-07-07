@@ -39,7 +39,7 @@ wiki-search "<query>" \
     [--where 'field=value' ...] [--status <v>] [--severity <v>] [--tag <v>] \
     [--as-of YYYY-MM-DD] \
     [--exact | --no-stem] \
-    [--audience <level>] \
+    [--audience <level>] [--log-access] \
     [--format json|markdown] \
     [--db-path <override>]
 ```
@@ -82,6 +82,11 @@ listing is returned.
   A query-less `--tag`/`tags=` listing now **narrows through the `pages_fts.tags` index**
   (TASK 035 — ~4× faster at 2.5k pages); behaviour/results are **identical** (it is a
   transparent optimization, zero schema change).
+- **Read-audit (TASK 050 / R-17, opt-in)** — `--log-access` appends ONE DB-only
+  `query` event (subject `search`): control-stripped ≤200-char query text + hit
+  identities (+ `audience`/`actor` from `WIKI_ACTOR_ID`). Logged to the single named
+  vault, else the `_global_` sentinel. Best-effort: a failed insert reports
+  `access_logged: false` in the envelope — a read path never fails over telemetry.
 - **Temporal filter (TASK 034)** — `--as-of YYYY-MM-DD` returns only pages **active
   on that date**: created on-or-before it (`pages.date`, or an authored `valid_from`
   override) AND **not yet superseded/invalidated by then** — derived from the event

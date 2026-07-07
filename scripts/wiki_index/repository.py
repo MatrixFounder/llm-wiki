@@ -167,6 +167,7 @@ class IndexRepository(abc.ABC):
         allowed_classifications: list[str] | None = None,
         classification_default: str | None = None,
         classification_home_vault: str | None = None,
+        min_trust: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
         """FTS5 + BM25 search, optionally filtered by frontmatter metadata.
@@ -248,6 +249,18 @@ class IndexRepository(abc.ABC):
                 vault may intend a higher default). ``None`` = the default
                 applies uniformly (single-vault scope, or no home known —
                 built-in ladder outside any vault).
+            min_trust: TASK 050 (R-6) — derived-trust floor
+                (``external < internal < verified``; Q-050-1 MIN-rule). When
+                ``internal``: exclude external-origin pages (``_raw/`` path
+                segment — ``LIKE '\_raw/%' ESCAPE '\'``, the `_` wildcard must
+                be escaped — or an ``http(s)://``-prefixed scalar
+                ``$.source``/``$.URL``/``$.url``). When ``verified``:
+                additionally require an inbound ``verifies`` ref (EXISTS
+                correlated on ``r.vault_id = p.vault_id``). ``external`` = no
+                clause (the lowest floor). Applied in SQL **pre-LIMIT** on all
+                query shapes; predicates are test-pinned to the Python
+                ``policy.trust_tier`` derivation (Q-050-3). Unknown value ⇒
+                ``ValueError`` (library-caller defense). None = no floor.
             limit: max hits to return.
         """
         ...
@@ -391,6 +404,20 @@ class IndexRepository(abc.ABC):
         carrying an out-of-ladder label are SKIPPED here (rank-incomparable;
         ``find_invalid_classifications`` flags them). Rank comparison happens
         in Python; SQL fetches candidate rows only. Read-only; zero DDL."""
+        ...
+
+    @abc.abstractmethod
+    def find_verified_slugs(
+        self, pairs: list[tuple[str, str]],
+    ) -> set[tuple[str, str]]:
+        """TASK 050 (R-5) — which of the given ``(vault_id, slug)`` pairs have
+        an INBOUND ``verifies`` ref (``page_entity_refs.ref_type='verifies' AND
+        entity_slug = slug`` within the SAME vault). One batched, fully-bound
+        query (chunked under the SQLite variable cap) — never per-hit N+1.
+        Pairs keep the check cross-vault-safe under ``--vaults all`` (a foreign
+        vault's ref must not verify a same-slug home page). Advisory: the
+        project-less ``entity_slug`` can over-match a cross-project same-slug
+        page (Q-050-1 accepted imprecision). Read-only; zero DDL."""
         ...
 
     @abc.abstractmethod

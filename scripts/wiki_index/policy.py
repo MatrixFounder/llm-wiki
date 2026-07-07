@@ -224,3 +224,44 @@ def effective_level(frontmatter: dict[str, Any] | None, default_level: str) -> s
     if isinstance(val, str):
         return val
     return _NON_SCALAR_SENTINEL
+
+
+# -----------------------------------------------------------------------------
+# TASK 050 (R-5/R-6) — derived trust tier (external < internal < verified)
+# -----------------------------------------------------------------------------
+
+TRUST_TIERS: tuple[str, ...] = ("external", "internal", "verified")
+"""Ordered low→high. MIN-rule (Q-050-1): origin taints — a page that is both
+external-origin AND verified stays ``external``."""
+
+_HTTP_PREFIXES = ("http://", "https://")
+
+
+def _is_external(frontmatter: dict[str, Any] | None, file_path: str) -> bool:
+    """External-origin predicate, ALIGNED with the SQL half (Q-050-3):
+
+    - a SCALAR string ``$.source`` / ``$.URL`` / ``$.url`` with an exact
+      ``http://``/``https://`` ASCII-case-insensitive prefix (never bare
+      ``http`` — ``httpx://`` must not match; non-scalar values are NOT
+      external — SQL ``json_extract`` of a list/object yields ``[``/``{``
+      text, which the prefix ``LIKE`` likewise rejects);
+    - OR the page file lives under a ``_raw/`` segment. ASCII-case-insensitive
+      (`_RAW/`) to match SQLite ``LIKE``'s default fold."""
+    if frontmatter:
+        for key in ("source", "URL", "url"):
+            val = frontmatter.get(key)
+            if isinstance(val, str) and val.lower().startswith(_HTTP_PREFIXES):
+                return True
+    fp = file_path.lower()
+    return fp.startswith("_raw/") or "/_raw/" in fp
+
+
+def trust_tier(
+    frontmatter: dict[str, Any] | None, file_path: str, verified: bool,
+) -> str:
+    """A page's derived trust tier. ``verified`` = the caller resolved an
+    inbound ``verifies`` ref for this page (batched —
+    ``IndexRepository.find_verified_slugs``)."""
+    if _is_external(frontmatter, file_path):
+        return "external"          # MIN-rule: origin taints (Q-050-1)
+    return "verified" if verified else "internal"

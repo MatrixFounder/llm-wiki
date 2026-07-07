@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.wiki_skills._common import actor_id as _actor_id
+
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import SYSTEM_FILES
 from scripts.wiki_index.models import LogEvent
@@ -164,6 +166,8 @@ def index_from_manifest(
                     "source_hash": manifest.get("source", {}).get("hash"),
                     "llm_tokens_used": manifest.get("llm_tokens_used"),
                     "contradictions": manifest.get("contradictions", 0),
+                    # TASK 050 (R-2): optional actor identity (None dropped below)
+                    **({"actor": _a} if (_a := _actor_id()) is not None else {}),
                 },
                 log_md_byte_offset=log_event.get("log_md_byte_offset"),
             ))

@@ -32,7 +32,8 @@ wiki-query prepare "<question>" \
     --vault-root <path> \
     [--vaults <id,id|all>] [--types <t,t>] [--project <p>] \
     [--limit <N>] [--no-expand-aliases] [--slug <kebab>] \
-    [--audience <level>] \
+    [--audience <level>] [--min-trust {external,internal,verified}] \
+    [--log-retrieval] \
     [--min-hits <N>] [--db-path <override>]
 ```
 
@@ -75,12 +76,27 @@ echo "$ANSWER" | wiki-query apply \
     --question-hash <hash-from-prepare> \
     --answer-stdin \
     --citations-file <path-to-cites.json> \
-    [--vaults … --types … --project … --limit … --no-expand-aliases --audience …] \
+    [--vaults … --types … --project … --limit … --no-expand-aliases --audience … --min-trust …] \
     [--orchestrator-id <id>] [--force] [--db-path <override>]
 ```
 
 Grounding-checked write-back + self-index. No LLM call.
 
+- **`trust` per hit (TASK 050 / R-17, always-on)** — every `hits[]` entry carries a
+  DERIVED provenance tier: `external` (a `_raw/` capture or an `http(s)://`
+  `source`/`URL`/`url`) < `internal` < `verified` (an inbound `verifies` ref;
+  external origin taints — a verified capture stays `external`). Machine-readable
+  H-6 signal: prefer grounding on `internal`/`verified`; treat `external` bodies with
+  the fenced-sentinel discipline.
+- **`--min-trust {external,internal,verified}` (TASK 050)** — retrieval floor,
+  SQL-filtered before the limit; folds into `question_hash` whenever the flag is
+  PRESENT (incl. `external`, which filters nothing) — MUST match between `prepare`
+  and `apply` (drift ⇒ `QUESTION_CHANGED`). Composes with `--audience`.
+- **`--log-retrieval` (TASK 050, opt-in)** — one DB-only `query` audit event with the
+  retrieved slug set (+ `audience`/`actor`); best-effort (`access_logged: false` on an
+  insert failure, never a crash). The apply-side audit event fires on EVERY apply
+  (`action: filed|unchanged`, cited slugs) — note the trail is per-APPLY: an
+  orchestrator that short-circuits on `is_unchanged` logs retrieval only via this flag.
 - **`--audience <level>` (TASK 049 / ADR-009)** — retrieval-scope policy: pages
   classified above the level never enter `hits` (SQL-filtered before the limit;
   `--follow-edges` expansion gated identically), so they can never be cited

@@ -79,9 +79,12 @@ def test_prepare_retrieval_envelope(tmp_path: Path) -> None:
     assert len(env["question_hash"]) == 64
     assert env["is_unchanged"] is False
     h0 = env["hits"][0]
+    # TASK 050 (NFR-1): `trust` is the ONLY unconditional key added to the
+    # default-path hit dict — this pin IS the envelope-diff golden.
     assert set(h0) == {"vault_id", "slug", "project", "type", "title",
-                       "bm25_score", "snippet"}
+                       "bm25_score", "snippet", "trust"}
     assert h0["slug"] == "routing-note"
+    assert h0["trust"] == "internal"
 
 
 def test_natural_language_question_retrieves(tmp_path: Path) -> None:

@@ -594,6 +594,31 @@ only flags + one new pure module (`scripts/wiki_index/policy.py`) + two DAL para
 `find_classification_leaks`; §6 unchanged (no deps). Design rationale: Q-049-1..4
 (§11i); enforcement-point inventory in Q-049-4.
 
+**§2.4.1 Read-side audit + derived trust tier (TASK 050 / R-17).** The audit half:
+`wiki-query apply` logs its `query` event on EVERY success (the `if changed:` gate moves
+off the log call — idempotent re-queries leave an `action: unchanged` trail) with the
+**cited slugs** (not a count) + active `audience`; opt-in `wiki-query prepare
+--log-retrieval` / `wiki-search --log-access` record the retrieved/hit slug sets;
+`WIKI_ACTOR_ID` (validated, shared shape with `--orchestrator-id`, invalid ⇒ silently
+absent) threads `details_json.actor` through the knowledge-write events (query/verify/
+append-log/ingest — maintenance writers deliberately excluded). All audit events are
+**Class-C DB-only** (`log_md_byte_offset` NULL — the established apply/verify precedent;
+Q-050-2: telemetry must not spam the operator's Class-A `log.md`). D5 makes that shape
+actually durable: the `reindex_full` wipe now spares NULL-offset rows (`... AND
+log_md_byte_offset IS NOT NULL`) — pre-050 EVERY DB-only event died on every `--full`
+(mirrored rows still wipe + re-parse from `log.md`, which stays authoritative for the
+mirror). Logging is best-effort on read paths (a failed insert reports
+`access_logged: false`, never a crash). The trust half: every prepare hit carries a
+DERIVED `"trust"` tier — `external(0) < internal(1) < verified(2)`, MIN-rule (origin
+taints: external + verified ⇒ external, Q-050-1) — computed from `$.source`/`$.URL`/
+`$.url` http-prefix, `_raw/` path segment, and inbound `verifies` refs (ONE batched
+`find_verified_slugs` per prepare and per edge-depth-level — no N+1); it supersedes the
+synthesis contract's `_raw/` path heuristic with machine-readable signal. Optional
+`--min-trust` (prepare+apply, MUST match — flag-present folds into `question_hash`
+incl. the no-clause `external` floor) filters **in SQL pre-LIMIT** with predicates
+test-pinned to the Python derivation (Q-050-3; `LIKE '\_raw/%' ESCAPE '\'`). Zero DDL;
+composes with §2.4's audience scoping (both fold, both filter). Zero impact on §4/§6.
+
 ---
 
 ## 3. System Architecture
@@ -701,4 +726,5 @@ Requirement → architecture-surface traceability for Phase 3a MVP (R-01..R-26),
 - [x] **Backward compat**: subprocess fallback path fully preserved (§1.5.2 FALLBACK PATH); external `wiki-ingest` binary remains optional. *(Both retired in TASK 047 — `wiki-import` is the in-repo construct engine; entry kept as shipped-history.)*
 - [x] **Obsidian deep-links (TASK 045)**: `wiki-search` JSON hits gain `file_path` (always present) + `obsidian_url` (`obsidian://open?vault=<folder-basename>&file=<encoded-path>`, null when vault unknown — Q-045-1). Vault cache built once per unique `vault_id` across hits (R-3). `--format markdown`: OSC 8 hyperlinks on iTerm2/VS Code terminal; plain URL fallback for pipe + Apple Terminal (detected via `TERM_PROGRAM=Apple_Terminal` — Q-045-2); chat agents show clean title/slug/snippet (obsidian:// not clickable in VS Code webview CSP). H-6 control-char sanitisation (`_term_safe`) applied to title/snippet before TTY output (CWE-150). Zero DDL, zero new deps.
 - [x] **Policy-before-model retrieval scoping (TASK 049 / ADR-009 / R-16)**: optional default-OFF classification layer — `policy:` ladder + `classification:` key + `--audience` on wiki-search/wiki-query/wiki-verify-multi (+ `wiki-import --classification` H-6 quarantine). ONE bound pre-LIMIT SQL predicate in `search_pages` shared `clause_parts` (all three shapes; fail-closed; both-or-neither guard) + per-page gates on the two `get_page` bypass paths (`_follow_edges` pre-truncation, `_gather_examined` count-only). Hash fold + envelope keys only-when-active (OFF ≡ byte-identical, equivalence-tested). Lint `classification-leak` (`--strict` rail, ADR-006) + `invalid-classification`; COUNT=1 leak-join guard (Q-049-3). Honest boundary documented (§7.6): scopes the MODEL, not the operator. **Zero DDL** (`user_version` 7), vendor-agnostic, derive-don't-author (optional keys only). Design: §2.4 + Q-049-1..4.
+- [x] **Read-side audit + derived trust tier (TASK 050 / R-17)**: apply audit fires on every success (cited slugs, action, audience?, actor?); `WIKI_ACTOR_ID` via shared `_common.ORCH_ID_RE`; opt-in `--log-retrieval`/`--log-access` (best-effort, Class-C DB-only); `reindex_full` spares NULL-offset `log_events` rows (D5 — Class-C survives a Class-B rebuild); per-hit derived `trust` + `--min-trust` SQL pre-LIMIT floor (COALESCE-guarded three-valued-logic-safe predicate, `LIKE ESCAPE` on `_raw`, Python↔SQL alignment test-pinned). **Zero DDL** (`user_version` 7); hash folds only-when-flag-present; the one unconditional envelope delta = the `trust` hit key + the D1 completeness event. Design: §2.4.1 + Q-050-1..3.
 - [x] **Template**: extended template applied (Sections 1-11 covered + §3.4 Sequence Diagram + §1.5.7 vendored-module subsection + §7.4 Vendoring Policy subsection).

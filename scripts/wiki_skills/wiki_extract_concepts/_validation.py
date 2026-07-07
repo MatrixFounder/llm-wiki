@@ -56,7 +56,9 @@ _SOURCE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 # `entities.canonicalized_by`. Strict charset: lowercase alphanumerics +
 # `._:@-` (allows model names like `claude-opus-4-7@vendor`). Cap at
 # 64 chars; rejects newlines, control chars, and shell metachars.
-_ORCHESTRATOR_ID_RE = re.compile(r"^[a-z0-9._:@-]{1,64}$")
+from scripts.wiki_skills._common import ORCH_ID_RE
+
+_ORCHESTRATOR_ID_RE = ORCH_ID_RE  # TASK 050: shared shape (explicit re-export for the facade)
 
 # v3.1 strict-validator caps (003-v3-02 / H-2 / H-6 / H-9):
 _REQUIRED_CANDIDATE_KEYS = {
@@ -159,7 +161,7 @@ def _validate_orchestrator_id(value: str) -> str:
     sees an argparse-level usage error (exit 2 / SystemExit 2) rather
     than the exit-4 EXTRACTION_PARSE_ERROR envelope.
     """
-    if not _ORCHESTRATOR_ID_RE.match(value):
+    if not _ORCHESTRATOR_ID_RE.fullmatch(value):  # fullmatch: `$` alone admits a trailing \n
         raise argparse.ArgumentTypeError(
             f"--orchestrator-id must match regex "
             f"{_ORCHESTRATOR_ID_RE.pattern!r}"
