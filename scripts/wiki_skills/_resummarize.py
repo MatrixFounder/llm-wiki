@@ -241,21 +241,41 @@ def apply_policy(
     policy: ResummarizeConfig | None,
     force: bool,
     caches: Caches | None = None,
+    current_hash: str | None = None,
 ) -> Decision:
     """The **monotone** re-summarization gate (Q-019-1/4/6).
 
     Only `ingest`/`convert+ingest` are gated — `upsert`/`skip` pass through
     unchanged (the safety invariant). Otherwise: `--force` re-arms a raw the policy
-    would skip (reason `forced`, set **uniformly** across `never` and `if-missing` —
-    vdd-multi logic MED-2); `mode: never` → `skip:resummarize-never`; `mode: always`
-    → unchanged; `mode: if-missing` → `skip:summary-exists:<which>` when a detector
-    matches, else unchanged."""
+    would skip (reason `forced`, set **uniformly** across `never`/`if-missing`/
+    `if-changed` — vdd-multi logic MED-2); `mode: never` → `skip:resummarize-never`;
+    `mode: always` → unchanged; `mode: if-changed` (TASK 051 / R-18) →
+    `skip:summary-unchanged` iff the recorded D1 `source_state` hash still equals
+    `current_hash`, else re-summarise; `mode: if-missing` →
+    `skip:summary-exists:<which>` when a detector matches, else unchanged.
+
+    `current_hash` is the caller-supplied `sha256` of the file (TASK 051 / Q-051-1 —
+    `wiki-sync scan` hoists it once ahead of the gate and threads it in); it is used
+    ONLY by `if-changed`."""
     if policy is None or decision.action not in ACTIONABLE:
         return decision
     if policy.mode == "never":
         return replace(decision, reason="forced") if force \
             else Decision("skip", "resummarize-never")
     if policy.mode == "always":
+        return decision
+    if policy.mode == "if-changed":
+        # TASK 051 (R-18): re-summarise iff the recorded D1 `source_state` hash no
+        # longer matches the file. Skip ONLY on a real match — a `None` on EITHER
+        # side (never-recorded, or an unreadable/vanished file whose `current_hash`
+        # is None) must re-summarise, NEVER a `None == None` silent skip (mirrors the
+        # executor TOCTOU guard in wiki_sync.py). Provenance/mirror are NOT consulted:
+        # they prove a summary EXISTS, not that the source is UNCHANGED (Q-051-2/5).
+        recorded = repo.get_source_state(vault_id, "sync", rel, "source_hash")
+        if current_hash is not None and recorded is not None \
+                and recorded == current_hash:
+            return replace(decision, reason="forced") if force \
+                else Decision("skip", "summary-unchanged")
         return decision
     # if-missing
     which = summary_exists(

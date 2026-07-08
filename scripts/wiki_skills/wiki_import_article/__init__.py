@@ -297,6 +297,29 @@ def prepare(args: argparse.Namespace) -> int:
         raw_md = inject_classification(raw_md, args.classification)
     raw_bytes = raw_md.encode("utf-8")
     source_hash = hashlib.sha256(raw_bytes).hexdigest()  # _raw hash → import idempotency ONLY
+    # TASK 051 (R-18): `is_unchanged` short-circuit — a re-poll of a source that
+    # converts to byte-identical `_raw` skips the REASON pass entirely. Placed AFTER
+    # the symlink guards (raw_path L276 / att_dst L284) so we never hash THROUGH a
+    # swapped-in symlink (H-6 write posture), and BEFORE the write so nothing on disk
+    # changes. `--force` bypasses (regenerate after a REASON-harness change or a
+    # corrupt prior summary). A read failure falls through to a normal (over)write.
+    if not args.force and raw_path.is_file():
+        try:
+            existing_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+        except OSError:
+            existing_hash = None
+        if existing_hash == source_hash:
+            if _imgtmp and _imgtmp.exists():
+                shutil.rmtree(_imgtmp, ignore_errors=True)
+            return emit({
+                "action": "unchanged",
+                "is_unchanged": True,
+                "vault_id": args.vault,
+                "raw_path": str(raw_path.relative_to(vault_root)),
+                "folder": args.folder,
+                "slug": slug,
+                "source_hash": source_hash,
+            }, exit_code=0)
     n_images = 0
     # The html skill temp dir (`_imgtmp`) is reclaimed in the `finally` — the SINGLE owner for both
     # the success path AND any OSError from write_bytes/mkdir/copy2 (read-only vault, ENOSPC,
@@ -781,6 +804,11 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
+    pp.add_argument("--force", action="store_true",
+                    help="TASK 051 (R-18): bypass the `is_unchanged` short-circuit — "
+                         "always rewrite _raw and emit a full envelope even when a "
+                         "re-poll produced byte-identical content (regenerate after a "
+                         "REASON-harness change or a corrupt prior summary).")
     pp.add_argument("--classification", type=_classification_arg, default=None,
                     metavar="LEVEL",
                     help="TASK 049 (ADR-009): stamp `classification: <level>` into the "

@@ -744,7 +744,19 @@ compliance-flavored "what did the model read" question. **Effort**: S.
 **Files**: `wiki_query.py` (event + envelope), `wiki_search.py`,
 `wiki_append_log.py`/DAL (Class-C access rows), `skills/wiki-query-synthesis/SKILL.md`.
 
-### R-18. Source freshness — the connector substrate (P2)
+### R-18. Source freshness — the connector substrate ✅ SHIPPED (TASK 051, 2026-07-08)
+
+**Status: SHIPPED** as TASK 051 (`docs/tasks/task-051-source-freshness` on merge;
+ARCHITECTURE §2/§4 + open-questions §11k Q-051-1..5). Delivered all three slices,
+**zero-DDL** (`user_version` 7): **(a)** `resummarize.mode: if-changed` — `apply_policy`
+consults the D1 `source_state` hash by **equality** (not marker presence), skipping
+`skip:summary-unchanged` iff a recorded hash still matches (the scan hoists the file hash
+once ahead of the gate, Q-051-1; `None`/absent-record ⇒ re-summarise, never a silent
+skip); **(b)** a `wiki-import prepare` `is_unchanged` short-circuit (hash the pre-existing
+`_raw` after the symlink guards, before the write → orchestrator STOP, no REASON pass;
+`--force` bypasses); **(c)** the **connector contract** — `templates/connector-zone.sync.yaml`
++ the functional-architecture "connector contract" section. Original spec below.
+
 
 **What**: make "keep sources current" cheap without becoming a live query
 proxy (the wiki is a **pull-refreshed knowledge cache**; Class A/B layering

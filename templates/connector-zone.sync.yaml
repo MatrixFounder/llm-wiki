@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Connector-zone `.wiki/sync.yaml` — TASK 051 / R-18 example.
+#
+# Drop this into a folder that a CONNECTOR feeds — any PATH executable that
+# exports ONE FILE PER BUSINESS OBJECT (a Jira issue, a newsletter edition, a
+# channel thread) with a STABLE FILENAME = the object's stable external key
+# (`PROJ-123.md` → stable slug → in-place refresh + stable [[wikilinks]]).
+# `wiki-sync scan <zone>` then keeps the zone fresh cheaply:
+#   • an unchanged file              → skip:summary-unchanged  (no re-LLM)
+#   • a file whose content moved     → re-ingested (re-summarised, in place)
+#   • a brand-new object             → ingested
+# No `--force`, no re-LLM of the untouched majority.
+#
+# The connector is NOT shipped in this repo — it is your own exporter (an MCP
+# tool MAY wrap it, but MCP is not the contract). See the obsidian-llm-wiki
+# manual's "connector contract" section (docs/architectures/functional-architecture.md).
+# ─────────────────────────────────────────────────────────────────────────────
+
+resummarize:
+  # if-changed (TASK 051): re-summarise a source IFF its recorded content hash no
+  # longer matches the file — the freshness mode for machine-materialised zones.
+  # (Global default stays `if-missing`; a connector zone opts in here.)
+  mode: if-changed
+
+summarize:
+  # How wiki-sync distils each source (passed to the delegated `wiki-import`).
+  profile: article          # article | meeting | lesson | auto  (== wiki-import --kind)
+  extract_concepts: true    # file _concepts/ pages (false → defer to /wiki-extract-concepts)
+  # diagrams: false         # opt into a selective-mermaid overlay
+  # target_subdir: Summaries  # file the distilled notes under <zone>/Summaries/

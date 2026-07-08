@@ -1004,6 +1004,46 @@ Therefore `wiki-sync` owns its own partition:
   `get_source_state` + a `set_source_state` writer (both pure DML on the existing
   table) — see interfaces §5.4 (the earlier "no new DAL surface" claim is corrected).
 
+### Source freshness & the connector contract (TASK 051 / R-18)
+
+**Freshness is pull-refreshed, never fetch-through.** The wiki is a knowledge *cache*:
+Class A/B layering + the H-6 trust model forbid a query-time fetch (the freshness SLA is
+the fetcher's cadence, stated plainly). TASK 051 makes "keep sources current" cheap on two
+axes without adding a query proxy:
+
+- **`resummarize.mode: if-changed`** (the plan gate). The TASK-019 `if-missing` gate skips
+  whenever a summary *exists* — so a **changed** source that already carries a D1
+  `source_state` marker is frozen (its `apply_policy` decision becomes
+  `skip:summary-exists:source_state` at the plan layer and never reaches the executor's
+  `is_unchanged` no-op). `if-changed` re-keys that D1 detector on hash **equality**: skip
+  (`skip:summary-unchanged`) iff the recorded hash still matches the file, else
+  re-summarise. `wiki-sync scan` hoists the file `sha256` once ahead of the gate and threads
+  it in (Q-051-1), reusing the single value for the executor marker (a non-ACTIONABLE
+  `upsert` falls back to a lazy hash — no double read). `None`/absent-record ⇒ re-summarise
+  (never a `None == None` silent skip). D1-only: provenance/mirror prove *existence*, not
+  *sameness* (Q-051-2/5).
+- **`wiki-import prepare` `is_unchanged`** (the per-source engine). A re-poll that converts
+  to byte-identical `_raw` short-circuits: after the symlink guards and before the write,
+  `prepare` hashes the pre-existing `_raw` and — on a match — emits `{"action":"unchanged",
+  "is_unchanged":true}` and STOPs (no write, no attachment copy/GC, no context-build, no
+  REASON pass). `--force` bypasses (regenerate after a REASON-harness change or a corrupt
+  prior summary). What is saved is the LLM pass + the write; the fetch+convert still runs
+  (the hash is of the *converted* `_raw`, Q-051-4).
+
+**The connector contract.** A *connector* is any operator-owned PATH executable (the
+`resolve_skill_bin` discovery pattern) that materialises **one file per business object**
+into a `wiki-sync` zone, where the **filename is a stable external key** (`PROJ-123.md` →
+stable slug → in-place refresh + stable `[[wikilinks]]`), paired with a zone-local
+`.wiki/sync.yaml` (`resummarize.mode: if-changed` + a `summarize:` profile —
+`templates/connector-zone.sync.yaml`). Source notes refresh **in place**; a refreshed
+source is "the current snapshot", so `supersedes`/`--as-of` chains stay reserved for
+knowledge-class pages (an event log, not a source cache). An MCP tool MAY *wrap* a
+connector, but **MCP is not the contract** — this turns Epic 6 from "N adapters to build"
+into "any exporter + a zone config". Out of scope (Epic-6 trigger stands): live SQL
+federation / fetch-through, an MCP *server* surface, prebuilt IMAP/Jira/GramJS adapters,
+authored `freshness` frontmatter (git + `source_state` own history), a webhook/push daemon
+(a second writer to single-writer SQLite → the Postgres trigger).
+
 ### Builds on (reuse, don't reinvent)
 
 `register_summary` (the `wiki-enrich` primitive) + the existing idempotent CLIs

@@ -85,6 +85,7 @@ index, view-sidecars to skip). `scan` only PLANS — it writes nothing:
 ```bash
 wiki-sync scan "03 - Learning" --vault personal              # JSON plan
 wiki-sync scan "03 - Learning" --vault personal --dry-run     # human-readable plan
+# Freshness (TASK 051): set resummarize.mode:if-changed in .wiki/sync.yaml → re-summarise a source ONLY when its content changed; --force redoes anyway
 # Executing the plan (summarising etc.) is orchestrator/LLM work → use Claude CLI (§B).
 ```
 
@@ -132,6 +133,7 @@ wiki-search "..." --vaults personal --log-access               # log the read (D
 # prepare emits `language` (the vault's WIKI_SCHEMA language, en fallback) → summarise IN that language:
 wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
+#   TASK 051: an unchanged re-poll emits {action:unchanged, is_unchanged:true} → STOP (no REASON pass); --force rewrites anyway
 #   …translate/summarise IN prepare.language, reusing the emitted known_concepts; note JSON uses
 #   neutral {title, body, summary_bullets, entities[]} (legacy title_ru/ru_body still accepted). Then:
 wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \

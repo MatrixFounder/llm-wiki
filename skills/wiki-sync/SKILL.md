@@ -116,11 +116,17 @@ A `resummarize:` block in `.wiki/sync.yaml` turns the dispatcher idempotent at t
 `source_state` (wiki-sync already ingested it), **D2a** `provenance_ref` (a page's
 `source:`/`sources:` frontmatter cites the raw vault-rel path), **D2b** `mirror`
 (a `_summary`-tree sibling: `stem-relpath` 1:1 or `group-key` N:1 via a configurable,
-ReDoS-guarded regex). `mode` ∈ `if-missing` (default) / `always` / `never`. The block
-is **per-folder overridable** — a `<folder>/.wiki/sync.yaml` `resummarize:` deep-merges
-deepest-wins over the vault root (a folder may set only `mode` and inherit `detect`).
-Absent block ≡ TASK 018 behavior. New skip reasons:
-`summary-exists:{source_state,provenance,mirror}` and `resummarize-never`.
+ReDoS-guarded regex). `mode` ∈ `if-missing` (default) / **`if-changed`** (TASK 051) /
+`always` / `never`. **`if-changed`** is the *freshness* mode for a **connector zone**:
+it re-summarises a source **iff its recorded D1 `source_state` hash no longer matches the
+file** (an unchanged source → `skip:summary-unchanged`; a *changed* one → re-ingested;
+a never-summarised one → ingested) — so a re-poll of the untouched majority costs no LLM
+pass, without the blunt re-LLM-everything of `always`. See `templates/connector-zone.sync.yaml`.
+The block is **per-folder overridable** — a `<folder>/.wiki/sync.yaml` `resummarize:`
+deep-merges deepest-wins over the vault root (a folder may set only `mode` and inherit
+`detect`). Absent block ≡ TASK 018 behavior. Skip reasons:
+`summary-exists:{source_state,provenance,mirror}`, `summary-unchanged` (if-changed), and
+`resummarize-never`.
 
 ## Config — `.wiki/sync.yaml` (optional)
 

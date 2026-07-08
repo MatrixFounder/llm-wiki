@@ -1444,3 +1444,59 @@
   predicate (default-OFF, FTS-candidate-set-bounded, ADR-005 posture; latent
   metadata-path cost noted); unbounded `log_events` growth under machine re-query
   loops (retention = P3).
+
+### 11k. TASK 051 — source freshness / connector substrate (R-18) (design rationale)
+
+- **Q-051-1 (RESOLVED) — where the current-file hash comes from.** `if-changed` needs the
+  candidate's `sha256` at the plan gate, but `wiki-sync scan` computes `_hash_file` **after**
+  `apply_policy` and only for `action != "skip"` ([wiki_sync.py](../../scripts/wiki_skills/wiki_sync.py) L218).
+  Resolution: **hoist** the hash of ACTIONABLE candidates ahead of the gate and thread it
+  into `apply_policy` (a new kwarg), reusing the single computed value for both the gate and
+  the executor's `is_unchanged`/marker record — never a second read of a large raw (PERF).
+  **Mode-scoped hoist (code-review refinement):** the pre-gate hash fires ONLY when
+  `policy.mode == "if-changed"` (the sole consumer of `current_hash`); under `if-missing`/
+  `always`/`never` a gated-to-skip ACTIONABLE raw must NOT incur a pre-gate read it avoided
+  pre-051 — those modes hash lazily in the record block (fallback), byte-identically to
+  before. Under `if-changed` the executor record reuses the hoisted value; a non-ACTIONABLE
+  `upsert` (never hoisted) falls back to a single lazy hash.
+  **Two guards the branch must carry (arch-review M-1):** (a) `if-changed` is an **explicit**
+  `apply_policy` branch — the current gate is `never`/`always`/**else→if-missing**
+  ([_resummarize.py](../../scripts/wiki_skills/_resummarize.py) L253-269), so a new enum value
+  without its own arm would silently fall through to the buggy marker-**presence** path (the
+  exact behaviour Q-051-5(ii) rejects); (b) the skip fires **only** when
+  `current_hash is not None and recorded is not None and recorded == current_hash` — mirroring
+  the executor's TOCTOU guard ([wiki_sync.py](../../scripts/wiki_skills/wiki_sync.py) L221-230,
+  "a `None` hash must NEVER read as `is_unchanged`"), else a markerless-and-unreadable file
+  (`None == None`) would silently skip actionable content.
+- **Q-051-2 (RESOLVED) — `if-changed` keys on D1 (`source_state`) only.** Provenance (D2a) and
+  mirror (D2b) prove a summary *exists*, not that the source is *unchanged* — they carry no
+  hash to compare. So `if-changed` consults only the `source_state.source_hash` marker; **no
+  recorded hash ⇒ re-summarise** (safe: at worst one extra pass, never a silent stale skip).
+- **Q-051-3 (RESOLVED) — default stays `if-missing`.** The global `resummarize.mode` default
+  is unchanged (back-compat for every existing vault); the shipped template connector zone
+  `sync.yaml` opts into `if-changed`. Adding an enum value is additive (schema + validation).
+- **Q-051-4 (RESOLVED) — compare the converted `_raw` bytes.** `wiki-import prepare`'s
+  `is_unchanged` hashes the **converted** `_raw` markdown (the `source_hash` already in the
+  envelope), so the comparison is exact against what is stored; an upstream byte change that
+  converts to identical markdown is correctly a no-op. **Corollary:** for `wiki-sync`
+  `convert+ingest`, D1's `source_state` hash is the **source binary** hash, so a re-save with
+  identical text but new metadata re-summarises (consistent with the existing `is_unchanged`
+  semantics — documented, not fixed).
+- **Q-051-5 (RESOLVED) — `if-changed` vs `mode: always` + the executor `is_unchanged` no-op.**
+  Ground truth (task-review C-1): `always` does **not** re-LLM unchanged files — the executor
+  no-ops any entry whose scan `is_unchanged` holds ([workflows/wiki-sync.md](../../workflows/wiki-sync.md) L105).
+  Tracing every file class, **`always` and `if-changed` make identical re-summarise
+  decisions** (both re-summarise a changed-marker file AND a markerless file; both skip/no-op
+  an unchanged-marker file). So the choice is NOT behavioural. Three options weighed:
+  **(i) new opt-in `if-changed` enum value — CHOSEN**: it surfaces the skip **at the plan
+  layer** (`skip:summary-unchanged`, visible in `scan` output) instead of a silent executor
+  no-op, emits **no delegate/`resolve_summarize`** for unchanged files, fixes the real bug
+  (under `if-missing`, D1's marker-**presence** turns a *changed* file into
+  `skip:summary-exists` at the plan layer — never reaching the executor), and reads as a
+  clean freshness policy for connector zones. **(ii) change `if-missing`'s D1 to
+  hash-equality in place — REJECTED**: a back-compat break for every existing `if-missing`
+  vault. **(iii) tell operators to use `mode: always` — REJECTED** not on behaviour but
+  because it hides the skip inside the executor (no plan-layer signal), still emits a delegate
+  per unchanged file, and reads as blunt "re-summarise everything" intent, not a freshness
+  policy. Connector zones — `if-changed`'s only target — carry machine-materialised sources,
+  not hand-authored summaries, so the D1-markerless concern does not arise there.

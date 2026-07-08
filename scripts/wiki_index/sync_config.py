@@ -105,7 +105,8 @@ class DetectConfig:
 
 @dataclass(frozen=True)
 class ResummarizeConfig:
-    """The re-summarization policy (TASK 019). `mode` ∈ {if-missing, always, never}."""
+    """The re-summarization policy (TASK 019; TASK 051 adds `if-changed`).
+    `mode` ∈ {if-missing, if-changed, always, never}."""
 
     mode: str = "if-missing"
     detect: DetectConfig = field(default_factory=DetectConfig)

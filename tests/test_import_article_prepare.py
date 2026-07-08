@@ -206,3 +206,70 @@ def test_prepare_explicit_slug_override(vault, monkeypatch, capsys):
     rc = _run(vault, monkeypatch, fr, extra=["--slug", "custom-slug"])
     out = json.loads(capsys.readouterr().out)
     assert rc == 0 and out["slug"] == "custom-slug"
+
+
+# ---------------------------------------------------------------------------
+# TASK 051 / R-18 (051-04/05) — `is_unchanged` short-circuit + `--force`
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_is_unchanged_short_circuits_on_repoll(vault, monkeypatch, capsys):
+    """051-05: a re-poll producing byte-identical `_raw` emits `is_unchanged` and
+    skips the write (mtime unchanged) + the REASON envelope."""
+    fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="DeFi Guide",
+                     author="A", date="2025-01-01", engine="html")
+    rc1 = _run(vault, monkeypatch, fr)
+    out1 = json.loads(capsys.readouterr().out)
+    assert rc1 == 0 and out1["action"] == "prepared"
+    raw = vault / out1["raw_path"]
+    mtime1 = raw.stat().st_mtime_ns
+
+    rc2 = _run(vault, monkeypatch, fr)          # identical re-poll
+    out2 = json.loads(capsys.readouterr().out)
+    assert rc2 == 0
+    assert out2["action"] == "unchanged" and out2["is_unchanged"] is True
+    assert out2["source_hash"] == out1["source_hash"]
+    assert out2["raw_path"] == out1["raw_path"] and out2["slug"] == out1["slug"]
+    # no REASON/context fields on the short-circuit envelope
+    assert "reason_harness" not in out2 and "known_concepts" not in out2
+    assert raw.stat().st_mtime_ns == mtime1     # NOT rewritten
+
+
+def test_prepare_changed_source_rewrites(vault, monkeypatch, capsys):
+    """051-05: changed content → normal (over)write, no short-circuit."""
+    fr1 = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="G", engine="html")
+    _run(vault, monkeypatch, fr1)
+    capsys.readouterr()
+    fr2 = FetchResult(ok=True, raw_text="# Guide\n\nNEW body\n", title="G", engine="html")
+    rc = _run(vault, monkeypatch, fr2)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["action"] == "prepared"
+    assert "NEW body" in (vault / out["raw_path"]).read_text()
+
+
+def test_prepare_force_bypasses_short_circuit(vault, monkeypatch, capsys):
+    """051-04/05: `--force` always rewrites + emits a full envelope on identical bytes."""
+    fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="G", engine="html")
+    _run(vault, monkeypatch, fr)
+    capsys.readouterr()
+    rc = _run(vault, monkeypatch, fr, extra=["--force"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["action"] == "prepared"     # NOT "unchanged"
+    assert "reason_harness" in out
+
+
+def test_prepare_is_unchanged_reclaims_imgtmp(vault, monkeypatch, capsys, tmp_path):
+    """051-05: the html temp dir is reclaimed on the short-circuit (no leak)."""
+    fr0 = FetchResult(ok=True, raw_text="# G\n\nbody\n", title="G", engine="html")
+    _run(vault, monkeypatch, fr0)
+    capsys.readouterr()
+    att = tmp_path / "imgroot" / "_attachments"
+    att.mkdir(parents=True)
+    (att / "x.png").write_bytes(b"PNG")
+    imgroot = att.parent
+    fr1 = FetchResult(ok=True, raw_text="# G\n\nbody\n", title="G", engine="html",
+                      attachments_dir=att)
+    rc = _run(vault, monkeypatch, fr1)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["action"] == "unchanged"
+    assert not imgroot.exists()                         # _imgtmp reclaimed

@@ -84,6 +84,17 @@ override with `--kind`), and emits:
   embedded,                                          # --embedded-videos: per-embed [{url,reason}] log (fetched / ad-context / ad-denylist / cap / …); null otherwise
   known_concepts: [{slug,name}…], existing_page_slugs: […] }
 ```
+> **Idempotent re-poll — `is_unchanged` STOP (TASK 051 / R-18).** If `_raw/<slug>.md`
+> already exists and the freshly fetched+converted content is **byte-identical**, `prepare`
+> skips the write and emits `{ action: "unchanged", is_unchanged: true, raw_path, slug,
+> source_hash }` instead — the orchestrator **STOPs** (no REASON, no `apply`), exactly like
+> the `wiki-extract-concepts` / `wiki-query prepare` short-circuit. A scheduled re-poll of an
+> unchanged source therefore costs one fetch+hash, not one LLM pass. Pass **`--force`** to
+> bypass (always rewrite + a full envelope — regenerate after a REASON-harness change or a
+> corrupt prior summary). The fetch+convert still run; only the summarise (and the write) are
+> skipped. This is the per-source half of R-18's freshness story; the `wiki-sync` half is
+> `resummarize.mode: if-changed` (see the manual's *connector contract*).
+
 **The `_raw` is a self-contained capture (invariants):** it always carries a `source:`
 frontmatter link to the original (injected for PDFs/text dumps that lack one), and — when
 **image import is ON** — its images are downloaded into a sibling `_raw/_attachments/`

@@ -51,7 +51,10 @@ Two per-vault override files (both optional; the built-in `${layout}` grammar is
     your new rule (they do NOT merge).
 - **`.wiki/sync.yaml`** — how `wiki-sync` routes a mixed zone (transcripts to summarise,
   office/PDF to convert, ready notes to upsert, generated-view sidecars to skip). Carries
-  `zones`, `exclude`, `transcript_dedup`, and the `resummarize` re-summarization gate.
+  `zones`, `exclude`, `transcript_dedup`, and the `resummarize` re-summarization gate
+  (`mode: if-missing` default; **`if-changed`** re-summarises a source only when its content
+  actually changes — the freshness mode for a **connector zone**, see
+  `templates/connector-zone.sync.yaml`).
 
 - **`index_db`** (in `WIKI_SCHEMA.md` frontmatter) — by default this vault shares the
   global DB; set `index_db: .wiki/index.db` to make the index travel WITH the vault. An

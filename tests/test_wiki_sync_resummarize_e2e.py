@@ -16,9 +16,11 @@ from scripts.wiki_index.layout_config import resolve_layout_config
 from scripts.wiki_index.models import Page, Vault
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
 from scripts.wiki_index.sync_config import load_sync_config
-from scripts.wiki_skills.wiki_sync import _build_entries
+from scripts.wiki_skills.wiki_sync import _build_entries, _hash_file
+import re
 
 VID = "demand-gen"
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _repo(tmp_path: Path) -> SQLiteRepository:
@@ -116,3 +118,76 @@ def test_e2e_same_dir_stem(tmp_path: Path) -> None:
     by = _plan(repo, tmp_path, res)
     assert by["Module-04/Resources/Алгоритм.docx"]["reason"] == "summary-exists:mirror"
     assert by["Module-04/Resources/Orphan.pdf"]["action"] == "convert+ingest"  # uncovered
+
+
+# ---------------------------------------------------------------------------
+# TASK 051 / R-18 (051-03) — `if-changed` mode at the scan layer
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_if_changed_unchanged_skips_no_delegate(tmp_path: Path) -> None:
+    """051-03: `if-changed` — a marker file whose recorded `source_state` hash
+    matches the file plans `skip:summary-unchanged` with NO `delegate` emitted;
+    `--force` re-arms it."""
+    repo = _repo(tmp_path)
+    _yaml(tmp_path, "resummarize:\n  mode: if-changed\n")
+    mod = tmp_path / "Module-01"
+    raw = mod / "Transcripts" / "02-1.txt"
+    _mk(raw, "body")
+    rel = "Module-01/Transcripts/02-1.txt"
+    repo.set_source_state(VID, "sync", rel, "source_hash", _hash_file(raw))
+
+    by = _plan(repo, tmp_path, mod)
+    assert by[rel]["action"] == "skip"
+    assert by[rel]["reason"] == "summary-unchanged"
+    assert "delegate" not in by[rel]
+
+    forced = _plan(repo, tmp_path, mod, force=True)
+    assert forced[rel]["action"] == "ingest" and forced[rel]["reason"] == "forced"
+
+
+def test_e2e_if_changed_changed_reingests(tmp_path: Path) -> None:
+    """051-03: a source whose content changed since the recorded hash re-summarises
+    (ingest + delegate)."""
+    repo = _repo(tmp_path)
+    _yaml(tmp_path, "resummarize:\n  mode: if-changed\n")
+    mod = tmp_path / "Module-01"
+    raw = mod / "Transcripts" / "02-1.txt"
+    _mk(raw, "NEW body")
+    rel = "Module-01/Transcripts/02-1.txt"
+    repo.set_source_state(VID, "sync", rel, "source_hash", "stale-hash-value")
+
+    by = _plan(repo, tmp_path, mod)
+    assert by[rel]["action"] == "ingest"
+    assert "delegate" in by[rel]
+
+
+def test_e2e_if_changed_markerless_ingests(tmp_path: Path) -> None:
+    """051-03: no recorded hash → ingest (never a `None == None` silent skip)."""
+    repo = _repo(tmp_path)
+    _yaml(tmp_path, "resummarize:\n  mode: if-changed\n")
+    mod = tmp_path / "Module-01"
+    _mk(mod / "Transcripts" / "02-1.txt")
+    by = _plan(repo, tmp_path, mod)
+    assert by["Module-01/Transcripts/02-1.txt"]["action"] == "ingest"
+
+
+def test_e2e_if_changed_upsert_keeps_source_hash(tmp_path: Path) -> None:
+    """051-03 (plan-review MAJOR-1): the hoist-fallback preserves `source_hash` +
+    `is_unchanged` on a non-ACTIONABLE `upsert` (ready-note) entry — the hoist for
+    ACTIONABLE candidates must NOT strip the executor's upsert marker."""
+    repo = _repo(tmp_path)
+    _yaml(tmp_path, "resummarize:\n  mode: if-changed\n")
+    mod = tmp_path / "Module-01"
+    ready = mod / "note.md"
+    _mk(ready, "---\ntype: lesson-summary\n---\n\na real ready-note body with content")
+    rel = "Module-01/note.md"
+
+    by = _plan(repo, tmp_path, mod)
+    assert by[rel]["action"] == "upsert"
+    assert _HEX64.match(by[rel]["source_hash"] or "")
+    assert by[rel]["is_unchanged"] is False  # no marker yet
+
+    repo.set_source_state(VID, "sync", rel, "source_hash", _hash_file(ready))
+    by2 = _plan(repo, tmp_path, mod)
+    assert by2[rel]["is_unchanged"] is True

@@ -133,9 +133,12 @@ $defs:
   # Resummarize (TASK 019) — the re-summarization policy gate. OPT-IN: absence ≡
   # TASK 018 behavior. A raw source (ingest / convert+ingest) is gated to
   # `skip:summary-exists:*` unless `--force` or `mode: always`. "Summary exists"
-  # = union of D1 (source_state) ∪ D2a (provenance_ref) ∪ D2b (mirror). Per-folder
-  # overridable via `<folder>/.wiki/sync.yaml` (Option A cascade, deepest-wins).
-  # STRICT (additionalProperties:false) — a misspelled key is INVALID_SYNC_CONFIG.
+  # = union of D1 (source_state) ∪ D2a (provenance_ref) ∪ D2b (mirror). TASK 051
+  # (R-18) adds `if-changed`: skip (`skip:summary-unchanged`) ONLY when the recorded
+  # D1 `source_state` hash still equals the file — a *changed* source re-summarises
+  # (the freshness mode for connector zones). Per-folder overridable via
+  # `<folder>/.wiki/sync.yaml` (Option A cascade, deepest-wins). STRICT
+  # (additionalProperties:false) — a misspelled key is INVALID_SYNC_CONFIG.
   # ----------------------------------------------------------------------------
   Resummarize:
     type: object
@@ -143,8 +146,8 @@ $defs:
     properties:
       mode:
         type: string
-        enum: [if-missing, always, never]
-        description: 'if-missing (default): ingest only if no summary detected; always; never.'
+        enum: [if-missing, if-changed, always, never]
+        description: 'if-missing (default): ingest only if no summary detected; if-changed: re-summarise iff the recorded source_state hash no longer matches the file (TASK 051); always; never.'
       detect:
         $ref: '#/$defs/Detect'
 

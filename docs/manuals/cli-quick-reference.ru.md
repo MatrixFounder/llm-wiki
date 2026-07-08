@@ -88,6 +88,7 @@ wiki-index-upsert --vault personal --source "./03 - Learning/Courses/X/note.md"
 ```bash
 wiki-sync scan "03 - Learning" --vault personal              # JSON plan
 wiki-sync scan "03 - Learning" --vault personal --dry-run     # human-readable plan
+# Свежесть (TASK 051): resummarize.mode:if-changed в .wiki/sync.yaml → пере-саммаризировать источник ТОЛЬКО когда его контент изменился; --force = переделать всё равно
 # Executing the plan (summarising etc.) is orchestrator/LLM work → use Claude CLI (§B).
 ```
 
@@ -136,6 +137,7 @@ wiki-search "..." --vaults personal --log-access               # логиров�
 # prepare отдаёт `language` (язык хранилища из WIKI_SCHEMA, фолбэк en) → суммаризируйте НА этом языке:
 wiki-import prepare --vault personal --vault-root . --kind auto \
     --source "https://example.com/article" --folder "05 - Материалы/Криптовалюты" --mode full
+#   TASK 051: неизменный повторный опрос → {action:unchanged, is_unchanged:true} → STOP (без REASON-прохода); --force переписывает всё равно
 #   …перевести/суммаризировать НА prepare.language, переиспользуя known_concepts; note JSON — нейтральные
 #   {title, body, summary_bullets, entities[]} (легаси title_ru/ru_body тоже принимаются). Затем:
 wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \

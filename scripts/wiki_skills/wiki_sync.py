@@ -186,9 +186,24 @@ def _build_entries(
                 reason=f"transcript-variant:{variant_skips[cand.rel]}",
             )
         policy = resolve_policy(cand.path, vault_root=vault_root, caches=caches)
+        # TASK 051 (R-18 / Q-051-1): HOIST the file hash for ACTIONABLE candidates
+        # AHEAD of the gate so `apply_policy`'s `if-changed` mode can compare it
+        # against the recorded `source_state` marker — and REUSE the single value
+        # for the executor `is_unchanged`/`source_hash` record below (no double
+        # read). Scoped to `if-changed` (the ONLY mode that reads `current_hash`):
+        # under `if-missing`/`always`/`never` a gated-to-skip ACTIONABLE raw must
+        # NOT incur a pre-gate read it avoided pre-051 — those paths hash lazily in
+        # the record block (fallback), byte-identically to before. `upsert`/`skip`
+        # are non-ACTIONABLE → also lazy. `None` (unreadable/vanished) flows through
+        # unchanged (gate and record both treat it as "not unchanged").
+        source_hash: str | None = None
+        if d.action in ACTIONABLE and policy is not None \
+                and policy.mode == "if-changed":
+            source_hash = _hash_file(cand.path)
         d = apply_policy(
             d, path=cand.path, rel=cand.rel, vault_root=vault_root,
             repo=repo, vault_id=vault_id, policy=policy, force=force, caches=caches,
+            current_hash=source_hash,
         )
         entry: dict[str, Any] = {
             "path": cand.rel, "action": d.action, "reason": d.reason,
@@ -216,7 +231,11 @@ def _build_entries(
                 "concepts": sm.extract_concepts,
             }
         if d.action != "skip":
-            source_hash = _hash_file(cand.path)
+            # Reuse the hoisted hash for ACTIONABLE; a non-ACTIONABLE non-skip
+            # (`upsert`/ready-note) was NOT hoisted, so hash it once here (TASK 051
+            # fallback — plan 051-03; never a double read).
+            if source_hash is None:
+                source_hash = _hash_file(cand.path)
             entry["source_hash"] = source_hash
             # A `None` hash (file vanished / unreadable between walk and hash —
             # TOCTOU) must NEVER read as `is_unchanged`: `None == None` would

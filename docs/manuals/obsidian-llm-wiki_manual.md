@@ -1074,6 +1074,20 @@ bypasses the gate (re-summarise anyway). Rules are **per-folder overridable** (a
 `<folder>/.wiki/sync.yaml` deep-merges over the vault root — e.g. a `Lessons/` zone keyed by
 date instead of lesson number).
 
+**Freshness — `mode: if-changed` (TASK 051 / R-18).** The default gate skips whenever a summary
+*exists* — so a source whose raw content **changed** since it was summarised is skipped too (only
+`--force` or `mode: always` refresh it, and `always` re-LLMs the whole zone every scan).
+`resummarize.mode: if-changed` closes that gap: it skips (`skip:summary-unchanged`) **only while the
+recorded content hash still matches the file**, and re-summarises a *changed* source **in place** — so a
+scheduled re-poll of a zone re-LLMs only the deltas, not the untouched majority. This is the *freshness
+mode* for a **connector zone**: any exporter that drops **one file per business object** (`PROJ-123.md`)
+with a **stable filename = stable external key** into a zone, plus a `.wiki/sync.yaml` with `mode:
+if-changed` (copy `templates/connector-zone.sync.yaml`), is a *connector* — the wiki stays a
+pull-refreshed cache of that source with **no adapter code** (an MCP tool may wrap a fetcher, but MCP is
+not the contract). The per-source half is `wiki-import prepare`'s **`is_unchanged` short-circuit**: an
+unchanged re-poll costs one fetch+hash, **not** an LLM (REASON) pass — the orchestrator STOPs on
+`{action:"unchanged", is_unchanged:true}`; `--force` bypasses.
+
 > **Provenance match mode (TASK 025) — `vault-rel-path` vs `basename`.** The provenance
 > detector's `provenance_ref.match` chooses how a summary's cited `file:` is matched to a raw.
 > **`vault-rel-path`** (the default) is exact full-path equality — strict, but it MISSES a

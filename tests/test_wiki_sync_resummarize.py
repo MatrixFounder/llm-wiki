@@ -167,6 +167,17 @@ def test_resummarize_bad_mode_rejected(tmp_path: Path) -> None:
         load_sync_config(tmp_path)
 
 
+def test_resummarize_if_changed_mode_validates(tmp_path: Path) -> None:
+    """TASK 051 (R-18, 051-01): `if-changed` is an accepted `mode` and parses
+    through to `ResummarizeConfig(mode="if-changed")`; the default detect
+    (`source_state`) still applies. RED before the schema enum gains `if-changed`
+    (→ INVALID_SYNC_CONFIG), GREEN after."""
+    _write_sync_yaml(tmp_path, "resummarize:\n  mode: if-changed\n")
+    r = load_sync_config(tmp_path).resummarize
+    assert r is not None and r.mode == "if-changed"
+    assert r.detect.source_state is True
+
+
 def test_resummarize_group_key_shorthand_defaults_match(tmp_path: Path) -> None:
     """`group_key` shorthand with no explicit `match` → match defaults to group-key."""
     _write_sync_yaml(
@@ -265,6 +276,72 @@ def test_apply_policy_stub_noop(tmp_path: Path) -> None:
         repo=repo, vault_id="demand-gen", policy=None, force=False,
     )
     assert out is d
+
+
+# ---------------------------------------------------------------------------
+# TASK 051 / R-18 (051-02) — `apply_policy` `if-changed` branch matrix
+# ---------------------------------------------------------------------------
+
+
+def _if_changed() -> ResummarizeConfig:
+    return ResummarizeConfig(mode="if-changed")
+
+
+def _apply_ic(tmp_path: Path, repo: SQLiteRepository, *, rel: str,
+              current_hash: str | None, force: bool = False,
+              action: str = "ingest") -> Decision:
+    return apply_policy(
+        Decision(action, "text-source"), path=tmp_path / rel, rel=rel,
+        vault_root=tmp_path, repo=repo, vault_id="demand-gen",
+        policy=_if_changed(), force=force, current_hash=current_hash,
+    )
+
+
+def test_apply_policy_if_changed_no_record_resummarises(tmp_path: Path) -> None:
+    """051-02: no recorded source_state hash → re-summarise (decision unchanged)."""
+    repo = _repo(tmp_path)
+    out = _apply_ic(tmp_path, repo, rel="x.txt", current_hash="deadbeef")
+    assert out == Decision("ingest", "text-source")
+
+
+def test_apply_policy_if_changed_match_skips(tmp_path: Path) -> None:
+    """051-02: recorded hash == current_hash → skip:summary-unchanged."""
+    repo = _repo(tmp_path)
+    repo.set_source_state("demand-gen", "sync", "x.txt", "source_hash", "h1")
+    out = _apply_ic(tmp_path, repo, rel="x.txt", current_hash="h1")
+    assert out == Decision("skip", "summary-unchanged")
+
+
+def test_apply_policy_if_changed_mismatch_resummarises(tmp_path: Path) -> None:
+    """051-02: recorded hash != current_hash → re-summarise (changed source)."""
+    repo = _repo(tmp_path)
+    repo.set_source_state("demand-gen", "sync", "x.txt", "source_hash", "h1")
+    out = _apply_ic(tmp_path, repo, rel="x.txt", current_hash="h2")
+    assert out == Decision("ingest", "text-source")
+
+
+def test_apply_policy_if_changed_none_hash_never_skips(tmp_path: Path) -> None:
+    """051-02 (arch-review M-1): `current_hash=None` must NEVER produce a
+    `None == None` silent skip, even when the record is also absent."""
+    repo = _repo(tmp_path)  # no record for x.txt
+    out = _apply_ic(tmp_path, repo, rel="x.txt", current_hash=None)
+    assert out == Decision("ingest", "text-source")  # re-summarise, not a skip
+
+
+def test_apply_policy_if_changed_force_rearms_on_match(tmp_path: Path) -> None:
+    """051-02: `--force` re-arms a would-skip (hash match) → reason 'forced'."""
+    repo = _repo(tmp_path)
+    repo.set_source_state("demand-gen", "sync", "x.txt", "source_hash", "h1")
+    out = _apply_ic(tmp_path, repo, rel="x.txt", current_hash="h1", force=True)
+    assert out == Decision("ingest", "forced")
+
+
+def test_apply_policy_if_changed_non_actionable_passthrough(tmp_path: Path) -> None:
+    """051-02: a non-ACTIONABLE decision (upsert) passes through untouched."""
+    repo = _repo(tmp_path)
+    repo.set_source_state("demand-gen", "sync", "x.md", "source_hash", "h1")
+    out = _apply_ic(tmp_path, repo, rel="x.md", current_hash="h1", action="upsert")
+    assert out == Decision("upsert", "text-source")
 
 
 # ---------------------------------------------------------------------------
@@ -795,3 +872,17 @@ def test_build_entries_force_rearms_recorded(tmp_path: Path) -> None:
               _build_entries(repo, "demand-gen", zone, tmp_path, config, layout, force=True)}
     assert forced["zone/lec.txt"]["action"] == "ingest"
     assert forced["zone/lec.txt"]["reason"] == "forced"
+
+
+def test_connector_zone_template_parses(tmp_path: Path) -> None:
+    """TASK 051 (051-06): the shipped `templates/connector-zone.sync.yaml` example
+    parses clean under the sync-config schema — mode `if-changed` + a `summarize:`
+    profile — so an operator can copy it verbatim into a zone's `.wiki/`."""
+    import shutil
+    template = Path(__file__).resolve().parents[1] / "templates" / "connector-zone.sync.yaml"
+    (tmp_path / ".wiki").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(template, tmp_path / ".wiki" / "sync.yaml")
+    cfg = load_sync_config(tmp_path)   # must not raise
+    assert cfg.resummarize is not None and cfg.resummarize.mode == "if-changed"
+    assert cfg.summarize is not None and cfg.summarize.profile == "article"
+    assert cfg.summarize.extract_concepts is True

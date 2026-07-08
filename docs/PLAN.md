@@ -1,99 +1,110 @@
-# PLAN 050 — Read-side audit completeness + derived trust tier (R-17)
+# PLAN 051 — Source freshness: the connector substrate (R-18)
 
-Phases: **P1 (audit spine: D1+D2+D5) → P2 (opt-in read logging: D3) → P3 (trust: D4)
-→ P4 (docs)**. Stub-first within each bead (signatures + RED → GREEN); every bead ends
-with the full suite + `mypy --strict` green. RTM IDs from `docs/TASK.md`.
+Phases: **PA (Epic A — `resummarize.mode: if-changed`) → PB (Epic B — `wiki-import
+prepare` `is_unchanged`) → PC (Epic C — connector-contract docs)**. Stub-first within
+each bead (signature/enum + RED → GREEN); every bead ends with the full suite +
+`mypy --strict` green. RTM IDs (R1..R5) from `docs/TASK.md`; design record in
+`open-questions.md` §11k (Q-051-1..5). Zero-DDL (`user_version` 7). Beads live inline
+(the TASK 049/050 convention this task follows).
 
-## P1 — Audit spine (R-1, R-2, R-6b)
+## PA — Epic A: `resummarize.mode: if-changed` (R1, R4, R5)
 
-**050-01 [R-2] `actor_id()` + shared shape** — `_common.py`: move the orchestrator-id
-regex to `_common.ORCH_ID_RE` (wiki_query/wiki_verify_multi import it — no copy; fold
-the FOURTH copy `wiki_extract_concepts/_validation._ORCHESTRATOR_ID_RE` too —
-`_validation → _common` is an allowed leaf edge per §2.1, and the patch-target lock
-covers symbols, not constants);
-`actor_id() -> str | None` reads `WIKI_ACTOR_ID`, `fullmatch` or None (invalid/unset ⇒
-silently None). Tests: shape matrix (valid/invalid/unset/oversize), no error on garbage.
+**051-01 [R1] schema enum + validation** — `config/sync-config.schema.yaml`: add
+`if-changed` to the `resummarize.mode` `enum` (currently `[if-missing, always, never]`,
+L146) + extend the description line. `scripts/wiki_index/sync_config.py`: `ResummarizeConfig`
+already stores `mode` as a free string validated against the schema enum — confirm
+`if-changed` passes and a bogus mode is still `INVALID_SYNC_CONFIG` (exit 6, value never
+echoed). Fold a **currency touch-up**: the `ResummarizeConfig` docstring (`sync_config.py`
+L108 "`mode` ∈ {if-missing, always, never}") and the schema comment block (L133-147) both
+list the old three modes. **Stub-first**: enum value + RED. Tests (`tests/test_sync_config.py`):
+`if-changed` parses to `ResummarizeConfig(mode="if-changed")`; a bogus mode rejected
+[R4: exit 6, value never echoed]; **default stays `if-missing`** (back-compat, Q-051-3).
 
-**050-02 [R-1] apply audit completeness** — `wiki_query.apply`: move `append_log_event`
-OUT of `if changed:` (record_query_state + self-index stay in); `details_json` gains
-`cited: [project/slug...]`, `action: filed|unchanged`, `audience?` (profile active),
-`actor?`. Tests (`tests/test_wiki_query_audit.py`, new): filed run → 1 event with slugs;
-idempotent re-run → +1 event `action: unchanged`; audience threading; actor threading;
-NFR-1 golden (event-count delta ≡ this event only; no log.md file appears).
+**051-02 [R1] `apply_policy` `if-changed` branch** — `scripts/wiki_skills/_resummarize.py::apply_policy`:
+add a `current_hash: str | None = None` kwarg and an **explicit** `if policy.mode ==
+"if-changed":` branch placed BEFORE the `# if-missing` fall-through (arch-review M-1 — a
+new enum value without its own arm silently runs the marker-**presence** if-missing path).
+Logic: `recorded = repo.get_source_state(vault_id, "sync", rel, "source_hash")`; return
+`Decision("skip", "summary-unchanged")` **only** when
+`current_hash is not None and recorded is not None and recorded == current_hash`; otherwise
+return `decision` (re-summarise); `--force` → `replace(decision, reason="forced")`
+uniformly (mirrors L256/L268). The `None`-guard mirrors the executor TOCTOU guard
+(`wiki_sync.py` L221-230) so a markerless-and-unreadable file (`None == None`) never
+silently skips. **Stub-first**: signature + RED matrix. Tests (`tests/test_wiki_sync_resummarize.py`):
+no-record→decision; match→`skip:summary-unchanged`; mismatch→decision; `current_hash=None`
+→decision (never a `None==None` skip) [R4]; `--force`→`forced`; non-ACTIONABLE→pass-through.
 
-**050-03 [R-2] actor in verify/append-log/ingest events** — `wiki_verify_multi.apply`,
-`wiki_append_log`, `_manifest_consumer` ingest event: `details_json.actor` when set.
-Tests per writer (with/without env).
+**051-03 [R1] wiki-sync scan: hoist the hash + thread it in** — `scripts/wiki_skills/wiki_sync.py`
+scan loop. **RED first** — write the failing `skip:summary-unchanged` + no-`delegate`
+assertions AND the `if-missing`/`always`/`never` + `upsert` regressions BEFORE touching the
+loop. Then: init `source_hash: str | None = None`; **hoist** `source_hash =
+_hash_file(cand.path)` for ACTIONABLE candidates ({ingest, convert+ingest} — `_resummarize.
+ACTIONABLE`) AHEAD of the `apply_policy` gate (today the hash is at L219, *after* the gate at
+L189, only for `action != "skip"` — Q-051-1) and pass `current_hash=source_hash` into
+`apply_policy`. **Do NOT drop the `upsert` hash** (plan-review 🟡-1): `upsert` (`_sync.py`
+L364 `Decision("upsert","ready-note")`) is **non-ACTIONABLE and non-skip**, so the L218
+record still needs a hash — keep that block but make it a **fallback**: `if source_hash is
+None: source_hash = _hash_file(cand.path)`, then record `is_unchanged`/`source_hash` on the
+single value (no double read for ACTIONABLE; `upsert` reads once as before). Preserve the
+existing `None`-hash / `action == "skip"` handling verbatim. Tests (`tests/test_wiki_sync.py`):
+an `if-changed` zone — an unchanged marker-bearing file plans `skip:summary-unchanged` with
+**no `delegate` emitted**; a changed file plans an ingest delegate; a markerless file plans
+ingest; **an `upsert`/ready-note entry still carries a 64-hex `source_hash` + correct
+`is_unchanged`** (the hoist-fallback guard); `if-missing`/`always`/`never` plans unchanged
+(regression) [R5].
 
-**050-04 [R-6b] reindex_full spares Class-C audit rows** — `reindex.py` wipe loop:
-special-case `log_events` → `DELETE ... WHERE vault_id = ? AND log_md_byte_offset IS
-NOT NULL`. Tests: a NULL-offset event survives `--full`; a mirrored (offset-set) event
-still wipes + re-parses without dupes; `tests/test_e2e_rebuildability.py` untouched
-and green.
+## PB — Epic B: `is_unchanged` short-circuit in `wiki-import prepare` (R2, R4, R5)
 
-## P2 — Opt-in read logging (R-3, R-4)
+**051-04 [R2] `--force` flag on prepare** — `scripts/wiki_skills/wiki_import_article/__init__.py`
+prepare arg parser: add `--force` (store_true; bypass the is_unchanged short-circuit →
+always rewrite + full envelope). Confirmed net-new (no force flag exists today). **Stub**:
+flag + RED (parser accepts `--force`; default `False`).
 
-**050-05 [R-3] `wiki-query prepare --log-retrieval`** — flag; after successful retrieval
-(post `min_hits` gate), best-effort append (`try/except sqlite3.Error` minimum — a
-`--db-path`-only DB without the vault row raises `IntegrityError`, FK ON): subject =
-`query_slug`, details `{access: true, retrieved: [...], audience?, actor?}`; envelope
-gains `access_logged: true|false` ONLY when the flag was given. Tests: on/off, event
-shape, failure injection (unregistered-vault DB) → exit 0 + `access_logged: false`.
+**051-05 [R2] prepare `is_unchanged` short-circuit** — same file, `prepare`: after the
+symlink guards (L276 `raw_path`, L284 `att_dst`) and after `source_hash` is computed
+(L299), BEFORE `raw_path.write_bytes` (L305): if `not args.force` and `raw_path.is_file()`,
+read+`sha256` the existing `_raw`; if it equals `source_hash`, reclaim `_imgtmp` (the
+`_bad` cleanup path) and `emit({"action":"unchanged","is_unchanged":true, "raw_path":…,
+"source_hash":…, "slug":…}, 0)` — skipping the write, the attachment copy/GC, and the
+`known_concepts`/`existing_page_slugs` context-build. Any mismatch / absent `_raw` / `--force`
+→ byte-identical to today. Placement AFTER the symlink guards keeps the H-6 write posture
+(never hash through a swapped symlink). **Stub-first**: envelope shape + RED. Tests
+(`tests/test_import_is_unchanged.py`, new): unchanged re-poll → `is_unchanged` envelope +
+`_raw` mtime unchanged + no REASON fields; changed source → rewrite + normal envelope;
+`--force` on unchanged → rewrite; a symlinked `_raw` still `REFUSED_SYMLINK`; `_imgtmp`
+reclaimed on the short-circuit (no temp-dir leak).
 
-**050-06 [R-4] `wiki-search --log-access`** — flag; one event: vault_id = the log
-target computed as `vaults_list[0] if vaults_list and len(vaults_list)==1 else
-GLOBAL_VAULT_SENTINEL` (plan-review MED-1 — do NOT reuse `factory_vault`, which is
-`[0]` for ANY non-empty list and would mis-log `--vaults a,b` to `a`), subject `"search"`,
-details `{access: true, q: <control-stripped, ≤200 chars>, hits: ["vault:project/slug"],
-audience?, actor?}`; same best-effort posture + `access_logged` echo only-when-flagged.
-Tests: single-vault, `--vaults all` (`_global_` row), **`--vaults a,b` → `_global_`**
-(MED-1), CWE-117 strip/cap, failure injection, OFF ⇒ zero writes.
+## PC — Epic C: connector contract (docs + one template) (R3)
 
-## P3 — Trust tier (R-5, R-6)
+**051-06 [R3] template zone `sync.yaml`** — add a `templates/connector-zone.sync.yaml`
+example: `resummarize.mode: if-changed` + a `summarize:` profile + comments naming the
+**stable filename = stable external key** discipline. Verification: the example **parses
+clean** under `config/sync-config.schema.yaml` (a tiny load-smoke test, not a behavioural
+one).
 
-**050-07 [R-5] tier derivation + DAL batch** (LOW-3: the Python `_raw` path check is
-ASCII-case-insensitive to match SQLite `LIKE` — a `_RAW/` row sits in the corpus) — `policy.py` (or a sibling pure module —
-decide at implementation; keep Decision-17): `TRUST_TIERS = ("external", "internal",
-"verified")`, `trust_tier(page, verified: bool) -> str` (external: exact
-`http://`/`https://` ASCII-ci prefix on `$.source`/`$.URL`/`$.url` scalar strings —
-non-scalar ⇒ not external — OR a `_raw` path segment; min-rule: external beats
-verified). DAL `find_verified_slugs(pairs) -> set[(vault_id, slug)]` (ABC + impl; one
-bound query, row-value IN or OR-chain). Tests: derivation matrix (incl. list/object
-source, `Xraw/` non-match, case variants), DAL pairs semantics + cross-vault
-false-positive guard.
-
-**050-08 [R-5] prepare envelope annotation** — `_hit_dict` gains `trust`; prepare
-computes the verified set in ONE `find_verified_slugs` call over the final hit list.
-Tests: envelope matrix e2e; call-count seam (one DAL call); **named NFR-1 golden
-`test_default_envelope_diff_is_trust_only`** (default-path prepare envelope vs a
-pre-050 recorded shape: the ONLY new key per hit is `trust`).
-
-**050-09a [R-6] `search_pages.min_trust` SQL + alignment** — kwarg `min_trust` (enum-validated
-`ValueError`); SQL in shared `clause_parts` pre-LIMIT: `internal` ⇒ `AND NOT <ext>`;
-`verified` ⇒ `AND NOT <ext> AND EXISTS(verifies corr. vault_id)`; `external` ⇒ no
-clause. `<ext>` uses `LIKE '\_raw/%' ESCAPE '\'` + `'%/\_raw/%' ESCAPE '\'` + http-prefix
-`LIKE 'http://%'`/`'https://%'` on the three JSON paths (all literals; values bound where
-any). Tests (09a): SQL↔Python alignment matrix (3 shapes × 2 floors ×
-the derivation corpus incl. `_RAW/`), LIMIT-window eviction.
-
-**050-09b [R-6] wiki-query `--min-trust` plumbing** — flag on prepare+apply
-(MUST-match epilog), fold `\x00min_trust:<v>` into `_question_hash` when flag PRESENT
-(incl. `external`); `_follow_edges` floor gate per the pinned contract (batch per depth
-level over candidate pairs pre-cap; seen+continue inside the sorted stream). Tests
-(09b): e2e round-trip + drift ⇒ `QUESTION_CHANGED`, edge-gate determinism, `external`
-folds but filters nothing, compose with `--audience`.
-
-## P4 — Docs (R-7)
-
-**050-10 [R-7]** — SKILL.md: wiki-query (flags `--log-retrieval`/`--min-trust`, trust field),
-wiki-search (`--log-access`), wiki-query-synthesis (the `trust` field SUPERSEDES the
-`_raw/` path-heuristic paragraph — rewrite it to key on `trust: external`; keep the
-fenced-sentinel rule); workflow note: the audit trail is per-APPLY (UC-5 "supported not
-forced"). ROADMAP R-17 → SHIPPED one-liner; ARCHITECTURE quality-checklist row
-(§2.4.1/§11j already landed). Final gates: full suite, `mypy --strict`, `grep import
-anthropic` ∅, `user_version` 7 untouched, karpathy byte-identity green.
+**051-07 [R2][R3] connector-contract docs + currency** — (1) a **connector-contract** section
+in `docs/architectures/functional-architecture.md` (connector = PATH-executable exporter,
+one file per business object, stable filename, zone + `.wiki/sync.yaml`, in-place refresh,
+MCP-*may-wrap-not-the-contract*, `supersedes` reserved for knowledge classes); (2)
+`skills/wiki-import/SKILL.md` documents the `is_unchanged` STOP + `--force`; (3)
+`config/sync-config.schema.yaml` `if-changed` doc (folded from 051-01); (4) `docs/ROADMAP.md`
+R-18 → **SHIPPED**; (5) workflow cross-links (`workflows/wiki-sync.md` / `wiki-import`).
+Verification: `grep` cross-refs resolve; no behavioural test.
 
 ## Order & risk
-01→02→03→04 (spine) → 05→06 (independent) → 07→08→09a→09b (the risky slice lands
-last, split SQL-first, after the derivation matrix is green) → 10. No bead touches layouts or the
-schema. NFR-1 goldens live in 050-02 (audit delta) and 050-09 (hash stability).
+
+Serial: **01 → 02 → 03 → 04 → 05 → 06 → 07**. Riskiest beads:
+- **051-03** (scan hoist) — a reorder of live code; the executor's `is_unchanged`/
+  `source_hash` record MUST keep reading the *same* hash value, and the `None`/`action==skip`
+  handling MUST stay verbatim. Guard: regression tests for `if-missing`/`always`/`never`
+  plans + the existing `is_unchanged` executor path.
+- **051-05** (prepare short-circuit) — must sit exactly after the two symlink guards and
+  before the write, and skip *every* downstream side-effect (write, attachment copy, GC,
+  context-build) while still reclaiming `_imgtmp`. Guard: the symlink-still-refused +
+  no-temp-leak tests.
+
+Cross-cutting (every bead): **R4** invariants — zero-DDL (`user_version` 7; no new
+column/method), Decision-17 (no `import anthropic`; envelope + exit codes), Epic A OFF by
+default / Epic B byte-identical for first-import+changed-raw, vendor-agnostic — and **R5** —
+each bead ends with the **full `pytest` + `mypy --strict` green**; Karpathy byte-identity
+untouched (no layout/schema change).
