@@ -97,8 +97,9 @@ _PYRAMID_KINDS = frozenset({"meeting", "lesson"})
 # RECOVERABLE (vs benign dedup/collision/layout skips). Surfaced LOUDLY in the apply
 # envelope's `warnings` — one entry PER reason, each with reason-specific recovery advice —
 # so a paraphrased/mis-sourced quote (or an over-cap tail) can't hide behind
-# action="imported"/exit 0 (the TASK 042 silent-drop fix). Keys mirror the `skipped` reasons
-# in `_authoring.derive_candidates` (keep in sync).
+# action="imported"/exit 0 (the TASK 042 silent-drop fix). Keys mirror the LOSSY `skipped`
+# reasons in `_authoring.derive_candidates` — INTENTIONAL skips (dedup / self-collision /
+# `participant-not-concept`, TASK 052) are deliberately absent: reported in `skipped[]`, never warned.
 _LOSSY_DROP_HINTS = {
     "no-verbatim-quote": "each entity `quote` MUST be an exact substring of the authored "
                          "`body` — copy quotes FROM the body you write, not the raw source. "
@@ -525,12 +526,17 @@ def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
             # into garbage `tags: [c, r, y, p, t, o]`; require a list of strings:
             or (note.get("tags") is not None
                 and (not isinstance(note.get("tags"), list)
-                     or not all(isinstance(t, str) for t in note["tags"])))):
+                     or not all(isinstance(t, str) for t in note["tags"])))
+            # `participants` (TASK 052; consumed by assemble_note for pyramid kinds) — same
+            # per-CHAR hazard as tags; require a list of strings when present:
+            or (note.get("participants") is not None
+                and (not isinstance(note.get("participants"), list)
+                     or not all(isinstance(p, str) for p in note["participants"])))):
         raise ImportArticleError(
             "BAD_NOTE_JSON",
             "note needs a non-empty string title (or legacy title_ru), a list of object "
             "entities with string names + string-or-null quotes, string body/tldr (or legacy "
-            "ru_body), string summary_bullets items, and a list-of-strings tags",
+            "ru_body), string summary_bullets items, and list-of-strings tags/participants",
             exit_code=EXIT_BAD_ARG)
     return note
 
@@ -700,7 +706,7 @@ def apply(args: argparse.Namespace) -> int:
     elif concepts_indexable:
         candidates, skipped = derive_candidates(
             note["entities"], note_text, slug_strategy=mint,
-            note_slug=note_slug, existing_page_slugs=existing)
+            note_slug=note_slug, existing_page_slugs=existing, grammar=grammar)
     else:
         candidates = []
         skipped = [{"name": str(e.get("name", "")), "reason": "layout-no-concepts"}

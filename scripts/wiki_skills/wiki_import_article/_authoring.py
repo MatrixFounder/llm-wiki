@@ -72,11 +72,12 @@ def fname_sanitize(title: str) -> str:
 
 
 def _fm_scalar(value: str) -> str:
-    """Frontmatter/inline-safe scalar: strip control chars + newlines AND backslashes so an
-    orchestrator/fetched-content value cannot inject a YAML key, break a link, or escape the
-    closing quote of a double-quoted scalar (a trailing `\\` makes `"v\\"` swallow the quote)
-    — CWE-91 / H-6 frontmatter-injection guard."""
-    return re.sub(r"[\x00-\x1f\x7f\\]+", " ", str(value or "")).strip()
+    """Frontmatter/inline-safe scalar: strip control chars + newlines (incl. the Unicode line
+    breaks NEL U+0085 / LS U+2028 / PS U+2029, which YAML 1.1 treats as line breaks) AND
+    backslashes so an orchestrator/fetched-content value cannot inject a YAML key, break a link,
+    escape the closing quote of a double-quoted scalar (a trailing `\\` makes `"v\\"` swallow the
+    quote), or smuggle a mid-scalar `---`/`...` document separator — CWE-91 / H-6 guard."""
+    return re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029\\]+", " ", str(value or "")).strip()
 
 
 def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
@@ -249,6 +250,19 @@ def assemble_note(
                 + (f" · {published}" if published else "")
                 + origin + ".")
 
+    # TASK 052: a pyramid (meeting/lesson) records ATTENDEES in `participants:` frontmatter — a real
+    # home so the REASON step stops smuggling people into `entities[]` (person concept pages). H-6:
+    # each value is control/newline/backslash-stripped (`_fm_scalar`) so it cannot inject a YAML key
+    # or break the scalar. Emitted ONLY for pyramid grammar with a non-empty list → article grammar
+    # and a pyramid without participants stay byte-identical to pre-052 output.
+    _pl = note.get("participants")
+    _parts = ([p for p in (_fm_scalar(x) for x in _pl) if p]
+              if grammar == "pyramid" and isinstance(_pl, list) else [])
+    participants_fm = ("participants:\n"
+                       + "".join(f'  - "{p.replace(chr(34), chr(39))}"\n'
+                                 for p in dict.fromkeys(_parts))  # de-dup, preserve order
+                       ) if _parts else ""
+
     fm = (
         "---\n"
         f"type: {note_type}\n"
@@ -261,10 +275,11 @@ def assemble_note(
         + (f'author: "{author.replace(chr(34), chr(39))}"\n' if author else "")
         + (f'published: "{published.replace(chr(34), chr(39))}"\n' if published else "")
         + f"Created: {today}T13:00\nUpdated: {today}T13:00\nlang: {(lang or 'en').lower()}\n"
-        f'sources:\n  - "{_fm_scalar(raw_rel_basename).replace(chr(34), chr(39))}"\n'
-        f"tags: {_yaml_list(tags)}\n"
-        f'tldr: "{tldr}"\n'
-        "---\n"
+        + participants_fm
+        + f'sources:\n  - "{_fm_scalar(raw_rel_basename).replace(chr(34), chr(39))}"\n'
+        + f"tags: {_yaml_list(tags)}\n"
+        + f'tldr: "{tldr}"\n'
+        + "---\n"
     )
     _raw_base = raw_rel_basename.rsplit('/', 1)[-1]
     _raw_stem = _raw_base.rsplit('.', 1)[0]
@@ -306,13 +321,17 @@ def derive_candidates(
     slug_strategy: str,
     note_slug: str,
     existing_page_slugs: list[str],
+    grammar: str = "article",
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Entities → extract-concepts candidates + a `skipped` report (R-4/R-5).
 
-    Skips (reported, never silent): empty/unfilable name, dup slug, slug == the
-    source note's own slug (self-collision), slug ∈ existing_page_slugs (a generic
-    name that would evict an owner page), over the candidate cap (`max-candidates`),
-    or no verbatim/mention support in the body (`no-verbatim-quote`). The last two are
+    Skips (reported, never silent): empty/unfilable name, a `person` entity when
+    ``grammar == "pyramid"`` (`participant-not-concept`, TASK 052 — a meeting/lesson
+    attendee belongs in the note's `participants:` frontmatter, not a concept page),
+    dup slug, slug == the source note's own slug (self-collision), slug ∈
+    existing_page_slugs (a generic name that would evict an owner page), over the
+    candidate cap (`max-candidates`), or no verbatim/mention support in the body
+    (`no-verbatim-quote`). The last two are
     the RECOVERABLE-loss reasons the `apply` envelope surfaces loudly (the literal
     strings key `_LOSSY_SKIP_REASONS` there — keep them in sync). Every kept
     candidate's `source_quote` is a guaranteed-verbatim substring of `note_text`.
@@ -326,6 +345,18 @@ def derive_candidates(
         name = sanitize_name(e.get("name", ""))
         if not name_is_filable(name):
             skipped.append({"name": str(e.get("name")), "reason": "unfilable-name"})
+            continue
+        # TASK 052: a meeting/lesson (pyramid) records attendees in the note's `participants:`
+        # frontmatter, NOT as `_concepts/` person pages. Deterministically drop `person`-typed
+        # entities for pyramid grammar so a model that types an attendee `person` in `entities[]`
+        # (the observed failure — the Айва demo) never spawns a person concept page. NB this also
+        # drops a `person` merely MENTIONED (a cited author, a candidate): pyramid notes do not
+        # concept-track people by design; the drop stays visible in `skipped[]` (create a page
+        # deliberately via /wiki-extract-concepts if one is ever wanted). INTENTIONAL, not a
+        # recoverable loss → kept OUT of `_LOSSY_SKIP_REASONS` (no CONCEPTS_DROPPED warning).
+        # `group` is deliberately kept: a committee/team can be a real domain concept (Q-052-1).
+        if grammar == "pyramid" and str(e.get("type", "")).strip().lower() == "person":
+            skipped.append({"name": name, "reason": "participant-not-concept"})
             continue
         slug = _apply_slug_strategy(name, slug_strategy)
         if not _is_valid_slug(slug, max_len=None):

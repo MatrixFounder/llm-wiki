@@ -154,7 +154,9 @@ the project is international, NOT RU-only:
 { title, title_orig?, author?, published?, tldr, summary_bullets[],
   body?,                          # full body in the target language (mode=full/thread); null for summary
   tags[],                         # 3–6 content topic tags (you read it → you tag it); no folder heuristic
+  participants[],                 # MEETING/LESSON ONLY: attendees "Name — role/org" — the home for PEOPLE
   entities: [{name, definition, quote, type}] }   # type ∈ concept|external|person|company|product|group
+                                  # entities[] = domain concepts; for meeting/lesson apply DROPS type:person
 ```
 (`title_ru`/`ru_body` are accepted as legacy aliases.) Depth by mode: **full** = complete
 translation into the target language; **summary** = thorough digest (`body` null, detailed
@@ -188,6 +190,10 @@ translation into the target language; **summary** = thorough digest (`body` null
 > transcript in the pyramid", not "translate every line verbatim"). `--kind article`/`paper`/`thread`
 > keep the per-`mode` article wrapper (the depth-by-mode table above). See
 > [`references/reason-contract.md`](references/reason-contract.md) *Note grammar by content-type*.
+>
+> **Participants ≠ entities (TASK 052):** for meeting/lesson, list attendees in `participants[]`
+> ("Name — role/org"); keep `entities[]` for domain concepts only. `apply` DROPS a `type:"person"`
+> entity for pyramid kinds (`skipped` reason `participant-not-concept`) → no person concept page.
 >
 > **`--diagrams`** → add *selective* mermaid only where it earns its place (a process flow, a state
 > loop, an architecture relationship the prose can't carry); **never** a decorative diagram per
