@@ -336,7 +336,11 @@ maintained.
   **no path** → run `obsidian-active-note focused` / `match --descriptor "X"` **bare from this
   vault's terminal** (it auto-detects the vault from the CWD — no `--vault` needed) to resolve
   your **active/open tab** — a descriptor matching one open note = exact hit (no ask), a bare
-  "the note" = confirm once per session, not-found/ambiguous = it asks. It routes knowledge lookups to
+  "the note" = confirm once per session, not-found/ambiguous = it asks. **Need a folder, not a
+  file** (e.g. to hand `/wiki-sync <zone>` the current folder without copying a path)?
+  `obsidian-active-note folder` derives the open note's containing folder (`--descriptor "X"` →
+  a named note's folder); a folder is a **folder-WIDE** blast radius, so echo `folder ← note` and
+  confirm before the folder-wide op (a root note scopes the WHOLE vault). It routes knowledge lookups to
   `/wiki-search` first and, after any app-side mutation of this (registered) vault,
   refreshes the index **in the same turn** (`wiki-index-upsert` after a content edit;
   **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030; `--full` =

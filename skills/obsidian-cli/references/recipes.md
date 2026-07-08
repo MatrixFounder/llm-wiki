@@ -227,3 +227,37 @@ ref→focused tab) = confirm first-per-session, then trust · LOW (none/many/spl
 **Failure handling:** exit 6 `vault-mismatch` (the focused tab is in another vault) → surface it,
 don't act; exit 5 `cli-absent` / headless → degrade per SKILL.md, ask for an explicit path. Never
 fall back to the active tab when the user named a *different* note (that's the LOW→ASK case).
+
+## 10. Feed the CURRENT folder to a folder-taking skill (wiki-sync)
+
+**Goal:** the user, in Obsidian's shell, says *"sync this folder"* / *"resummarize the folder I'm
+in"* with **no path** → derive the folder from the **open note** and hand it to a skill that takes a
+FOLDER (here `wiki-sync scan <zone>`), so the user never copies the path. Same preconditions as
+recipe 9 (CLI present, not headless). `folder` resolves the open note, then takes its `dirname`.
+
+```bash
+# bare → the FOCUSED note's folder ; --descriptor "…" → the matched note's folder (F-1 guard)
+obsidian-active-note folder --format json
+#   exit 0 → {"path":"05 - Материалы/Разработка","abs":"/…/05 - Материалы/Разработка",
+#             "vault":"<NAME>","source":"recent-open","note_path":"…/Версии в GitHub.md","note_abs":"/…"}
+#             (source=recent-open here: run from the integrated terminal, the focused leaf is the
+#              terminal itself, so the wrapper falls back to the most-recent OPEN note — MEDIUM)
+#   exit 3 (no open note) / 7 (ambiguous descriptor) → ASK for the folder
+
+# --format path prints JUST the absolute folder → feed it straight to a zone-taking CLI. ABORT on
+# failure — a bare `wiki-sync scan ""` would join to the vault root and scan the WHOLE vault:
+ZONE=$(obsidian-active-note folder --format path) || { echo "no open note — ask for the folder"; exit 1; }
+[ -n "$ZONE" ] || { echo "empty folder — ask for the folder"; exit 1; }
+
+# BLAST RADIUS: a folder feeds a folder-WIDE op. ECHO "folder ← note" and CONFIRM before running:
+#   → "About to wiki-sync '05 - Материалы/Разработка' (derived from the open note 'Версии в GitHub').
+#      This re-summarizes/re-indexes every source under it. Proceed?"  ← get an explicit yes
+wiki-sync scan "$ZONE" --vault <vid>
+```
+
+**Confidence → confirmation:** folder inherits the resolved note's confidence but a folder is a
+**bigger blast radius than a file**, so it does NOT get the descriptor no-ask pass — **always echo
+`folder ← note` (both paths) and confirm** before the folder-wide op (SKILL.md blast-radius bullet).
+A note at the vault **root** yields `path=""` / `abs`=the vault root (the root folder — legitimate,
+but confirm loudly: it scopes the WHOLE vault). **Failure handling:** exit 3/7 → ASK; exit 6
+`vault-mismatch` → surface, don't act; exit 5 / headless → degrade, ask for an explicit folder.

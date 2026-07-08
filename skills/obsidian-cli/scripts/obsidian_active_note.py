@@ -14,6 +14,12 @@ Modes (subcommands):
   tabs                     list OPEN markdown tabs (title + view-type) for descriptor matching
   resolve --title "<T>"    resolve an open-tab title to a path (descriptor branch, step 2)
   match --descriptor "<d>" descriptor → unique open note + vault-unique basename (HIGH) | else (LOW ask)
+  folder [--descriptor "<d>"]  resolve the open note's CONTAINING folder (dirname of the
+                           resolved note) → for skills that take a FOLDER, not a file, e.g.
+                           `wiki-sync scan <zone>`. Bare → the focused note's folder; with
+                           --descriptor → the matched note's folder (reuses the `match` F-1 guard).
+                           Blast-radius note: a folder feeds folder-WIDE ops, so the CALLER still
+                           echoes "folder ← note" and confirms per the SKILL's confidence gate.
 
 Exit codes (see ``EXIT_*``):
   0 ok · 2 usage · 3 no-active-file · 4 app-not-running · 5 cli-absent ·
@@ -46,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -288,6 +295,75 @@ def vault_basename_count(stem: str, vault: Optional[str] = None) -> int:
     return sum(1 for ln in out.splitlines() if ln.strip() and Path(ln.strip()).stem.lower() == target)
 
 
+def resolve_match(descriptor: str, vault: Optional[str] = None) -> dict[str, str]:
+    """descriptor → the ONE open note it uniquely names, with the F-1 wrong-target guard.
+
+    Shared by the ``match`` and ``folder --descriptor`` modes so both carry the SAME safety:
+    the descriptor must hit exactly one open ``[markdown]`` tab (else NO_ACTIVE_FILE / AMBIGUOUS),
+    and the wikilink ``file=<title>`` resolve must land on a vault-unique basename (else AMBIGUOUS)
+    — so a wrong-file (or wrong-folder) target can never be produced silently.
+    """
+    hits = match_descriptor(list_open_notes(vault), descriptor)
+    if len(hits) == 0:
+        raise ResolveError(EXIT_NO_ACTIVE_FILE, "no open note matches the descriptor")
+    if len(hits) > 1:
+        raise ResolveError(EXIT_AMBIGUOUS, "multiple open notes match the descriptor — disambiguate")
+    res = resolve_title(hits[0]["title"], vault)
+    # F-1 guard: file=<title> is a vault-global wikilink resolve, NOT pinned to the open tab. The
+    # no-ask path requires PROOF the resolve is unambiguous: the resolved .md file must appear
+    # EXACTLY ONCE in the vault by basename. count!=1 (0 = couldn't corroborate — app glitch /
+    # non-md / stem mismatch; >1 = duplicate) → can't prove it's the open tab → AMBIGUOUS (ASK).
+    if vault_basename_count(Path(res["path"]).stem, vault) != 1:
+        raise ResolveError(EXIT_AMBIGUOUS, "resolved title is not a provably-unique basename in the vault — disambiguate")
+    return res
+
+
+def derive_folder(note: dict[str, str]) -> dict[str, str]:
+    """Derive the CONTAINING folder of an already-resolved note dict (pure — no obsidian call).
+
+    In folder mode the primary artifact is the FOLDER, so ``path``/``abs`` name the folder
+    (``_emit`` path/tsv stays coherent → ``--format path`` prints the absolute folder, exactly
+    what ``wiki-sync scan <zone>`` consumes). The originating note is kept as ``note_path`` /
+    ``note_abs`` provenance so the caller can echo "folder ← note" and, if needed, still act on
+    the note itself. A note at the vault ROOT yields folder ``path=""`` with ``abs`` = the vault
+    root (a legitimate, explicit result — the root folder), never a bare/relative path.
+    """
+    rel = note.get("path", "")
+    note_abs = note.get("abs", "")
+    return {
+        "path": posixpath.dirname(rel),   # vault-relative folder; "" when the note is at the root
+        "abs": os.path.dirname(note_abs),  # absolute folder; == vault root when path is ""
+        "vault": note.get("vault", ""),
+        "source": note.get("source", ""),
+        "note_path": rel,
+        "note_abs": note_abs,
+    }
+
+
+def resolve_folder(vault: Optional[str] = None, descriptor: Optional[str] = None) -> dict[str, str]:
+    """Resolve the open note's containing folder → the ``derive_folder`` dict.
+
+    Bare (``descriptor=None``) derives from the FOCUSED note (``active`` / ``recent-open``
+    fallback, MEDIUM). With a ``descriptor`` it routes through ``resolve_match`` (the F-1 guard),
+    tags ``source=descriptor``, then takes the folder. Both never emit a silent wrong target.
+
+    Branch on ``descriptor is not None`` (NOT truthiness): a PRESENT-but-empty ``--descriptor ""``
+    (the ``$VAR``-expands-to-empty shell footgun) must route through ``resolve_match`` and fail
+    like ``match`` (EXIT_NO_ACTIVE_FILE) — never silently substitute the focused note's folder for
+    a folder-WIDE target. Only an ABSENT ``--descriptor`` (→ ``None``) means "bare = focused".
+    """
+    if descriptor is not None:
+        note = resolve_match(descriptor, vault)
+        note["source"] = "descriptor"
+    else:
+        note = resolve_focused(vault)
+    if not note.get("path"):  # fail-CLOSED (mirrors _enrich / _check_vault): a real note ALWAYS has a
+        # non-empty vault-relative path (even at the root it is e.g. "README.md"); an empty path is an
+        # app glitch, and dirname-ing it would emit a folder OUTSIDE the vault — never a silent target.
+        raise ResolveError(EXIT_APP_NOT_RUNNING, "resolved note has an empty path — cannot derive a folder")
+    return derive_folder(note)
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────────
 def _headless_guard() -> None:
     if os.environ.get("WIKI_HEADLESS") == "1":
@@ -335,6 +411,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--title", required=True)
     mp = sub.add_parser("match", parents=[common], help="descriptor → unique open note (HIGH) | none/many (ask)")
     mp.add_argument("--descriptor", required=True)
+    fp = sub.add_parser("folder", parents=[common], help="resolve the open note's CONTAINING folder (for folder-taking skills, e.g. wiki-sync)")
+    fp.add_argument("--descriptor", default=argparse.SUPPRESS, help="derive from the note matching this descriptor (else the focused note)")
     return p
 
 
@@ -362,18 +440,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             _check_vault(res, expect_vault)
             _emit(res, fmt)
         elif args.mode == "match":
-            hits = match_descriptor(list_open_notes(vault), args.descriptor)
-            if len(hits) == 0:
-                raise ResolveError(EXIT_NO_ACTIVE_FILE, "no open note matches the descriptor")
-            if len(hits) > 1:
-                raise ResolveError(EXIT_AMBIGUOUS, "multiple open notes match the descriptor — disambiguate")
-            res = resolve_title(hits[0]["title"], vault)
-            # F-1 guard: file=<title> is a vault-global wikilink resolve, NOT pinned to the open
-            # tab. The no-ask path requires PROOF the resolve is unambiguous: the resolved .md file
-            # must appear EXACTLY ONCE in the vault by basename. count!=1 (0 = couldn't corroborate
-            # — app glitch / non-md / stem mismatch; >1 = duplicate) → can't prove it's the open tab → ASK.
-            if vault_basename_count(Path(res["path"]).stem, vault) != 1:
-                raise ResolveError(EXIT_AMBIGUOUS, "resolved title is not a provably-unique basename in the vault — disambiguate")
+            res = resolve_match(args.descriptor, vault)
+            _check_vault(res, expect_vault)
+            _emit(res, fmt)
+        elif args.mode == "folder":
+            res = resolve_folder(vault, getattr(args, "descriptor", None))
             _check_vault(res, expect_vault)
             _emit(res, fmt)
         else:  # pragma: no cover

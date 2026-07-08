@@ -213,6 +213,94 @@ def test_not_found_substring_in_name_is_not_a_false_miss(monkeypatch: pytest.Mon
     assert oan.resolve_focused()["path"] == "Bugs/Bug not found.md"
 
 
+# ── folder derivation (resolve the open note's CONTAINING folder) ─────────────────
+def test_derive_folder_pure_nested() -> None:
+    # pure dirname over an already-resolved note dict — no obsidian call; folder is the artifact
+    note = {"path": "A/B/note.md", "abs": "/vault/A/B/note.md", "vault": "V", "source": "active"}
+    assert oan.derive_folder(note) == {
+        "path": "A/B", "abs": "/vault/A/B", "vault": "V", "source": "active",
+        "note_path": "A/B/note.md", "note_abs": "/vault/A/B/note.md",
+    }
+
+
+def test_derive_folder_root_note_is_vault_root_not_relative() -> None:
+    # a note at the vault ROOT → folder path "" and abs == the vault root (an explicit result)
+    note = {"path": "top.md", "abs": "/vault/top.md", "vault": "V", "source": "recent-open"}
+    f = oan.derive_folder(note)
+    assert f["path"] == "" and f["abs"] == "/vault"
+    assert f["note_path"] == "top.md" and f["source"] == "recent-open"
+
+
+def test_resolve_folder_focused_nested(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, {("file",): (_TSV_WR, 0), **_VAULT_OK})
+    res = oan.resolve_folder()
+    assert res["path"] == "Notes" and res["abs"] == _ROOT + "/Notes"
+    assert res["note_path"] == "Notes/Weekly Review.md"
+    assert res["note_abs"] == _ROOT + "/Notes/Weekly Review.md"
+    assert res["source"] == "active" and res["vault"] == "obsidian-llm-wiki"
+
+
+def test_resolve_folder_root_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, {("file",): (_fix("obsidian-file-active.tsv"), 0), **_VAULT_OK})
+    res = oan.resolve_folder()
+    assert res["path"] == "" and res["abs"] == _ROOT  # README.md lives at the vault root
+    assert res["note_path"] == "README.md"
+
+
+def test_resolve_folder_recent_open_source_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    # folder inherits the focused resolver's MEDIUM recent-open heuristic + its source tag
+    rel = "05 - Материалы/Разработка/Версии в GitHub.md"
+    tsv = f"path\t{rel}\nname\tВерсии в GitHub\nextension\tmd\n"
+
+    def fake(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+        if args == ["file"]:
+            return subprocess.CompletedProcess(args, 0, stdout="Error: No active file.", stderr="")
+        if args[:1] == ["file"] and any(a.startswith("path=") for a in args):
+            return subprocess.CompletedProcess(args, 0, stdout=tsv, stderr="")
+        if args == ["tabs"]:
+            return subprocess.CompletedProcess(args, 0, stdout="[markdown] Версии в GitHub\n", stderr="")
+        if args == ["recents"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{rel}\n", stderr="")
+        if args == ["vault", "info=path"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_ROOT + "\n", stderr="")
+        if args == ["vault", "info=name"]:
+            return subprocess.CompletedProcess(args, 0, stdout="ObsidianNotes-Test\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", fake)
+    res = oan.resolve_folder()
+    assert res["source"] == "recent-open"
+    assert res["path"] == "05 - Материалы/Разработка"
+    assert res["abs"].endswith("05 - Материалы/Разработка")
+    assert res["note_path"] == rel
+
+
+def test_resolve_folder_descriptor_reuses_f1_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, {
+        ("tabs",): (_TABS_WITH_NOTES, 0),
+        ("file",): (_TSV_WR, 0),  # Notes/Weekly Review.md — unique basename
+        ("files", "ext=md"): (_fix("obsidian-files-md.txt"), 0),
+        **_VAULT_OK,
+    })
+    res = oan.resolve_folder(descriptor="weekly")
+    assert res["path"] == "Notes" and res["source"] == "descriptor"
+
+
+def test_resolve_folder_empty_descriptor_routes_to_match_not_focused(monkeypatch: pytest.MonkeyPatch) -> None:
+    # present-but-empty --descriptor "" (the $VAR-expands-empty footgun) must fail like `match`
+    # (exit 3), NOT silently fall back to the focused note's folder for a folder-WIDE target.
+    _patch(monkeypatch, {("tabs",): (_TABS_WITH_NOTES, 0), ("file",): (_TSV_WR, 0), **_VAULT_OK})
+    assert oan.main(["folder", "--descriptor", ""]) == oan.EXIT_NO_ACTIVE_FILE
+
+
+def test_resolve_folder_empty_note_path_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # obsidian glitch: `file` returns a present-but-EMPTY path value (no Error: prefix). derive_folder
+    # would dirname it to a folder OUTSIDE the vault → resolve_folder fail-CLOSES instead (APP_NOT_RUNNING).
+    _patch(monkeypatch, {("file",): ("path\t\nname\tX\nextension\tmd\n", 0), **_VAULT_OK})
+    assert oan.main(["folder"]) == oan.EXIT_APP_NOT_RUNNING
+
+
 # ── CLI exit-code map ───────────────────────────────────────────────────────────
 def test_cli_focused_ok_after_position(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, {("file",): (_fix("obsidian-file-active.tsv"), 0), **_VAULT_OK})
@@ -290,3 +378,49 @@ def test_cli_headless_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
     monkeypatch.setenv("WIKI_HEADLESS", "1")
     assert oan.main(["focused"]) == oan.EXIT_HEADLESS
+
+
+# ── CLI: folder mode (the wiki-sync <zone> feed) ─────────────────────────────────
+def test_cli_folder_path_emits_absolute_folder(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    # --format path prints the ABSOLUTE folder — exactly what `wiki-sync scan <zone>` consumes
+    _patch(monkeypatch, {("file",): (_TSV_WR, 0), **_VAULT_OK})
+    assert oan.main(["folder", "--format", "path"]) == oan.EXIT_OK
+    assert capsys.readouterr().out.strip() == _ROOT + "/Notes"
+
+
+def test_cli_folder_root_note_path_is_vault_root(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    _patch(monkeypatch, {("file",): (_fix("obsidian-file-active.tsv"), 0), **_VAULT_OK})  # README.md at root
+    assert oan.main(["folder", "--format", "path"]) == oan.EXIT_OK
+    assert capsys.readouterr().out.strip() == _ROOT  # folder of a root note == the vault root
+
+
+def test_cli_folder_descriptor_ok(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    _patch(monkeypatch, {
+        ("tabs",): (_TABS_WITH_NOTES, 0),
+        ("file",): (_TSV_WR, 0),
+        ("files", "ext=md"): (_fix("obsidian-files-md.txt"), 0),
+        **_VAULT_OK,
+    })
+    assert oan.main(["folder", "--descriptor", "weekly", "--format", "path"]) == oan.EXIT_OK
+    assert capsys.readouterr().out.strip() == _ROOT + "/Notes"
+
+
+def test_cli_folder_descriptor_duplicate_basename_ambiguous(monkeypatch: pytest.MonkeyPatch) -> None:
+    # folder --descriptor inherits the match F-1 guard: a non-unique resolved basename → AMBIGUOUS
+    _patch(monkeypatch, {
+        ("tabs",): (_TABS_WITH_NOTES, 0),
+        ("file",): (_TSV_GH, 0),  # Dev/GitHub Setup.md — but Archive/GitHub Setup.md also exists
+        ("files", "ext=md"): (_fix("obsidian-files-md.txt"), 0),
+        **_VAULT_OK,
+    })
+    assert oan.main(["folder", "--descriptor", "github"]) == oan.EXIT_AMBIGUOUS
+
+
+def test_cli_folder_no_active_and_no_recent(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, {("file",): (_fix("obsidian-file-no-active.txt"), 0)})  # tabs/recents → ""
+    assert oan.main(["folder"]) == oan.EXIT_NO_ACTIVE_FILE
+
+
+def test_cli_folder_vault_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch(monkeypatch, {("file",): (_TSV_WR, 0), **_VAULT_OK})
+    assert oan.main(["--expect-vault", "some-other-vault", "folder"]) == oan.EXIT_VAULT_MISMATCH

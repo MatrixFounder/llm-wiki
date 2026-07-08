@@ -8,12 +8,15 @@ description: >-
   note", "obsidian cli". NOT for knowledge lookup about vault content; use wiki-search or
   wiki-query first. Vendor-agnostic.
 tier: 2
-version: 1.1
+version: 1.2
 ---
-<!-- Changelog: v1.1 (TASK 041 / ADR-008) — add "Active-note resolution" (pathless "edit the note"
-     → confidence-gated resolution of the active/open tab via the `obsidian-active-note` wrapper);
-     amend the Targeting-discipline footgun rule (resolve-then-explicit-`path=`, never the implicit
-     default). v1.0 (TASK 029) — initial skill. -->
+<!-- Changelog: v1.2 — add the `folder` resolver mode (derive the open note's CONTAINING folder
+     for skills that take a FOLDER, not a file — e.g. `wiki-sync scan <zone>`); folder ops are
+     folder-WIDE (larger blast radius) so the caller echoes "folder ← note" and confirms per the
+     confidence gate. v1.1 (TASK 041 / ADR-008) — add "Active-note resolution" (pathless "edit the
+     note" → confidence-gated resolution of the active/open tab via the `obsidian-active-note`
+     wrapper); amend the Targeting-discipline footgun rule (resolve-then-explicit-`path=`, never the
+     implicit default). v1.0 (TASK 029) — initial skill. -->
 
 
 # obsidian-cli
@@ -85,6 +88,7 @@ takes the NAME, e.g. `obsidian vaults verbose`.)*
 |---|---|---|
 | a **descriptor** ("note about *github setup*") | `obsidian-active-note match --descriptor "github setup"` | exit 0 (**unique open-tab match, basename-unique in vault**) → **HIGH** · exit 7 (many / non-unique basename) / 3 (none) → **LOW: ASK** |
 | a **bare** "the/current note" | `obsidian-active-note focused` | exit 0 → **MEDIUM** · exit 3 (nothing open) → **ASK** |
+| a pathless **folder** ("*this folder*", or a skill needs a FOLDER — e.g. `wiki-sync <zone>`) | `obsidian-active-note folder` (bare → focused note's folder) · `… folder --descriptor "…"` (matched note's folder, reuses the F-1 guard) | inherits the resolved note's confidence, but a folder feeds folder-WIDE ops → **echo "folder ← note" and confirm** (see below) · exit 3 (nothing open) / 7 → **ASK** |
 
 `focused` returns a `source` field: **`active`** = the focused editor's file; **`recent-open`** =
 there was *no* active file (the focused leaf is a non-markdown view — typically the **integrated
@@ -97,6 +101,21 @@ tab **and** that title must `file=`-resolve to a **vault-unique basename** (else
 resolve isn't provably the open tab → exit 7 AMBIGUOUS → ASK). So a wrong-file mutation can't
 happen silently. "Exit 7 → ASK" covers both "many open matches" and "resolved name not unique".
 
+**Folder resolution (`folder` mode).** When a skill needs a **FOLDER, not a file** — the common
+case is handing `wiki-sync scan <zone>` (or any zone/root-taking CLI) the current folder without
+the user copying the path — resolve the open note first and take its **containing folder**
+(`dirname`): `obsidian-active-note folder` (bare → the focused note's folder) or `… folder
+--descriptor "<d>"` (the matched note's folder, reusing the `match` F-1 guard). It emits `{path,
+abs, vault, source, note_path, note_abs}` — `path`/`abs` name the **folder** (so `--format path`
+prints the absolute folder, ready to feed `scan <zone>`), and `note_path`/`note_abs` record which
+note it was derived from. A note at the vault **root** yields `path=""` with `abs` = the vault root
+(the root folder — a legitimate, explicit result, but the **most dangerous** one: fed to `wiki-sync`
+it scopes the **WHOLE vault**, so confirm that scope out loud, never as a terse "folder ← note").
+**A folder is a bigger blast radius than a file**
+— `wiki-sync` re-summarizes/re-indexes the WHOLE folder — so folder mode does **not** get the
+descriptor-HIGH no-ask pass: always echo "**folder ← note**" (both paths) and confirm before a
+folder-wide op (see the blast-radius bullet below).
+
 **Confirmation — keyed to confidence, NOT a flat rule:**
 - **HIGH** (descriptor → unique open note, guard passed): proceed, **no ask** (echo the resolved path).
 - **MEDIUM** (bare ref → focused tab, or `recent-open` fallback): **confirm the first time per
@@ -107,6 +126,11 @@ happen silently. "Exit 7 → ASK" covers both "many open matches" and "resolved 
   offer a `wiki-search`/`obsidian search` to locate a *closed* note → propose-then-confirm.)
 - **Destructive verbs (`delete`/`move`/`rename`/`history:restore`) ALWAYS re-confirm**,
   regardless of confidence (T2 + trash-first, see Safety tiers).
+- **Folder-derived targets ALWAYS confirm the FOLDER (blast radius), even from a HIGH note.**
+  A resolved folder feeds a folder-WIDE op (`wiki-sync scan <zone>` re-summarizes/re-indexes every
+  source under it), so a right-note-but-unexpected-folder resolve churns files the user never named.
+  Echo `folder ← note` (the resolved folder AND the note it came from) and get an explicit go before
+  running the folder-wide op. `folder` never inherits the descriptor no-ask pass.
 - Session-trust is conversation state → on context loss it **fail-safe resets to "confirm again"**.
 
 **Safety (this widens the attack surface — hold the line):**
@@ -246,11 +270,13 @@ shell — there is **no auto-execution**; classify every command by the **Safety
 ## Script Contract
 
 `scripts/obsidian_active_note.py` (entrypoint `obsidian-active-note`) — **stdlib-only, no
-network, no `import anthropic`, READ-ONLY** (it only calls T1 `obsidian file`/`tabs`/`vault`
-commands to *resolve a path*; it never mutates the vault). Modes `focused` / `tabs` /
-`resolve --title` / `match --descriptor`; `--format json|path|tsv`; typed exit codes
-`0 ok · 3 no-active-file · 4 app-not-running · 5 cli-absent · 6 vault-mismatch · 7 ambiguous ·
-8 headless` (see the file header + "Active-note resolution").
+network, no `import anthropic`, READ-ONLY** (it only calls T1 `obsidian file`/`tabs`/`vault`/
+`files`/`recents` commands to *resolve a path*; it never mutates the vault). Modes `focused` /
+`tabs` / `resolve --title` / `match --descriptor` / `folder [--descriptor]` (the last derives the
+open note's containing folder — `dirname` — for folder-taking skills like `wiki-sync scan <zone>`);
+`--format json|path|tsv`; typed exit codes `0 ok · 2 usage · 3 no-active-file · 4 app-not-running ·
+5 cli-absent · 6 vault-mismatch · 7 ambiguous · 8 headless` (see the file header + "Active-note
+resolution").
 
 ## Safety Boundaries
 
@@ -277,11 +303,13 @@ Obsidian version bump.
   fixture, apply only the delta — never re-derive the catalog).
 - [references/recipes.md](references/recipes.md) — composed playbooks (link-safe rename,
   daily capture, task sweep, Base→JSON, property migration, history recovery, vault audit,
-  workspace setup, **operate on the active note**), each with its coherence step.
+  workspace setup, **operate on the active note**, **feed the current folder to wiki-sync**),
+  each with its coherence step.
 - [scripts/obsidian_active_note.py](scripts/obsidian_active_note.py) — the
   `obsidian-active-note` resolver (stdlib, vendor-neutral) used by "Active-note resolution":
-  modes `focused` / `tabs` / `resolve --title` / `match --descriptor`; typed exit codes
-  (0 ok · 3 no-active-file · 4 app-not-running · 5 cli-absent · 6 vault-mismatch · 7 ambiguous
-  · 8 headless). Contract-tested in `tests/test_obsidian_active_note.py` against committed fixtures.
+  modes `focused` / `tabs` / `resolve --title` / `match --descriptor` / `folder [--descriptor]`
+  (folder = the open note's containing folder, for folder-taking skills like `wiki-sync`); typed
+  exit codes (0 ok · 2 usage · 3 no-active-file · 4 app-not-running · 5 cli-absent · 6 vault-mismatch
+  · 7 ambiguous · 8 headless). Contract-tested in `tests/test_obsidian_active_note.py` against committed fixtures.
 - [evals/](evals/) — behaviour evals (routing, coherence, safety, injection canary,
   active-note resolution).
