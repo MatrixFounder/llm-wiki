@@ -1088,6 +1088,48 @@ not the contract). The per-source half is `wiki-import prepare`'s **`is_unchange
 unchanged re-poll costs one fetch+hash, **not** an LLM (REASON) pass — the orchestrator STOPs on
 `{action:"unchanged", is_unchanged:true}`; `--force` bypasses.
 
+#### Connectors — mirror a whole external system into the vault (TASK 051 / R-18)
+
+`if-changed` is what makes a **connector** practical. A connector is **not** something this repo
+ships — it is **any small program you own** (a shell/Python script, or an installed tool) that talks
+to an external system's API and writes **one markdown file per object** into a `wiki-sync` zone,
+naming each file by the object's **stable external key**. The wiki then keeps that zone fresh
+cheaply; you never hand-import the objects one by one. `templates/connector-zone.sync.yaml` is only
+the tiny per-zone **config** (`mode: if-changed` + a distil profile) — it holds no data; the
+connector produces the content files.
+
+**Worked example — mirror a Jira project.** You write `jira-export.sh` (~20 lines): for each issue
+in `PROJ`, `curl` the Jira API and write `04 - Work/Jira/PROJ-123.md` (issue title/status as
+frontmatter, body as markdown). You drop `04 - Work/Jira/.wiki/sync.yaml` — a copy of
+`templates/connector-zone.sync.yaml`. Then you cron it nightly:
+
+```bash
+jira-export.sh                                    # YOUR connector: (over)writes one .md per issue
+wiki-sync scan "04 - Work/Jira" --vault personal   # the wiki distils ONLY the changed issues
+#   → the orchestrator runs the plan (workflows/wiki-sync.md): each changed/new issue → wiki-import distil;
+#     the untouched majority → skip:summary-unchanged (zero tokens)
+```
+
+Every night `jira-export.sh` refreshes the issue files; `wiki-sync` with `if-changed` re-summarises
+only the handful that changed and skips the rest. Your vault becomes an always-fresh,
+FTS-searchable, cross-linked mirror of the project that `wiki-search`/`wiki-query` answer over.
+
+**Why the filename must be a stable key.** `PROJ-123.md` is stable, so when the issue changes the
+connector **overwrites the same file** → the wiki refreshes the note **in place** (same slug, its
+`[[wikilinks]]` stay valid). A random filename each run would spawn duplicate notes and dangling
+links — hence the contract: **one file per object, filename = the object's stable external key**. A
+refreshed source is "the current snapshot", not a new event, so `supersedes`/`--as-of` history stays
+reserved for knowledge-class pages.
+
+**What you bring vs what R-18 gives.** *You* bring the connector — the API-specific dump script;
+R-18 ships **no** adapters, by design. *R-18* gives (1) the contract above, and (2) cheap refresh in
+two halves: **`wiki-sync … mode: if-changed`** for a whole zone (a batch of connector files), and
+**`wiki-import prepare`'s `is_unchanged`** for a single source. The point of the scope is "any
+exporter + a zone config" instead of "build an IMAP/Jira/Telegram adapter for every system". *(An
+MCP tool may wrap a connector, but MCP is not the contract — the contract is "files in a zone".)*
+You don't need any of this until you have a recurring source you actually re-poll; keep using
+`wiki-import <url>` for one-off captures.
+
 > **Provenance match mode (TASK 025) — `vault-rel-path` vs `basename`.** The provenance
 > detector's `provenance_ref.match` chooses how a summary's cited `file:` is matched to a raw.
 > **`vault-rel-path`** (the default) is exact full-path equality — strict, but it MISSES a
