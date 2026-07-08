@@ -274,6 +274,29 @@ def prepare(args: argparse.Namespace) -> int:
                     EXIT_BAD_ARG)
 
     raw_path = raw_dir / f"{slug}.md"
+    # TASK 053 / R5 (DF-JUNK): adopt-in-place. A clean markdown source that
+    # ALREADY lives under a `_raw/` dir inside the vault (a re-dropped `.md`, a
+    # re-run, or a direct `/wiki-import <…>/_raw/x.md`) is ITSELF a valid
+    # raw-of-record — minting a second `_raw/<slug>.md` beside it is pure junk.
+    # Adopt the source path as the capture; the symlink guard (below) + the
+    # `is_unchanged` short-circuit then make this a no-op (byte-identical) or an
+    # in-place `source:` stamp (SAME path → no dup). Scoped to clean markdown
+    # already under `_raw/`: a `.txt/.vtt`/office original genuinely needs
+    # conversion+relocation into `_raw/`, so it is NOT adopted (its leftover inbox
+    # original is handled by the wiki-sync workflow — see workflows/wiki-sync.md).
+    # A URL / out-of-vault / symlinked source naturally fails these guards and
+    # falls through to the normal mint (R-26 posture preserved).
+    try:
+        _src = Path(args.source).expanduser()
+        _src_real = _src.resolve()
+        _src_rel = _src_real.relative_to(vault_root.resolve())
+        if (_src_real.suffix.lower() in (".md", ".markdown")
+                and "_raw" in _src_rel.parts
+                and not _src.is_symlink()
+                and _src_real.is_file()):
+            raw_path = _src_real
+    except (ValueError, OSError):
+        pass  # not an in-vault local file (URL / outside vault / unresolvable)
     if raw_path.is_symlink():  # refuse a swapped-in symlink target (R-26 write posture)
         return _bad({"error": "REFUSED_SYMLINK",
                      "message": f"_raw/{slug}.md is a symlink; refusing to write through it"},
@@ -490,7 +513,27 @@ def _load_note_json(args: argparse.Namespace) -> dict[str, Any]:
         raw = data.decode("utf-8", errors="replace")
     elif args.note_file:
         nf = Path(args.note_file)
-        if nf.is_file() and nf.stat().st_size > _MAX_NOTE_BYTES:
+        # TASK 053 / R4 (DF-9): DELIBERATELY no `validate_inside_vault` containment
+        # check here (contrast wiki-extract-concepts `--candidates-file`, which
+        # refuses an out-of-vault path with INVALID_CANDIDATES_PATH). The note JSON
+        # is ephemeral orchestrator scaffolding — the documented primary channel is
+        # `--note-stdin`, and `--note-file` routinely points at a scratchpad tmpfile
+        # OUTSIDE the vault; a containment check would break that flow. We DO keep
+        # the R-26 posture: refuse to read THROUGH a swapped-in symlink.
+        if nf.is_symlink():
+            raise ImportArticleError("REFUSED_SYMLINK",
+                "note file is a symlink; refusing to read through it",
+                exit_code=EXIT_BAD_ARG)
+        # R4 deliberately drops containment (a scratchpad path is fine), so
+        # --note-file may be ANY path — require a REGULAR file so a FIFO / char
+        # device can't bypass the size bound with an unbounded read_text() (the
+        # st_size guard is meaningless for a non-regular file). Covers missing /
+        # FIFO / device / dir uniformly.
+        if not nf.is_file():
+            raise ImportArticleError("NOTE_NOT_FILE",
+                "note file is not a regular file (missing, FIFO, device, or directory)",
+                exit_code=EXIT_BAD_ARG)
+        if nf.stat().st_size > _MAX_NOTE_BYTES:
             raise ImportArticleError("NOTE_TOO_LARGE",
                 f"note file exceeds {_MAX_NOTE_BYTES >> 20} MiB", exit_code=EXIT_BAD_ARG)
         raw = nf.read_text(encoding="utf-8")
@@ -855,7 +898,12 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="content-type from prepare; sets the note `type:` (layout-safe)")
     note_src = ap.add_mutually_exclusive_group()  # enforce the documented mutex
     note_src.add_argument("--note-file", default=None,
-                          help="Path to the orchestrator's note JSON (mutex with --note-stdin)")
+                          help="Path to the orchestrator's note JSON (mutex with --note-stdin). "
+                               "By design this MAY live outside --vault-root (ephemeral "
+                               "orchestrator scratch, e.g. a scratchpad tmpfile — NOT vault "
+                               "content), so unlike wiki-extract-concepts' --candidates-file it "
+                               "is NOT containment-checked; a swapped-in symlink is still "
+                               "refused (TASK 053 / R4, DF-9).")
     note_src.add_argument("--note-stdin", action="store_true",
                           help="Read the orchestrator's note JSON from stdin")
     ap.add_argument("--existing-page-slugs", default=None,

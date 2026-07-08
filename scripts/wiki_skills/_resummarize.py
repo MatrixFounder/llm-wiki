@@ -193,7 +193,24 @@ def summary_exists(
     if det.source_state and repo.get_source_state(
         vault_id, "sync", rel, "source_hash"
     ) is not None:
-        return "source_state"
+        # TASK 053 / R2 (DF-7): a marker proves a summary was PRODUCED, not that it
+        # still EXISTS. If `record` also stored the produced note's path (a separate
+        # key='note_path' row), reconcile it with disk: a marker whose note was
+        # deleted out-of-band must NOT report "summary exists" — that strands the
+        # source as `skip` forever (even `wiki-reindex --full` spares this Class-C
+        # marker). On a missing target, WARN and FALL THROUGH so D2a/D2b still get a
+        # chance (another page may cite the raw), else the gate re-summarises. A
+        # legacy marker with NO note_path row keeps today's behaviour (skip) —
+        # backward compatible; there is nothing to reconcile.
+        note_path = repo.get_source_state(vault_id, "sync", rel, "note_path")
+        if note_path is None or (vault_root / note_path).exists():
+            return "source_state"
+        _LOG.warning(
+            "[resummarize] source_state marker for %s names note %r which is MISSING "
+            "on disk — re-summarising (its prior summary was deleted out-of-band; run "
+            "wiki-lint to surface other orphaned rows).",
+            rel, note_path,
+        )
     # D2a — an indexed page cites this raw file. The citation SET is hoisted once
     # per (fields, match) (PERF-HIGH); `match` chooses vault-rel-path vs basename
     # equality (the previously-orphaned config knob — vdd-multi logic MED-1).
@@ -210,9 +227,12 @@ def summary_exists(
             # decomposable Cyrillic (`й`=и+◌̆, `ё`) etc. Without normalising both
             # sides, a Cyrillic-named raw (`Кейс Ярли …pptx`) NEVER matches its
             # summary's provenance and re-converts on EVERY scan. ASCII paths are
-            # unaffected (NFC≡NFD). D1 source_state stays NFD-on-both-sides
-            # (self-consistent); D2b mirror is FS-vs-FS (consistent) — only D2a
-            # crosses the FS↔frontmatter boundary, so the fix is localised here.
+            # unaffected (NFC≡NFD). D1 source_state is NFC-normalized at the DAL
+            # choke point (TASK 053 / R1 — get/set_source_state), so its key is
+            # form-insensitive regardless of whether `record` was handed an NFD or
+            # NFC path; D2b mirror is FS-vs-FS (consistent). D2a is the one detector
+            # crossing the FS↔frontmatter boundary in THIS function, so it normalizes
+            # here.
             c.cited[ckey] = frozenset(
                 unicodedata.normalize("NFC", x) for x in cited)
         target = PurePosixPath(rel).name if pr.match == "basename" else rel

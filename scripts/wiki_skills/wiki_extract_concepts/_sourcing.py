@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,31 @@ def _all_concepts_dirs(vault_root: Path) -> list[Path]:
             if not candidate.is_symlink():
                 found.append(candidate)
     return sorted(found)
+
+
+def _present_concept_slugs(vault_root: Path) -> set[str]:
+    """The set of concept-page slugs whose `_concepts/<slug>.md` ACTUALLY
+    exists on disk (one `os.scandir` per `_concepts/` dir found by
+    :func:`_all_concepts_dirs`).
+
+    Filesystem ground-truth used to reconcile the DB `entities` table against
+    reality on TWO paths: `prepare`'s drift report (`missing_concept_files`)
+    and — TASK 053 / R3 (DF-8) — the create-vs-mention classification in
+    `_apply_write`, where a known slug whose backing page was deleted (a GHOST
+    entity row) must reclassify `create` (self-heal) instead of silently
+    deduping to `mention`."""
+    present: set[str] = set()
+    for concepts_dir in _all_concepts_dirs(vault_root):
+        for entry in os.scandir(concepts_dir):
+            if entry.is_file() and entry.name.endswith(".md"):
+                # NFC-normalize the FS-derived name (TASK 053 / R3 fix-up): macOS/
+                # iCloud yields NFD filenames (`й`=и+◌̆) while DB/candidate slugs are
+                # NFC — the same boundary R1 closes for source_state. Without this,
+                # {NFC} ∩ {NFD} drops every present Cyrillic concept, so it would
+                # re-`create` on every run (and prepare's `missing_concept_files`
+                # would falsely list it). ASCII is a no-op (NFC≡NFD).
+                present.add(unicodedata.normalize("NFC", entry.name[:-3]))  # strip .md
+    return present
 
 
 def _resolve_source_inside_sources(
@@ -318,6 +344,10 @@ def _load_candidates(
         # existence outside the vault. If the operator passed a relative
         # path, resolve it against vault_root (instead of CWD which would
         # produce inconsistent envelopes across operator shells).
+        # NB (TASK 053 / R4, DF-9): this inside-vault containment is INTENTIONALLY
+        # STRICTER than wiki-import `--note-file`, which accepts an out-of-vault
+        # scratchpad path. The asymmetry is deliberate, not an oversight — see the
+        # `--note-file` branch in wiki_import_article/__init__.py._load_note_json.
         if not _path_is_absolute(candidates_file):
             candidates_file = vault_root / candidates_file
         try:

@@ -166,6 +166,15 @@ TASK 046 P3; default `kind:auto`, `diagrams:false`, `concepts:true`). Run the wi
    Both then short-circuit `is_unchanged` next scan. (An opt-in `resummarize` provenance gate is a
    secondary defence; this capture-marker is the primary, always-on fix.)
 
+   > **Avoid the junk `_raw` duplicate (TASK 053 / R5 — DF-10).** If the user dropped a
+   > CLEAN markdown file directly under `_raw/`, `prepare` now **adopts it in place** (no
+   > second `_raw/<slug>.md` is minted). But a `.txt`/`.vtt`/office original in a TOPIC folder
+   > still converts to a distinct `_raw/<slug>.md`, leaving the inbox original beside it. The
+   > **recommended flow for a one-off** is to call `/wiki-import <file>` directly (a single
+   > capture) rather than manually dropping a raw and running sync; when a manual drop did leave
+   > an inbox original, move it under an `ignore`d/`_raw/` location so the next scan doesn't
+   > re-ingest it (a built-in `--consume-source` is a tracked follow-up, not yet shipped).
+
 > **Why no inline `summarizing-meetings`/`wiki-extract-concepts` here anymore:** the
 > overlap between `wiki-sync` ingest and `wiki-import` is retired (ARCHITECTURE §2.3.4 / Q-046-1).
 > The classifier's `entry.converter`/`entry.normalize` remain in the plan only as the
@@ -191,14 +200,31 @@ re-run is a no-op (Step 4 `is_unchanged` short-circuit):
 # upsert (4c): one marker — the ready note itself
 wiki-sync record "$REL" --source-hash "$ENTRY_SOURCE_HASH" --vault "$VAULT" [--db-path …]
 
-# delegated distil (4a/4b): TWO markers — the original source AND wiki-import's _raw capture
-wiki-sync record "$REL"            --source-hash "$ENTRY_SOURCE_HASH" --vault "$VAULT" [--db-path …]
-wiki-sync record "$PREPARE_RAW_REL" --source-hash "$(sha256 of <prepare.raw_path>)" --vault "$VAULT" [--db-path …]
+# delegated distil (4a/4b): TWO markers — the original source AND wiki-import's _raw capture.
+# Pass --note-path = apply's `note` (the produced summary) so the gate can re-summarise if
+# that note is later deleted (TASK 053 / R2 — DF-7); omitting it keeps the old skip-forever risk.
+wiki-sync record "$REL"            --source-hash "$ENTRY_SOURCE_HASH" --vault "$VAULT" \
+  --note-path "$APPLY_NOTE_REL" [--db-path …]
+wiki-sync record "$PREPARE_RAW_REL" --source-hash "$(sha256 of <prepare.raw_path>)" --vault "$VAULT" \
+  --note-path "$APPLY_NOTE_REL" [--db-path …]
 ```
 
 Pass `entry.source_hash` from the plan **verbatim**. For a delegated import you MUST also record
 wiki-import's capture (`prepare.raw_path`) — else the next scan re-ingests it (Step 4 item 4). A
 partial failure records nothing → the file is re-planned next scan (no half-done state survives).
+
+> **Never re-type or reconstruct a non-ASCII path** when calling `record` (or any wiki-* CLI).
+> Always pass the path **verbatim** from the tool's own JSON (`scan`'s `entries[].path`,
+> `prepare`'s `raw_path`, `apply`'s `note`). Since TASK 053 / R1 the `source_state` key is
+> NFC-normalized at the DAL, so an NFC/NFD mix no longer strands a Cyrillic-named source — but
+> passing the JSON value verbatim avoids every other class of path drift.
+
+> **A `skip` is only as trustworthy as a recent `wiki-lint`.** If output may have been deleted
+> out-of-band, run `wiki-lint` (its `missing-on-disk` check) before trusting a
+> `skip:summary-exists:*`. Since TASK 053 / R2 a delegated import recorded with `--note-path`
+> self-heals (the gate re-summarises + WARNs when the note is gone); for the residual cases
+> (legacy markers with no `note_path`, or provenance/D2a), `wiki-sync scan <zone> --force` is the
+> intended stale-marker recovery.
 
 ## Step 5 — Refresh the derived mentions ledger (TASK 047)
 

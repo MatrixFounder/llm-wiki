@@ -54,6 +54,60 @@ def _run(vault, note_file, db, extra=None, existing='["defi"]'):
     return wia.main(argv + (extra or []))
 
 
+def _vault_subdir(tmp_path):
+    """A vault in a SUBDIR of tmp_path, so a sibling scratch dir is genuinely
+    outside --vault-root (the default `vault` fixture makes vault==tmp_path, which
+    masks the R4/DF-9 divergence)."""
+    vroot = tmp_path / "vault"
+    (vroot / "05 - Материалы" / "Криптовалюты").mkdir(parents=True)
+    (vroot / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: testv\nlayout: obsidian-personal\nlanguage: ru\n---\n", encoding="utf-8")
+    return vroot
+
+
+def test_apply_note_file_outside_vault_root_succeeds(tmp_path, capsys, _stub_subprocs):
+    """TASK 053 / R4 (DF-9): --note-file MAY live outside --vault-root (ephemeral
+    orchestrator scratchpad) by design — apply must NOT reject it with a
+    containment error. Guards against a future accidental is_relative_to() add."""
+    vroot = _vault_subdir(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    nf = _note(scratch)  # scratch/note.json — OUTSIDE vroot
+    assert not str(nf).startswith(str(vroot))
+    rc = _run(vroot, nf, vroot / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0, out
+    assert "note" in out
+
+
+def test_apply_note_file_symlink_refused(tmp_path, capsys, _stub_subprocs):
+    """R4: containment is intentionally NOT enforced, but the R-26 posture still
+    holds — a swapped-in symlink note-file is refused (REFUSED_SYMLINK)."""
+    vroot = _vault_subdir(tmp_path)
+    realdir = tmp_path / "real"
+    realdir.mkdir()
+    real = _note(realdir)
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    rc = _run(vroot, link, vroot / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0
+    assert out["error"] == "REFUSED_SYMLINK"
+
+
+def test_apply_note_file_non_regular_refused(tmp_path, capsys, _stub_subprocs):
+    """R4 hardening (VDD MINOR): since containment is dropped, --note-file must
+    require a REGULAR file — a directory / FIFO / device can't bypass the size
+    bound with an unbounded read_text()."""
+    vroot = _vault_subdir(tmp_path)
+    d = tmp_path / "notedir"
+    d.mkdir()  # a directory masquerading as the note file
+    rc = _run(vroot, d, vroot / "index.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc != 0
+    assert out["error"] == "NOTE_NOT_FILE"
+
+
 def test_apply_meeting_kind_sets_meeting_summary_type(vault, tmp_path, capsys, _stub_subprocs):
     rc = _run(vault, _note(tmp_path), vault / "index.db", extra=["--kind", "meeting"])
     out = json.loads(capsys.readouterr().out)

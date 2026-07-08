@@ -135,6 +135,35 @@ def test_source_state_overwrite_in_place(tmp_path: Path) -> None:
     repo.close()
 
 
+def test_source_state_scope_nfc_nfd_equivalence(tmp_path: Path) -> None:
+    """TASK 053 / R1 (DF-6): a source_state scope written in one Unicode normal
+    form is found when read in the other. macOS/iCloud yields NFD paths from the
+    filesystem walk while an LLM/JSON/hand-typed path is NFC; without DAL
+    normalization the byte-exact TEXT compare misses and a Cyrillic-named source
+    re-summarises on EVERY scan. Both forms must collapse to one row."""
+    import unicodedata
+    repo = _repo(tmp_path)
+    nfc = unicodedata.normalize("NFC", "курсы/Кейс й.vtt")   # precomposed й (U+0439)
+    nfd = unicodedata.normalize("NFD", nfc)                   # decomposed и + ◌̆
+    assert nfc != nfd  # sanity: decomposition actually changed the bytes
+    # write NFD (as the FS walk would), read NFC (as an LLM/JSON path would): a hit
+    repo.set_source_state("vault-one", "sync", nfd, "source_hash", "h")
+    assert repo.get_source_state("vault-one", "sync", nfc, "source_hash") == "h"
+    # and the reverse direction
+    repo.set_source_state("vault-one", "sync", nfc, "source_hash", "h2")
+    assert repo.get_source_state("vault-one", "sync", nfd, "source_hash") == "h2"
+    # both forms address the SAME single row (not two)
+    n = repo._connect().execute(
+        "SELECT COUNT(*) AS n FROM source_state "
+        "WHERE vault_id='vault-one' AND source_kind='sync' AND key='source_hash'"
+    ).fetchone()["n"]
+    assert n == 1
+    # ASCII scope is unaffected (NFC ≡ NFD → a no-op)
+    repo.set_source_state("vault-one", "sync", "courses/x.vtt", "source_hash", "ascii")
+    assert repo.get_source_state("vault-one", "sync", "courses/x.vtt", "source_hash") == "ascii"
+    repo.close()
+
+
 def test_source_state_multi_vault_isolation(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     repo.set_source_state("vault-one", "sync", "a.md", "source_hash", "x")
@@ -740,6 +769,42 @@ def test_record_then_scan_is_unchanged(tmp_path: Path) -> None:
     assert json.loads(rec.stdout)["status"] == "recorded"
     second = json.loads(_run_scan(z, vault, db).stdout)
     assert next(e for e in second["entries"] if e["path"] == "courses/ready.md")["is_unchanged"] is True
+
+
+def test_record_note_path_records_second_row(tmp_path: Path) -> None:
+    """TASK 053 / R2 (DF-7): --note-path stores a SECOND source_state row
+    (key='note_path') so the gate can later reconcile the marker against disk."""
+    vault = tmp_path / "vault"
+    z = _plan_zone(vault)
+    db = tmp_path / "g.db"
+    _register_vault(db, vault)
+    first = json.loads(_run_scan(z, vault, db).stdout)
+    ready = next(e for e in first["entries"] if e["path"] == "courses/ready.md")
+    rec = _run_record("courses/ready.md", ready["source_hash"], db,
+                      "--note-path", "courses/ready-summary.md")
+    assert rec.returncode == 0, rec.stderr
+    out = json.loads(rec.stdout)
+    assert out["status"] == "recorded"
+    assert out["note_path"] == "courses/ready-summary.md"
+    repo = SQLiteRepository(db)
+    assert repo.get_source_state(
+        _VAULT, "sync", "courses/ready.md", "note_path") == "courses/ready-summary.md"
+    # the source_hash row still exists independently (separate key → separate row)
+    assert repo.get_source_state(
+        _VAULT, "sync", "courses/ready.md", "source_hash") is not None
+    repo.close()
+
+
+def test_record_bad_note_path_exit_2(tmp_path: Path) -> None:
+    """A malformed --note-path is rejected (INVALID_PATH, field=note-path) — the
+    same clean-vault-rel guard as the positional source path."""
+    db = tmp_path / "g.db"
+    _register_vault(db, tmp_path / "vault")
+    rec = _run_record("courses/ready.md", "a" * 64, db, "--note-path", "../../evil.md")
+    assert rec.returncode == 2
+    body = json.loads(rec.stdout)
+    assert body["error"] == "INVALID_PATH"
+    assert body["field"] == "note-path"
 
 
 def test_record_bad_hash_exit_2(tmp_path: Path) -> None:

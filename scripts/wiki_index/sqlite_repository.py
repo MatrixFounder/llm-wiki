@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1790,7 +1791,14 @@ class SQLiteRepository(IndexRepository):
         self, vault_id: str, source_kind: str, scope: str, key: str
     ) -> str | None:
         """TASK 018 / Q-018-8 — generic `source_state` read. Defensive NULL guard
-        mirrors `check_query_state` (a corrupt `value IS NULL` row → None)."""
+        mirrors `check_query_state` (a corrupt `value IS NULL` row → None).
+
+        TASK 053 / R1 (DF-6): `scope` (a vault-rel path) is NFC-normalized here — the
+        single DAL choke point — so a filesystem-walk-derived NFD key (macOS/iCloud
+        decomposes `й`=и+◌̆) and an operator/LLM/JSON-supplied NFC key resolve to the
+        SAME row. Covers scan-read, `record`-write, and both `_resummarize` D1 reads in
+        one edit; ASCII scopes are a no-op (NFC≡NFD)."""
+        scope = unicodedata.normalize("NFC", scope)
         row = self._connect().execute(
             "SELECT value FROM source_state "
             "WHERE vault_id = ? AND source_kind = ? AND scope = ? AND key = ?",
@@ -1805,7 +1813,11 @@ class SQLiteRepository(IndexRepository):
     ) -> None:
         """TASK 018 / Q-018-8 — generic `source_state` UPSERT (commit marker).
         `'sync'` needs no DDL: `source_state.source_kind` has no CHECK, so the
-        partition is pure data (`user_version` stays 5)."""
+        partition is pure data (`user_version` stays 5).
+
+        TASK 053 / R1 (DF-6): `scope` is NFC-normalized on write to match the
+        normalized read in `get_source_state` (see there)."""
+        scope = unicodedata.normalize("NFC", scope)
         conn = self._connect()
         now = datetime.now(timezone.utc).isoformat()
         with conn:

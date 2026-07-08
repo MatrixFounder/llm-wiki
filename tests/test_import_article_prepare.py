@@ -35,6 +35,57 @@ def _run(vault, monkeypatch, fetch_result, extra=None):
     return wia.main(argv + (extra or []))
 
 
+def test_prepare_adopts_in_place_md_already_in_raw(vault, monkeypatch, capsys):
+    """TASK 053 / R5 (DF-JUNK): a clean .md ALREADY under _raw/ is adopted as the
+    raw-of-record in place — prepare must NOT mint a second _raw/<slug>.md beside
+    it (the junk dup). The source already carries `source:` → byte-identical →
+    action:unchanged, zero writes, zero dup."""
+    raw_dir = vault / "05 - Материалы" / "Криптовалюты" / "_raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    src = raw_dir / "Демо Айва.md"  # spaces/caps → derived slug ≠ on-disk stem
+    body = '---\nsource: "https://e.com/orig"\n---\n# Демо\n\nтело встречи\n'
+    src.write_text(body, encoding="utf-8")
+    before = {p.name for p in raw_dir.iterdir()}
+
+    fr = FetchResult(ok=True, raw_text=body, title="Демо Айва",
+                     author=None, date=None, engine="text")
+    monkeypatch.setattr(wia, "dispatch_fetch", lambda *a, **k: fr)
+    rc = wia.main(["prepare", "--vault", "testv", "--vault-root", str(vault),
+                   "--db-path", str(vault / "index.db"), "--source", str(src),
+                   "--folder", "05 - Материалы/Криптовалюты", "--mode", "summary",
+                   "--kind", "meeting"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["raw_path"] == "05 - Материалы/Криптовалюты/_raw/Демо Айва.md"
+    assert out["action"] == "unchanged" and out["is_unchanged"] is True
+    after = {p.name for p in raw_dir.iterdir()}
+    assert after == before, f"a duplicate _raw file was minted: {after - before}"
+
+
+def test_prepare_does_not_adopt_txt_in_raw(vault, monkeypatch, capsys):
+    """R5 scope guard: a .txt under _raw/ is NOT adopted — it genuinely needs
+    conversion into a clean _raw/<slug>.md, so a distinct .md IS minted and the
+    original .txt is left untouched (the inbox-consume of that leftover is a
+    wiki-sync workflow concern, not prepare's)."""
+    raw_dir = vault / "05 - Материалы" / "Криптовалюты" / "_raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    src = raw_dir / "transcript.txt"
+    src.write_text("plain transcript body", encoding="utf-8")
+
+    fr = FetchResult(ok=True, raw_text="plain transcript body", title="Transcript",
+                     author=None, date=None, engine="text")
+    monkeypatch.setattr(wia, "dispatch_fetch", lambda *a, **k: fr)
+    rc = wia.main(["prepare", "--vault", "testv", "--vault-root", str(vault),
+                   "--db-path", str(vault / "index.db"), "--source", str(src),
+                   "--folder", "05 - Материалы/Криптовалюты", "--mode", "summary",
+                   "--kind", "meeting"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["raw_path"].endswith(".md")
+    assert out["raw_path"] != "05 - Материалы/Криптовалюты/_raw/transcript.txt"
+    assert (raw_dir / "transcript.txt").exists()  # original left untouched
+
+
 def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="DeFi Guide",
                      author="A", date="2025-01-01", engine="html")

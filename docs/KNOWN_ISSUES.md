@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-07T22:49:42.652324 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-07-08T23:05:56.910541 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -8,10 +8,12 @@
 ## class-b-integrity
 
 - **DF-046-2** [[df-046-2-wiki-sync-can-upsert-a-nested-raw-capture|wiki-sync can \`upsert\` a nested \`_raw/\` capture (Class-B drift if the 4d marker is skipped)]] — status `open`, opened 2026-06-30
+- **DF-7** [[df-7-resummarize-gate-trusts-source-state-without-disk-check|\`wiki-sync\`'s resummarize gate (\`source_state\`/\`provenance_ref\`/\`mirror\`) never checks that the output it claims exists is still on disk]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 
 ## correctness
 
 - **DF-049-1** [[df-049-1-queries-dir-not-walked-off-karpathy|filed \`_queries/\`/\`_verifications/\` pages don't survive reindex on non-karpathy layouts]] — severity `SEV-2`, status `fixed`, opened 2026-07-07
+- **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 
 ## dogfood
@@ -23,6 +25,11 @@
 - **DF-5** [[df-5-wiki-alias-add-created-a-redundant-self-alias|wiki-alias --add created a redundant self-alias]] — status `fixed`, opened 2026-05-29
 - **DF-Q1** [[df-q1-natural-language-questions-returned-no-context|natural-language questions returned NO_CONTEXT]] — status `fixed`, opened 2026-05-29
 - **DF-V1** [[df-v1-verdict-page-pages-pk-collides-with-the-audited-query-page|verdict-page \`pages\` PK collides with the audited query page]] — status `fixed`, opened 2026-05-29
+- **DF-6** [[df-6-source-state-scope-unicode-normalization-mismatch|\`source_state.scope\` is compared byte-exact — an NFC/NFD-normalized path never matches the on-disk NFD form]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
+
+## hygiene
+
+- **DF-10** [[df-10-prepare-mints-duplicate-raw-capture-for-in-vault-source|\`wiki-import prepare\` mints a duplicate \`_raw/&lt;slug&gt;.md\` when the \`--source\` is a file already inside the vault]] — severity `SEV-3`, status `fixed`, opened 2026-07-08
 
 ## logic
 
@@ -83,6 +90,7 @@
 - **H-6** [[h-6-indirect-prompt-injection-via-source-body|indirect prompt injection via source_body]] — status `open`, opened 2026-05-28
 - **D-010-1** [[d-010-1-cross-source-conflict-lens-rule-deferred-prompt-change|cross-source conflict lens rule (deferred prompt change)]] — status `fixed`, opened 2026-05-31
 - **D-010-2** [[d-010-2-completeness-omission-bleed-on-inversion-defects-v3-quantified|completeness-omission bleed on inversion defects (v3-quantified)]] — status `mitigated`, opened 2026-05-31
+- **DF-9** [[df-9-note-file-lacks-vault-containment-check|\`wiki-import apply --note-file\` accepts an absolute path outside \`--vault-root\`; the sibling \`wiki-extract-concepts apply --candidates-file\` refuses one]] — status `fixed`, opened 2026-07-08
 - **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
 
