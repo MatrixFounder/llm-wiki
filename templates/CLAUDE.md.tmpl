@@ -162,6 +162,28 @@ Claude over- or under-extracts.
 Every claim in an answer should carry a `[^src-<slug>]` footnote (or a `cited:`
 ref) that resolves to a `_sources/` page — so it traces back to the raw source.
 
+**Retrieval-scope controls (optional — ADR-009, all default-OFF).** Each is OFF until
+opted into (the pages a query returns are then unchanged; the only always-on addition is a
+`trust` tier on each `/wiki-query prepare` hit). They scope *what the model sees* — least-privilege
+for cooperating agents, **not** protection from someone with file/DB access.
+
+```bash
+# Provenance floor: hits are tiered external (http(s) source:/url:/URL: or _raw/) < internal
+# < verified (inbound `verifies` edge); origin taints. --min-trust grounds RAG on trusted pages:
+/wiki-query prepare "..." --vault ${vault_id} --vault-root . --min-trust internal
+# Classification scope: declare `policy: {levels, default_level}` in WIKI_SCHEMA.md, mark pages
+# `classification: <level>`; higher-than-audience pages never enter context (fail-closed):
+/wiki-search "..." --vaults ${vault_id} --audience internal      # also on /wiki-query, /wiki-verify-multi
+# Read-audit: attribute multi-agent writes/reads (solo use rarely needs it):
+WIKI_ACTOR_ID=critic-a /wiki-query apply ...                     # stamps details.actor on the log_events row
+```
+
+`/wiki-lint` flags out-of-ladder labels (`invalid-classification`, a warning) and a lower→higher
+cite (`classification-leak`, an error under `--strict`); a bad `--audience`/`policy:` block exits 2.
+`apply` must repeat the SAME `--audience`/`--min-trust` flags as `prepare` (they fold into
+`question_hash` → `QUESTION_CHANGED` on mismatch). The high-value control for a single owner is
+`--min-trust`; `--audience`/read-audit earn their keep under shared or multi-agent use.
+
 ### 3. Lint — health-check
 
 ```bash

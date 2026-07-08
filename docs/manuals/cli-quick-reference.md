@@ -106,6 +106,24 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 # (the answer is composed, then) wiki-query apply …        # files a compounding _queries/<slug>.md
 ```
 
+**Retrieval-scope controls (ADR-009) — classification, provenance, read-audit; all default-OFF**
+```bash
+# --- Retrieval-scope controls (ADR-009 / TASK 049–050) — all default-OFF ---
+# Provenance floor: prepare hits carry a derived trust tier
+#   external (http(s) source:/url:/URL: or _raw/) < internal < verified (inbound `verifies` edge); origin taints.
+wiki-query prepare "..." --vault personal --vault-root . --min-trust internal   # ground RAG on trusted pages, drop clippings
+# Classification scope: declare `policy: {levels, default_level}` in WIKI_SCHEMA.md, mark pages
+# `classification: <level>`; a page ABOVE the audience never enters context (fail-closed):
+wiki-search "..." --vaults personal --audience internal        # also on wiki-query / wiki-verify-multi
+# apply MUST repeat prepare's --audience/--min-trust (they fold into question_hash → QUESTION_CHANGED on mismatch).
+# Read-audit (opt-in): attribute multi-agent writes/reads (solo use rarely needs it):
+WIKI_ACTOR_ID=critic-a wiki-query apply ...                    # stamps details.actor on the log_events row
+wiki-search "..." --vaults personal --log-access               # log the read (DB-only Class-C event; access_logged echo)
+```
+
+> Lint: `invalid-classification` (out-of-ladder label; a warning) and `classification-leak` (a lower
+> page citing a higher one; an error under `--strict`). A bad `--audience`/`policy:` block exits 2.
+
 **Other handy ones**
 ```bash
 # import an external URL/PDF/thread/transcript — OR a local raw file (--source ./raw.md);

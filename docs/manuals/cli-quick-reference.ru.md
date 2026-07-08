@@ -109,6 +109,25 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 # (the answer is composed, then) wiki-query apply …        # files a compounding _queries/<slug>.md
 ```
 
+**Управление областью выдачи (policy / trust / read-audit) — всё по умолчанию ВЫКЛ**
+```bash
+# --- Управление областью выдачи (retrieval-scope, ADR-009 / TASK 049–050) — всё по умолчанию ВЫКЛ ---
+# Порог доверия к происхождению: результаты prepare несут производный уровень trust
+#   external (http(s) source:/url:/URL: или _raw/) < internal < verified (входящее ребро `verifies`); происхождение «заражает» (external не поднимается выше).
+wiki-query prepare "..." --vault personal --vault-root . --min-trust internal   # строить RAG на доверенных страницах, отбросить веб-клиппинги
+# Область классификации: объявите `policy: {levels, default_level}` в WIKI_SCHEMA.md, помечайте страницы
+# `classification: <level>`; страница ВЫШЕ уровня audience никогда не попадёт в контекст (fail-closed):
+wiki-search "..." --vaults personal --audience internal        # также в wiki-query / wiki-verify-multi
+# apply ОБЯЗАН повторить --audience/--min-trust из prepare (входят в question_hash → QUESTION_CHANGED при расхождении).
+# Аудит чтения (opt-in): атрибуция записей/чтений в мульти-агентной работе (в одиночку редко нужно):
+WIKI_ACTOR_ID=critic-a wiki-query apply ...                    # штампует details.actor в строке log_events
+wiki-search "..." --vaults personal --log-access               # логировать чтение (событие Class-C только в БД; эхо access_logged)
+```
+
+> Lint: `invalid-classification` (метка вне лестницы уровней; warning) и `classification-leak`
+> (страница более низкого уровня цитирует более высокую; error при `--strict`). Плохое значение
+> `--audience` или битый блок `policy:` → выход 2 (exit 2).
+
 **Прочие полезные**
 ```bash
 # импорт внешнего URL/PDF/треда/транскрипта — ИЛИ локального сырого файла (--source ./raw.md);

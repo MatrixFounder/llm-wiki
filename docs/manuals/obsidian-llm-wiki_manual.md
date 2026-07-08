@@ -26,6 +26,7 @@
   - [Maintain health](#5-maintain-health)
   - [Vault lifecycle](#6-vault-lifecycle)
 - [Working with documents in Obsidian](#working-with-documents-in-obsidian)
+  - [Vault configuration files (overview)](#vault-configuration-files-overview)
   - [The standard (karpathy) layout](#the-standard-karpathy-layout)
   - [Page anatomy & the auditability invariants](#page-anatomy--the-auditability-invariants)
   - [The author's contract: markdown is canonical](#the-authors-contract-markdown-is-canonical)
@@ -39,6 +40,7 @@
   - [The `prepare` / `apply` contract (Decision-17)](#the-prepare--apply-contract-decision-17)
   - [The wiki as a RAG backend](#the-wiki-as-a-rag-backend)
   - [Untrusted data: the H-6 posture](#untrusted-data-the-h-6-posture)
+- [Policy, provenance & read-audit (ADR-009)](#policy-provenance--read-audit-adr-009)
 - [Health & maintenance, methodologically](#health--maintenance-methodologically)
 - [Anti-patterns (do NOT)](#anti-patterns-do-not)
 - [Command reference appendix](#command-reference-appendix)
@@ -224,7 +226,7 @@ The everyday read path — **search before you grep**.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing* (the `--tag`/`tags=` listing narrows through the existing `pages_fts.tags` index since TASK 035 — identical results, ~4× faster at scale). It *also* does **temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15". The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. |
+| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default. **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). This is the fast lookup that replaces re-reading raw files. It *also* does **metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing* (the `--tag`/`tags=` listing narrows through the existing `pages_fts.tags` index since TASK 035 — identical results, ~4× faster at scale). It *also* does **temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15". The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate. Two optional retrieval-scope filters also ride here (default-OFF): `--audience <level>` (a classification gate) and `--log-access` (read-audit) — see [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
 | **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files). With **`--concept-mentions` (TASK 047)** it regenerates each concept page's `<!-- BEGIN-AUTO:mentions -->## Mentions across sources … <!-- END-AUTO:mentions -->` block — a **derived** "which sources mention this concept" ledger, so concept compounding is a rebuildable render, not a body-merge. Use it to refresh the human-browsable catalog after imports. |
 
 ### 3. Resolve entities
@@ -244,7 +246,7 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-query`** | Retrieval-augmented answering. `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex. This is "good answers can be filed back into the wiki" made durable. |
+| **`wiki-query`** | Retrieval-augmented answering. `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex. This is "good answers can be filed back into the wiki" made durable. Optional retrieval-scope controls — `--min-trust` (a provenance floor) and `--audience` (classification), both folded into `question_hash` so `apply` must repeat them — are covered in [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
 | **`wiki-verify-multi`** | An **off-by-default** four-critic prose audit (factual-grounding / logic-coherence / security-injection / completeness-faithfulness) of a filed answer *against the sources it cited*. It files a `_verifications/verify-<slug>.md` verdict page. A FAIL **records the verdict and exits non-zero — it never edits the answer**. Reach for it on high-stakes answers where a silent hallucination would be costly. |
 | **`wiki-graph`** | Read-only **event-graph** traversal (TASK 032/034 / ADR-004): the typed page-to-page edges (`implements`/`supersedes`/`causes`/`relates-to`, plus the TASK-034 `invalidated-by`/`activated-by`/`uses`/`owns`, + auto-derived inverses) authored in frontmatter and indexed on reindex. `backlinks` (inbound) / `neighbors` (one-hop, in/out/both, by `--kind`) / `chain` (bounded supersession/causation lineage). Pairs with `wiki-query prepare --follow-edges`, which weaves typed-edge neighbors into a cited answer (default OFF; deterministic). "What did this decision cause / what supersedes X / the lineage." |
 
@@ -308,8 +310,36 @@ auto-rejected wherever they appear**, to prevent SQLite WAL/shm corruption.
 
 This is the half most operators get wrong: **what do the files look like, what may
 I touch by hand, and how do I make the tooling fit a vault that isn't shaped like
-Karpathy's?** Three parts: the standard layout, the page contract, and custom
-layouts.
+Karpathy's?** First, a map of the configuration files; then three parts: the standard
+layout, the page contract, and custom layouts.
+
+### Vault configuration files (overview)
+
+Under `<vault>/` live a few configuration surfaces. The key thing: there are **two
+SEPARATE systems** — the vault's *identity* (`WIKI_SCHEMA.md`) and the layout *grammar*
+(`.wiki/layout.yaml`); they don't overlap and change independently.
+
+| File | Responsibility | Required | How it's overridden |
+|---|---|---|---|
+| **`WIKI_SCHEMA.md`** (frontmatter) | The vault's **identity**: `vault_id`, `layout`, optional `index_db`, optional `policy:` (ADR-009) | **Yes** | It *is* the vault's declaration — hand-edited, never merged |
+| **`.wiki/layout.yaml`** | The **layout grammar**: WHAT and HOW to index — `ignore`, `type_mapping`, `paths`, `ref_extraction`, `drift_rules`/`coverage_rules` | No (base = the built-in `layout`) | Per-key: **`ignore` → UNION**, **`type_mapping` → deep-MERGE**, **`paths`/`ref_extraction` → REPLACE** |
+| **`.wiki/sync.yaml`** | **`wiki-sync`** config: `zones`, `exclude`, `extensions`, `tag_namespace`, the `resummarize` gate | No | Strict schema; a deeper `<subfolder>/.wiki/sync.yaml` deep-merges over the root one |
+| **`.wiki/page-types/*.md`** | Authoring scaffolds — one template per typed class | No | Copied by `wiki-init`; not indexed themselves (they live under `.wiki/`) |
+
+- **Two systems.** `WIKI_SCHEMA.md` answers "WHAT vault is this" (identity —
+  `config_loader`); `.wiki/layout.yaml` answers "HOW to index it" (grammar —
+  `layout_config`). Distinct layers, edited separately.
+- **The override rule that bites.** In `.wiki/layout.yaml`, `paths` and `ref_extraction`
+  **REPLACE** the built-in list wholesale — supply `paths:` with one rule and you silently
+  lose all the built-in routing; to extend, re-declare the base rules verbatim + yours.
+  `ignore` and `type_mapping`, by contrast, ADD to the built-in.
+- **Index DB location (`index_db`).** Defaults to one shared global DB; declare `index_db:`
+  in `WIKI_SCHEMA.md` to make the DB travel with the vault. Precedence: `--db-path` >
+  `index_db` > global.
+
+Details: layout override semantics are in **"Custom layouts: the layout engine"**;
+`wiki-sync` in **"Automating the mix: `wiki-sync`"**; the `policy:` block in **"Policy,
+provenance & read-audit"**.
 
 ### The standard (karpathy) layout
 
@@ -1215,6 +1245,180 @@ verification skills carry an explicit H-6 banner; honour it. On the write side, 
 tooling already escapes markdown/HTML-active sequences on egress
 (`sanitize_markdown_text`) so a filed answer can't smuggle a wikilink/HTML/dataview
 payload back into the vault.
+
+---
+
+## Policy, provenance & read-audit (ADR-009)
+
+Three optional **retrieval-scope** controls, shipped in TASK 049 (R-16) and TASK 050
+(R-17). Each is **default-OFF**: without any of them the search/RAG behaviour is
+byte-identical to before, and the schema is unchanged (**zero-DDL** — they ride
+`frontmatter_json` + the existing event graph; `user_version` stays 7). They scope
+**what the model is shown**, which is least-privilege for cooperating agents and
+subagents — **not** access control against someone who can read the files or the DB.
+That boundary is deliberate: a local single-owner tool cannot defend against its own
+owner; the markdown and the DB stay fully readable and nothing is encrypted. The honest
+value is (a) keeping classified or low-trust pages out of a model/subagent context and
+out of durable filed artifacts, and (b) an attributable read/write trail. The one
+always-on addition is a derived `trust` key on every `wiki-query prepare` hit (below).
+
+### 1. Policy — classification + `--audience` (R-16)
+
+Three steps: declare the ladder of levels, mark pages, set the audience at query time.
+
+**Step 1** — the ladder in `WIKI_SCHEMA.md` frontmatter (ordered low→high):
+
+```yaml
+policy:
+  levels: [public, internal, restricted]   # your own level names are fine too (≤16)
+  default_level: internal                  # assumed for any page with no `classification:` key
+  # default_audience: internal             # OPTIONAL — declaring it ACTIVATES the layer with no flag
+```
+
+**Step 2** — mark individual pages (a plain frontmatter string; unmarked pages take `default_level`):
+
+```yaml
+---
+title: Salary Review 2026
+classification: restricted
+---
+```
+
+**Step 3** — the audience now decides what enters the model's context. Pages *above* the
+audience level are dropped **in SQL, before the `LIMIT`** (edge-expansion through
+`--follow-edges` is gated too), so the model can neither see nor cite them:
+
+```bash
+wiki-search "salary" --vaults personal --audience public      # the restricted page is NOT in the results
+wiki-search "salary" --vaults personal --audience restricted  # visible (top of the ladder)
+wiki-search "salary" --vaults personal                        # no flag → layer OFF → visible, as before
+# the same --audience flag exists on `wiki-query prepare|apply` and `wiki-verify-multi`.
+```
+
+Key properties:
+
+- **Fail-closed.** An unknown / out-of-ladder label is excluded even at the *top*
+  audience level (it is never a member of the allowed set); a non-string
+  `classification:` fails closed the same way.
+- **Errors (exit 2).** A bad `--audience` value → `INVALID_AUDIENCE`; a
+  present-but-malformed `policy:` block → `INVALID_POLICY` (fail-loud; the offending
+  value is never echoed — CWE-209).
+- **Lint.** `wiki-lint` reports an out-of-ladder label as `invalid-classification` (a
+  `warning`) and a lower-level page that cites a higher-level one as
+  `classification-leak` (escalated to `error` under `--strict` — a filed answer
+  republishing restricted content is the canonical leak). Note `wiki-lint --strict` is
+  **severity-blind**: it exits non-zero on *any* issue (including the normal
+  `orphan-link` backlog), so it's a whole-vault clean-slate gate, not a
+  classification-specific one.
+- **Activation & hashes.** Without `--audience` *and* without `default_audience` the
+  layer is OFF (byte-identical). Declaring `default_audience` activates it with no flag
+  but re-keys every filed `_queries/*` hash once (the next re-query reports
+  `is_unchanged=false` — expected, not an error).
+- **`apply` must match `prepare`.** `wiki-query apply` must repeat the *same*
+  `--audience` the `prepare` used — the level folds into `question_hash`, so a mismatch
+  fails `QUESTION_CHANGED` (exit 2), and a citation to a page the audience hid fails
+  `CITATION_NOT_RETRIEVED` (the model cannot launder a restricted source into a filed
+  answer).
+
+### 2. Provenance — the derived `trust` tier + `--min-trust` (R-17)
+
+Every `wiki-query prepare` hit carries a **derived** `trust` tier — no new authored field:
+
+| Tier | What it means |
+|---|---|
+| `external` | The page has an `http(s)` `source:` / `url:` / `URL:` (the uppercase key `wiki-import` writes) **or** lives under `_raw/`. These are captures/clippings that may carry inline instructions (H-6 indirect prompt injection). |
+| `internal` | An ordinary vault page. |
+| `verified` | A page with an inbound `verifies` edge (a verification/verdict page vouches for it). |
+
+**Origin taints (MIN-rule).** An external-origin page never rises above `external` even
+if something verifies it — checked *first*, so the `verified`/`internal` branch is only
+reached when the page is not external.
+
+```bash
+# no flag — trust is visible on every prepare hit:
+wiki-query prepare "trading strategy" --vault personal --vault-root .
+#   hits: [{"slug": "quickfinger-luc-strategy", "trust": "external"},   ← a web clipping (url:)
+#          {"slug": "my-td-sequential-note",    "trust": "internal"}]   ← your own note
+# with the flag — the floor is applied in SQL, BEFORE the LIMIT:
+wiki-query prepare "trading strategy" --vault personal --vault-root . --min-trust internal
+#   → external clippings dropped; the answer grounds on YOUR notes (a larger internal set surfaces)
+```
+
+`--min-trust {external,internal,verified}` floors
+retrieval **in SQL, before the `LIMIT`**: `internal` drops untrusted clippings (letting a
+larger trusted set surface); `verified` additionally requires an inbound `verifies` edge
+*and* excludes external-origin pages, so the SQL floor is taint-consistent with the
+displayed tier. If nothing meets the floor you get `NO_CONTEXT` (exit 2). `external`
+imposes no SQL clause but *still* folds into `question_hash` (so `prepare`/`apply` must
+both carry it). The tier is a provenance **signal for grounding**, NOT access control
+(that is `--audience`). For a clippings-heavy corpus, `--min-trust internal` is the
+high-value default when you want an answer grounded on your own notes rather than saved
+web pages.
+
+### 3. Read-audit — `WIKI_ACTOR_ID` + opt-in read logging (R-17)
+
+Every knowledge-write leaves a row in the `log_events` ledger. The env var
+`WIKI_ACTOR_ID` signs that row with the acting agent's name — the "who did what"
+attribution that is the whole point of the audit.
+
+**Example — tag WHICH agent filed an answer.** `WIKI_ACTOR_ID` is set ONCE in the
+subagent's environment (no need to repeat it per command):
+
+```bash
+WIKI_ACTOR_ID=critic-security wiki-query apply --vault personal --vault-root . \
+    --query-slug td-sequential-risks --question "What are the risks of TD Sequential?" \
+    --question-hash <hash from prepare> --answer-file answer.md --citations-file cites.json
+```
+
+The resulting `log_events` row carries the cited slugs, the action, and the actor:
+
+```json
+{"cites": 2, "cited": ["Материалы/td-sequential", "Материалы/wyckoff"],
+ "action": "filed", "actor": "critic-security"}
+```
+
+**Multi-agent scenario.** An orchestrator runs several subagents, each with its own
+`WIKI_ACTOR_ID` (`critic-security`, `critic-logic`, `research-agent`, …). They all write
+to the same `log_events`, but now every row shows whose it is. The rules:
+
+- **Name shape** — `^[a-z0-9._:@-]{1,64}$`. An invalid or unset value → no `actor` key at
+  all (never an error — an ambient env var can't break a CLI).
+- **Who stamps `actor`** — all knowledge-write CLIs: `wiki-query apply`,
+  `wiki-verify-multi apply`, `wiki-append-log`, plus import / upsert / sync. An explicit
+  `--orchestrator-id` (or `actor` in `--details-json`) wins over the env var.
+- **What is recorded** — `wiki-query apply` on *every* success (including an idempotent
+  re-file, `action: unchanged`) writes the `cited` slug list + `action`.
+  `wiki-verify-multi apply` has its own shape (only on a changed run, no `cited`/`action`);
+  `wiki-append-log` writes an operator-supplied event.
+
+**Read logging (opt-in).** Reads are not logged by default. These flags record "who
+searched / retrieved what":
+
+```bash
+WIKI_ACTOR_ID=research-agent wiki-search "smart money" --vaults personal --log-access
+#   → envelope: "access_logged": true
+#   → log_events gains a Class-C (DB-only) row: query text + the hit slugs + actor="research-agent"
+wiki-query prepare "..." --vault personal --vault-root . --log-retrieval    # same for the retrieval set
+```
+
+Read logging is **best-effort**: if the insert fails the envelope reports
+`"access_logged": false`, but the read itself NEVER breaks.
+
+**Survives a rebuild (D5).** These Class-C audit rows (NULL `log_md_byte_offset`) are
+*spared* by `wiki-reindex --full` — a Class-B rebuild does not wipe operational Class-C
+state — and the `--delta` staleness cutoff excludes read/`unchanged` telemetry so an
+audited read can't mask a changed file.
+
+### When to use which (single-owner vs multi-agent)
+
+- **Solo / interactive:** the one high-value control is **`--min-trust internal`**
+  (cleaner RAG on a clippings-heavy vault; also cuts the H-6 surface). Zero config — it
+  works off your existing `url:` / `source:` fields.
+- **Policy / `--audience`:** worth it only to sandbox cooperating subagents or gate an
+  export; a solo owner has file access anyway, so keep it OFF (declare the ladder if you
+  want it ready).
+- **Read-audit / `WIKI_ACTOR_ID`:** earns its keep under named multi-agent pipelines
+  (who filed / read what).
 
 ---
 
