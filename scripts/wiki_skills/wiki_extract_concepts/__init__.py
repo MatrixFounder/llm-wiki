@@ -54,6 +54,7 @@ import logging
 import os
 import sqlite3
 import sys
+import unicodedata
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -120,6 +121,7 @@ from ._sourcing import (  # noqa: E402
     _read_file_bounded,
     _resolve_source_inside_sources,
     _all_concepts_dirs,
+    _present_concept_slugs,
     _derive_source_project,
     _load_candidates,
 )
@@ -350,15 +352,11 @@ def _load_known_and_drift(
     else:
         known_out = known
 
-    # M-7: one os.scandir per `_concepts/` dir found in the vault.
-    # Course-tier layout (Karpathy / Lessons pattern) puts concept
-    # pages under `Lessons/<Course>/_concepts/` — sweep BOTH tiers
-    # so the drift report is correct on any layout.
-    present_concept_files: set[str] = set()
-    for concepts_dir in _all_concepts_dirs(vault_root):
-        for entry in os.scandir(concepts_dir):
-            if entry.is_file() and entry.name.endswith(".md"):
-                present_concept_files.add(entry.name[:-3])  # strip .md
+    # M-7: one os.scandir per `_concepts/` dir found in the vault (course-tier
+    # Karpathy `Lessons/<Course>/_concepts/` AND PARA `<folder>/_concepts/`).
+    # Shared with `_apply_write`'s ghost-row self-heal (TASK 053 / R3) via the
+    # `_present_concept_slugs` helper — one source of truth for on-disk concepts.
+    present_concept_files = _present_concept_slugs(vault_root)
     missing_concept_files = sorted(
         slug for slug in known_slugs if slug not in present_concept_files
     )
@@ -763,6 +761,7 @@ def _apply_write(
     today: date,
     repo: Any,
     known_slugs: set[str] | None = None,
+    present_concept_files: set[str] | None = None,
 ) -> dict[str, Any]:
     """Step 5 of ``apply()`` — write pages + entities + refs + manifest on an
     ALREADY-OPEN repo (caller owns lifecycle: does NOT close it, does NOT
@@ -778,6 +777,14 @@ def _apply_write(
     place — each newly-created entity slug is added so the NEXT batch entry
     dedups against it WITHOUT re-scanning the entities table (O(E) once
     instead of O(N·E)).
+
+    ``present_concept_files`` (TASK 053 / R3, DF-8): the set of concept slugs
+    whose `_concepts/<slug>.md` exists on disk. None (single-page) → scanned
+    fresh; a set (batch) is loaded ONCE and grown in place alongside
+    ``known_slugs``. A candidate dedups to `mention` ONLY when it is BOTH a
+    known entity AND present on disk; a known-but-missing slug (a GHOST row,
+    file deleted without a reindex) reclassifies `create` so the page
+    self-heals instead of silently vanishing.
     """
     source_path: Path = validated["source_path"]
     source_slug: str = validated["source_slug"]
@@ -816,7 +823,22 @@ def _apply_write(
         if known_slugs is None:
             known = load_known_entities(repo, vault_id)
             known_slugs = {e["slug"] for e in known}
-        create_list, mention_list = classify_candidates(candidates, known_slugs)
+        if present_concept_files is None:
+            present_concept_files = _present_concept_slugs(vault_root)
+        # TASK 053 / R3 (DF-8): dedup to `mention` ONLY for a slug that is both a
+        # known entity AND present on disk. A known-but-missing slug is a GHOST
+        # row (its `_concepts/<slug>.md` was deleted without a reindex); intersect
+        # so it reclassifies `create` and self-heals. NEW local — do NOT rebind
+        # `known_slugs` (the batch path mutates that shared set in place below).
+        # Both sides are NFC-normalized (R3 fix-up): `present_concept_files` is
+        # normalized at its FS source, and `known_slugs` is normalized here to
+        # defend against a reindex-derived NFD entity slug on macOS/iCloud — else
+        # {NFD} ∩ {NFC} would drop a present Cyrillic concept and re-`create` it
+        # every run (the same NFC/NFD boundary R1 closes for source_state).
+        effective_known = {
+            unicodedata.normalize("NFC", s) for s in known_slugs
+        } & present_concept_files
+        create_list, mention_list = classify_candidates(candidates, effective_known)
 
         for cand in create_list:
             _target, file_action = write_concept_page(
@@ -829,10 +851,15 @@ def _apply_write(
                 orchestrator_id=orchestrator_id,
                 concepts_rel=concepts_rel,
             )
-            # Augment the shared set so a later batch entry mentioning this
+            # Augment the shared sets so a later batch entry mentioning this
             # just-created concept classifies it as `mention`, not a dup
-            # `create` — exactly what a fresh load_known_entities would show.
+            # `create` — exactly what a fresh load_known_entities + on-disk scan
+            # would show. Both must grow: `known_slugs` (entity row now exists)
+            # AND `present_concept_files` (the page was just written above), so
+            # the R3 `known & present` intersection sees it (else the next entry
+            # would re-`create` the same slug — a double-create).
             known_slugs.add(cand["slug"])
+            present_concept_files.add(unicodedata.normalize("NFC", cand["slug"]))
 
         upsert_entity_refs(
             repo, vault_id, source_slug, source_project,
@@ -875,6 +902,7 @@ def _apply_candidates_to_db(
     today: date,
     repo: Any,
     known_slugs: set[str] | None = None,
+    present_concept_files: set[str] | None = None,
 ) -> dict[str, Any]:
     """Validate + write ONE source page's candidates on an already-open repo
     (R-015-5d). Thin combiner over :func:`_apply_validate` +
@@ -882,8 +910,10 @@ def _apply_candidates_to_db(
     legitimately open for every entry. Returns the same envelope shape as
     ``_apply_write`` (or the validation error envelope, with ``_exit_code``).
 
-    ``known_slugs`` is threaded to :func:`_apply_write` so a batch caller can
-    load known entities ONCE and have the set grow in place across entries.
+    ``known_slugs`` / ``present_concept_files`` are threaded to
+    :func:`_apply_write` so a batch caller can load known entities + scan
+    on-disk concepts ONCE and have both sets grow in place across entries
+    (P-7; R3 ghost-row self-heal).
     """
     validated = _apply_validate(
         source_page_arg, source_hash_expected, vault_root, candidates,
@@ -893,6 +923,7 @@ def _apply_candidates_to_db(
     return _apply_write(
         validated, vault_id, vault_root, candidates,
         orchestrator_id, today, repo, known_slugs=known_slugs,
+        present_concept_files=present_concept_files,
     )
 
 
@@ -944,6 +975,10 @@ def _batch_apply(args: argparse.Namespace) -> int:
         # re-scan the entities table per entry (O(E) once, not O(N·E)).
         known = load_known_entities(repo, args.vault)
         known_slugs = {e["slug"] for e in known}
+        # TASK 053 / R3 (DF-8): scan on-disk concept slugs ONCE too and thread
+        # the shared set (grown in place per create) so the ghost-row self-heal
+        # does not reintroduce an O(N·walk) `_all_concepts_dirs` sweep per entry.
+        present_concept_files = _present_concept_slugs(vault_root)
         for entry in entries:
             # Per-entry shape validation (non-fatal — isolates one bad entry).
             if (not isinstance(entry, dict)
@@ -965,6 +1000,7 @@ def _batch_apply(args: argparse.Namespace) -> int:
                     source_slug, entry["source_hash"], args.vault, vault_root,
                     entry["candidates"], orchestrator_id_val, today, repo,
                     known_slugs=known_slugs,
+                    present_concept_files=present_concept_files,
                 )
             # Per-entry isolation: expected FS/parse/DB faults route to this
             # entry's error envelope and the batch continues. `sqlite3.Error`

@@ -351,6 +351,12 @@ def record(args: argparse.Namespace) -> int:
     if not _is_clean_rel(rel):
         return emit({"error": "INVALID_PATH", "field": "path",
                      "reason": "expected a clean vault-relative path"}, 2)
+    # TASK 053 / R2 (DF-7): optional produced-note path, recorded as a SECOND
+    # source_state row so the resummarize gate can reconcile the marker with disk.
+    note_rel = (getattr(args, "note_path", None) or "").strip()
+    if note_rel and not _is_clean_rel(note_rel):
+        return emit({"error": "INVALID_PATH", "field": "note-path",
+                     "reason": "expected a clean vault-relative path"}, 2)
     config = build_repo_config(
         args.vault, vault_root=resolve_vault_root_for_cli(args), db_path_flag=args.db_path)
     try:
@@ -361,10 +367,18 @@ def record(args: argparse.Namespace) -> int:
     try:
         try:
             repo.set_source_state(args.vault, "sync", rel, "source_hash", args.source_hash)
+            if note_rel:
+                # Separate key='note_path' row (zero-DDL — the generic KV table takes
+                # any key). NOT packed into the source_hash value, which the
+                # `mode: if-changed` gate compares byte-for-byte (would break R-18).
+                repo.set_source_state(args.vault, "sync", rel, "note_path", note_rel)
         except sqlite3.IntegrityError:
             return emit({"error": "VAULT_NOT_REGISTERED", "field": "vault",
                          "reason": "vault not registered (FK)"}, 2)
-        return emit({"status": "recorded", "path": rel}, 0)
+        out: dict[str, Any] = {"status": "recorded", "path": rel}
+        if note_rel:
+            out["note_path"] = note_rel
+        return emit(out, 0)
     finally:
         repo.close()
 
@@ -391,6 +405,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "record", help="Executor commit-marker: record a successful per-file sync.")
     rp.add_argument("path", help="Vault-relative POSIX path of the synced source.")
     rp.add_argument("--source-hash", required=True, help="sha256 of the source bytes (from the plan).")
+    rp.add_argument("--note-path", default=None,
+                    help="TASK 053 / R2: vault-rel path of the produced summary note "
+                         "(from wiki-import apply's `note_path`). Recorded so the "
+                         "resummarize gate re-summarises if that note is later deleted "
+                         "out-of-band, instead of skipping forever.")
     rp.add_argument("--vault", required=True)
     rp.add_argument("--vault-root", default=None,
                     help="Vault root (resolve a local index_db). Walks up from CWD when omitted.")

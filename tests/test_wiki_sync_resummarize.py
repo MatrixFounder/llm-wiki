@@ -349,6 +349,50 @@ def test_apply_policy_if_changed_non_actionable_passthrough(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
+def test_d1_note_path_missing_target_resummarises(tmp_path: Path) -> None:
+    """TASK 053 / R2 (DF-7): a source_state marker whose recorded note_path is
+    gone on disk must NOT report 'summary exists' — it degrades (returns None)
+    so the gate re-summarises instead of skipping forever."""
+    repo = _repo(tmp_path)
+    rel = "_raw/x.txt"
+    repo.set_source_state("demand-gen", "sync", rel, "source_hash", "h1")
+    repo.set_source_state("demand-gen", "sync", rel, "note_path", "Notes/x.md")  # not on disk
+    which = summary_exists(
+        tmp_path / rel, rel=rel, vault_root=tmp_path, repo=repo,
+        vault_id="demand-gen", policy=ResummarizeConfig(), caches=Caches())
+    assert which is None
+    repo.close()
+
+
+def test_d1_note_path_present_target_skips(tmp_path: Path) -> None:
+    """When the recorded note_path DOES exist on disk, D1 still proves the summary
+    exists → skip (the normal steady-state)."""
+    repo = _repo(tmp_path)
+    rel = "_raw/x.txt"
+    (tmp_path / "Notes").mkdir()
+    (tmp_path / "Notes" / "x.md").write_text("summary", encoding="utf-8")
+    repo.set_source_state("demand-gen", "sync", rel, "source_hash", "h1")
+    repo.set_source_state("demand-gen", "sync", rel, "note_path", "Notes/x.md")
+    which = summary_exists(
+        tmp_path / rel, rel=rel, vault_root=tmp_path, repo=repo,
+        vault_id="demand-gen", policy=ResummarizeConfig(), caches=Caches())
+    assert which == "source_state"
+    repo.close()
+
+
+def test_d1_legacy_marker_no_note_path_skips(tmp_path: Path) -> None:
+    """Backward compat: a pre-053 marker with NO note_path row has nothing to
+    reconcile, so it keeps today's skip behaviour."""
+    repo = _repo(tmp_path)
+    rel = "_raw/x.txt"
+    repo.set_source_state("demand-gen", "sync", rel, "source_hash", "h1")
+    which = summary_exists(
+        tmp_path / rel, rel=rel, vault_root=tmp_path, repo=repo,
+        vault_id="demand-gen", policy=ResummarizeConfig(), caches=Caches())
+    assert which == "source_state"
+    repo.close()
+
+
 def _upsert_page(repo: SQLiteRepository, vault_id: str, slug: str, fm: dict) -> None:
     repo.upsert_page(Page(
         vault_id=vault_id, slug=slug, project="_vault_", type="summary",

@@ -1637,6 +1637,149 @@ def test_apply_canned_json_happy(
     assert (vault_root / "_concepts" / "sharpe-ratio.md").is_file()
 
 
+def test_apply_self_heals_ghost_entity_row(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK 053 / R3 (DF-8): after a concept page is deleted on disk while its
+    `entities` row survives (a GHOST row — the exact drift `wiki-lint`'s
+    missing-on-disk catches), re-running apply must RE-CREATE the page (self-heal)
+    rather than silently classify the slug as a 'mention' and skip creation."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+    page = vault_root / "_concepts" / "sharpe-ratio.md"
+
+    def _run() -> dict[str, Any]:
+        payload = _json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8")
+        monkeypatch.setattr(
+            "sys.stdin",
+            type("FakeStdin", (), {"buffer": io.BytesIO(payload)})(),
+        )
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True,
+        )
+        assert wec.apply(args) == 0
+        return _json.loads(capsys.readouterr().out)  # type: ignore[no-any-return]
+
+    m1 = _run()
+    assert page.is_file()
+    assert any(w["slug"] == "sharpe-ratio" for w in m1["written"])  # created first time
+
+    # Delete the page (ghost row now: entities row present, file gone) and re-run.
+    page.unlink()
+    assert not page.exists()
+    m2 = _run()
+    assert page.is_file(), "ghost entities row suppressed page re-creation (DF-8)"
+    # It is re-CREATED (in `written`), not merely counted as a mention.
+    assert any(w["slug"] == "sharpe-ratio" for w in m2["written"])
+
+
+def test_apply_present_concept_still_mentions_no_double_write(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK 053 / R3 guard: when the concept page IS present on disk, the normal
+    dedup still holds — a re-run classifies it a `mention` (not a fresh create),
+    so the intersection fix does not regress steady-state idempotency."""
+    import io
+    import json as _json
+    vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
+
+    def _run() -> dict[str, Any]:
+        payload = _json.dumps([_APPLY_DEMO_CANDIDATE]).encode("utf-8")
+        monkeypatch.setattr(
+            "sys.stdin",
+            type("FakeStdin", (), {"buffer": io.BytesIO(payload)})(),
+        )
+        args = _make_apply_args(
+            vault="trade-agents", vault_root=vault_root,
+            source_page="sample-doc", source_hash=source_hash,
+            db_path=db_path, candidates_stdin=True,
+        )
+        assert wec.apply(args) == 0
+        return _json.loads(capsys.readouterr().out)  # type: ignore[no-any-return]
+
+    _run()  # create
+    m2 = _run()  # file present → mention, not re-create
+    assert not any(w["slug"] == "sharpe-ratio" for w in m2["written"])
+    assert any(mn["slug"] == "sharpe-ratio" for mn in m2["mentioned"])
+
+
+def test_present_concept_slugs_nfc_normalizes(tmp_path: Path) -> None:
+    """TASK 053 / R3 fix-up (VDD MAJOR): `_present_concept_slugs` returns NFC even
+    when the on-disk filename is NFD (macOS/iCloud store `й`=и+◌̆), so the
+    known(NFC) ∩ present intersection matches a present Cyrillic concept instead of
+    re-`create`ing it on every run. Deterministic + discriminating on an
+    NFD-preserving filesystem (APFS/iCloud/HFS+)."""
+    import unicodedata
+    from scripts.wiki_skills.wiki_extract_concepts._sourcing import _present_concept_slugs
+    concepts = tmp_path / "_concepts"
+    concepts.mkdir()
+    nfc = unicodedata.normalize("NFC", "нейросеть")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd  # decomposition actually changed the bytes
+    (concepts / f"{nfd}.md").write_text(f"# {nfc}\n", encoding="utf-8")
+    present = _present_concept_slugs(tmp_path)
+    assert nfc in present  # normalized to NFC regardless of the on-disk normal form
+
+
+def test_apply_cyrillic_concept_present_nfd_still_mentions(
+    repo_factory: Callable[[], IndexRepository],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK 053 / R3 fix-up (VDD MAJOR): on macOS/iCloud a present concept page is
+    stored NFD while the entity row + LLM candidate slug are NFC. The
+    known ∩ present intersection must NFC-normalize BOTH sides, else the concept
+    re-`create`s on every apply (violates AC-3 for non-ASCII). This is the exact
+    iCloud-Russian-vault break the ASCII-only tests hid."""
+    import io
+    import json as _json
+    import unicodedata
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+    body = "---\ntype: summary\n---\nНейросеть обучается на данных примеров.\n"
+    vault_root, db_path, source_hash = _seed_apply_vault(
+        repo_factory, tmp_path, source_body=body)
+    nfc = unicodedata.normalize("NFC", "нейросеть")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd
+    # Simulate an iCloud/Finder-created concept page: NFD filename on disk...
+    concepts = vault_root / "_concepts"
+    concepts.mkdir(exist_ok=True)
+    (concepts / f"{nfd}.md").write_text(f"# {nfc}\n", encoding="utf-8")
+    # ...with the entity row stored NFC (as a prior LLM/JSON candidate would).
+    repo = SQLiteRepository(Path(db_path))
+    _insert_entity(repo, "trade-agents", nfc, "Нейросеть")
+    repo.close()
+
+    candidate = {
+        "slug": nfc, "name": "Нейросеть",
+        "definition": "Модель машинного обучения.",
+        "source_quote": "Нейросеть обучается на данных примеров.",
+        "source_span": "L3-L3", "entity_type": "concept",
+    }
+    payload = _json.dumps([candidate], ensure_ascii=False).encode("utf-8")
+    monkeypatch.setattr(
+        "sys.stdin", type("FakeStdin", (), {"buffer": io.BytesIO(payload)})())
+    args = _make_apply_args(
+        vault="trade-agents", vault_root=vault_root, source_page="sample-doc",
+        source_hash=source_hash, db_path=db_path, candidates_stdin=True)
+    assert wec.apply(args) == 0
+    m = _json.loads(capsys.readouterr().out)
+    # present(NFD→NFC) ∩ known(NFC) includes the slug → mention, NOT a re-create
+    assert not any(w["slug"] == nfc for w in m["written"]), \
+        "Cyrillic concept re-created (NFC/NFD intersection mismatch)"
+    assert any(mn["slug"] == nfc for mn in m["mentioned"])
+
+
 def test_apply_stdin_vs_file_mutex(
     tmp_path: Path,
 ) -> None:
