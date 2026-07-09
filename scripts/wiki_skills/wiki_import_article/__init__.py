@@ -373,7 +373,9 @@ def prepare(args: argparse.Namespace) -> int:
     project = derive_project_for_path(note_dir / f"{slug}.md", vault_root)
     repo = make_repo(cfg)
     try:
-        known = _context.known_concepts(repo, args.vault, vault_root)
+        known = _context.known_concepts(
+            repo, args.vault, vault_root,
+            fmt=getattr(args, "known_concepts_format", "full"))
     finally:
         repo.close()
     existing = _context.existing_page_slugs(
@@ -655,6 +657,12 @@ def apply(args: argparse.Namespace) -> int:
                     exit_code=EXIT_BAD_ARG)
 
     note = _load_note_json(args)
+    # WI-3: a month-precision source date (arXiv `2025-10`, ECB/working-paper `YYYY-MM`) has no
+    # valid YYYY-MM-DD form, so the REASON note commonly leaves `published` null. Fall back to
+    # prepare's already-extracted `date` (round-tripped via --published) so the publication date
+    # isn't lost. Only fills a null/blank — a note that DID author `published` (any precision) wins.
+    if not str(note.get("published") or "").strip() and getattr(args, "published", None):
+        note["published"] = args.published
     today = args.today or datetime.date.today().isoformat()
     note_type = _note_type(args.kind, layout)
     # TASK 046: meeting/lesson → the REASON-authored PYRAMID is filed verbatim (no article
@@ -853,6 +861,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
     pp.add_argument("--slug", default=None, help="Override the _raw/<slug>.md filename slug")
+    pp.add_argument("--known-concepts-format", choices=["full", "slugs-only"], default="full",
+                    dest="known_concepts_format",
+                    help="P-6 (mirrors wiki-extract-concepts R-015-3): shape of the envelope's "
+                         "`known_concepts` field. 'full' (default) = [{slug,name}, …] "
+                         "(backward-compatible); 'slugs-only' = [slug, …] (~N×30 B vs ~N×200 B) "
+                         "— pass it on a LARGE vault to keep the prepare envelope small.")
     pp.add_argument("--force", action="store_true",
                     help="TASK 051 (R-18): bypass the `is_unchanged` short-circuit — "
                          "always rewrite _raw and emit a full envelope even when a "
@@ -912,6 +926,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--raw-rel", required=True,
                     help="Vault-rel path of the _raw original (use prepare's raw_path verbatim)")
     ap.add_argument("--source-lang", default="en")
+    ap.add_argument("--published", default=None,
+                    help="WI-3: prepare's extracted source `date` (may be month-precision "
+                         "YYYY-MM or year-only YYYY, e.g. arXiv `2025-10`). Used as a FALLBACK "
+                         "for the note's `published` when the REASON note leaves it null — so a "
+                         "publication date with no valid YYYY-MM-DD form isn't silently dropped. "
+                         "A `published` authored in the note JSON (any precision) wins.")
     ap.add_argument("--classification", type=_classification_arg, default=None,
                     metavar="LEVEL",
                     help="TASK 049: stamp `classification: <level>` into the authored "

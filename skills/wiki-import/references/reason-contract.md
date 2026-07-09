@@ -34,7 +34,9 @@ yourself thinking:
 - `known_concepts: [{slug, name}]` — the vault's existing concept names. **Already in this
   envelope** → match your entities against it **in-context** (scan these names for the terms you
   extract); do NOT issue a separate command to dump the vault's full concept list — it's a large,
-  noisy read and a needless approval prompt.
+  noisy read and a needless approval prompt. (On a very large vault the operator may pass
+  `prepare --known-concepts-format slugs-only`, in which case this field is a bare `[slug, …]`
+  list — same discipline, resolve a full record only when a collision is suspected — P-6.)
 - `existing_page_slugs: […]` — round-trip these into `apply` for the collision guard.
 - `mode` — `full` | `summary` | `thread`.
 
@@ -44,7 +46,9 @@ yourself thinking:
   "title":     "string",            // title IN THE TARGET LANGUAGE
   "title_orig":"string?",           // original-language title (verbatim)
   "author":    "string|null",
-  "published": "YYYY-MM-DD|null",
+  "published": "YYYY | YYYY-MM | YYYY-MM-DD | null", // partial dates OK: a month-only source date
+                                     // (arXiv `2025-10`, ECB/working papers) — do NOT fabricate a day
+                                     // to force YYYY-MM-DD; keep the precision the source actually gives.
   "tldr":      "string",            // 1–2 sentences in the target language
   "summary_bullets": ["string", …], // key points / conclusions in the target language
   "body":      "string|null",       // full body in the target language; see depth-by-mode
@@ -118,6 +122,14 @@ full-text-wrapped article note for a meeting/lesson.
    page: if a quote isn't a verbatim substring, `apply` falls back to a body line that mentions the
    entity by name (the base name, ignoring any trailing `(disambiguator)`); if there's no such line
    it **drops** the candidate (`no-verbatim-quote`).
+   - **`mode=summary` (body is `null`) — WI-2.** There is no `## Полный текст` body to quote from,
+     so every `entities[].quote` MUST be a verbatim substring of the `tldr` **or** a `summary_bullets`
+     line. `apply` resolves quotes against the **rendered** summary note (which contains the tldr +
+     the bullets), so the name-mention fallback DOES search your bullets — but if the entity's name
+     appears in NO bullet and NO tldr, the candidate is dropped (`no-verbatim-quote`). Practically:
+     for every entity you keep in a summary import, either its `quote` is copied verbatim from a
+     bullet/tldr, or at least one bullet names the entity. Any drop shows up as a `CONCEPTS_DROPPED`
+     warning (below) — check it after `apply`.
    **Pre-apply self-check (run before EVERY `apply`):**
    - **(mode=full) coverage:** the `body` covers EVERY section of `raw_path` (you read the whole file,
      not a sample) and is comparable in scope to the source — if it is a small fraction of the raw,

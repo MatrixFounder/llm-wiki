@@ -80,6 +80,24 @@ def _fm_scalar(value: str) -> str:
     return re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029\\]+", " ", str(value or "")).strip()
 
 
+_TLDR_FM_CAP = 300  # the frontmatter `tldr:` is a PREVIEW scalar (an Obsidian property) \u2192 capped;
+#                     the rendered BODY `## brief` section carries the FULL tldr (WI-1).
+
+
+def _tldr_fm_preview(tldr: str, cap: int = _TLDR_FM_CAP) -> str:
+    """The capped frontmatter `tldr:` preview scalar (WI-1). Only THIS frontmatter preview is
+    truncated \u2014 the body `## \u041a\u0440\u0430\u0442\u043a\u043e`/`## \u0421\u0430\u043c\u043c\u0430\u0440\u0438` section renders the full tldr. Character-based
+    (Python `str` slices by codepoint, so Cyrillic counts as ONE each \u2014 no byte/char mismatch),
+    and the cut lands on a WORD boundary with a trailing `\u2026`, never mid-grapheme. A tldr already
+    \u2264 `cap` is returned unchanged (byte-identity with pre-WI-1 output)."""
+    tldr = tldr.strip()
+    if len(tldr) <= cap:
+        return tldr
+    head = tldr[:cap].rstrip()
+    cut = head.rsplit(" ", 1)[0] if " " in head else head  # drop the partial trailing word
+    return cut.rstrip(" ,.;:\u2014-") + "\u2026"
+
+
 def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
     """Return a verbatim substring of `body` that SUPPORTS `name`, or ``""`` when none
     exists. Order: (1) the agent's quote if it is an exact substring; (2) a body line that
@@ -217,7 +235,14 @@ def assemble_note(
     # PARA files under the human title; karpathy passes an explicit slug-based fname
     # (its `identity` strategy makes filename == slug, which must be a valid lowercase slug).
     fname = fname or (fname_sanitize(title) + ".md")
-    tldr = _fm_scalar((note.get("tldr") or "").replace('"', "'"))[:300]
+    # WI-1: the FULL tldr feeds the rendered body `## brief` section (the REASON contract already
+    # bounds tldr to "1–2 sentences", so the body needs no cap). Only the frontmatter `tldr:` scalar
+    # is a preview → capped on a WORD boundary (never the old mid-word `[:300]` slice). Keep the raw
+    # tldr (literal `"` intact) for the BODY so it byte-matches the orchestrator-authored text — the
+    # verbatim-quote gate resolves against it, and this mirrors the sibling scalars (title/author/…)
+    # which keep raw quotes in the variable and normalize `"`→`'` ONLY at the frontmatter emission.
+    tldr = _fm_scalar(note.get("tldr") or "")
+    tldr_fm = _tldr_fm_preview(tldr)
     author = _fm_scalar(note.get("author") or "")
     published = _fm_scalar(note.get("published") or "")
     url = _fm_scalar(source_url)
@@ -278,7 +303,9 @@ def assemble_note(
         + participants_fm
         + f'sources:\n  - "{_fm_scalar(raw_rel_basename).replace(chr(34), chr(39))}"\n'
         + f"tags: {_yaml_list(tags)}\n"
-        + f'tldr: "{tldr}"\n'
+        # WI-1: capped word-boundary PREVIEW (the body carries the full tldr); `"`→`'` normalized
+        # HERE at emission, like every sibling scalar — never baked into the body-facing `tldr`.
+        + f'tldr: "{tldr_fm.replace(chr(34), chr(39))}"\n'
         + "---\n"
     )
     _raw_base = raw_rel_basename.rsplit('/', 1)[-1]

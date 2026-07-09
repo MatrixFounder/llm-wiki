@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-08T23:05:56.910541 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-07-09T16:48:56.966550 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -15,6 +15,7 @@
 - **DF-049-1** [[df-049-1-queries-dir-not-walked-off-karpathy|filed \`_queries/\`/\`_verifications/\` pages don't survive reindex on non-karpathy layouts]] — severity `SEV-2`, status `fixed`, opened 2026-07-07
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
+- **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
 
 ## dogfood
 
@@ -81,6 +82,11 @@
 - **Q-007-1** [[q-007-1-wiki-query-apply-re-runs-the-full-retrieval-to-recompute-the-hash|\`wiki-query apply\` re-runs the full retrieval to recompute the hash]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **Q-007-2** [[q-007-2-self-index-re-reads-the-just-written-query-page|self-index re-reads the just-written query page]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **DF-017-1** [[df-017-1-check-drift-type-mismatch-not-layout-mapping-aware|check_drift type-mismatch is not layout-type-mapping-aware (false positives on non-karpathy layouts)]] — severity `SEV-3`, status `fixed`, opened 2026-06-02
+
+## robustness
+
+- **WI-2** [[wi-2-summary-mode-quote-fallback-unclear|wiki-import: in \`mode=summary\` the entity-quote "body-line" fallback has no body — clarify + guard]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
+- **WI-3** [[wi-3-published-drops-month-only-source-date|wiki-import: month-precision source date (\`YYYY-MM\`) has no valid \`published\` slot → publication date lost]] — severity `SEV-4`, status `fixed`, opened 2026-07-09
 
 ## security
 

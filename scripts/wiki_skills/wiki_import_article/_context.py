@@ -22,20 +22,38 @@ from scripts.wiki_index.layout import CONCEPTS_SUBDIR
 from scripts.wiki_index.layout_config import _apply_slug_strategy
 
 
-def known_concepts(repo: Any, vault_id: str, vault_root: Path) -> list[dict[str, str]]:
-    """Existing concept {slug, name} pairs for the vault — a single indexed query.
+def known_concepts(
+    repo: Any, vault_id: str, vault_root: Path, *, fmt: str = "full",
+) -> list[dict[str, str]] | list[str]:
+    """Existing concept names for the vault — a single indexed query.
 
     Uses `load_known_entities` (one SQL read) rather than the drift-computing
     `_load_known_and_drift(..., "full")`, which walks the ENTIRE vault on disk only to
-    discard the drift result here — needless O(vault) work on every `prepare`."""
+    discard the drift result here — needless O(vault) work on every `prepare`.
+
+    `fmt` (P-6 residual — mirrors `wiki-extract-concepts` R-015-3) selects the envelope payload
+    shape: ``"full"`` (default, backward-compatible) → ``[{slug, name}, …]`` (~N×200 B);
+    ``"slugs-only"`` → ``[slug, …]`` (~N×30 B), for a large vault where the full known-concepts
+    list dominates the `prepare` envelope. The orchestrator still matches entities against these
+    in-context; with slugs-only it resolves the full record via SKILL.md prompt / a targeted probe
+    only on a suspected collision."""
     from scripts.wiki_skills.wiki_extract_concepts._db import load_known_entities
 
+    entities = load_known_entities(repo, vault_id)
+    if fmt == "slugs-only":
+        slugs: list[str] = []
+        for k in entities:
+            slug = str(k.get("slug") or "") if isinstance(k, dict) else str(k)
+            if slug:
+                slugs.append(slug)
+        return slugs
+
     out: list[dict[str, str]] = []
-    for k in load_known_entities(repo, vault_id):
+    for k in entities:
         if isinstance(k, dict):
             slug = str(k.get("slug") or "")
             out.append({"slug": slug, "name": str(k.get("name") or slug)})
-        else:  # "slugs-only" fallback shape
+        else:  # "slugs-only" upstream shape → normalize to a {slug, name} pair
             out.append({"slug": str(k), "name": str(k)})
     return out
 
