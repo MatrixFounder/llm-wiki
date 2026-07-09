@@ -124,3 +124,10 @@ samples
 
 # TASK 012 / R-X2: dev-vault operational state (SQLite cache + render-state) — Class C
 .wiki/
+
+# Obsidian per-machine UI state — churns on every focus change (24× in history).
+# The shared dev setup (app/appearance/*-plugins config + the vendored `plugins/terminal/*`)
+# stays TRACKED so the repo opens in Obsidian out of the box; only this noise is ignored.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
