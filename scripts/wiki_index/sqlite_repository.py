@@ -37,6 +37,8 @@ from scripts.wiki_index.models import (
     InvalidClassificationHit,
     LogEvent,
     MergeReport,
+    OntologyConfig,
+    OntologyViolation,
     OrphanLink,
     Page,
     PageHit,
@@ -1061,6 +1063,135 @@ class SQLiteRepository(IndexRepository):
                 out.append(CoverageGap(
                     vault_id=vault_id, page_slug=r["slug"], page_project=r["project"],
                     page_class=rule.page_class, kind=kind, detail=detail,
+                ))
+        return out
+
+    def find_ontology_violations(
+        self, vault_id: str, ontology: OntologyConfig
+    ) -> list[OntologyViolation]:
+        # TASK 054 / R-19 — pages that CONTRADICT the declared ontology contract. Two
+        # read-side families (edge domain/range + property enum). All values are BOUND
+        # params; the only string-composed parts are placeholder COUNTS (never values), the
+        # FIXED `$.type` JSON-path literal, and a `$.<field>` path that is
+        # `validate_filter_field`-checked THEN bound. Keyed on frontmatter `$.type` (the
+        # AUTHORED raw class, NOT pages.type the db-bucket) — the R-15 drift/coverage
+        # precedent. Read-only; zero DDL; NOT a write gate.
+        #
+        # `closed_types` is NOT re-checked here: reindex resolves a typed page's class FROM
+        # its frontmatter `$.type` and SKIPS any page whose `$.type` ∉ type_mapping (reported
+        # in `wiki-reindex --full`'s `skipped[]`), so an out-of-roster type can never be
+        # indexed — a read-side sweep would be a guaranteed no-op. The closed-world stance is
+        # thus enforced at INDEX time (a type is a hard classification failure) while edge/
+        # property contradictions are soft (the page still indexes) → advisory here. Q-054.
+        #
+        # COVERAGE SCOPE (Q-054, vdd-multi critic-logic MAJOR): the checks key on frontmatter
+        # `$.type` — the R-15 drift/coverage precedent. A note filed under a typed folder with
+        # NO authored `type:` (a quick-capture; cybos routes its db-class from the path glob but
+        # never injects `$.type`) has a NULL `$.type` and so escapes these checks. The
+        # page-type TEMPLATES all author `type:`, so template-created notes ARE checked; the
+        # gap is untyped quick-captures. Fixing it uniformly (key off the derived class tag, or
+        # inject the glob-resolved `$.type` at reindex) belongs to a machinery-wide change
+        # across R-15+R-19, deferred (not silently narrowed).
+        #
+        # DELTA CAVEAT (mirrors find_lifecycle_drift): the forward edge a page carries can be an
+        # AUTO-DERIVED inverse; a `wiki-reindex --delta` that re-walks only one side of a
+        # bidirectionally-authored edge can leave it transiently missing until the next
+        # `--full`, so `wiki-lint --strict` ontology gating assumes a recent `--full`.
+        conn = self._connect()
+        out: list[OntologyViolation] = []
+        # A `domain` violation is about the PAGE's class carrying an edge type — the specific
+        # target is irrelevant — so a page with N same-type edges (`implements: [[A]], [[B]]`)
+        # is ONE domain finding, not N (critic-logic 1d: else `total_violations`/`by_kind`
+        # inflate by target cardinality). Range/property stay per-instance (each a distinct fact).
+        domain_seen: set[tuple[str, str, str]] = set()
+
+        # (a) edge domain/range — per (forward) ref_type. A **LEFT JOIN** to the resolved
+        # target (guarded by the COUNT=1 same-slug check IN THE ON-CLAUSE, verbatim from
+        # find_classification_leaks) collapses the target to exactly one row OR all-NULL when
+        # the slug is an orphan / entity / cross-project-ambiguous. Consequence (critic-logic
+        # MAJOR fix): the **domain** check fires off the src join alone — INDEPENDENT of whether
+        # the target resolves (a `risk` that `implements` a dangling `[[ghost]]` is still a
+        # domain error) — while the **range** check fires only when the target resolves
+        # uniquely (tgt_type non-NULL), so it never phantom-hits an ambiguous slug.
+        for edge in ontology.edges:
+            frm = set(edge.frm)
+            to = set(edge.to)
+            sql = (
+                "SELECT r.page_slug, r.page_project, "
+                "CAST(json_extract(src.frontmatter_json, '$.type') AS TEXT) AS src_type, "
+                "t.slug AS tgt_slug, "
+                "CAST(json_extract(t.frontmatter_json, '$.type') AS TEXT) AS tgt_type "
+                "FROM page_entity_refs r "
+                "JOIN pages src ON src.vault_id = r.vault_id "
+                "               AND src.slug = r.page_slug "
+                "               AND src.project = r.page_project "
+                "LEFT JOIN pages t ON t.vault_id = r.vault_id AND t.slug = r.entity_slug "
+                "     AND (SELECT COUNT(*) FROM pages tc WHERE tc.vault_id = r.vault_id "
+                "          AND tc.slug = r.entity_slug) = 1 "
+                "WHERE r.vault_id = ? AND r.ref_type = ? "
+                "ORDER BY r.page_project, r.page_slug, r.entity_slug"
+            )
+            for row in conn.execute(sql, (vault_id, edge.edge)).fetchall():
+                src_type = row["src_type"]
+                tgt_type = row["tgt_type"]
+                # Only an EXPLICIT (present, scalar) class is a contradiction — a page with
+                # no authored `$.type` has an unknown class, never a domain/range violation.
+                if src_type is not None and src_type not in frm:
+                    key = (row["page_slug"], row["page_project"], edge.edge)
+                    if key not in domain_seen:
+                        domain_seen.add(key)
+                        out.append(OntologyViolation(
+                            vault_id=vault_id, page_slug=row["page_slug"],
+                            page_project=row["page_project"], page_class=src_type,
+                            kind="domain", ref=edge.edge,
+                            detail=f"source class {src_type!r} not in from {sorted(frm)}",
+                            target_slug=None,  # domain is about the source class, not any target
+                        ))
+                if tgt_type is not None and tgt_type not in to:
+                    out.append(OntologyViolation(
+                        vault_id=vault_id, page_slug=row["page_slug"],
+                        page_project=row["page_project"],
+                        # the offending page's class; fall back to the target class when the
+                        # source is an untyped quick-capture (never an empty string — critic NIT).
+                        page_class=(src_type if src_type is not None else tgt_type),
+                        kind="range", ref=edge.edge,
+                        detail=f"target class {tgt_type!r} not in to {sorted(to)}",
+                        target_slug=row["tgt_slug"],
+                    ))
+
+        # (b) property enum — a PRESENT scalar `$.<field>` not in the enum. `json_type ==
+        # 'text'` excludes absent/null/list/object (an absence is a coverage concern, not a
+        # contradiction — mirrors the drift scalar-only rule). Field re-validated
+        # (library-caller defense) + bound as a `$.<field>` path; enum values bound.
+        for prop in ontology.properties:
+            if not prop.enum:
+                continue  # defensive: a hand-built rule bypassing the load-gate → skip (no `IN ()`)
+            field = validate_filter_field(prop.field)
+            json_path = f"$.{field}"
+            placeholders = ",".join("?" * len(prop.enum))
+            sql = (
+                "SELECT p.slug, p.project, "
+                "CAST(json_extract(p.frontmatter_json, ?) AS TEXT) AS val "
+                "FROM pages p "
+                "WHERE p.vault_id = ? "
+                "AND json_extract(p.frontmatter_json, '$.type') = ? "
+                "AND json_type(p.frontmatter_json, ?) = 'text' "
+                f"AND CAST(json_extract(p.frontmatter_json, ?) AS TEXT) NOT IN ({placeholders}) "
+                "ORDER BY p.project, p.slug"
+            )
+            params: list[Any] = [json_path, vault_id, prop.page_class, json_path,
+                                  json_path, *prop.enum]
+            for row in conn.execute(sql, params).fetchall():
+                # The offending value is UNTRUSTED frontmatter (H-6). `!r` escapes control
+                # chars (CWE-117) and every sink re-escapes (json.dumps / dict-repr); a length
+                # cap bounds an adversarial value in the operator-facing report (critic NIT,
+                # parity with lint._safe_surface's 200-char cap).
+                raw_val = row["val"]
+                shown = raw_val if len(raw_val) <= 200 else raw_val[:200] + "…"
+                out.append(OntologyViolation(
+                    vault_id=vault_id, page_slug=row["slug"], page_project=row["project"],
+                    page_class=prop.page_class, kind="property", ref=field,
+                    detail=f"{field}={shown!r} not in {list(prop.enum)}",
                 ))
         return out
 

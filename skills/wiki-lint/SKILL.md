@@ -30,6 +30,15 @@ Read-only consistency check between the SQLite index and the filesystem.
   cleanup trigger).
 - **hash-mismatch** — `pages.file_hash` differs from on-disk sha256.
 - **type-mismatch** — frontmatter `type:` doesn't match DB `pages.type`.
+- **lifecycle-drift** — a page whose authored `status` *contradicts* its event-graph
+  state (R-15; a decision carrying `superseded-by` but still `status: accepted`).
+  Config-driven (`drift_rules`; cybos only). Advisory; **gates `--strict`**.
+- **ontology-violation** — a page that *contradicts* the declared ontology contract
+  (R-19; TASK 054): an edge whose source/target class is outside the declared
+  `from`/`to` (`kind: domain`/`range`), or a `status`-style property value outside its
+  enum (`kind: property`). Config-driven (the `ontology:` block; cybos only → other
+  layouts no-op). Advisory; **gates `--strict`** (a contradiction, ADR-006 D-036).
+  The always-exit-0 report view is `wiki-health ontology`.
 - **cross-vault-duplicate** — same concept slug exists in 2+ vaults
   (R-29; informational, suggests promotion).
 

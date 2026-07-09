@@ -794,7 +794,27 @@ external source (newsletter/Jira/channel) an operator actually re-polls.
 `skills/wiki-import/SKILL.md` + `workflows/`, a `templates/` zone-`sync.yaml`
 example + a connector-contract section in `docs/architectures/functional-architecture.md`.
 
-### R-19. Formal ontology spec — declared, validated type/edge/property contract (P2)
+### R-19. Formal ontology spec — declared, validated type/edge/property contract ✅ SHIPPED (TASK 054, 2026-07-09)
+
+**Status: SHIPPED** as TASK 054 (`docs/tasks/task-054-formal-ontology-spec`). Delivered the
+OPTIONAL `ontology:` layout block (cybos only) exactly as specced, **zero-DDL** (`user_version`
+7): `closed_types` + `edges` (per-ref_type domain→range) + `properties` (per-class value enums);
+load-gate `_validate_ontology` (edges ∈ `reindex._INVERSE_REF_TYPE`; every from/to/class ∈
+`type_mapping` keys; property field via `validate_filter_field` — a typo is exit 6); read-side DAL
+`find_ontology_violations` (edge domain/range via the `find_classification_leaks` target-JOIN +
+COUNT=1 orphan guard; property enum; all bound params) → `wiki-lint` `ontology-violation`
+(advisory, gates `--strict`, ADR-006 D-036) + `wiki-health ontology` (always exit 0). **Design
+correction (Q-054):** `closed_types` produces NO read-side violation — reindex resolves a typed
+page's class from frontmatter `$.type` and SKIPS an out-of-roster type (reported in `--full`'s
+`skipped[]`), so the closed-world stance is enforced at INDEX time, not re-swept; `closed_types`
+stays a declared, load-gate-validated flag. **NOT a write gate** (a violating page still indexes,
+ADR-002 §D8); **OFF ≡ byte-identical** (only cybos ships a block). Closes the ADR-009 pillar-2
+"ontology is tribal convention" gap. `/vdd-multi` (logic/security/performance) + a fix-verify
+re-critique converged: perf clean, security injection-clean (one value-cap NIT applied), logic
+surfaced 2 real coverage holes → **domain now fires independent of target resolution** (LEFT-JOIN
+fix), untyped-quick-capture blind spot documented+tested (Q-054-4, `$.type`-keying, shared with
+R-15), duplicate-rule load-gate + domain-dedup applied. **2011 pytest / 5 skip, mypy strict**.
+Original spec below.
 
 **What**: an OPTIONAL `ontology:` block in the layout YAML (per-vault override
 via `.wiki/layout.yaml`, STRICT schema like everything else in
