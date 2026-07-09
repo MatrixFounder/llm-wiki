@@ -187,16 +187,21 @@ cite (`classification-leak`, an error under `--strict`); a bad `--audience`/`pol
 ### 3. Lint — health-check
 
 ```bash
-# SQL-level (drift, orphan links, hash mismatch, cross-vault dups + lifecycle-drift)
-/wiki-lint --vault ${vault_id}              # --strict to gate on lifecycle-drift (status vs graph)
+# SQL-level (orphan links, hash mismatch, cross-vault dups + lifecycle-drift + ontology-violation)
+/wiki-lint --vault ${vault_id}              # --strict to gate on lifecycle-drift + ontology-violation
 
 # Derived knowledge health — pages MISSING an expected relation (typed-class vaults; exit 0)
 /wiki-health coverage --vault ${vault_id}
+# Ontology-contract report — pages CONTRADICTING the declared type/edge/property contract (cybos; exit 0)
+/wiki-health ontology --vault ${vault_id}
 ```
 
-Run both periodically. `/wiki-lint` catches drift between markdown and the DB
-(orphan links, hash mismatch, cross-vault dups, lifecycle-drift); `/wiki-health`
-surfaces coverage gaps (a typed page missing an expected relation).
+Run periodically. `/wiki-lint` catches drift between markdown and the DB (orphan
+links, hash mismatch, cross-vault dups) plus two config-driven *contradictions* that
+gate `--strict`: **lifecycle-drift** (authored `status` vs the graph) and
+**ontology-violation** (an edge whose source/target class or a `status` value breaks the
+declared `ontology:` contract — cybos layouts). `/wiki-health` is the always-exit-0
+report view: `coverage` (a typed page missing an expected relation) and `ontology`.
 
 ### 4. Rebuild — when in doubt
 

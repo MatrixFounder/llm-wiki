@@ -191,6 +191,67 @@ $defs:
       - {required: [requires_field]}
 
   # ----------------------------------------------------------------------------
+  # Ontology (TASK 054 / R-19) — the OPTIONAL declared type/edge/property contract.
+  # STRICT. `closed_types` asserts the type roster IS the type_mapping keys; `edges`
+  # declares per-ref_type domain/range; `properties` declares per-class value enums.
+  # The `edge` vocabulary + all `from`/`to`/`class` names + property `field` names are
+  # re-checked in Python (layout_config._validate_ontology) against
+  # reindex._INVERSE_REF_TYPE + type_mapping keys + validate_filter_field.
+  # ----------------------------------------------------------------------------
+  OntologyEdge:
+    type: object
+    additionalProperties: false
+    required: [edge, from, to]
+    properties:
+      edge:
+        type: string
+        description: 'the (forward) ref_type this rule constrains (e.g. implements)'
+      from:
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: 'allowed SOURCE page classes (frontmatter $.type) — the domain'
+      to:
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: 'allowed TARGET page classes — the range'
+
+  OntologyProperty:
+    type: object
+    additionalProperties: false
+    required: [class, field, enum]
+    properties:
+      class: {type: string, description: 'frontmatter $.type this rule applies to'}
+      field:
+        type: string
+        description: 'frontmatter scalar field whose value is constrained (allow-listed name)'
+      enum:
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: 'the permitted values; a PRESENT scalar not in this set is a violation'
+
+  Ontology:
+    type: object
+    additionalProperties: false
+    properties:
+      closed_types:
+        type: boolean
+        default: false
+        description: 'flag a page whose authored $.type scalar is outside the type_mapping roster'
+      edges:
+        type: array
+        items: {$ref: '#/$defs/OntologyEdge'}
+        default: []
+        description: 'per-ref_type domain/range declarations'
+      properties:
+        type: array
+        items: {$ref: '#/$defs/OntologyProperty'}
+        default: []
+        description: 'per-class property value-enum declarations'
+
+  # ----------------------------------------------------------------------------
   # WriteGrammar (TASK 040 / ADR-007) — the WRITE-side grammar: where a NEW source
   # note + its concept pages file, and the source filename convention. Optional;
   # absent → the engine default (PARA-legacy: "" / title). Makes Karpathy a YAML, not a fork.
@@ -271,6 +332,14 @@ $defs:
         items: {$ref: '#/$defs/CoverageRule'}
         default: []
         description: 'coverage-gap rules (Slice A2, surfaced by wiki-health coverage).'
+      # TASK 054 / R-19 — OPTIONAL formal ontology contract (zero DDL; computed over the
+      # same pages.frontmatter_json + page_entity_refs). Absent ⇒ ontology is None ⇒ zero
+      # behaviour change (cybos ships one; other layouts ship none). A per-vault override
+      # deep-merges: `closed_types` is a scalar overwrite, but `edges`/`properties` REPLACE
+      # as whole lists (an override that supplies `edges:` discards the base edges) — the
+      # same list-replace semantics as paths/ref_extraction/drift_rules.
+      # formal ontology contract (R-19, surfaced by wiki-lint + wiki-health ontology).
+      ontology: {$ref: '#/$defs/Ontology'}
       # TASK 031 / R-031-3 — INIT-ONLY registry metadata (the layout registry
       # reads these RAW; the indexer ignores them, so they do NOT affect
       # discovery/pages/refs → Karpathy byte-identity holds). Both OPTIONAL with

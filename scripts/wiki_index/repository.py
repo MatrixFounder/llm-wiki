@@ -37,6 +37,8 @@ from scripts.wiki_index.models import (
     Entity,
     LogEvent,
     MergeReport,
+    OntologyConfig,
+    OntologyViolation,
     OrphanLink,
     Page,
     PageHit,
@@ -388,6 +390,29 @@ class IndexRepository(abc.ABC):
         → the frontmatter scalar ``$.<field>`` is absent/empty (e.g. a ``fact`` with an
         empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
         coverage`` (a gap is data, not a failure → always exit 0)."""
+        ...
+
+    @abc.abstractmethod
+    def find_ontology_violations(
+        self, vault_id: str, ontology: OntologyConfig
+    ) -> list[OntologyViolation]:
+        """TASK 054 / R-19 — pages that CONTRADICT the declared ontology contract. Two
+        read-side violation families, all values bound: **domain/range** — for each
+        ``ontology.edges`` rule, a page carrying the (forward) ref_type whose SOURCE class ∉
+        ``from`` (kind ``domain``, fires INDEPENDENT of whether the target resolves) or whose
+        resolved TARGET class ∉ ``to`` (kind ``range``); the target is resolved through the
+        project-less ``entity_slug`` with a COUNT=1 same-slug guard (a LEFT JOIN), so
+        ``range`` never phantom-hits an orphan/entity/ambiguous target while ``domain`` still
+        fires for a dangling edge. **property** — for each ``ontology.properties`` rule, a page of ``class``
+        whose ``$.<field>`` is a PRESENT scalar ∉ ``enum`` (absent/null/non-scalar is never a
+        violation). ``closed_types`` is NOT re-checked here — reindex resolves a typed page's
+        class from its frontmatter ``$.type`` and SKIPS any page whose ``$.type`` ∉
+        ``type_mapping`` (a hard classification failure reported in ``--full``'s
+        ``skipped[]``), so the closed-world stance is enforced at INDEX time, not re-swept
+        read-side (Q-054). Read-only over ``pages.frontmatter_json`` + ``page_entity_refs``;
+        **zero DDL**. NOT a write gate — reindex still indexes an edge/property-violating
+        page. Surfaced by ``wiki-lint`` (``ontology-violation``; gates ``--strict``) +
+        ``wiki-health ontology`` (always exit 0)."""
         ...
 
     @abc.abstractmethod

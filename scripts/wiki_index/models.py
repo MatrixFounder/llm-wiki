@@ -448,6 +448,77 @@ class CoverageGap:
     detail: str
 
 
+# -----------------------------------------------------------------------------
+# TASK 054 / R-19 — formal ontology spec: a declared, validated type/edge/property
+# contract. Grammar over existing data (pages.frontmatter_json + page_entity_refs);
+# derived, never stored. An OPTIONAL layout `ontology:` block (cybos only) — absent
+# ⇒ `LayoutConfig.ontology is None` ⇒ zero behaviour change.
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OntologyEdge:
+    """One declared edge domain/range (R-19): the (forward) ref_type ``edge`` may only
+    connect a SOURCE page of a class in ``frm`` to a resolved TARGET page of a class in
+    ``to``. ``frm`` avoids the ``from`` keyword (the YAML key is ``from``). Classes are
+    frontmatter ``$.type`` values, validated ∈ ``type_mapping`` keys at config load."""
+
+    edge: str
+    frm: tuple[str, ...]
+    to: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OntologyProperty:
+    """One declared property enum (R-19): a page of class ``page_class`` whose frontmatter
+    scalar ``$.<field>`` is PRESENT and not one of ``enum`` is a violation (an absent /
+    null / non-scalar value is NEVER a violation — an absence is a coverage concern, not a
+    contradiction). The field name is allow-listed (``validate_filter_field``); the YAML
+    key is ``class``."""
+
+    page_class: str
+    field: str
+    enum: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OntologyConfig:
+    """A layout's declared ontology contract (R-19) — the OPTIONAL ``ontology:`` block.
+    ``closed_types`` asserts the type roster IS the ``type_mapping`` keys (a page whose
+    authored ``$.type`` is a scalar outside it is a violation); ``edges`` declares
+    per-ref_type domain/range; ``properties`` declares per-class value enums. NOT a write
+    gate — reindex still indexes violating pages (markdown canonical, ADR-002 §D8)."""
+
+    closed_types: bool = False
+    edges: tuple[OntologyEdge, ...] = ()
+    properties: tuple[OntologyProperty, ...] = ()
+
+
+@dataclass(frozen=True)
+class OntologyViolation:
+    """One ontology-contract violation (R-19). ``kind``:
+      - ``domain``   — the page carries ``ref`` (an edge) but its class ∉ the edge's ``from``.
+      - ``range``    — the page's ``ref`` edge points at ``target_slug`` whose class ∉ ``to``.
+      - ``property`` — the page's ``$.<ref>`` scalar (``detail``) ∉ the class's enum.
+    (``closed_types`` yields NO read-side violation — an out-of-roster ``$.type`` is a hard
+    reindex SKIP, enforced at index time, Q-054.) ``page_class`` is the offending page's
+    authored ``$.type`` (for a ``range`` hit whose source is an untyped quick-capture it falls
+    back to the target class, never empty); ``ref`` is the ref_type (domain/range) or the
+    field name (property); ``detail`` is the offending value / target class; ``target_slug``
+    is the resolved edge target (may be ``None`` for a ``domain`` hit on a dangling edge).
+    Surfaced by ``wiki-lint`` (``ontology-violation``; gates ``--strict``) and
+    ``wiki-health ontology`` (always exit 0)."""
+
+    vault_id: str
+    page_slug: str
+    page_project: str
+    page_class: str
+    kind: str
+    ref: str
+    detail: str
+    target_slug: str | None = None
+
+
 @dataclass(frozen=True)
 class ClassificationLeakHit:
     """TASK 049 (R-6): a page whose ``cited``/``verifies`` ref targets a page

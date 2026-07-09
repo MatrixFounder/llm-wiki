@@ -51,7 +51,13 @@ from scripts.wiki_index.config_loader import (
     load_root_config,
 )
 from scripts.wiki_index.layout import SCHEMA_FILE, SYSTEM_FILES, VAULT_TIER_PROJECT
-from scripts.wiki_index.models import CoverageRule, DriftRule
+from scripts.wiki_index.models import (
+    CoverageRule,
+    DriftRule,
+    OntologyConfig,
+    OntologyEdge,
+    OntologyProperty,
+)
 from scripts.wiki_index.security import (
     PathTraversalError,
     assert_no_symlink_escape,
@@ -426,6 +432,7 @@ class LayoutConfig:
     auto_indexes: tuple[dict[str, Any], ...] = ()
     drift_rules: tuple[DriftRule, ...] = ()         # TASK 036 / R-15 (Slice A1)
     coverage_rules: tuple[CoverageRule, ...] = ()   # TASK 036 / R-15 (Slice A2)
+    ontology: OntologyConfig | None = None          # TASK 054 / R-19 (None ⇒ OFF)
     # R-X1-REDOS-RT (TASK 017) provenance — True iff a per-vault override SUPPLIED
     # this list (Q-012-f merge REPLACES it wholesale). Drives the runtime ReDoS
     # guard: operator-supplied patterns run under `regex`+timeout; built-in patterns
@@ -533,6 +540,7 @@ def _build(
         )
         for r in (merged.get("coverage_rules") or ())
     )
+    ontology = _build_ontology(merged.get("ontology"))
     return LayoutConfig(
         schema_version=merged["schema_version"],
         layout=merged["layout"],
@@ -547,6 +555,7 @@ def _build(
         auto_indexes=tuple(merged.get("auto_indexes") or ()),
         drift_rules=drift_rules,
         coverage_rules=coverage_rules,
+        ontology=ontology,
         ref_extraction_operator_supplied=ref_extraction_operator_supplied,
         paths_operator_supplied=paths_operator_supplied,
         write=_make_write_grammar(merged.get("write") or {}),
@@ -643,7 +652,111 @@ def load_layout_config(vault_root: Path, root_config: dict[str, Any]) -> LayoutC
     _validate_path_patterns(cfg.paths, operator_supplied=cfg.paths_operator_supplied)
     _redos_budget_check(cfg)            # PW-D ReDoS gate (ref + project regexes)
     _validate_health_rules(cfg)         # TASK 036 / R-15 — drift/coverage rule gate
+    _validate_ontology(cfg)             # TASK 054 / R-19 — ontology contract gate
     return cfg
+
+
+def _build_ontology(raw: Any) -> OntologyConfig | None:
+    """Parse the OPTIONAL `ontology:` mapping (TASK 054 / R-19) into an `OntologyConfig`,
+    or `None` when the key is absent/empty (⇒ OFF, zero behaviour change). Pure structural
+    parse; the semantic gate is `_validate_ontology` (post-`_build`, so a hand-built
+    LayoutConfig is still checked)."""
+    if not raw:
+        return None
+    return OntologyConfig(
+        closed_types=bool(raw.get("closed_types", False)),
+        edges=tuple(
+            OntologyEdge(
+                edge=e["edge"],
+                frm=tuple(e.get("from") or ()),
+                to=tuple(e.get("to") or ()),
+            )
+            for e in (raw.get("edges") or ())
+        ),
+        properties=tuple(
+            OntologyProperty(
+                page_class=p["class"],
+                field=p["field"],
+                enum=tuple(p.get("enum") or ()),
+            )
+            for p in (raw.get("properties") or ())
+        ),
+    )
+
+
+def _validate_ontology(config: LayoutConfig) -> None:
+    """TASK 054 / R-19 — validate the declared ontology contract at config-load (raise
+    LayoutConfigError → exit 6, the fail-loud posture of `_validate_health_rules`). The
+    schema enforces structure (required keys, `minItems`); this adds the SEMANTIC checks
+    JSON Schema cannot express — so a typo is exit 6, NEVER a silently never-fires rule:
+      - each `edge` is a known typed event-graph ref_type (`reindex._INVERSE_REF_TYPE` —
+        the SAME allow-list drift/coverage rules use);
+      - every `from`/`to`/`class` is a declared type (a `type_mapping` KEY — the roster the
+        `closed_types` contract derives from; no second roster, derive-don't-author);
+      - each property `field` is an allow-listed frontmatter field name
+        (`validate_filter_field`) — it is interpolated into a `$.<field>` JSON path;
+      - `from`/`to`/`enum` are non-empty with non-empty members (defensive: a hand-built
+        LayoutConfig bypassing the YAML schema must not slip an inert rule through).
+
+    Imports are LAZY (`reindex` imports THIS module → a top-level import would cycle).
+    No-op when no `ontology:` block is declared (the common case)."""
+    ont = config.ontology
+    if ont is None:
+        return
+    from scripts.wiki_index.reindex import _INVERSE_REF_TYPE
+    from scripts.wiki_index.repository import validate_filter_field
+
+    valid_edges = set(_INVERSE_REF_TYPE)
+    roster = set(config.type_mapping)
+    seen_edges: set[str] = set()
+    for e in ont.edges:
+        if e.edge not in valid_edges:
+            raise LayoutConfigError(
+                f"ontology edge names unknown ref_type {e.edge!r} "
+                f"(valid event-graph edges: {sorted(valid_edges)})")
+        # Duplicate edge rules AND together (each is a separate domain/range check), so a
+        # page satisfying one but not the other is falsely flagged — the operator almost
+        # certainly meant to UNION from/to. Reject at load (critic-logic MINOR): a typo is
+        # exit 6, never a silent misfire.
+        if e.edge in seen_edges:
+            raise LayoutConfigError(
+                f"ontology declares edge {e.edge!r} more than once; merge into ONE rule "
+                f"(union its from/to) — duplicate rules AND, not union")
+        seen_edges.add(e.edge)
+        if not e.frm or not e.to:
+            raise LayoutConfigError(
+                f"ontology edge {e.edge!r} must set non-empty from/to class lists")
+        for cls in (*e.frm, *e.to):
+            if cls not in roster:
+                raise LayoutConfigError(
+                    f"ontology edge {e.edge!r} names unknown class {cls!r} "
+                    f"(not a type_mapping key)")
+    seen_props: set[tuple[str, str]] = set()
+    for p in ont.properties:
+        if p.page_class not in roster:
+            raise LayoutConfigError(
+                f"ontology property names unknown class {p.page_class!r} "
+                f"(not a type_mapping key)")
+        try:
+            validate_filter_field(p.field)
+        except ValueError as exc:
+            raise LayoutConfigError(
+                f"ontology property for class {p.page_class!r}: {exc}") from exc
+        if not p.enum:
+            raise LayoutConfigError(
+                f"ontology property {p.page_class!r}.{p.field} must set a non-empty enum")
+        if any(not v.strip() for v in p.enum):
+            raise LayoutConfigError(
+                f"ontology property {p.page_class!r}.{p.field}: enum must not contain "
+                f"an empty value")
+        # Duplicate (class, field) property rules AND their enums → a value must satisfy
+        # BOTH, almost always a false positive. Reject (critic-logic MINOR).
+        key = (p.page_class, p.field)
+        if key in seen_props:
+            raise LayoutConfigError(
+                f"ontology declares property {p.page_class!r}.{p.field} more than once; "
+                f"merge into ONE rule (union the enum)")
+        seen_props.add(key)
 
 
 def _validate_health_rules(config: LayoutConfig) -> None:

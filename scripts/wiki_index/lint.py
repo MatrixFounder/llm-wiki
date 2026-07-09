@@ -109,6 +109,10 @@ def run_all_checks(
         issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path, config=config))
         issues.extend(
             check_lifecycle_drift(repo, vid, v.root_path, strict=strict, config=config))
+        # TASK 054 (R-19): ontology-violation — config-driven (`ontology:` block; cybos ships
+        # one, others none ⇒ no-op). A contradiction ⇒ advisory, gates `--strict` (ADR-006).
+        issues.extend(
+            check_ontology_violations(repo, vid, v.root_path, strict=strict, config=config))
         # TASK 049 (R-6): classification-leak + invalid-classification — gated
         # on the vault actually declaring a `policy:` block (no block ⇒ no DAL
         # call, no output — the R-15 no-op precedent).
@@ -210,6 +214,37 @@ def check_lifecycle_drift(
             details={"project": hit.page_project, "class": hit.page_class,
                      "edge": hit.edge, "status": hit.status,
                      "expected": hit.expected},
+        ))
+    return out
+
+
+def check_ontology_violations(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
+    config: "LayoutConfig | None" = None,
+) -> list[LintIssue]:
+    """TASK 054 / R-19 — flag pages that CONTRADICT the declared ontology contract: an edge
+    whose source/target class is out of the declared `from`/`to` (domain/range), or a
+    `status`-style property value out of its enum. Config-driven (`ontology:` block; the
+    `cybos` layout ships one, other layouts none → no-op, no DAL call). An ontology violation
+    is a genuine CONTRADICTION (like lifecycle-drift), so it rides `wiki-lint` and gates ONLY
+    `--strict` (ADR-006 D-036-2, the same rail); the sibling `wiki-health ontology` is the
+    always-exit-0 report view. (`closed_types` is enforced at index time — an out-of-roster
+    `$.type` is a reindex SKIP — so it produces no read-side finding here; see Q-054.)
+    `config` is reused from `run_all_checks` when provided (else resolved here)."""
+    if config is None:
+        from scripts.wiki_index.layout_config import resolve_layout_config
+        config = resolve_layout_config(vault_root)
+    if config.ontology is None:
+        return []
+    sev: Severity = "error" if strict else "warning"
+    out: list[LintIssue] = []
+    for v in repo.find_ontology_violations(vault_id, config.ontology):
+        out.append(LintIssue(
+            category="ontology-violation", severity=sev, vault_id=vault_id,
+            page_slug=v.page_slug,
+            details={"project": v.page_project, "class": v.page_class,
+                     "kind": v.kind, "ref": v.ref, "detail": v.detail,
+                     "target": v.target_slug},
         ))
     return out
 

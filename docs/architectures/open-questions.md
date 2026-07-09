@@ -1500,3 +1500,64 @@
   per unchanged file, and reads as blunt "re-summarise everything" intent, not a freshness
   policy. Connector zones — `if-changed`'s only target — carry machine-materialised sources,
   not hand-authored summaries, so the D1-markerless concern does not arise there.
+
+### 11l. TASK 054 — formal ontology spec (R-19) (design rationale)
+
+- **Q-054-1 (RESOLVED) — `closed_types` is enforced at INDEX time, not re-swept read-side.**
+  The initial design added a read-side "type" violation family (flag a page whose authored
+  `$.type` ∉ the `type_mapping` roster). The Red phase disproved its premise: cybos resolves a
+  typed page's class **from its frontmatter `$.type`** and `reindex` **SKIPS** any page whose
+  `$.type` ∉ `type_mapping` (verified error: `"frontmatter type='descision' not in type_mapping"`,
+  surfaced in `wiki-reindex --full`'s `skipped[]`). So an out-of-roster type **can never be
+  indexed** — a read-side sweep would be a guaranteed no-op. Resolution: the closed-world stance
+  is enforced at the **write/index boundary** (an unclassifiable type is a hard failure), while
+  edge/property contradictions are **soft** (the page still indexes) → advisory read-side. This
+  is a coherent split, not an inconsistency: a type you can't map you can't file; an edge/status
+  you author wrong is a filed-but-contradictory fact. `closed_types` remains a declared flag
+  (fed to an orchestrator as context; the load-gate validates all edge/property classes against
+  the same `type_mapping` roster — no second roster, derive-don't-author). The DAL signature is
+  therefore `find_ontology_violations(vault_id, ontology)` (no roster param).
+
+- **Q-054-2 (RESOLVED, revised after `/vdd-multi` critic-logic) — domain fires INDEPENDENT of
+  target resolution; only range needs the COUNT=1 target.** The initial edge check INNER-JOINed
+  the resolved target (the `find_classification_leaks` shape), which correctly skipped phantom
+  **range** hits but ALSO dropped **domain** hits whose target was an orphan/entity/ambiguous
+  slug (a `risk` that `implements [[ghost]]` is a domain error regardless of whether `ghost`
+  resolves). Fixed to a **LEFT JOIN** with the `COUNT=1` guard in the ON-clause: the target
+  collapses to exactly one row OR all-NULL, so `domain` evaluates off the `src` join alone
+  (fires for a dangling edge; `target_slug` is then `None`) while `range` fires only when the
+  target resolves uniquely (`tgt_type` non-NULL) — still no phantom cross-project range hit.
+  NULL `$.type` on either side is never a violation (only a PRESENT, scalar, wrong class is a
+  contradiction — the drift `json_type=='text'` precedent). A `range` hit whose SOURCE is an
+  untyped quick-capture attributes `page_class` to the target class (never empty). A `domain`
+  hit is deduped per `(page_slug, ref)` with `target_slug=None` (a page carrying the same edge
+  type to N targets is ONE domain finding — the target is irrelevant to a domain error — so
+  `total_violations`/`by_kind` never inflate by target cardinality, `/vdd-multi` re-critique
+  1d); `range`/`property` stay per-instance.
+
+- **Q-054-4 (KNOWN LIMITATION, `/vdd-multi` critic-logic MAJOR) — `$.type`-keying misses untyped
+  quick-captures.** The checks (like R-15 drift/coverage) key on frontmatter `$.type`. A note
+  filed under a typed folder with NO authored `type:` is indexed with its db-class derived from
+  the path glob (`normalization._infer_type_from_path` / `glob_type`), but reindex never injects
+  `$.type` into `frontmatter_json`, so `$.type` is NULL and the note escapes every ontology
+  check. The page-type TEMPLATES all author `type:`, so template-created notes ARE checked; the
+  gap is untyped quick-captures. Left as a documented limitation (codified by
+  `test_typeless_note_escapes_checks`) rather than fixed here, because the robust fix — key off
+  the derived class tag, or inject the glob-resolved `$.type` at reindex — must be applied
+  **uniformly across R-15 + R-19** (a separate machinery-wide change), not divergently in R-19
+  alone. Recorded, not silently narrowed.
+
+- **Q-054-5 (RESOLVED, `/vdd-multi` critic-logic MINOR) — duplicate ontology rules are rejected
+  at load.** Two `{edge: implements, …}` (or `{class, field}` property) rules AND rather than
+  union — a page satisfying one but not the other is falsely flagged. The load-gate now rejects
+  a repeated edge name / `(class, field)` pair (exit 6, "merge into ONE rule"), honouring the
+  "a typo is exit 6, never a silent misfire" contract.
+
+- **Q-054-3 (RESOLVED) — a contradiction rides `wiki-lint --strict`; the report view is
+  `wiki-health ontology`.** Per ADR-006 D-036-2: an ontology violation is a *contradiction*
+  (like lifecycle-drift), so its `--strict`-gating rail is `wiki-lint` (`ontology-violation`,
+  `warning`→`error` under `--strict`). The sibling `wiki-health ontology` is the always-exit-0
+  report (like `coverage`) for surfacing without gating. Both read the same DAL. Edge/property
+  values that flow into the report `detail` originate from possibly-untrusted frontmatter, but
+  the surface is an operator-facing JSON/markdown report (same posture as the coverage/drift
+  reports), and every value reaches SQL only as a bound param.

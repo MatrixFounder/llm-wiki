@@ -163,3 +163,50 @@ coverage_rules:
   - {class: requirement, requires_edge: implemented-by}   # nothing implements this requirement
   - {class: capability,  requires_edge: implemented-by}   # no agent/tool provides this capability
   - {class: fact,        requires_field: source}          # fact with no cited source
+
+# --- TASK 054 / R-19: formal ontology contract (zero-DDL, read-only, NOT a write gate) ---
+# Promotes the typed-knowledge ontology from tribal convention to a declared, validated,
+# diffable contract an orchestrator can also be FED as context. Three parts:
+#   closed_types: DECLARES the type roster is closed (== the type_mapping keys, no second
+#     roster). Enforcement is at INDEX time, not re-swept read-side: reindex resolves a typed
+#     page's class from its frontmatter `$.type` and SKIPS any page whose `$.type` ∉
+#     type_mapping (reported in `wiki-reindex --full`'s `skipped[]`) — an out-of-roster type
+#     is a hard classification failure, so it can never be indexed to flag later (Q-054).
+#   edges: per-(forward)-ref_type domain→range. `from`/`to` are the SOURCE/TARGET page classes
+#     ($.type). A page carrying the edge whose source class ∉ from = a `domain` violation; whose
+#     RESOLVED target class ∉ to = a `range` violation (an orphan/entity target is skipped).
+#   properties: lift the `status` vocabularies out of templates/page-types/*.md comments into
+#     validated config — a PRESENT scalar $.<field> not in the enum is a violation.
+# Load-gate (_validate_ontology): every edge ∈ the 15 event-graph ref_types; every from/to/class
+# ∈ type_mapping keys; every field allow-listed — a typo is exit 6, never a silent never-fires
+# rule. Edge/property violations surface as a `wiki-lint` `ontology-violation` (a soft
+# CONTRADICTION → advisory, gates `--strict`, ADR-006 D-036-2) + `wiki-health ontology` (always
+# exit 0). Reindex still indexes an edge/property-violating page (markdown canonical, ADR-002
+# §D8) — reported, never enforced.
+ontology:
+  closed_types: true
+  edges:
+    # from/to = SOURCE/TARGET page classes ($.type), derived from the edge conventions the
+    # templates/page-types/*.md author (forward `implements:`/`causes:`/… OR the inverse
+    # `implemented_by:`/`caused_by:`/… that reindex auto-derives the forward from). Kept broad
+    # enough to never false-flag a template-conformant note; test_templates_conform_to_ontology
+    # anchors that (a cybos vault authored per the templates yields ZERO ontology violations).
+    - {edge: implements,  from: [decision, task, agent, tool],                     to: [requirement, capability]}
+    - {edge: supersedes,  from: [decision, requirement, workflow, adr, pattern],   to: [decision, requirement, workflow, adr, pattern]}
+    - {edge: causes,      from: [decision, event, incident, risk],                 to: [incident, event, risk, pattern, execution]}
+    - {edge: invalidates, from: [incident, event],                                 to: [decision, hypothesis]}
+    - {edge: activates,   from: [event],                                           to: [decision]}
+    - {edge: uses,        from: [agent, workflow, execution],                      to: [tool, capability]}
+    - {edge: owns,        from: [agent],                                           to: [workflow, tool, capability]}
+  properties:
+    - {class: decision,    field: status, enum: [proposed, accepted, superseded, rejected]}
+    - {class: incident,    field: status, enum: [open, mitigated, resolved]}
+    - {class: requirement, field: status, enum: [draft, approved, implemented, dropped]}
+    - {class: workflow,    field: status, enum: [draft, active, deprecated, superseded]}
+    - {class: hypothesis,  field: status, enum: [proposed, testing, confirmed, refuted]}
+    - {class: risk,        field: status, enum: [open, mitigated, accepted, closed]}
+    - {class: tool,        field: status, enum: [active, deprecated, retired]}
+    - {class: agent,       field: status, enum: [active, deprecated, retired]}
+    - {class: capability,  field: status, enum: [active, deprecated]}
+    - {class: execution,   field: status, enum: [success, failed, partial]}
+    - {class: pattern,     field: status, enum: [active, superseded]}

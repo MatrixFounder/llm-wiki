@@ -254,8 +254,8 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**. Since **R-15 / TASK 036** it also runs **lifecycle-drift** — a page whose authored `status` *contradicts* the event graph (a `decision` carrying a `superseded-by` edge but still `status: accepted`; one an incident `invalidates` but still live). Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans). Drift is **advisory by default and gates only `--strict`** (it is a true contradiction); `--mtime-skip` trades full-hash integrity for speed. |
-| **`wiki-health`** | Read-only **derived knowledge-health** report (R-15 / TASK 036, ADR-006) — the *coverage* sibling of `wiki-lint`'s drift. `wiki-health coverage --vault <id> [--class C]` lists pages **missing an expected relation** — a `requirement` nothing implements, a `capability` no agent provides, a `fact` with no `source:` — computed over frontmatter + the event graph (layout-config-driven `coverage_rules`; the `cybos` layout ships them, other layouts → an empty report). A gap is *data*, not a failure → it **always exits 0** (whereas drift gates `--strict`). Pure derivation: zero new fields, zero DDL. |
+| **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**. Since **R-15 / TASK 036** it also runs **lifecycle-drift** — a page whose authored `status` *contradicts* the event graph (a `decision` carrying a `superseded-by` edge but still `status: accepted`; one an incident `invalidates` but still live) — and since **R-19 / TASK 054** **ontology-violation** — a page that breaks the declared `ontology:` contract (an edge whose source/target class is out of its `from`/`to`, e.g. a `fact` that `implements` a `risk`; or a `status` outside its class enum). Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans). Both drift and ontology-violation are **advisory by default and gate only `--strict`** (they are true contradictions); `--mtime-skip` trades full-hash integrity for speed. |
+| **`wiki-health`** | Read-only **derived knowledge-health** report (R-15 / TASK 036, ADR-006) — the always-exit-0 sibling of `wiki-lint`'s `--strict`-gating contradictions. **`wiki-health coverage --vault <id> [--class C]`** lists pages **missing an expected relation** — a `requirement` nothing implements, a `capability` no agent provides, a `fact` with no `source:`. **`wiki-health ontology --vault <id> [--class C]`** (R-19 / TASK 054) lists pages **contradicting the declared `ontology:` contract** — an edge whose source/target class is out of its declared domain/range, or a `status` value outside its class enum. Both are computed over frontmatter + the event graph (layout-config-driven `coverage_rules` / `ontology`; the `cybos` layout ships them, other layouts → an empty report) and **always exit 0** (a gap/violation from this surface is *data* — the `--strict` gate for the ontology contradiction is `wiki-lint`). Pure derivation: zero new fields, zero DDL. |
 | **`wiki-reindex`** | Rebuilds the DB from markdown. `--full` wipes and rebuilds (this is the **rebuildability gate** — if a vault can't survive `--full`, the Class A→B contract is broken); `--delta` does an incremental mtime/hash-based pass after manual edits. The authoritative reconciliation of cache ↔ canon. |
 
 ### 6. Vault lifecycle
@@ -322,7 +322,7 @@ SEPARATE systems** — the vault's *identity* (`WIKI_SCHEMA.md`) and the layout 
 | File | Responsibility | Required | How it's overridden |
 |---|---|---|---|
 | **`WIKI_SCHEMA.md`** (frontmatter) | The vault's **identity**: `vault_id`, `layout`, optional `index_db`, optional `policy:` (ADR-009) | **Yes** | It *is* the vault's declaration — hand-edited, never merged |
-| **`.wiki/layout.yaml`** | The **layout grammar**: WHAT and HOW to index — `ignore`, `type_mapping`, `paths`, `ref_extraction`, `drift_rules`/`coverage_rules` | No (base = the built-in `layout`) | Per-key: **`ignore` → UNION**, **`type_mapping` → deep-MERGE**, **`paths`/`ref_extraction` → REPLACE** |
+| **`.wiki/layout.yaml`** | The **layout grammar**: WHAT and HOW to index — `ignore`, `type_mapping`, `paths`, `ref_extraction`, `drift_rules`/`coverage_rules`, `ontology` (R-19: the declared type/edge/property contract) | No (base = the built-in `layout`) | Per-key: **`ignore` → UNION**, **`type_mapping` → deep-MERGE**, **`paths`/`ref_extraction`/`ontology.edges`/`ontology.properties` → REPLACE** |
 | **`.wiki/sync.yaml`** | **`wiki-sync`** config: `zones`, `exclude`, `extensions`, `tag_namespace`, the `resummarize` gate | No | Strict schema; a deeper `<subfolder>/.wiki/sync.yaml` deep-merges over the root one |
 | **`.wiki/page-types/*.md`** | Authoring scaffolds — one template per typed class | No | Copied by `wiki-init`; not indexed themselves (they live under `.wiki/`) |
 
@@ -647,7 +647,13 @@ frontmatter `layout_config:` pointer.
 > graph proper (`wiki-graph`) — **shipped** in TASK 032/034 (ADR-004, schema v7): author
 > `implements`/`supersedes`/`caused_by`/`invalidated_by`/`uses`/`owns`/… in frontmatter,
 > one direction, inverse auto-derived. Point-in-time "what was active on date X" is then
-> a no-LLM `wiki-search --as-of` query (TASK 034).
+> a no-LLM `wiki-search --as-of` query (TASK 034). Since **R-19 / TASK 054** an optional
+> `ontology:` block in the layout promotes these classes/edges/statuses from convention to a
+> **declared, validated contract** — `closed_types` + per-edge `from`/`to` (domain→range) +
+> per-class `status` enums — so a mis-typed edge (a `fact` that `implements` a `risk`) or a
+> `status` outside its enum is caught by `wiki-lint --strict` (`ontology-violation`) /
+> `wiki-health ontology`. Zero-DDL, cybos ships one, and it is **NOT a write gate** (a
+> violating page still indexes — markdown stays canonical).
 
 Three design facts worth internalising:
 
@@ -1558,7 +1564,9 @@ skill's `SKILL.md`. Quick index:
 | `wiki-confirm` | Promote/demote a candidate entity | [skills/wiki-confirm](../../skills/wiki-confirm/SKILL.md) |
 | `wiki-alias` | Manage entity aliases | [skills/wiki-alias](../../skills/wiki-alias/SKILL.md) |
 | `wiki-merge` | Fold a duplicate entity | [skills/wiki-merge](../../skills/wiki-merge/SKILL.md) |
-| `wiki-lint` | SQL-level health-check | [skills/wiki-lint](../../skills/wiki-lint/SKILL.md) |
+| `wiki-lint` | SQL-level health-check (+ lifecycle-drift & ontology-violation contradictions; gate `--strict`) | [skills/wiki-lint](../../skills/wiki-lint/SKILL.md) |
+| `wiki-graph` | Event-graph traversal: `backlinks` / `neighbors` / `chain` over typed edges | [skills/wiki-graph](../../skills/wiki-graph/SKILL.md) |
+| `wiki-health` | Read-only knowledge-health report: `coverage` (missing relations) + `ontology` (contract violations); always exit 0 | [skills/wiki-health](../../skills/wiki-health/SKILL.md) |
 
 Contract skills (LLM-side, no CLI; loaded by the orchestrator between
 `prepare`/`apply`): `wiki-query-synthesis`, `wiki-verify`, `concept-extraction`.
