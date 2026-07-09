@@ -63,7 +63,8 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
 ### 1. `prepare` — deterministic fetch + context
 ```bash
 wiki-import prepare --vault <id> --vault-root <abs> \
-  --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread
+  --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread \
+  [--known-concepts-format full|slugs-only]   # P-6: slugs-only shrinks the envelope on a large vault
 ```
 Dispatches to one of **three** wrapped external skills (composition, not reinvention —
 extends ADR-001): `html` (URL/HTML — it already owns the Wikipedia-REST-HTML and
@@ -206,9 +207,12 @@ translation into the target language; **summary** = thorough digest (`body` null
 wiki-import apply --vault <id> --vault-root <abs> \
   --folder "<topic folder>" --mode <same> --kind <prepare.kind> \
   --raw-rel <prepare.raw_path> --source-url <URL> --source-lang en|ru \
-  [--diagrams] [--no-concepts] \
+  [--published <prepare.date>] [--diagrams] [--no-concepts] \
   --existing-page-slugs '<prepare.existing_page_slugs JSON>' --note-stdin   # note JSON on stdin
 ```
+(`--published <prepare.date>` (WI-3): pass prepare's extracted source `date` — it's used as a
+fallback for the note's `published` when the REASON note leaves it null, so a month-precision
+publication date like arXiv `2025-10` isn't dropped. A `published` in the note JSON wins.)
 (`apply` rejects `--kind auto` — pass the **resolved concrete** kind from `prepare`. `--diagrams`/
 `--no-concepts` mirror the REASON modifiers above: `--diagrams` is recorded in the manifest;
 `--no-concepts` skips concept filing and sets `concepts_deferred: true`.)

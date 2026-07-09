@@ -20,8 +20,11 @@ def vault(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _stub_context(monkeypatch):
+    # P-6: known_concepts now takes a keyword-only `fmt` (full|slugs-only) — the stub honours it so
+    # the slugs-only prepare path is exercised too (a bare-3-arg lambda would TypeError under fmt=).
     monkeypatch.setattr(_context, "known_concepts",
-                        lambda repo, v, root: [{"slug": "amm", "name": "AMM"}])
+                        lambda repo, v, root, *, fmt="full": (
+                            ["amm"] if fmt == "slugs-only" else [{"slug": "amm", "name": "AMM"}]))
     monkeypatch.setattr(_context, "existing_page_slugs",
                         lambda *a, **k: ["defi", "uniswap"])
 
@@ -86,6 +89,17 @@ def test_prepare_does_not_adopt_txt_in_raw(vault, monkeypatch, capsys):
     assert (raw_dir / "transcript.txt").exists()  # original left untouched
 
 
+def test_prepare_known_concepts_format_slugs_only(vault, monkeypatch, capsys):
+    # P-6 residual: `--known-concepts-format slugs-only` shrinks the envelope's known_concepts to a
+    # bare [slug, …] list (default `full` stays [{slug,name}, …]) — the wiki-import parallel to R-015-3.
+    fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="DeFi Guide",
+                     author="A", date="2025-01-01", engine="html")
+    rc = _run(vault, monkeypatch, fr, extra=["--known-concepts-format", "slugs-only"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["action"] == "prepared"
+    assert out["known_concepts"] == ["amm"]           # bare slug list, not {slug,name} pairs
+
+
 def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     fr = FetchResult(ok=True, raw_text="# Guide\n\nbody\n", title="DeFi Guide",
                      author="A", date="2025-01-01", engine="html")
@@ -94,7 +108,7 @@ def test_prepare_ok_emits_envelope_and_writes_raw(vault, monkeypatch, capsys):
     assert rc == 0 and out["action"] == "prepared"
     assert out["slug"] == "defi-guide" and out["mode"] == "summary"
     assert out["project"] == "Материалы/Криптовалюты"
-    assert out["known_concepts"] == [{"slug": "amm", "name": "AMM"}]
+    assert out["known_concepts"] == [{"slug": "amm", "name": "AMM"}]   # default fmt=full unchanged
     assert out["existing_page_slugs"] == ["defi", "uniswap"]
     # R-2: content-type detection fields present in the envelope (auto-detected → article)
     assert out["kind"] == "article" and out["reason_harness"] == "summarizing-meetings"

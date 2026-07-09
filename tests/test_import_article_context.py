@@ -77,3 +77,23 @@ def test_known_concepts_normalizes(monkeypatch):
     out = _context.known_concepts(object(), "personal", __import__("pathlib").Path("/x"))
     assert {"slug": "amm", "name": "AMM"} in out
     assert any(c["name"] == "Постквантовая криптография" for c in out)
+
+
+def test_known_concepts_slugs_only_shape(monkeypatch):
+    # P-6 residual: `slugs-only` emits a bare [slug, …] list (mirrors wiki-extract-concepts
+    # R-015-3), shrinking the prepare envelope on a large vault; `full` (default) is byte-identical
+    # to today. An empty slug is dropped from the slugs-only list (never emits a bare "").
+    from pathlib import Path
+
+    from scripts.wiki_skills.wiki_extract_concepts import _db
+    monkeypatch.setattr(
+        _db, "load_known_entities",
+        lambda repo, v: [{"slug": "amm", "name": "AMM"},
+                         {"slug": "defi", "name": "DeFi"},
+                         {"slug": "", "name": "junk"}],
+    )
+    slugs = _context.known_concepts(object(), "v", Path("/x"), fmt="slugs-only")
+    assert slugs == ["amm", "defi"]                       # bare slug strings, empty dropped
+    full = _context.known_concepts(object(), "v", Path("/x"))  # default fmt="full"
+    assert {"slug": "amm", "name": "AMM"} in full
+    assert all(isinstance(c, dict) and set(c) == {"slug", "name"} for c in full)

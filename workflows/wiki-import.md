@@ -39,7 +39,9 @@ content harness) is yours, the orchestrator. **No `import anthropic`.**
    - Each `entities[].quote` MUST be copied verbatim from the text you write.
 3. **apply** — pipe the note JSON to `wiki-import apply … --kind <prepare.kind> --note-stdin
    --raw-rel <prepare.raw_path> --source-url <URL> --source-lang en|ru
-   --existing-page-slugs '<prepare.existing_page_slugs JSON>'`.
+   [--published <prepare.date>] --existing-page-slugs '<prepare.existing_page_slugs JSON>'`.
+   - `--published <prepare.date>` (WI-3) backstops the note's `published` when the REASON step
+     leaves it null (a month-only source date like arXiv `2025-10` has no `YYYY-MM-DD` form).
    - It files the note **per the resolved layout** + sets the note `type:` from `--kind`
      (layout-safe), sanitizes names, guarantees verbatim quotes, runs the collision guard, files
      concept pages (`wiki-extract-concepts apply` with a FRESH hash of the written note + the

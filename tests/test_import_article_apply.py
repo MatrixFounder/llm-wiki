@@ -178,6 +178,38 @@ def test_apply_writes_note_and_files_concepts(vault, tmp_path, capsys, _stub_sub
     assert [c["slug"] for c in cands] == ["amm"]
 
 
+def test_wi3_apply_published_falls_back_to_source_date(vault, tmp_path, capsys, _stub_subprocs):
+    # WI-3: the REASON note leaves `published` null (a month-only source date, e.g. arXiv 2025-10,
+    # has no valid YYYY-MM-DD form). apply backfills from prepare's extracted date (--published) so
+    # the publication date isn't silently dropped.
+    rc = _run(vault, _note(tmp_path), vault / "i.db", extra=["--published", "2025-10"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    text = (vault / out["note"]).read_text()
+    assert 'published: "2025-10"' in text          # frontmatter carries the month-precision date
+    assert "· 2025-10" in text                       # and the source provenance line
+
+
+def test_wi3_note_published_wins_over_source_date(vault, tmp_path, capsys, _stub_subprocs):
+    # a `published` authored in the note JSON (any precision) is authoritative — the --published
+    # fallback only fills a null/blank, never overwrites.
+    nf = _note(tmp_path, published="2025-10-15")
+    rc = _run(vault, nf, vault / "i.db", extra=["--published", "2025-10"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    text = (vault / out["note"]).read_text()
+    assert 'published: "2025-10-15"' in text          # note value wins
+    assert 'published: "2025-10"' not in text         # fallback did NOT overwrite
+
+
+def test_wi3_no_published_and_no_fallback_omits_field(vault, tmp_path, capsys, _stub_subprocs):
+    # no note `published` AND no --published → the key is simply absent (unchanged pre-WI-3 output).
+    rc = _run(vault, _note(tmp_path), vault / "i.db")
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert "published:" not in (vault / out["note"]).read_text()
+
+
 def test_apply_no_candidates_skips_concept_filing(vault, tmp_path, capsys, _stub_subprocs):
     # every entity collides → no candidates → _file_concepts not called
     nf = _note(tmp_path, entities=[{"name": "DeFi", "definition": "d", "quote": "q", "type": "concept"}])

@@ -87,6 +87,83 @@ def test_assemble_note_is_language_driven_not_hardcoded():
     assert "## Key takeaways" in unknown
 
 
+def test_wi1_tldr_fm_preview_word_boundary_and_ellipsis():
+    # WI-1 unit: the frontmatter preview caps on a WORD boundary + `…` (never mid-grapheme), is
+    # character-based (Cyrillic = 1 each), and returns a ≤300-char tldr unchanged (byte-identity).
+    assert A._tldr_fm_preview("кратко") == "кратко"                 # short → unchanged
+    long = " ".join(["слово"] * 100)                                 # 600 chars, word-separated
+    prev = A._tldr_fm_preview(long)
+    assert prev.endswith("…") and len(prev) <= 301                   # capped + ellipsis
+    assert not prev[:-1].endswith("слов")                            # not cut mid-word
+    assert long.startswith(prev[:-1])                                # a genuine prefix span
+
+
+def test_wi1_full_tldr_in_body_but_capped_in_frontmatter():
+    # WI-1: a tldr > 300 chars renders IN FULL in the body `## brief` section; only the frontmatter
+    # `tldr:` scalar is capped — on a word boundary + `…`, never the old mid-word `[:300]` slice.
+    import re as _re
+    long_tldr = ("Метод прицельно перемаскирует только вероятно неверные токены и тем самым "
+                 "ускоряет диффузионное декодирование без потери качества генерации текста на "
+                 "широком классе задач обработки естественного языка и машинного рассуждения "
+                 "современных языковых моделей глубокого обучения что подтверждено многочисленными "
+                 "экспериментами на публичных бенчмарках и проверено независимыми исследователями.")
+    assert len(long_tldr) > 300
+    note = {"title_ru": "T", "tldr": long_tldr, "summary_bullets": ["b1"], "ru_body": "x"}
+    _, text = A.assemble_note(
+        note, mode="summary", raw_rel_basename="f/_raw/x.md", source_url="u",
+        source_lang="en", today="2026-06-18", san_names=[], lang="ru")
+    assert long_tldr in text                                          # body carries the FULL tldr
+    fm_tldr = _re.search(r'^tldr: "(.*)"$', text, _re.MULTILINE).group(1)
+    assert fm_tldr.endswith("…") and len(fm_tldr) <= 301             # frontmatter capped
+    preview = fm_tldr[:-1]
+    assert long_tldr.startswith(preview)                             # genuine prefix
+    assert not long_tldr[len(preview):len(preview) + 1].isalnum()    # cut at a boundary, not mid-word
+
+
+def test_wi1_tldr_keeps_raw_quotes_in_body_normalizes_in_frontmatter():
+    # WI-1 (+ vdd logic/security converge): the body-rendered tldr keeps its literal `"` so it
+    # byte-matches the orchestrator-authored text (verbatim-quote resolution) and is consistent with
+    # the sibling scalars; the frontmatter `tldr:` preview normalizes `"`→`'` at emission (YAML-safe).
+    note = {"title_ru": "T", "tldr": 'Он назвал это "ремаскингом" токенов.',
+            "summary_bullets": ["b"], "ru_body": "x"}
+    _, text = A.assemble_note(
+        note, mode="summary", raw_rel_basename="f/_raw/x.md", source_url="u",
+        source_lang="en", today="2026-06-18", san_names=[], lang="ru")
+    assert '## Кратко\n\nОн назвал это "ремаскингом" токенов.' in text     # body: raw quotes intact
+    assert 'tldr: "Он назвал это \'ремаскингом\' токенов."' in text          # frontmatter: normalized
+    assert 'tldr: "Он назвал это "' not in text                            # scalar never broken by a raw `"`
+
+
+def test_wi2_summary_mode_quote_fallback_searches_rendered_bullets():
+    # WI-2: in mode=summary `body` is null → the entity quote resolves against the RENDERED summary
+    # note (tldr + bullets). derive_candidates runs on that rendered text, so a bullet line naming the
+    # entity IS a valid fallback; an entity absent from tldr+bullets drops `no-verbatim-quote`.
+    note = {"title_ru": "Обзор диффузии", "tldr": "Диффузионные LLM ускоряют декодирование.",
+            "summary_bullets": ["Ремаскинг перемаскирует только вероятно неверные токены.",
+                                "Качество генерации сохраняется на широких бенчмарках."],
+            "ru_body": None}
+    _, rendered = A.assemble_note(
+        note, mode="summary", raw_rel_basename="f/_raw/x.md", source_url="u",
+        source_lang="en", today="2026-06-18", san_names=[], lang="ru")
+    assert "## Полный текст" not in rendered                          # summary mode → no body section
+    ents = [
+        {"name": "Ремаскинг", "definition": "d",                     # verbatim bullet substring → kept
+         "quote": "Ремаскинг перемаскирует только вероятно неверные токены.", "type": "concept"},
+        {"name": "Качество генерации", "definition": "d",            # paraphrased quote, name in a bullet
+         "quote": "выдуманная цитата которой нет", "type": "concept"},  # → rescued by name-mention fallback
+        {"name": "Квантовая телепортация", "definition": "d",        # named nowhere → dropped
+         "quote": "тоже нет", "type": "concept"},
+    ]
+    cands, skipped = A.derive_candidates(
+        ents, rendered, slug_strategy="preserve-unicode",
+        note_slug="obzor-diffuzii", existing_page_slugs=[])
+    kept = {c["name"] for c in cands}
+    assert "Ремаскинг" in kept                                        # exact bullet quote
+    assert "Качество генерации" in kept                               # resolved via a bullet-line mention
+    assert {"name": "Квантовая телепортация", "reason": "no-verbatim-quote"} in skipped
+    assert all(c["source_quote"] in rendered for c in cands)          # every kept quote is verbatim
+
+
 def test_derive_candidates_collision_guard():
     body = "AMM это маркет-мейкер. DeFi это финансы. Bonding это связывание.\n"
     ents = [
