@@ -25,10 +25,23 @@ content harness) is yours, the orchestrator. **No `import anthropic`.**
 ## Single-source steps
 
 1. **prepare** — `wiki-import prepare --vault <id> --vault-root <abs>
-   --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread`.
+   --source <URL|file> [--folder "<topic folder>"] --kind auto --mode full|summary|thread`.
    - `--folder` = an EXISTING vault folder (PARA topic, or `_sources` for karpathy). No new top-levels.
+   - **Folder unknown? OMIT `--folder`** (TASK 057 W2 — the FIRST move; do NOT guess): `prepare`
+     stages the capture OUTSIDE the vault and infers the folder from a same-series sibling in the
+     index (then an optional active-note hint). Handle the outcome:
+     - `action:"folder_proposed"` (exit 0) → echo `folder_inferred` + `evidence` to the user,
+       confirm/override, then re-run `prepare --folder "<F>" --source <staged_path>` — fetch-free.
+     - `FOLDER_UNRESOLVED` (exit 2) → ASK the user, offering `candidates[]`; then the same
+       staged re-run. Never pick a folder silently.
    - `--kind auto` detects content-type (meeting / article / paper / thread / summary) and reports
      `kind` + `reason_harness` + `kind_confidence` in the envelope; pass `--kind <X>` to override.
+   - `action:"announcement_only"` (exit 0, TASK 057 W3 — an x-status that merely announces a
+     Broadcast/Space): nothing was filed; re-run `prepare` on the envelope's `broadcast_url`
+     (usually `--kind meeting`), or pass `--video` to concatenate tweet + transcript.
+   - Long X Broadcast/Space (TASK 057 W1): the skill's parallel download + duration-derived
+     budget apply automatically; `--transcript-concurrency` / `--transcript-media-timeout`
+     override per run, `WIKI_TRANSCRIPT_TIMEOUT_S` bounds the subprocess (default 3600 s primary).
    - On `FETCH_FAILED` (exit 10): source unreachable/empty (e.g. SSRN paywall) → file a
      `needs-manual` stub by hand and stop for this source.
 2. **REASON (you)** — run the harness `prepare` reported (`reason_harness` =

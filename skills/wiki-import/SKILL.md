@@ -63,9 +63,30 @@ A Decision-17 skill: **no `import anthropic`** — Python does the deterministic
 ### 1. `prepare` — deterministic fetch + context
 ```bash
 wiki-import prepare --vault <id> --vault-root <abs> \
-  --source <URL|file> --folder "<topic folder>" --kind auto --mode full|summary|thread \
+  --source <URL|file> [--folder "<topic folder>"] --kind auto --mode full|summary|thread \
   [--known-concepts-format full|slugs-only]   # P-6: slugs-only shrinks the envelope on a large vault
 ```
+
+> ### No `--folder`? prepare INFERS one (TASK 057 — W2)
+> `--folder` is **optional on `prepare`** (still required on `apply`). Omitted → the fetch runs
+> as usual, then a **vendor-independent inference chain** proposes the folder — and `prepare`
+> **writes NOTHING into the vault**:
+> 1. **Series-sibling (primary):** the detected title's series stem (`Building AI-Native
+>    Startups [004]` → `Building AI-Native Startups`) is FTS-matched against the vault's own
+>    index; siblings agreeing on ONE folder → `{action:"folder_proposed",
+>    folder_inferred, basis:"series-sibling", confidence:"high", evidence:[…]}` (exit 0).
+>    Needs no running app, no vendor — index + filesystem only.
+> 2. **Active-note hint (secondary):** only if (1) is inconclusive — `obsidian-active-note
+>    folder` when on PATH (basis `active-note`, confidence `medium`); ANY non-zero exit /
+>    absence degrades silently.
+> 3. **Ask:** neither → `{error:"FOLDER_UNRESOLVED", candidates:[…]}` (exit 2) — ask the
+>    operator; never guess.
+>
+> Every no-folder outcome also carries **`staged_path`** — the converted capture persisted
+> OUTSIDE the vault (frontmatter stamped with `source:`/title/author/date), so the confirmed
+> re-run `prepare --folder "<F>" --source <staged_path>` is **fetch-free** (a 70-min broadcast
+> is never transcribed twice). Staging keeps text only — re-run the ORIGINAL URL instead when
+> the images matter.
 Dispatches to one of **three** wrapped external skills (composition, not reinvention —
 extends ADR-001): `html` (URL/HTML — it already owns the Wikipedia-REST-HTML and
 arXiv-`/html/` rewrites + typed `EmptyExtraction`/`arxiv_no_html` exits), the `pdf`
@@ -129,8 +150,27 @@ and writes **nothing** — file a `needs-manual` stub by hand.
 >
 > **Passthroughs** to the transcript subprocess: `--lang` is ALWAYS forwarded (the vault language; never
 > the skill's own `ru` default), plus `--max-duration-min` (clip long Broadcasts/Spaces),
-> `--cookies-from-browser`/`--cookies-file` (login-walled video). `--transcript-bin` overrides the
-> skill path (absent → exit 6 when a video URL is hit). Timeout via `WIKI_TRANSCRIPT_TIMEOUT_S` (default 300s).
+> `--cookies-from-browser`/`--cookies-file` (login-walled video), and — TASK 057 (W1) —
+> **`--transcript-concurrency`** → the skill's `--concurrent-fragments` (parallel HLS fragment
+> downloads for X media) and **`--transcript-media-timeout`** → `--media-timeout-sec` (X media
+> download budget). Omitted → the flags are NOT passed, so the skill's own env/`.env`/
+> duration-derived defaults rule (the policy stays skill-owned). `--transcript-bin` overrides the
+> skill path (absent → exit 6 when a video URL is hit).
+>
+> **Wall-clock (scoped — TASK 057 W1-3):** `WIKI_TRANSCRIPT_TIMEOUT_S` set → that bound for every
+> transcript subprocess; unset → **3600 s** for a PRIMARY fetch (the URL is the content:
+> unambiguous video / x-status `--video` — covers parallel download + ASR of a ≥60-min broadcast)
+> and **300 s** per best-effort `--embedded-videos` fetch (hung embeds must never chain multi-hour
+> stalls). NOTE: an embed fetch therefore clips a large `--transcript-media-timeout` at 300 s —
+> raise the env knob when you genuinely want long embedded transcriptions.
+>
+> ### Announcement tweets (TASK 057 — W3)
+> An `x.com/<user>/status/<id>` **without `--video`** whose reader capture merely ANNOUNCES a
+> Broadcast/Space (low prose **AND** a first-party `/i/broadcasts/`+`/i/spaces/` link — both gates
+> must fire, so a substantive tweet that also links a broadcast still imports) **writes nothing**
+> and emits `{action:"announcement_only", broadcast_url, hint}` (exit 0): re-run `prepare` on the
+> `broadcast_url`, or pass `--video` to concatenate tweet + transcript as before. No junk `_raw`,
+> no avatar/emoji attachments, no `thread` mislabel.
 >
 > **Dependencies are path-dependent:** captioned YouTube/Vimeo/x-status-video need only **yt-dlp**
 > (light); caption-less **Broadcasts/Spaces** additionally need **ffmpeg + a whisper backend** (ASR) —
@@ -230,8 +270,8 @@ note. Skipped candidates are reported in the manifest, never silently dropped.
 ## Exit codes
 | Code | Meaning |
 |---|---|
-| 0 | ok (`action:"prepared"` / `"imported"`) |
-| 2 | bad argument (bad note JSON, invalid slug, folder escapes vault) |
+| 0 | ok (`action:"prepared"` / `"imported"` / `"unchanged"`; TASK 057: `"folder_proposed"` — folder inferred, capture staged, nothing filed yet; `"announcement_only"` — announcement tweet, nothing filed, re-route to `broadcast_url`) |
+| 2 | bad argument (bad note JSON, invalid slug, folder escapes vault); TASK 057: `FOLDER_UNRESOLVED` — no `--folder` and inference couldn't resolve one (the `NO_CONTEXT`-family "input effectively missing"; envelope carries ranked `candidates` + `staged_path`) |
 | 6 | a dependency missing (`html`/`pdf`/`transcript` bin absent; or no ffmpeg/ASR backend for caption-less video — `transcript-fetcher` exit 7); or partial (index/concept-file failed) |
 | 10 | `FETCH_FAILED` (source unreachable/empty; or transcript no-media on an unambiguous-video URL / source-auth / rate-limit — propagated from html/pdf/transcript; no raw written) |
 

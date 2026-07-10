@@ -132,6 +132,17 @@ and its `_concepts/` per this vault's layout.
 /wiki-import apply   --vault ${vault_id} --vault-root . --kind "<prepare.kind>" --note-stdin
 ```
 
+**Target folder unknown? Do NOT guess — omit `--folder` and let `prepare` infer it.**
+The FIRST move is the vault itself: `prepare` (no `--folder`) FTS-matches the detected
+title's series stem against the index and proposes the folder a same-series sibling
+already lives in (`folder_proposed` + `evidence`, capture staged for a fetch-free
+re-run), falling back to the open-note hint (`obsidian-active-note` — a *secondary*,
+optional signal: no running Obsidian needed for the primary path), else it returns
+`FOLDER_UNRESOLVED` + candidates so you ask the user. Echo the proposal (`folder ←
+evidence`), confirm/override, then re-run
+`prepare --folder "<F>" --source <staged_path>`. Never file into a folder you picked
+by topical guesswork — that is exactly the mis-filing this flow removes.
+
 **A local raw file already in the tree** — the *same* `/wiki-import`: point
 `--source` at the file instead of a URL. It distils and files it per the layout —
 note **plus** `_concepts/`, indexed in one shot — exactly like an external source
