@@ -126,8 +126,10 @@ def build_plans(
             raw_cache[file_rel] = _raw_of(vault_root, file_rel)
         return raw_cache[file_rel]
 
-    for i, finding in enumerate(findings):
-        plan_id = f"f{i}"
+    for finding in findings:
+        # Stable across runs while the finding itself persists — the serve UI
+        # round-trips these ids into POST /api/fix.
+        plan_id = f"{finding.code}:{finding.file}:{finding.pointer}"
         code = finding.code
         if finding.kind.tier == "manual" or finding.system != "sync":
             manual.append(finding)

@@ -382,6 +382,16 @@ def _apply_single_edit(
                  "backup": backup})
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from ._server import run_serve
+
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND"}, 2)
+    return run_serve(vault_root, port=int(args.port),
+                     open_browser=bool(args.open))
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     from ._report import build_report_model, render_html
 
@@ -757,6 +767,18 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="also write a markdown overview (AUTO-block wrapped) "
                              "to this vault-visible path for viewing in Obsidian")
     report.set_defaults(func=_cmd_report)
+
+    serve = sub.add_parser(
+        "serve",
+        help="local web editor (schema-driven form with hints + YAML tab); "
+             "binds 127.0.0.1, token-authenticated, Ctrl-C to stop",
+    )
+    serve.add_argument("--vault-root", default=None)
+    serve.add_argument("--port", default=0, type=int,
+                       help="port (default: ephemeral)")
+    serve.add_argument("--open", action="store_true",
+                       help="open the tokened URL in the default browser")
+    serve.set_defaults(func=_cmd_serve)
 
     return p
 
