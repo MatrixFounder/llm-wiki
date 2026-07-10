@@ -29,10 +29,12 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +53,7 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_skills._common import atomic_write_text, build_repo_config, emit
 from scripts.wiki_skills.wiki_extract_concepts._validation import _is_valid_slug
 
-from . import _context
+from . import _context, _folder
 from ._authoring import (
     _MAX_CANDIDATES,
     assemble_note,
@@ -67,6 +69,7 @@ from ._fetch import (
     ensure_source_frontmatter,
     inject_classification,
     resolve_skill_bin,
+    stamp_metadata_frontmatter,
 )
 
 # TASK 049 (R-7): --classification value shape — same ≤16 cap as a policy
@@ -80,6 +83,18 @@ def _classification_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(
             "must be a level name matching [a-z][a-z0-9_-]{0,15}")
     return value
+
+
+def _positive_int(value: str) -> int:
+    """argparse type for the W1 transcript knobs — ≥ 1, offending value kept out of the
+    error text (CWE-209 posture, mirrors _classification_arg)."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return n
 
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
@@ -189,6 +204,79 @@ def _vault_language(vault_root: Path) -> str:
         return "en"
 
 
+def _stage_capture(args: argparse.Namespace, result: Any) -> Path:
+    """TASK 057 (W2-4, Q-057-3): persist the converted capture to a tempfile OUTSIDE the
+    vault so the confirmed re-run (`prepare --folder <F> --source <staged_path>`) is
+    fetch-free — a 70-min broadcast is never transcribed twice. Frontmatter carries
+    `source:` + the detected title/author/date (each `_fm_safe`-guarded — H-6) so the
+    local-md re-read keeps slug + provenance; an operator `--classification` stamp is
+    applied now too, so the quarantine survives even if the flag is dropped at re-run."""
+    md = ensure_source_frontmatter(result.raw_text or "", args.source)
+    md = stamp_metadata_frontmatter(md, title=result.title, author=result.author,
+                                    date=result.date)
+    if getattr(args, "classification", None):
+        md = inject_classification(md, args.classification)
+    fd, name = tempfile.mkstemp(prefix="wiki-import-staged-", suffix=".md")
+    os.close(fd)
+    staged = Path(name)
+    staged.write_text(md, encoding="utf-8")
+    return staged
+
+
+def _propose_folder(args: argparse.Namespace, cfg: dict[str, Any], vault_root: Path,
+                    layout: Any, result: Any) -> int:
+    """TASK 057 (W2): the no-`--folder` outcome — stage the capture, run the inference
+    chain (series-sibling → active-note hint → ask), emit `folder_proposed` (exit 0) or
+    `FOLDER_UNRESOLVED` (exit 2 — Q-057-1), and write NOTHING inside the vault."""
+    staged = _stage_capture(args, result)
+    if args.kind == "auto":
+        fm = _parse_frontmatter(result.raw_text or "")
+        kind, kind_conf = detect_kind(result.raw_text, args.source, fm)
+    else:
+        kind, kind_conf = args.kind, "explicit"
+    repo = make_repo(cfg)
+    try:
+        inf = _folder.infer_folder(repo, args.vault, result.title,
+                                   source_subdir=layout.write.source_subdir)
+    finally:
+        repo.close()
+    if inf.folder is None:
+        hint_folder = _folder.active_note_folder(vault_root)   # optional signal, may be None
+        if hint_folder is not None:
+            inf = _folder.FolderInference(
+                folder=hint_folder, basis="active-note", confidence="medium",
+                evidence=[], candidates=inf.candidates or [hint_folder])
+    if inf.folder is not None:
+        return emit({
+            "action": "folder_proposed",
+            "vault_id": args.vault,
+            "source": args.source,
+            "title": result.title,
+            "kind": kind,
+            "kind_confidence": kind_conf,
+            "folder_inferred": inf.folder,
+            "basis": inf.basis,
+            "confidence": inf.confidence,
+            "evidence": inf.evidence,
+            "candidates": inf.candidates,
+            "staged_path": str(staged),
+            "hint": "confirm or override the folder, then re-run prepare "
+                    "--folder <F> --source <staged_path> (fetch-free) or "
+                    "--source <original URL> (re-downloads images).",
+        }, exit_code=0)
+    return emit({
+        "error": "FOLDER_UNRESOLVED",
+        "message": "no --folder given and neither a same-series sibling nor an "
+                   "active-note hint resolved one — ask the operator, then re-run "
+                   "prepare --folder <F> --source <staged_path>.",
+        "source": args.source,
+        "title": result.title,
+        "kind": kind,
+        "candidates": inf.candidates,
+        "staged_path": str(staged),
+    }, exit_code=EXIT_BAD_ARG)
+
+
 def prepare(args: argparse.Namespace) -> int:
     vault_root = _resolve_vault_root(args)
     cfg = build_repo_config(args.vault, vault_root=vault_root, db_path_flag=args.db_path)
@@ -199,21 +287,26 @@ def prepare(args: argparse.Namespace) -> int:
     # RU); emitted in the envelope so the orchestrator knows the target language. en fallback.
     note_lang = _vault_language(vault_root)
 
-    try:
-        folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
-    except PathTraversalError:
-        return emit({"error": "INVALID_FOLDER",
-                     "message": f"--folder {args.folder!r} escapes the vault root"},
-                    exit_code=EXIT_BAD_ARG)
-    except FileNotFoundError:
-        # validate_inside_vault resolve(strict=True) → FileNotFoundError for a missing folder.
-        # Refuse with a clean envelope (Decision-17), never a raw traceback. We auto-create our
-        # OWN machinery subdirs (_raw/_sources/_concepts) but not the operator's topic folder —
-        # so a typo can't silently spawn junk folders in a curated vault.
-        return emit({"error": "INVALID_FOLDER",
-                     "message": f"--folder {args.folder!r} does not exist in the vault; "
-                                "create the target topic folder first"},
-                    exit_code=EXIT_BAD_ARG)
+    # TASK 057 (W2-1): --folder is optional — omitted → the folder-inference path below
+    # (fetch runs as today, then propose/ask; NOTHING is written into the vault). Given →
+    # byte-identical legacy behaviour, validated up front as before.
+    folder_abs: Path | None = None
+    if args.folder is not None:
+        try:
+            folder_abs = validate_inside_vault(vault_root / args.folder, vault_root)
+        except PathTraversalError:
+            return emit({"error": "INVALID_FOLDER",
+                         "message": f"--folder {args.folder!r} escapes the vault root"},
+                        exit_code=EXIT_BAD_ARG)
+        except FileNotFoundError:
+            # validate_inside_vault resolve(strict=True) → FileNotFoundError for a missing folder.
+            # Refuse with a clean envelope (Decision-17), never a raw traceback. We auto-create our
+            # OWN machinery subdirs (_raw/_sources/_concepts) but not the operator's topic folder —
+            # so a typo can't silently spawn junk folders in a curated vault.
+            return emit({"error": "INVALID_FOLDER",
+                         "message": f"--folder {args.folder!r} does not exist in the vault; "
+                                    "create the target topic folder first"},
+                        exit_code=EXIT_BAD_ARG)
 
     # 1. deterministic fetch (NO raw written on failure — R-3)
     try:
@@ -231,9 +324,23 @@ def prepare(args: argparse.Namespace) -> int:
             max_duration_min=args.max_duration_min,
             cookies_from_browser=args.cookies_from_browser,
             cookies_file=args.cookies_file,
+            concurrent_fragments=args.transcript_concurrency,    # TASK 057 W1: skill knobs
+            media_timeout_sec=args.transcript_media_timeout,     # (None → skill defaults)
         )
     except ImportArticleError as e:
         return emit(e.envelope(), exit_code=e.exit_code)
+
+    # TASK 057 (W3): announcement-of-a-Broadcast tweet → benign stop BEFORE slug/_raw/kind —
+    # nothing filed, exit 0, and the orchestrator gets the broadcast URL + route hint.
+    _err_details = (result.error or {}).get("details", {}) or {}
+    if _err_details.get("kind") == "announcement_only":
+        return emit({
+            "action": "announcement_only",
+            "source": args.source,
+            "broadcast_url": _err_details.get("broadcast_url"),
+            "hint": "the tweet only announces a Broadcast/Space — re-run prepare on the "
+                    "broadcast URL, or pass --video to concatenate tweet + transcript.",
+        }, exit_code=0)
 
     if not result.ok or not result.raw_text:
         return emit({
@@ -253,6 +360,16 @@ def prepare(args: argparse.Namespace) -> int:
         if _imgtmp:
             shutil.rmtree(_imgtmp, ignore_errors=True)
         return emit(env, exit_code=code)
+
+    # TASK 057 (W2): no --folder → stage + infer + propose/ask; the vault stays untouched
+    # (attachments are not staged — Q-057-3 — so the html temp dir is reclaimed here too).
+    if args.folder is None:
+        try:
+            return _propose_folder(args, cfg, vault_root, layout, result)
+        finally:
+            if _imgtmp:
+                shutil.rmtree(_imgtmp, ignore_errors=True)
+    assert folder_abs is not None  # set above whenever args.folder is given
 
     # 2. slug + raw path (containment + slug validity — R-26). Mint via _MINT_SLUG so a
     # capitalized title under karpathy's `identity` strategy still yields a valid slug.
@@ -855,8 +972,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("prepare", help="Fetch+convert a source; emit known_concepts context.")
     _add_common(pp)
     pp.add_argument("--source", required=True, help="A http(s) URL or a local file path")
-    pp.add_argument("--folder", required=True,
-                    help="Target folder, vault-relative (e.g. '05 - Materials/Crypto')")
+    pp.add_argument("--folder", required=False, default=None,
+                    help="Target folder, vault-relative (e.g. '05 - Materials/Crypto'). "
+                         "TASK 057 (W2): omitted → prepare runs folder INFERENCE (same-series "
+                         "sibling via the index, then an optional active-note hint), emits "
+                         "folder_proposed / FOLDER_UNRESOLVED with a staged capture, and "
+                         "writes NOTHING into the vault until a --folder re-run confirms.")
     pp.add_argument("--mode", choices=("full", "summary", "thread"), default="full")
     pp.add_argument("--kind", choices=KINDS, default="auto",
                     help="content-type → REASON harness (auto-detected; reported in the envelope)")
@@ -898,6 +1019,16 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="cap on embedded videos transcribed (default 5); overflow logged, never silently dropped")
     pp.add_argument("--max-duration-min", dest="max_duration_min", type=float, default=None,
                     help="passthrough: transcribe only the first N minutes (long Broadcasts/Spaces)")
+    # TASK 057 (W1): forward the skill's X-media robustness knobs. Omitted (None) → the flag
+    # is NOT passed, so the skill's own env/.env/duration-derived defaults rule.
+    pp.add_argument("--transcript-concurrency", dest="transcript_concurrency",
+                    type=_positive_int, default=None, metavar="N",
+                    help="passthrough → transcript-fetcher --concurrent-fragments (parallel HLS "
+                         "fragment downloads for X media; omitted → skill default/env)")
+    pp.add_argument("--transcript-media-timeout", dest="transcript_media_timeout",
+                    type=_positive_int, default=None, metavar="SEC",
+                    help="passthrough → transcript-fetcher --media-timeout-sec (X media download "
+                         "budget; omitted → skill duration-derived default/env)")
     pp.add_argument("--cookies-from-browser", dest="cookies_from_browser", default=None,
                     help="passthrough: load cookies from a local browser (login-walled video)")
     pp.add_argument("--cookies-file", dest="cookies_file", default=None,
