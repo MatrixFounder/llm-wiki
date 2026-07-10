@@ -226,6 +226,30 @@ WHERE frontmatter_json::jsonb -> 'tags' @> '["management"]'::jsonb;
 
 Цель — переключение backend через config, без изменения бизнес-логики скиллов.
 
+### 4.0 Фактическая раскладка (TASK 056) и mirror-конвенция для Postgres
+
+Код ниже в §4.1–4.4 — исторические иллюстративные наброски (имена `sqlite_repo.py` /
+`postgres_repo.py` устарели). **Фактическая** реализация: `IndexRepository` ABC в
+`scripts/wiki_index/repository.py` и SQLite-backend как **доменный пакет**
+`scripts/wiki_index/sqlite_repository/` (TASK 056) — per-table-family mixin-модули,
+собранные в один класс; путь импорта заморожен
+(`from scripts.wiki_index.sqlite_repository import SQLiteRepository`).
+
+**Mirror-конвенция**: будущий Postgres-backend создаётся как пакет
+`scripts/wiki_index/postgres_repository/`, зеркалящий ту же по-доменную раскладку поверх
+`psycopg`, + ветка `backend:` в `factory.make_repo`. Каждый модуль SQLite-пакета несёт
+`dialect:`-тег в docstring — карта того, что переносится как есть, а что переписывается:
+
+| Модуль | Диалект | Postgres-замена |
+|---|---|---|
+| `_base.py` | SQLite-only: PRAGMA-блок (WAL/…), `user_version`-DDL | psycopg pool + session config |
+| `_search.py` | SQLite-only ядро: FTS5 `MATCH`/`bm25()`/`snippet()`, `json_extract`/`json_each` | tsvector + `ts_rank`/`ts_headline` + `jsonb` (§3.2) |
+| `_health_rules.py`, `_health_scan.py`, `_state.py` | смешанный: формы запросов портируемы, `json_extract`/`json_each`/`json_type` → `jsonb`-операторы | `->`/`->>`/`jsonb_typeof`/`jsonb_array_elements` |
+| `_vaults.py`, `_pages.py`, `_refs_graph.py`, `_events.py`, `_entities.py`, `_merge.py` | generic SQL (ON CONFLICT DO UPDATE — общий синтаксис) | как есть (меняется только драйвер/placeholder) |
+
+**Явный non-goal (TASK 056 R6c): код `PostgresRepository` в задаче 056 НЕ создаётся** —
+только Postgres-ready форма пакета и эта карта диалектов. Триггеры перехода — §7.
+
 ### 4.1 Python (рекомендуется для wiki-* скиллов)
 
 ```python

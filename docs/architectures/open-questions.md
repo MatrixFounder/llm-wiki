@@ -1561,3 +1561,44 @@
   values that flow into the report `detail` originate from possibly-untrusted frontmatter, but
   the surface is an operator-facing JSON/markdown report (same posture as the coverage/drift
   reports), and every value reaches SQL only as a bound param.
+
+### 11m. TASK 056 — SQLite DAL modularization (design rationale)
+
+- **Q-056-1 (RESOLVED) — mixin package over delegating facade (and over an ABC split).**
+  Three candidate shapes were weighed for splitting the 2227-line `sqlite_repository.py`:
+  (a) **delegating facade** — per-domain store objects (`PageStore`, `EntityStore`, …) behind a
+  facade class: cleanest textbook boundaries, but the `IndexRepository` ABC already forces one
+  concrete class surface, so the facade must hand-write ~75 forwarding methods — pure churn +
+  signature-drift risk for zero cohesion gain; (b) **interface segregation** — split the ABC
+  itself into per-domain protocols: churns `repository.py` (a healthy 779-line contract) and
+  every mock fixture, and the ROADMAP explicitly says the existing ABC "was designed for" the
+  Postgres future; (c) **mixin package** — bodies move *verbatim* into per-table-family mixin
+  modules, `SQLiteRepository` composes them, the public import path survives via the package
+  `__init__`. Chosen: (c). It is the only shape where the diff is a pure relocation (the full
+  test suite + mypy `--strict` prove behaviour-freeze mechanically) and where a future
+  `postgres_repository/` package can mirror the layout module-for-module. Consistent with the
+  SQLITE-VS-POSTGRES.md §8 anti-pattern table (no ORM; raw SQL per backend).
+
+- **Q-056-2 (RESOLVED) — cross-domain coupling is four calls; two mechanisms absorb it.** A
+  full `self.`-call trace of the monolith found exactly four cross-cluster couplings (task-review
+  round-1 C1): `search_pages→_row_to_page`, `merge_entities→_recompute_mentions`,
+  `query_log_events→_in_clause`, `check_drift→get_vault`. Resolution: the genuinely
+  cross-domain stateless `_in_clause` hoists to `_base.py`; `get_vault` is public — it
+  type-checks against the ABC through `SQLiteRepositoryBase(IndexRepository)`; the two
+  domain-owned private helpers stay in their home modules and the callers declare explicit
+  mixin-dependency edges — `_SearchMixin(_PagesMixin)`, `_MergeMixin(_EntitiesMixin)` — making
+  the coupling visible in the class statement instead of hiding it in a shared-helpers dumping
+  ground. **MRO rule** (task-review round-2 J1): the composite base tuple omits the super-mixins
+  (`_PagesMixin`/`_EntitiesMixin` arrive transitively via their dependents); listing a
+  super-mixin before its dependent would fail C3 linearization — mypy `--strict` itself reports
+  inconsistent MRO, so the gate catches any regression.
+
+- **Q-056-3 (RESOLVED) — health cluster splits by rule-provenance, not by size alone.** The
+  health/lint cluster (575 body lines) exceeds the ≤500-line module cap under the verbatim-move
+  rule (task-review round-1 C2). Rather than a size-driven arbitrary cut, it splits along an
+  existing conceptual seam: `_health_rules.py` = the config-driven declared-rules analyses
+  (R-15 lifecycle-drift + coverage, R-19 ontology — all read `LayoutConfig` rule objects) vs
+  `_health_scan.py` = structural integrity scans that need no declared rules (orphans,
+  classification leaks, missing-in-index, `check_drift`, cross-vault duplicates). 247 + 328
+  body lines — both land under the cap with headroom, and future R-15-family rules have an
+  obvious home.

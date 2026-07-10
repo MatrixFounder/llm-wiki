@@ -127,7 +127,7 @@ The chunk carries the full detail: the `wiki-extract-concepts` `prepare`/`apply`
 
 ## 3. System Architecture
 
-Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only).
+Architectural style (layered + plugin), system-component breakdown (Skill Layer → Adapters → DAL → SQLite), component-interaction diagram, and the UC-08 Concept Extraction sequence diagram (calling agent owns LLM synthesis; Python skill is deterministic plumbing only). **TASK 056** restructures the DAL concrete: `sqlite_repository.py` (2227-line monolith) becomes the domain-package `sqlite_repository/` — per-table-family mixin modules composed onto an abstract `SQLiteRepositoryBase(IndexRepository)` root, import path frozen, behaviour-freeze proven by the untouched test suite; the per-domain layout + per-module `dialect:` tags are the mirror-template for the future `postgres_repository/` (ROADMAP P3, SQLITE-VS-POSTGRES.md §4).
 
 **Layout-engine evolution** (§3.5):
 1. **TASK 012 / R-X1 — config-driven Layout Engine.** Two separate config layers (per-vault identity via `config_loader` + per-layout grammar via the new `layout_config` + built-in `layouts/{karpathy,dev-project,obsidian-personal}.yaml`); the `iter_pages` walk that converges the four hardcoded two-tier walks; the byte-identity strategy (karpathy.yaml = validated projection of `layout.py`; three slug surfaces kept distinct); the ReDoS guard (TASK 012 stdlib-`re` load-gate **+** the TASK 017 runtime per-file `regex` `timeout=` deadline for operator-custom patterns, R-X1-REDOS-RT); the PW-H `auto_indexes[]` renderer + PW-Q lint guard; the TASK 017 single-stat walk + drift fast-path (P-2/P-3 — Class-B "rebuildable markdown", zero DDL).
@@ -206,9 +206,11 @@ vault-local DB Q-022, typed classes/event graph Q-031/032, temporal `--as-of`
 Q-034, the TASK 035 FTS-narrowed tag-membership **Q-035-1/2**, the TASK 044
 transcript-fetcher video routing **Q-044-1**; embedded-video design rationale +
 ad-exclusion heuristic **Q-044-9/Q-044-10/Q-044-11**; TASK 045 Obsidian
-deep-link design **Q-045-1/2**; the policy/trust layer Q-049/Q-050; and TASK 051
+deep-link design **Q-045-1/2**; the policy/trust layer Q-049/Q-050; TASK 051
 source-freshness design **Q-051-1..5** — §11k, incl. the ratified `if-changed`-vs-`always`
-decision).
+decision; and the TASK 056 DAL-modularization rationale **Q-056-1..3** — §11m: mixin-package
+over facade, the four-call cross-domain coupling map + MRO base-tuple rule, and the
+health-cluster rule-provenance split).
 
 → [details](./architectures/open-questions.md)
 
