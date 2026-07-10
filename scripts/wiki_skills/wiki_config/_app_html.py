@@ -66,6 +66,9 @@ nav button{display:flex;width:100%;justify-content:space-between;gap:.5rem;
 nav button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 nav button:hover{background:var(--line-soft)}
 nav button.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+nav button.dim span:first-child{color:var(--muted);font-weight:400}
+nav button.active.dim span:first-child{color:var(--accent)}
+nav .cfgdot{color:var(--accent);font-size:.6rem;vertical-align:middle}
 
 #panel{background:var(--panel);border:1px solid var(--line);
   border-radius:.8rem;box-shadow:var(--shadow);min-height:22rem;
@@ -113,6 +116,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:not-allowed}
 textarea{font-family:ui-monospace,Menlo,monospace;min-height:3rem;resize:vertical}
+.field textarea{min-height:9rem;overflow-y:auto}
 #yamlText{min-height:24rem;white-space:pre;font-size:.83rem;line-height:1.5}
 
 .badge{display:inline-block;border-radius:999px;padding:.13rem .6rem;
@@ -124,6 +128,9 @@ textarea{font-family:ui-monospace,Menlo,monospace;min-height:3rem;resize:vertica
 button.small{background:var(--panel);border:1px solid var(--line);color:var(--fg);
   border-radius:.45rem;padding:.2rem .6rem;font-size:.73rem;cursor:pointer}
 button.small:hover{border-color:var(--accent);color:var(--accent)}
+button.small.danger:hover{border-color:var(--err);color:var(--err)}
+.confignote{font-size:.78rem;color:var(--muted);margin:.1rem 0 .6rem;
+  display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
 button.primary{background:var(--accent);border:0;color:#fff;border-radius:.55rem;
   padding:.5rem 1.3rem;font-weight:700;font-size:.88rem;cursor:pointer;
   box-shadow:var(--shadow)}
@@ -202,24 +209,40 @@ const midPath = (pointer) => parts(pointer).slice(1, -1).join(" › ");
 async function loadTree() {
   const {body} = await api("/api/tree", {headers: HDR});
   $("#vault").textContent = body.vault_root || "";
-  const labels = new Set([".", ...(body.nodes || []).map((n) => n.folder)]);
+  // Full hierarchy: EVERY folder, configured ones highlighted (●), the rest
+  // dimmed but clickable — clicking shows their inherited settings, editable.
+  const folders = body.folders && body.folders.length
+    ? body.folders
+    : [".", ...(body.nodes || []).map((n) => n.folder)]
+        .map((rel) => ({rel, configured: true}));
+  const byRel = new Map((body.nodes || []).map((n) => [n.folder, n]));
   const tree = $("#tree");
   tree.innerHTML = "";
-  [...labels].sort((a, b) => a.localeCompare(b)).forEach((label) => {
-    const node = (body.nodes || []).find((n) => n.folder === label);
-    const marks = node && node.ignored && node.ignored.length ? "⛔"
-      : (node && node.error ? "⚠" : "");
-    const depth = label === "." ? 0 : label.split("/").length;
-    const name = label === "." ? "(vault root)" : label.split("/").at(-1);
-    const b = document.createElement("button");
-    b.style.paddingLeft = (0.6 + Math.max(0, depth - 1) * 0.9) + "rem";
-    b.title = label;
-    b.innerHTML = `<span>${esc(name)}</span><span>${marks}</span>`;
-    b.onclick = () => select(label, b);
-    b.dataset.label = label;
-    if (label === SEL) b.classList.add("active");
-    tree.appendChild(b);
-  });
+  folders
+    .sort((a, b) => a.rel.localeCompare(b.rel))
+    .forEach(({rel, configured}) => {
+      const node = byRel.get(rel);
+      const marks = node && node.ignored && node.ignored.length ? "⛔"
+        : (node && node.error ? "⚠" : "");
+      const depth = rel === "." ? 0 : rel.split("/").length;
+      const name = rel === "." ? "(vault root)" : rel.split("/").at(-1);
+      const dot = configured ? '<span class="cfgdot">● </span>' : "";
+      const b = document.createElement("button");
+      b.style.paddingLeft = (0.6 + Math.max(0, depth - 1) * 0.9) + "rem";
+      b.title = rel + (configured ? " — has its own config" : " — inherited only");
+      if (!configured) b.classList.add("dim");
+      b.innerHTML = `<span>${dot}${esc(name)}</span><span>${marks}</span>`;
+      b.onclick = () => select(rel, b);
+      b.dataset.label = rel;
+      if (rel === SEL) b.classList.add("active");
+      tree.appendChild(b);
+    });
+  if (body.truncated) {
+    const note = document.createElement("div");
+    note.className = "navtitle";
+    note.textContent = "tree truncated at 5000 folders";
+    tree.appendChild(note);
+  }
   const other = document.createElement("button");
   other.innerHTML = "<span class='muted'>+ other folder…</span>";
   other.onclick = () => {
@@ -249,9 +272,22 @@ function renderPanel(tab) {
       + `${esc(FOLDER.broken.detail || "")}. The form needs a valid cascade — `
       + `use the YAML tab or the doctor first.</div>`
     : "";
+  const hasOwn = !!FOLDER.hash;
+  const configNote = hasOwn
+    ? `<div class="confignote"><span>● this folder has its own
+        <code>.wiki/sync.yaml</code></span>
+        <button class="small danger" id="deleteConfig"
+          title="remove this folder's overrides — values fall back to the
+inherited cascade; a backup is kept in .wiki/backups/">
+          ✕ delete config (fall back to inherited)</button></div>`
+    : `<div class="confignote"><span>○ no own config — the values below are
+        INHERITED; editing + saving creates
+        <code>${esc(FOLDER.rel === "." ? "" : FOLDER.rel + "/")}.wiki/sync.yaml</code>
+        here</span></div>`;
   panel.innerHTML = `
     <div class="panelhead">
       <h2>${esc(FOLDER.rel === "." ? "(vault root)" : FOLDER.rel)}</h2>
+      ${configNote}
       <div class="tabs">
         <button id="tabForm" class="${tab === "form" ? "active" : ""}">Form</button>
         <button id="tabYaml" class="${tab === "yaml" ? "active" : ""}">YAML</button>
@@ -265,6 +301,8 @@ function renderPanel(tab) {
     </div>`;
   $("#tabForm").onclick = () => renderPanel("form");
   $("#tabYaml").onclick = () => renderPanel("yaml");
+  const del = $("#deleteConfig");
+  if (del) del.onclick = deleteConfig;
   if (tab === "form" && !FOLDER.broken) renderForm();
   else if (tab === "yaml") renderYaml();
   renderFindings();
@@ -317,7 +355,7 @@ function inputFor(spec, st, id) {
   }
   if (spec.kind === "array") {
     const val = Array.isArray(current) ? current.join("\n") : "";
-    return `<textarea id="${id}" rows="2" ${disabled} placeholder="${placeholder}"
+    return `<textarea id="${id}" rows="6" ${disabled} placeholder="${placeholder}"
       spellcheck="false" title="one item per line">${esc(val)}</textarea>`;
   }
   const val = current === undefined ? "" : String(current);
@@ -376,11 +414,15 @@ function renderForm() {
     }
     html += "</fieldset>";
   }
+  const saveLabel = FOLDER.hash ? "Save changes"
+    : "Create override here";
+  const saveNote = FOLDER.hash
+    ? "schema-gated · comment-preserving · backed up to .wiki/backups/"
+    : "creates this folder's .wiki/sync.yaml with ONLY the fields you set";
   html += `<div class="actions">
-    <button class="primary" id="saveForm">Save changes</button>
+    <button class="primary" id="saveForm">${saveLabel}</button>
     <span id="dirtyCount"></span>
-    <span class="note">schema-gated · comment-preserving · backed up to
-    .wiki/backups/</span></div>`;
+    <span class="note">${saveNote}</span></div>`;
   body.innerHTML = html;
   $("#saveForm").onclick = saveForm;
   body.querySelectorAll("[data-reset]").forEach((b) => b.onclick = () => {
@@ -437,6 +479,21 @@ function wireField(spec, id) {
       ? (body.key ? `→ key "${body.key}"` : "→ no match")
       : `⚠ ${body.detail || "unsafe pattern"}`;
   });
+}
+
+async function deleteConfig() {
+  const target = FOLDER.rel === "." ? ".wiki/sync.yaml"
+    : FOLDER.rel + "/.wiki/sync.yaml";
+  if (!confirm(`Delete ${target}?\n\nThis folder falls back to the inherited `
+      + "cascade. A backup is kept in .wiki/backups/ (wiki-config restore "
+      + "undoes this).")) return;
+  const {status, body} = await api("/api/delete-config", {method: "POST",
+    headers: JHDR, body: JSON.stringify({rel: FOLDER.rel})});
+  if (status === 200) {
+    setStatus("config deleted ✓ (backup: " + (body.backup || "—") + ")", true);
+    select(SEL, document.querySelector("nav button.active"));
+    loadTree();
+  } else setStatus(body.error || "delete failed", false);
 }
 
 async function saveForm() {

@@ -149,8 +149,29 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 ]})
                 return
             if url.path == "/api/tree":
+                import os
+
+                from ._provenance import _PRUNE_DIRS
+
                 nodes = scan_tree(state.vault_root)
+                folders: list[dict[str, Any]] = []
+                truncated = False
+                for dirpath, dirnames, _files in os.walk(
+                        state.vault_root, followlinks=False):
+                    dirnames[:] = sorted(
+                        d for d in dirnames
+                        if d not in _PRUNE_DIRS and not d.startswith("."))
+                    d = Path(dirpath)
+                    rel = d.relative_to(state.vault_root).as_posix()
+                    folders.append({
+                        "rel": "." if rel == "." else rel,
+                        "configured": (d / ".wiki" / "sync.yaml").is_file(),
+                    })
+                    if len(folders) >= 5000:
+                        truncated = True
+                        break
                 self._json({"vault_root": str(state.vault_root),
+                            "folders": folders, "truncated": truncated,
                             "nodes": [n.to_json() for n in nodes]})
                 return
             if url.path == "/api/templates":
@@ -227,6 +248,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 "/api/fix": self._post_fix,
                 "/api/template": self._post_template,
                 "/api/test-regex": self._post_test_regex,
+                "/api/delete-config": self._post_delete_config,
             }.get(url.path)
             if route is None:
                 self._json({"error": "NOT_FOUND"}, 404)
@@ -294,6 +316,27 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             atomic_write_text(target, after)
             self._json({"ok": True, "hash": _sha256_text(after),
                         "backup": backup})
+
+        def _post_delete_config(self, body: dict[str, Any]) -> None:
+            """Remove a folder's OWN sync.yaml — the folder falls back to the
+            inherited cascade. Backed up first (restorable via `wiki-config
+            restore` — the backups dir is deliberately kept)."""
+            rel = str(body.get("rel", "."))
+            folder = self._resolve_rel(rel)
+            if folder is None:
+                self._json({"error": "FOLDER_NOT_FOUND"}, 404)
+                return
+            target = folder / ".wiki" / "sync.yaml"
+            if not target.is_file() or target.is_symlink():
+                self._json({"error": "NO_CONFIG"}, 404)
+                return
+            backup = write_backup(folder)
+            try:
+                target.unlink()
+            except OSError:
+                self._json({"error": "DELETE_FAILED"}, 409)
+                return
+            self._json({"ok": True, "backup": backup})
 
         def _post_fix(self, body: dict[str, Any]) -> None:
             plan_id = body.get("id")

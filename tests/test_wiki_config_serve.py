@@ -254,6 +254,56 @@ def test_template_endpoint_level_and_exists_guards(
     assert status == 409
 
 
+def test_tree_lists_full_hierarchy_with_configured_flags(
+    client: tuple[Client, Path]
+) -> None:
+    c, root = client
+    (root / "Plain" / "Deeper").mkdir(parents=True)
+    zone = root / "Zone"
+    _folder_yaml(zone, "summarize:\n  profile: meeting\n")
+    status, body = c.request("GET", "/api/tree")
+    assert status == 200
+    flags = {f["rel"]: f["configured"] for f in body["folders"]}
+    assert flags["."] is True and flags["Zone"] is True
+    assert flags["Plain"] is False and flags["Plain/Deeper"] is False
+
+
+def test_write_on_unconfigured_folder_creates_override(
+    client: tuple[Client, Path]
+) -> None:
+    c, root = client
+    plain = root / "Plain"
+    plain.mkdir(exist_ok=True)
+    status, body = c.request("POST", "/api/write", {
+        "rel": "Plain",
+        "edits": [{"op": "set", "pointer": "/summarize/profile",
+                   "value": "lesson"}],
+    })
+    assert status == 200 and body["backup"] is None  # nothing existed to back up
+    assert "profile: lesson" in (plain / ".wiki" / "sync.yaml").read_text(
+        encoding="utf-8")
+
+
+def test_delete_config_falls_back_to_inherited(
+    client: tuple[Client, Path]
+) -> None:
+    c, root = client
+    zone = root / "Zone2"
+    _folder_yaml(zone, "summarize:\n  profile: meeting\n")
+    _status, before = c.request("GET", "/api/folder?rel=Zone2")
+    assert before["effective"]["summarize"]["profile"] == "meeting"
+    status, body = c.request("POST", "/api/delete-config", {"rel": "Zone2"})
+    assert status == 200 and body["ok"] is True and body["backup"]
+    assert not (zone / ".wiki" / "sync.yaml").exists()
+    assert (zone / ".wiki" / "backups").is_dir()  # restorable
+    _status, after = c.request("GET", "/api/folder?rel=Zone2")
+    assert after["own"] is None
+    assert after["effective"]["summarize"]["profile"] == "article"  # ← root
+    # second delete → 404 NO_CONFIG; traversal refused
+    assert c.request("POST", "/api/delete-config", {"rel": "Zone2"})[0] == 404
+    assert c.request("POST", "/api/delete-config", {"rel": "../.."})[0] == 404
+
+
 def test_regex_tester(client: tuple[Client, Path]) -> None:
     c, _ = client
     status, body = c.request("POST", "/api/test-regex",
