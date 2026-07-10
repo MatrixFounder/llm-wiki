@@ -1,115 +1,100 @@
-# TASK 057 — wiki-import: video robustness (W1), vendor-independent folder inference (W2), announcement detection (W3)
+# TASK 058 — wiki-config: per-folder config interface (CLI + HTML report + local web editor)
 
 ## 0. Meta Information
-- **Task ID**: 057
-- **Slug**: wiki-import-video-folder-inference
-- **Origin**: `docs/wiki-import-video-folder-inference-spec.md` (committed bd57f21) — three
-  friction points from the cyber•Fund *"Building AI-Native Startups [004]"* X-Broadcast import
-  (2026-07-09). Counterpart of the transcript-fetcher skill spec in the Universal-skills repo.
-- **Type**: Feature + robustness (additive CLI surface; zero-DDL; no schema change)
-- **Effort**: M–L (three independent work packages over `wiki_import_article`; offline tests only)
-- **Dependency status (verified 2026-07-10)**: the transcript-fetcher flags W1 needs
-  (`--concurrent-fragments`, `--media-timeout-sec`) **have landed** in the installed skill
-  (`~/.claude/skills/transcript-fetcher/scripts/fetch.py` argparse + env
-  `TRANSCRIPT_FETCHER_CONCURRENT_FRAGMENTS` / `_MEDIA_TIMEOUT_SEC`, both X-media-only,
-  skill-side defaults 8 / duration-derived). W1 is **unblocked**.
-- **Architecture**: no layering change. Class A/B/C, Decision-17 (no `import anthropic`;
-  one JSON envelope + stable exit code per subcommand), `user_version 7`, H-6 egress posture
-  all untouched. W2 adds a *read-only* DAL consumer (`search_pages`) inside `prepare`.
+- **Task ID**: 058
+- **Slug**: wiki-config-interface
+- **Origin**: operator request 2026-07-10 — "plan a web and/or CLI interface for configuring
+  each folder in the tree: show which parameters are inherited vs defined at this level;
+  syntax validation; repair/recovery; quick template-based folder setup; **editing with
+  hints is a key capability**; the interface must NOT need rework when new config fields
+  appear." Approved design: `~/.claude/plans/drifting-snacking-wolf.md` (plan-mode session,
+  three-perspective design synthesis).
+- **Type**: Feature (new 18th `wiki-*` CLI + web layer; additive; zero-DDL; no index/DB use)
+- **Effort**: L (7 phases, each independently shippable)
+- **Architecture**: no layering change. Class A/B/C untouched (`.wiki/sync.yaml` is Class A
+  operator source; the HTML report is a derived, regenerable artifact — Class-B spirit).
+  Decision-17 holds (no `import anthropic`; one JSON envelope + stable exit code per
+  subcommand). H-6: config values are data, never echoed into error surfaces (CWE-209/117).
+  One NEW dependency: `ruamel.yaml>=0.18` (write-path only, never a security gate).
 
-## 1. Problem (verified against source)
+## 1. Problem
 
-Line references: `scripts/wiki_skills/wiki_import_article/__init__.py` (facade) and
-`_fetch.py` (dispatch) at bd57f21.
+Per-folder vault configuration (`.wiki/sync.yaml`) is hand-authored YAML with no tooling:
 
-1. **W1 — long X Broadcasts/Spaces can't be fetched.** `_fetch_transcript()`
-   (`_fetch.py:693–746`) builds the transcript-fetcher argv (`_fetch.py:705`) with `--out`,
-   `--json-errors`, `--with-description`, `--lang`, and optionally `--max-duration-min` /
-   `--cookies-*` — but has **no way** to forward the new fragment-concurrency / media-timeout
-   knobs. Additionally `_transcript_timeout()` (`_fetch.py:640–645`) defaults the subprocess
-   wall-clock to **300 s** (`_TRANSCRIPT_TIMEOUT_DEFAULT`, `_fetch.py:165`), which a ≥60-min
-   broadcast (parallel download + ASR ≈ 15–35 min) always exceeds → `kind:"timeout"` even when
-   the skill itself would succeed. This is why the 004 import had to bypass `wiki-import`.
-2. **W2 — `--folder` omitted → the operator/model guesses.** `prepare` hard-requires
-   `--folder` (`__init__.py:858`). During the 004 import the guess filed the raw capture under
-   `05 - Материалы/Криптовалюты/` when episode 003 already sat in `03 - Learning/Webinars/`.
-   The CLAUDE.md remedy (`obsidian-active-note`) is vendor-bound and timing-fragile (returned
-   "No active file" at the moment it was needed). The vault index already held the answer:
-   a same-series sibling note, derivable from FTS + filesystem alone.
-3. **W3 — announcement tweets produce junk.** An `x.com/<user>/status/<id>` that merely
-   *announces* a Broadcast stays on the html path (correct default), but the reader capture is
-   contentless chrome (nav, replies, trending) + a `x.com/i/broadcasts/<id>` link. `prepare`
-   still writes `_raw/<ugly-slug>.md` **plus ~17 avatar/emoji attachments** into the (guessed)
-   folder, and `--kind auto` mislabels it `thread`. Manual cleanup was required.
-4. **§C — concept compounding**: NOT a code defect (extraction defaults ON on the tool path;
-   the 004/003 notes were hand-authored). Resolution is config/practice only — see Non-goals.
+1. **Inheritance is invisible.** The Option-A cascade (deepest-wins RAW deep-merge,
+   `scripts/wiki_skills/_resummarize.py:93-171`) applies ONLY to `resummarize:`/`summarize:`;
+   `zones`/`exclude`/`tag_namespace`/`extensions`/`transcript_dedup` are consumed from the
+   vault root only (`load_sync_config`, `scripts/wiki_index/sync_config.py:222`). An operator
+   cannot see, for a given folder, which effective value comes from where — and a root-only
+   key placed in a subfolder file is **silently ignored** (the #1 real-world trap, documented
+   in the BD-workspace memory).
+2. **Validation exists but only as a runtime fail-fast gate** (`_load_validated_raw`,
+   exit 6). There is no whole-tree lint, no advisory findings (typo suggestions, dead mirror
+   regexes, redundant overrides), no `--fix`, no doctor, no backup/restore anywhere in the
+   repo.
+3. **No guided setup.** `templates/connector-zone.sync.yaml` is the single copy-me file;
+   real recurring shapes (meeting zone, lessons mirror with a `group_key` var) are re-derived
+   by hand each time. Regex fields (`group_key`, `key.*_regex`, `match:` mode) are the
+   documented pain points.
+4. **No editing surface with hints.** The operator edits raw YAML blind; enum values,
+   key scopes, and inherited context live only in code/docs.
 
-## Requirements Traceability
+## 2. Requirements (RTM)
 
-| ID | Requirement | MVP? | Acceptance criteria | Affected component |
-|---|---|---|---|---|
-| W1-1 | `_fetch_transcript()` accepts `concurrent_fragments: int \| None` and `media_timeout_sec: int \| None` and, when non-None, appends `--concurrent-fragments N` / `--media-timeout-sec N` to the fetch.py argv; `None` omits the flags so the skill's own env/`.env`/duration-derived defaults rule. Both callers (`_fetch_x_status_with_video`, `_append_embedded_videos`) and `dispatch_fetch` forward them. | yes | Offline argv assertion: flags present with values when set, absent when None, on all three call paths. | `_fetch.py::_fetch_transcript/_fetch_x_status_with_video/_append_embedded_videos/dispatch_fetch` |
-| W1-2 | `wiki-import prepare` exposes `--transcript-concurrency` and `--transcript-media-timeout` (int, default None = skill defaults), plumbed to `dispatch_fetch`. Values ≤ 0 are refused at the argparse layer. | yes | `prepare --transcript-concurrency 8 --transcript-media-timeout 2400` reaches the fetch.py argv verbatim; omitted → absent. | `__init__.py::_build_parser/prepare` |
-| W1-3 | The subprocess wall-clock default rises 300 → **3600 s for PRIMARY transcript fetches** (unambiguous video / x-status `--video`) so it covers parallel download + ASR of a ≥60-min broadcast, while best-effort **embedded-video fetches keep 300 s** (ARCH Q-057-2 scoping); `WIKI_TRANSCRIPT_TIMEOUT_S` set overrides BOTH roles (existing env contract unchanged). | yes | `_transcript_timeout(primary=True)` → 3600 / `primary=False` → 300 with no env; env override wins for both; docstring/SKILL.md state the budget rationale. | `_fetch.py::_transcript_timeout` (+ per-role constants) |
-| W2-1 | `--folder` becomes **optional** on `prepare`. When omitted: fetch+convert runs as today, then a **folder-inference step** executes and `prepare` emits a proposal/unresolved envelope and **writes nothing into the vault** (no `_raw`, no attachments). When `--folder` is given, behaviour is byte-identical to today. | yes | With `--folder`: existing tests unaffected. Without: no vault write on ANY inference outcome (asserted on a seeded tmp vault). | `__init__.py::prepare/_build_parser` |
-| W2-2 | **Series-stem inference (primary, vendor-independent):** derive a series stem from the detected title (strip trailing episode/index markers: `[004]`, `(4)`, `#4`, `Episode/Part/выпуск/урок N`, trailing bare number; conservative — a stem shorter than a floor (≥ 8 chars AND ≥ 2 words) aborts inference). FTS-query the stem (quoted phrase, vault-scoped, via `IndexRepository.search_pages`); keep hits whose title OR filename stem starts with the stem (case-folded); map each to its `--folder`-form folder (parent dir with a trailing layout `source_subdir` segment stripped; empty → the subdir itself). Exactly one distinct folder → proposal `{folder_inferred, basis:"series-sibling", evidence:[paths], confidence:"high"}`. | yes | Unit: 004-title + seeded 003 sibling → proposes `03 - Learning/Webinars` with the 003 path as evidence, no Obsidian involved. Distinct-series titles do NOT merge (stem guard). Multi-folder siblings → unresolved with ranked candidates. | new `_folder.py` (pure) + `__init__.py::prepare` (DAL call) |
-| W2-3 | **Active-note hint (secondary):** only when W2-2 is inconclusive, consult `obsidian-active-note folder --format json` (resolved via PATH; ~10 s timeout; **ANY non-zero exit = hint unavailable** — exits 3/4/5 are the illustrative family, never a per-code allowlist; ARCH §2.3.5). A folder is accepted only if it resolves inside `--vault-root` and exists → proposal `basis:"active-note"`, `confidence:"medium"`. Absent binary / any non-zero exit / outside-vault → skip silently (it is a hint, never a contract). | yes | Unit with a stubbed binary on PATH: success → proposal; exit 3 → skipped; outside-vault folder → skipped. No hard dependency: absence of the binary must not error. | new `_folder.py::_active_note_folder` |
-| W2-4 | **Ask fallback + staging:** neither signal → typed `FOLDER_UNRESOLVED` envelope (exit 2) carrying ranked `candidates` (may be empty). On BOTH proposal and unresolved paths the converted capture is **staged to a tempfile outside the vault** (frontmatter stamped with `source:` + detected title/author/date) and emitted as `staged_path`, so the confirmed re-run (`--source <staged_path> --folder <F>`) is fetch-free — a 70-min broadcast is never transcribed twice. Envelope also carries detected `kind`/`title` so the orchestrator can confirm intelligently. | yes | Unit: unresolved → exit 2 + candidates + staged file exists outside vault with stamped frontmatter; re-run on staged file with `--folder` imports without network (local-md engine) and keeps title/date. | `__init__.py::prepare`; `_fetch.py::ensure_source_frontmatter` (title stamp helper) |
-| W2-5 | **Companion rule:** the vault-template guidance (`templates/CLAUDE.md.tmpl`) makes "omit `--folder` → prepare infers from a same-series sibling (vault search first)" the primary path; `obsidian-active-note` is demoted to the secondary hint. `skills/wiki-import/SKILL.md` + `workflows/wiki-import.md` document the new flags/actions and the confirm/override loop. | yes | Template + SKILL.md + workflow mention series-sibling inference before active-note; new envelope actions documented with exit codes. | `templates/CLAUDE.md.tmpl`, `skills/wiki-import/SKILL.md`, `workflows/wiki-import.md` |
-| W3-1 | **Announcement heuristic (pure):** on the html path of an `ambiguous_x_status` URL (no `--video`), after a successful reader extraction: if the normalized prose (same normalization discipline as `_is_x_login_wall`) is below an announcement floor AND the body links a first-party `x.com`/`twitter.com` `/i/broadcasts/<id>` or `/i/spaces/<id>` URL, classify `announcement_only` and surface the broadcast URL. Host-shape allowlisted (no arbitrary egress); a substantive tweet that also links a broadcast is NOT dropped (floor gate). | yes | Unit: 004-shaped fixture (short prose + broadcast link + chrome) → `announcement_only` with the exact broadcast URL; a ≥floor-prose tweet with the same link passes through; a short tweet WITHOUT such a link passes through. | `_fetch.py` (new `_announcement_only` + `dispatch_fetch` hook) |
-| W3-2 | On `announcement_only`, `prepare` writes **no `_raw`, no attachments** (the html skill's temp attachment dir is reclaimed), and emits `{action:"announcement_only", broadcast_url, hint}` with **exit 0**. `--kind auto` never labels the junk capture `thread` (the path short-circuits before kind detection). | yes | Unit: prepare on the fixture → exit 0, envelope has `broadcast_url` + re-route hint, vault tree byte-identical before/after (no `_raw/`, no `_attachments/`). | `__init__.py::prepare` |
-| W3-3 | Regression: with `--video` the existing `_fetch_x_status_with_video` concat path is used unchanged (announcement heuristic does not run); a normal text tweet (no broadcast link) imports exactly as today. | yes | Existing `test_import_video.py` suite green unmodified; new no-regression unit for a plain tweet. | `_fetch.py::dispatch_fetch` |
-| NF-1 | Quality gates: `mypy --strict scripts/` clean; full `pytest tests/` green; all new tests offline (no network, no real Obsidian, no transcript-fetcher install required — subprocess/binary boundaries stubbed). | yes | CI-equivalent local run green. | tests + typing |
-| NF-2 | Envelope/exit-code contract stays stable: existing actions (`prepared`, `unchanged`, `fetch-failed`, errors) byte-compatible; new actions (`folder_proposed`, `announcement_only`) and error (`FOLDER_UNRESOLVED`) are additive and documented in SKILL.md §exit codes. | yes | Grep-level doc check + envelope regression tests. | `_errors.py`, SKILL.md |
+| ID | Requirement | Verified by |
+|----|-------------|-------------|
+| R-058-1 | `wiki-config show <folder>`: effective config + per-key provenance (`default` / `root` / `<ancestor>` / defined-HERE, `shadows`, root-only scope), computed WITHOUT modifying the real resolver, provably equivalent to it | equivalence test suite (release gate) |
+| R-058-2 | `wiki-config tree`: whole-vault override map incl. `overridden_by` and ignored keys; never aborts on one broken file | CLI tests |
+| R-058-3 | `wiki-config validate`: whole-tree, all-findings (not fail-fast), across ALL THREE config systems (sync.yaml full; layout.yaml + WIKI_SCHEMA.md/.wiki.yaml via their loaders); taxonomy of stable finding codes with severity × fix-tier; wiki-lint-style outputs (histogram stdout, `--json-sidecar`, `--report`, `--strict`); exit 6 on error-severity | per-code fixture tests + golden run over `samples/` |
+| R-058-4 | `wiki-config doctor`/`fix`: repair plan + tiered application (SAFE / CONFIRM→exit 7 / MANUAL); comment preservation as a **checked invariant** (ruamel sandwich: hardened-gate before AND after, semantic equality, untouched-lines byte-identity, downgrade-to-MANUAL on any verify failure); TOCTOU hash pinning (`CONFIG_DRIFTED` exit 2) | fix round-trip + idempotency + adversarial downgrade tests |
+| R-058-5 | Backups: `.wiki/backups/<name>.<utc-ts>.bak` before every mutation of an existing file, retention 10, `wiki-config restore <folder> [--list\|--to <ts>]`; restore itself reversible | backup/restore tests |
+| R-058-6 | `wiki-config init <folder> --template <name> [--var k=v] [--merge\|--force]` + `templates` list; 5 shipped profiles (meeting-zone, lessons-mirror, connector-zone, article-zone, root-baseline); level enforcement (root-template in subfolder → exit 2); regex vars ReDoS-gated; rendered output passes the full gate BEFORE write; deterministic (re-init byte-identical) | template tests |
+| R-058-7 | `wiki-config report [--open]`: ONE self-contained HTML file (inline CSS/JS, CSP `default-src 'none'`, no CDN) with folder tree + per-key inheritance badges (default/ROOT/↑inherited/HERE/⛔IGNORED) + findings with copy-paste fix commands; `html.escape` + NFC on ALL interpolations (Cyrillic/space/RTL names); snapshot-tested | renderer snapshot tests + manual E2E |
+| R-058-8 | `wiki-config serve`: local web editor — **schema-driven form** (enum→dropdown, bool→toggle, regex field with live tester, inherited values as placeholders with override/reset controls, hints from schema `description`) + raw-YAML tab with validation; writes go through the R-058-4 sandwich + R-058-5 backups | serve API tests + manual E2E |
+| R-058-9 | serve security: bind 127.0.0.1 ephemeral port; token in URL fragment + `X-Wiki-Config-Token` header (`hmac.compare_digest`); zero cookies (CSRF-immune); Host-header check; JSON-only POST; `validate_inside_vault` on every path; whitelist-id dispatch (server never executes client strings) | security-focused API tests |
+| R-058-10 | **Evolution invariant**: adding a new field to `config/sync-config.schema.yaml` (with `description`/enum/`x-wiki-*`) surfaces it in the UI model, form, HTML report, validate, and typo-suggestions with ZERO interface-code changes | dedicated test: inject a synthetic field into the schema → assert it appears in `_uimodel` projection + report model |
+| R-058-11 | Existing behavior untouched: `_resummarize.py` and resolver semantics byte-identical; `sync_config.py` change limited to an additive `SyncConfigError.reason` field; all pre-existing tests pass unmodified | full pytest run |
+| R-058-12 | `mypy --strict scripts/` stays green (ruamel confined to `_edit.py`, typed wrappers) | mypy gate |
+| R-058-13 | Vendor-agnostic: every capability incl. report reachable from plain shell + any LLM harness as `/wiki-config`; serve optional, one command | SKILL.md/commands + install-script wiring |
 
-## 3. Use cases
+## 3. Non-goals / out of scope
+- No Obsidian plugin, no Electron/Tauri, no Node.js toolchain (frontend = one
+  self-contained vanilla-JS HTML page — explicit user decision after weighing React+shadcn).
+- No FastAPI/uvicorn/textual/rich/click — backend is stdlib `http.server`.
+- No form editing for layout.yaml / WIKI_SCHEMA.md in v1 (raw-YAML tab + validate only;
+  the generic renderer makes this a cheap follow-up).
+- No editing of the SQLite index or any DB interaction at all (tool must work with a
+  broken/absent DB — recovery scenario).
+- No mutation deep-links from the static HTML report (copy-paste commands only).
 
-- **UC-1 (W1) long broadcast end-to-end.** `prepare --source https://x.com/i/broadcasts/<id>
-  --kind meeting --folder <F>` on a ~70-min broadcast: argv carries the concurrency/media-timeout
-  flags when given; the 3600 s wall-clock no longer clips; transcript `_raw` produced with no
-  manual `yt-dlp`/`mw` steps. (Live run is opt-in — gated on cookies/ASR; the committed test is
-  the offline argv/timeout assertion.)
-- **UC-2 (W2) sibling-resolved folder.** `prepare --source <004-broadcast>` with NO `--folder`:
-  title `Building AI-Native Startups [004]` → stem `Building AI-Native Startups` → FTS finds the
-  003 note in `03 - Learning/Webinars/` → envelope `action:"folder_proposed"`,
-  `folder_inferred:"03 - Learning/Webinars"`, `basis:"series-sibling"`, evidence = 003 path,
-  `staged_path` set; nothing written in the vault. Orchestrator confirms → re-runs
-  `prepare --folder "03 - Learning/Webinars" --source <staged_path>` → fetch-free import.
-- **UC-3 (W2) unresolved.** Same, but no sibling and no active note → exit 2,
-  `error:"FOLDER_UNRESOLVED"`, `candidates:[…]` (possibly empty), `staged_path` set; the
-  orchestrator asks the user instead of guessing.
-- **UC-4 (W3) announcement tweet.** `prepare --source https://x.com/cyberfund/status/<id>` (no
-  `--video`) where the tweet only announces a broadcast → exit 0, `action:"announcement_only"`,
-  `broadcast_url:"https://x.com/i/broadcasts/<id>"`, hint to re-run on the broadcast URL or pass
-  `--video`; vault untouched.
-- **UC-5 (W3) announcement + `--video`.** Same tweet with `--video` → existing concat path
-  (tweet text + transcript), unchanged.
-- **UC-6 (regression) normal tweet / explicit folder.** A substantive text tweet imports as
-  today; any `prepare` WITH `--folder` is byte-identical to current behaviour.
+## 4. Key design decisions (user-ratified)
+1. CLI + HTML report + local web editor; **editing with hints is a key capability**.
+2. Form-per-key + raw-YAML tab.
+3. `ruamel.yaml` for comment-preserving writes — wrapped in the hardened sandwich; the
+   existing `_NoAliasSafeLoader`/schema/size gates remain the ONLY security authority.
+4. Scope: all three config systems (sync.yaml = full CRUD + form; other two = show/validate
+   + raw-YAML editing).
+5. Backups under `.wiki/backups/` + `restore` (vaults are typically not git repos).
+6. **Schema-driven everything** (evolution without interface rework) — see R-058-10.
+7. Frontend: vanilla JS single file, shadcn-like aesthetic, zero build/deps.
 
-## 4. Non-goals / constraints
+## 5. Evolution contract (answers "what happens when new fields appear")
 
-- **§C (concept compounding)** — explicitly NO code change: extraction already defaults ON via
-  the tool path; resolution = file future episodes through `wiki-import`/`wiki-sync` (optionally
-  a Webinars-scoped `summarize:` block) + a one-time `wiki-extract-concepts` backfill for
-  003/004. Recorded here so the pipeline doesn't reinvent it.
-- **No new authored frontmatter fields** (derive-don't-author): inference derives from index +
-  filesystem; nothing new is required of note authors.
-- **wiki-sync untouched**: it always passes an explicit folder per its zone config; W2 changes
-  only the interactive/orchestrator path.
-- **Zero DDL**; no new indexes (P-5). W2 reads via the existing `search_pages` ABC surface only.
-- **H-6/egress posture unchanged**: W3 detection is string-shape only (no new network); the
-  active-note hint shells out to a local resolver binary only, never the network.
-- **Vendor-agnostic** (user requirement): W2's primary signal must work with no running
-  Obsidian, no specific harness; the secondary hint degrades silently.
+Adding a field = one edit in `config/sync-config.schema.yaml`. Automatically picked up by:
+form (runtime `/api/schema`), HTML report, validate (strict schema), difflib typo
+suggestions, provenance (generic dict fold). Manual by design: (a) the consumer code that
+USES the field (that is the feature itself); (b) `sync-config.schema.json` regeneration —
+enforced by an identity test that fails until regenerated; (c) a NEW top-level cascading
+block additionally needs a small resolver (à la `resolve_summarize`) — new fields INSIDE
+`resummarize`/`summarize` cascade with zero code; (d) optional template refresh, surfaced
+to operators via the `TEMPLATE_DRIFT` finding. Planned follow-ups (post-v1): form mode for
+layout/identity configs, web restore/undo UI, finer `extract_concepts` granularity,
+CI rail (`validate --strict`), localized descriptions.
 
-## 5. Open questions
-
-None blocking. Four implementation-level decisions taken here (recorded for the architect):
-(1) `FOLDER_UNRESOLVED` exits 2 (missing-argument family) while `folder_proposed` /
-`announcement_only` exit 0 — proposal and benign stop are successes of the guard, not failures;
-(2) staging lives in a persistent tempfile OUTSIDE the vault (never a "guessed" vault folder —
-spec W2 hard rule); (3) announcement prose floor is a named constant (initial 600; login-wall
-floor 220 stays separate) — tunable, conservative by AND-gating with the broadcast link;
-(4) wall-clock default 3600 s is a hang-guard, not a pacing knob — pacing lives in the skill's
-duration-derived media timeout.
+## 6. Acceptance
+- All RTM rows verified by the named tests; `pytest tests/` + `mypy --strict scripts/` green.
+- Golden run: the 4 real `samples/**/sync.yaml` produce no unexpected findings.
+- Manual E2E on `samples/Demand-generation`: report shows the Lessons cascade
+  (`group_key` HERE, `source_state` ↑inherited); serve edits `profile` via the form →
+  comments preserved, backup created, `wiki-sync scan --dry-run` sees the new value;
+  hand-broken sync.yaml → doctor offers restore.
