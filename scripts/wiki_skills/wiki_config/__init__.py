@@ -382,6 +382,40 @@ def _apply_single_edit(
                  "backup": backup})
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    from ._report import build_report_model, render_html
+
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND"}, 2)
+    findings, _checked = lint_vault(vault_root)
+    model = build_report_model(vault_root, sort_findings(findings),
+                               all_folders=bool(args.all_folders))
+    out = Path(args.out) if args.out else vault_root / ".wiki" / "config-report.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(out, render_html(model))
+    envelope: dict[str, Any] = {
+        "action": "reported", "vault_root": str(vault_root), "out": str(out),
+        "folders": len(model.folders),
+        "errors": model.errors, "warnings": model.warnings,
+    }
+    if args.md:
+        from ._report_md import render_tree_report
+
+        from scripts.wiki_skills._common import wrap_auto_block
+
+        md_body = render_tree_report(scan_tree(vault_root), vault_root)
+        atomic_write_text(Path(args.md),
+                          wrap_auto_block("config-overview", md_body.rstrip()) + "\n")
+        envelope["md"] = args.md
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(out.resolve().as_uri())
+        envelope["opened"] = True
+    return emit(envelope)
+
+
 def _cmd_templates(args: argparse.Namespace) -> int:
     vault_root = _resolve_vault_root(args)  # optional for listing builtins
     registry = discover_templates(vault_root)
@@ -706,6 +740,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     templates.add_argument("--vault-root", default=None)
     templates.set_defaults(func=_cmd_templates)
+
+    report = sub.add_parser(
+        "report",
+        help="render ONE self-contained HTML report: folder tree + per-key "
+             "inheritance badges + findings with copy-paste fix commands",
+    )
+    report.add_argument("--vault-root", default=None)
+    report.add_argument("--out", default=None,
+                        help="output path (default <vault>/.wiki/config-report.html)")
+    report.add_argument("--open", action="store_true",
+                        help="open the report in the default browser")
+    report.add_argument("--all-folders", action="store_true",
+                        help="include unconfigured folders too (capped)")
+    report.add_argument("--md", default=None,
+                        help="also write a markdown overview (AUTO-block wrapped) "
+                             "to this vault-visible path for viewing in Obsidian")
+    report.set_defaults(func=_cmd_report)
 
     return p
 
