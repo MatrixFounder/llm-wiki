@@ -25,6 +25,8 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfigError
 from scripts.wiki_skills._common import atomic_write_text, emit
 
+from ._findings import histogram, render_findings_report, sort_findings
+from ._lint import lint_vault
 from ._provenance import (
     FolderProvenance,
     TreeNode,
@@ -126,6 +128,68 @@ def _cmd_tree(args: argparse.Namespace) -> int:
     return emit(envelope)
 
 
+def _folder_label_of(file_rel: str) -> str | None:
+    """The folder label a sync.yaml finding belongs to (None for other files)."""
+    if file_rel == ".wiki/sync.yaml":
+        return "."
+    if file_rel.endswith("/.wiki/sync.yaml"):
+        return file_rel[: -len("/.wiki/sync.yaml")]
+    return None
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    import json
+
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND",
+                     "hint": "pass --vault-root or run inside a vault"}, 2)
+    findings, files_checked = lint_vault(vault_root)
+    if args.folder:
+        folder = _resolve_folder(args.folder, vault_root)
+        if folder is None:
+            return emit({"error": "FOLDER_NOT_FOUND", "field": "folder",
+                         "hint": "folder must exist inside the vault"}, 2)
+        rel = folder.relative_to(vault_root).as_posix()
+        target = "." if rel == "." else rel
+
+        def _in_scope(file_rel: str) -> bool:
+            label = _folder_label_of(file_rel)
+            if label is None:
+                return True  # layout/identity findings are vault-global
+            if target == "." or label == target:
+                return True
+            # ancestors of the target + its whole subtree
+            return (label == "." or target.startswith(label + "/")
+                    or label.startswith(target + "/"))
+
+        findings = [f for f in findings if _in_scope(f.file)]
+    findings = sort_findings(findings)
+    hist = histogram(findings)
+    errors = int(hist["by_severity"]["error"])
+    warnings = int(hist["by_severity"]["warning"])
+    gate = errors > 0 or (bool(args.strict) and warnings > 0)
+    envelope: dict[str, Any] = {
+        "action": "validated",
+        "vault_root": str(vault_root),
+        "files_checked": files_checked,
+        "ok": errors == 0,
+        "strict": bool(args.strict),
+        **hist,
+    }
+    if args.json_sidecar:
+        sidecar = Path(args.json_sidecar)
+        atomic_write_text(
+            sidecar,
+            json.dumps([f.to_json() for f in findings], ensure_ascii=False, indent=2),
+        )
+        envelope["json_sidecar"] = str(sidecar)
+    report_path = _maybe_report(args, render_findings_report(findings, str(vault_root)))
+    if report_path:
+        envelope["report"] = report_path
+    return emit(envelope, 6 if gate else 0)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="wiki-config",
@@ -158,6 +222,24 @@ def _build_parser() -> argparse.ArgumentParser:
     tree.add_argument("--report", default=None,
                       help="also write a human-readable markdown report to this path")
     tree.set_defaults(func=_cmd_tree)
+
+    validate = sub.add_parser(
+        "validate",
+        help="all-findings lint over every config file in the vault "
+             "(sync.yaml tree + layout.yaml + WIKI_SCHEMA.md/.wiki.yaml)",
+    )
+    validate.add_argument("folder", nargs="?", default=None,
+                          help="optional folder: narrow sync findings to its "
+                               "subtree + ancestor chain")
+    validate.add_argument("--vault-root", default=None,
+                          help="vault root (default: walk up from CWD)")
+    validate.add_argument("--strict", action="store_true",
+                          help="also gate (exit 6) on warning-severity findings")
+    validate.add_argument("--json-sidecar", default=None,
+                          help="write the full findings array (JSON) to this path")
+    validate.add_argument("--report", default=None,
+                          help="also write a grouped markdown report to this path")
+    validate.set_defaults(func=_cmd_validate)
 
     return p
 
