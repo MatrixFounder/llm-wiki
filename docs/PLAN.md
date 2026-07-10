@@ -1,116 +1,82 @@
-# PLAN — TASK 056: SQLite DAL modularization (`sqlite_repository.py` → domain-package)
+# PLAN — TASK 057: wiki-import video robustness (W1) · folder inference (W2) · announcement detection (W3)
 
-Stub-First here means **the suite is green after every bead**: bead 1 converts the module to a
-package *verbatim* (structure first, zero logic movement — the mechanical proof that the import
-surface froze), then each bead peels one domain cluster into its mixin module and re-runs the
-full gates. No bead leaves the tree in a state where `pytest tests/` or `mypy --strict scripts/`
-is red. Every RTM ID from `docs/TASK.md` maps to bead(s) below. **Zero test-file edits across
-the refactor beads (056-01+)** — the single sanctioned test change is the 056-00 prep commit
-(TASK Problem §6); any later bead that "needs" a test change is a defect in that bead.
+Design pinned in ARCHITECTURE §2.3.5 + Q-057-1..4. Stub-First is **degenerate for the
+existing-module beads** (W1/W3 edit `_fetch.py`/`__init__.py` in place — per-bead TDD: failing
+test → fix → targeted run → suite); the ONE new module (`_folder.py`, W2) gets a real
+stub-first scaffold bead (057-00) before its logic beads. Every RTM ID from `docs/TASK.md`
+maps to exactly one checklist item. Sub-task files: `docs/tasks/task-057-XX-*.md`.
 
-## Per-bead gate (applies to every bead)
+## Phase 1 — scaffold (stubs + red→green import tests)
 
-`pytest tests/` green + `mypy --strict scripts/` clean + `git diff --stat tests/` empty
-(against the post-056-00 baseline). On failure: fix within the bead; never carry red forward.
+- [ ] **057-00** `_folder.py` scaffold: typed signatures + `FolderInference` result dataclass,
+  stub bodies; `tests/test_import_folder_inference.py` scaffold (import + signature tests
+  green; behavior tests land per-bead). Gate: `mypy --strict scripts/` + targeted pytest.
+  → `docs/tasks/task-057-00-folder-module-scaffold.md`
 
-## Beads (atomic, ordered)
+## Phase 2 — logic beads (atomic, ordered)
 
-- [ ] **[R1]** 056-00 — PREP commit (the only test edit; lands BEFORE the refactor).
-  - Generalize the M-4 grep guard `tests/test_pages_upsert.py::
-    test_unit_01_no_insert_or_replace_in_source` (today it reads
-    `scripts/wiki_index/sqlite_repository.py` from disk by literal path — FileNotFoundError once
-    the module becomes a package): `base = Path(__file__).parent.parent / "scripts" /
-    "wiki_index" / "sqlite_repository"`; scan `[base.with_suffix(".py")]` if it exists else
-    `sorted(base.glob("*.py"))`; report offenders as `<file>:L<n>`.
-  - Guard holds for BOTH layouts (green before and after 056-01) and extends M-4 coverage to
-    every future mixin module. Own commit → the refactor diff stays test-clean.
+- [ ] **[W1-1]** + **[W1-2]** transcript robustness flags pass through end-to-end:
+  `_fetch_transcript(concurrent_fragments=None, media_timeout_sec=None)` → argv append
+  (non-None only); forwarded by `dispatch_fetch`, `_fetch_x_status_with_video`,
+  `_append_embedded_videos`; prepare CLI `--transcript-concurrency` / `--transcript-media-timeout`
+  (argparse positive-int type, default None). Offline argv assertions on all three call paths.
+  → `docs/tasks/task-057-01-transcript-flags-passthrough.md`
+- [ ] **[W1-3]** scoped wall-clock: `_transcript_timeout(primary: bool)` — env
+  `WIKI_TRANSCRIPT_TIMEOUT_S` set → overrides both roles; else 3600 primary / 300 embeds
+  (Q-057-2). Callers tag their role. Tests: default split, env override, invalid env.
+  → `docs/tasks/task-057-02-scoped-wallclock.md`
+- [ ] **[W3-1]** pure announcement heuristic `_announcement_only(md) -> str | None` +
+  `_X_ANNOUNCEMENT_PROSE_FLOOR = 600` + first-party broadcast/space absolute-URL regex
+  (allowlisted hosts; reuses the `_is_x_login_wall` prose normalization, extracted to a shared
+  helper). Unit tests: 004-shaped fixture → URL; substantive tweet + link → None; short tweet
+  no link → None. → `docs/tasks/task-057-03-announcement-heuristic.md`
+- [ ] **[W3-2]** + **[W3-3]** dispatch/prepare wiring: `dispatch_fetch` runs the heuristic on
+  the `ambiguous_x_status` html-ok path only when `video=False`; on match reclaims the html
+  temp/attachments dir and returns the typed marker (`error.details.kind="announcement_only"` +
+  `broadcast_url`); `prepare` short-circuits BEFORE `_raw` write + kind detection → emits
+  `{action:"announcement_only", broadcast_url, hint}` exit 0, vault byte-identical. Regression:
+  `--video` concat path untouched (existing `test_import_video.py` green unmodified); plain-tweet
+  no-regression test. → `docs/tasks/task-057-04-announcement-prepare-wiring.md`
+- [ ] **[W2-2]** series-stem inference logic in `_folder.py`: `series_stem(title)` (ONE trailing
+  episode/index marker stripped; floor ≥ 8 chars AND ≥ 2 words else None), `folder_for_hit
+  (file_path, source_subdir)` (strip ONE trailing subdir segment; empty → subdir itself;
+  machinery-segment exclusion), `infer_folder(repo, vault, title, layout)` (FTS5-quoted phrase
+  → `search_pages(query, vaults=[vault], limit=10)` → sibling filter title/filename-stem
+  startswith → distinct-folder decision + ranked candidates). Unit tests incl. seeded-repo
+  sibling → single folder; multi-folder → candidates; stem floor aborts.
+  → `docs/tasks/task-057-05-series-stem-inference.md`
+- [ ] **[W2-3]** active-note secondary hint `active_note_folder(vault_root)`:
+  `shutil.which("obsidian-active-note")`, `folder --format json`, 10 s timeout, ANY non-zero
+  exit / absent / outside-vault / timeout → None (never raises). Tests with a stub executable
+  on PATH (success / exit 3 / outside-vault). → `docs/tasks/task-057-06-active-note-hint.md`
+- [ ] **[W2-1]** + **[W2-4]** prepare no-`--folder` flow: `--folder` optional (required on
+  `apply` unchanged); folder-validation gate conditional; after fetch (+W3 short-circuit):
+  inference chain (series-sibling → active-note → unresolved); **no vault write on any
+  no-folder outcome** (html temp reclaimed); staging to persistent out-of-vault tempfile
+  `wiki-import-staged-*.md` with `_fm_safe`-stamped `source:`/title/author/date (H-6);
+  envelopes `folder_proposed` (exit 0) / `FOLDER_UNRESOLVED` + `candidates` (exit 2, Q-057-1),
+  both carrying `staged_path` + detected `kind`/`title`. Tests: proposal, unresolved, no-write
+  assertion (vault tree snapshot), fetch-free staged re-run keeps title/date, `--folder` given
+  → byte-identical legacy path. → `docs/tasks/task-057-07-prepare-no-folder-flow.md`
+- [ ] **[W2-5]** + **[NF-2]** docs + contract: `templates/CLAUDE.md.tmpl` (series-sibling
+  inference FIRST, active-note demoted), `skills/wiki-import/SKILL.md` (new flags, new
+  actions/exit codes table row for `folder_proposed`/`FOLDER_UNRESOLVED`/`announcement_only`,
+  the embed-wall-clock-clips note from ARCH MINOR-4), `workflows/wiki-import.md` (confirm/
+  override loop recipe). Envelope contract additive-only — regression-tested in 057-04/07.
+  → `docs/tasks/task-057-08-docs-and-envelope-contract.md`
+- [ ] **[NF-1]** final gates: full `pytest tests/` green + `mypy --strict scripts/` clean;
+  install-propagation check not needed (no new bin/command).
+  → `docs/tasks/task-057-09-final-gates.md`
 
-- [ ] **[R1]** 056-01 — package conversion, byte-verbatim.
-  - `git mv scripts/wiki_index/sqlite_repository.py scripts/wiki_index/sqlite_repository/__init__.py`
-    (content untouched; history preserved via rename detection).
-  - Verify: per-bead gate + `python -c "from scripts.wiki_index.sqlite_repository import
-    SQLiteRepository, AliasCollisionError, VaultRegistrationError"` + grep-verify zero edits in
-    the 8 importer script files.
-  - This bead alone proves R1's frozen-surface claim before any splitting risk is taken.
+## Dependencies / order
 
-- [ ] **[R2]** 056-02 — extract `_base.py`.
-  - Move to `_base.py`: `VaultRegistrationError`, `AliasCollisionError`, `_SCHEMA_PATH`
-    (`_stub` is NOT moved — zero call sites verified; it is deleted at 056-07a), and a new
-    `class SQLiteRepositoryBase(IndexRepository)` carrying
-    `__init__(db_path)`, `_connect()` + PRAGMA block (verbatim), `close()`,
-    `__enter__`/`__exit__`, `apply_schema()`, and the hoisted `@staticmethod _in_clause`.
-  - `__init__.py`: `SQLiteRepository` now inherits `SQLiteRepositoryBase`; the moved members are
-    deleted from it; exceptions **and `_SCHEMA_PATH` (defensive, per TASK R1)** re-exported from
-    `_base` (import path unchanged for consumers).
-  - `search_pages`/`query_log_events` call sites of `_in_clause` need **no edit** (`self.`-resolution).
-
-- [ ] **[R3]** 056-03 — peel leaf domains: `_vaults.py`, `_events.py`, `_state.py`.
-  - `_VaultsMixin` (register/get/list/rename/get_by_root_path + `_row_to_vault`);
-    `_EventsMixin` (append/update-offset/query log events + `_row_to_log_event`, begin/finish/last
-    batch runs); `_StateMixin` (check/record query state, check/record verify state, get/set
-    source state, `find_pages_citing_source`, `all_cited_sources`).
-  - Bodies verbatim; `SQLiteRepository` base tuple gains the three mixins.
-
-- [ ] **[R3]** 056-04 — peel `_pages.py` + `_refs_graph.py`.
-  - `_PagesMixin` (`_upsert_page_in_txn`, upsert/get/delete page, `_row_to_page`);
-    `_RefsGraphMixin` (upsert_refs, `_replace_refs_in_txn`, replace_refs, `_ref_from_row`,
-    get_backlinks, concept_pages, mentioning_source_pages, refs_from, neighbors, edge_chain).
-
-- [ ] **[R3]** 056-05 — peel `_entities.py` + `_merge.py` (first dependency edge).
-  - `_EntitiesMixin` (upsert/resolve entity, `_row_to_entity`, candidates, `_recompute_mentions`
-    + recompute/auto-promote/preview, add/remove/list aliases, expand_query_aliases);
-    `_MergeMixin(_EntitiesMixin)` (find_alias_collisions, merge_entities, get_entity_file_path,
-    find_entity_by_name).
-  - Composite tuple rule: `_MergeMixin` joins the tuple; `_EntitiesMixin` is **omitted**
-    (transitive) — C3 check via import + mypy.
-
-- [ ] **[R3]** 056-06 — peel `_health_rules.py` + `_health_scan.py`.
-  - `_HealthRulesMixin` (find_lifecycle_drift, find_coverage_gaps, find_ontology_violations);
-    `_HealthScanMixin` (find_orphan_links, find_classification_leaks,
-    find_invalid_classifications, find_verified_slugs, find_pages_missing_in_index, check_drift,
-    `_is_intentional_mapping`, `_extract_frontmatter_type`, find_cross_vault_concept_duplicates).
-  - `check_drift → self.get_vault` resolves via the ABC on the base — no edit.
-
-- [ ] **[R3]** 056-07a — peel `_search.py` verbatim (second dependency edge).
-  - `_SearchMixin(_PagesMixin)` with `search_pages` moved verbatim; `_PagesMixin` drops out of
-    the composite tuple (transitive). `__init__.py` is now assembly-only: mixin imports, the
-    `SQLiteRepository(<mixins>, IndexRepository)` class, re-exports + `__all__`.
-  - Rewrite the stale 2024 stub-phase docstrings (module header "every method raises
-    NotImplementedError…" + the class docstring "Stub phase…") to describe the package/assembly
-    role; drop the dead `_stub` helper (zero call sites, verified) instead of relocating it.
-- [ ] **[R4]** 056-07b — decompose `search_pages` in place.
-  - Extract module-private helpers (filter-clause builder incl. `--where`/status/severity/tag,
-    alias-expansion + FTS MATCH assembly, `--as-of` CTE builder, membership narrowing, row→
-    `PageHit` mapping); public method becomes the orchestrator. No new public surface.
-  - Cap check: `wc -l _search.py` ≤ 500 post-decomposition (overflow remedy: named carve-out
-    `_search_asof.py`, per TASK R4).
-
-- [ ] **[R5]** 056-08 — full gate sweep + cap audit.
-  - `pytest tests/` (zero test edits), `mypy --strict scripts/` (zero `type: ignore` added),
-    `wc -l scripts/wiki_index/sqlite_repository/*.py` all ≤ 500, e2e reindex-full tests green
-    (rebuildability), `grep -rn "sqlite_repository" scripts/ | grep -v sqlite_repository/` shows
-    only unchanged import lines.
-
-- [ ] **[R6]** 056-09 — Postgres-readiness dialect map (docs only).
-  - Add a `dialect:` tag line to every domain-module docstring (generic vs SQLite-only: FTS5 in
-    `_search`, `json_extract`/`json_each` in `_health_*`/`_search`/`_state`, PRAGMA +
-    `user_version` in `_base`).
-  - `docs/SQLITE-VS-POSTGRES.md` §4: replace illustrative `sqlite_repo.py`/`postgres_repo.py`
-    with the real package layout + the `postgres_repository/` mirror convention + consolidated
-    dialect table, **plus the explicit non-goal sentence — no `PostgresRepository` code in this
-    task (TASK R6c)** — mirrored in the ARCHITECTURE.md §3 summary if absent.
-
-- [ ] **[R7]** 056-10 — ledger/docs closeout.
-  - `scripts/wiki_index/.AGENTS.md`: new package inventory (one line per module).
-  - Verify `docs/ARCHITECTURE.md` + `docs/architectures/{system-architecture,project-anatomy,
-    open-questions}.md` (updated in the Architecture phase) still match the as-built result;
-    README repo-layout touch if it names `sqlite_repository.py`;
-    `grep -rn "sqlite_repository\.py" docs/ARCHITECTURE.md README.md` → 0 stale hits.
+057-00 → {057-05, 057-06} → 057-07; 057-01 → 057-02; 057-03 → 057-04; 057-04 before 057-07
+(both edit `prepare` — serialize to keep diffs reviewable); 057-08 after all code beads;
+057-09 last.
 
 ## Verification checkpoints
-1. After every bead: the per-bead gate (suite + mypy + tests-untouched).
-2. After 056-08: full acceptance sweep = TASK §4 criteria 1–5.
-3. Adversarial review (`/vdd-adversarial`, Phase 4): logic/perf/security critics over the final
-   diff — special attention to MRO order, `_search` decomposition SQL equivalence, and any
-   accidental behaviour drift in relocated SQL strings.
-4. Docs closeout (TASK §4 criterion 6) + task archive.
+
+1. Per bead: targeted pytest (named in each sub-task file) green.
+2. After 057-07: the W2 acceptance pair from TASK §3 (UC-2/UC-3) reproduced in tests.
+3. 057-09: full suite + mypy strict (NF-1).
+4. Phase 4 adversarial review (vdd-adversarial) converged per the workflow bar.

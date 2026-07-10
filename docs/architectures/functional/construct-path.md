@@ -6,6 +6,7 @@
 - [2.3.2 Transcript-fetcher — a third wrapped external skill for video sources](#232-transcript-fetcher--a-third-wrapped-external-skill-for-video-sources-task-044--extends-adr-001)
 - [2.3.3 Embedded-video discovery](#233-embedded-video-discovery-opt-in---embedded-videos--task-044-r-13)
 - [2.3.4 Converged construct pipeline — one engine, one batch driver](#234-converged-construct-pipeline--one-engine-one-batch-driver-task-046)
+- [2.3.5 Video robustness, folder inference & announcement detection](#235-video-robustness-folder-inference--announcement-detection-task-057)
 - [Legacy PARA-import framing (superseded)](#legacy-para-import-framing-superseded-23--task-038-retired-task-047)
 
 Knowledge enters the wiki through **one** config-driven construct path, **`wiki-import`**
@@ -379,6 +380,108 @@ flowchart TD
 
 (`wiki-enrich` — the legacy Karpathy on-ramp mentioned as a pending retirement here — was retired
 in TASK 047.) Design rationale: Q-046-1.
+
+## 2.3.5 Video robustness, folder inference & announcement detection (TASK 057)
+
+Three additive hardenings of the `prepare` side, from the cyber•Fund 004 X-Broadcast import
+(spec: `docs/wiki-import-video-folder-inference-spec.md`). All zero-DDL, Decision-17, no new
+Python runtime deps; W2 adds ONE read-only DAL consumer (`search_pages`) inside `prepare`.
+
+**W1 — transcript-fetcher robustness flags pass through; scoped wall-clock.**
+The skill (§2.3.2's third external skill) now owns `--concurrent-fragments` /
+`--media-timeout-sec` (X-media-only; env `TRANSCRIPT_FETCHER_CONCURRENT_FRAGMENTS` /
+`_MEDIA_TIMEOUT_SEC`; skill-side defaults 8 / duration-derived — the formula is skill-owned,
+never re-derived here).
+`wiki-import` forwards, never duplicates, that policy:
+
+- `_fetch_transcript()` gains `concurrent_fragments: int | None` / `media_timeout_sec: int |
+  None`; **non-None appends the flag, None omits it** so the skill's own env/`.env`/derived
+  defaults rule (single source of truth stays in the skill).
+- `prepare` exposes `--transcript-concurrency` / `--transcript-media-timeout` (default None;
+  argparse rejects values < 1) → `dispatch_fetch` → all three call paths
+  (`unambiguous_video`, `_fetch_x_status_with_video`, `_append_embedded_videos`).
+- **Wall-clock is scoped by role (task-review note):** `_transcript_timeout()` keeps the ONE
+  env knob `WIKI_TRANSCRIPT_TIMEOUT_S` (set → overrides everywhere), but the built-in default
+  splits **primary** fetches (the URL IS the content: unambiguous video / x-status `--video`)
+  = **3600 s** — covering parallel download + ASR of a ≥60-min broadcast — from **supplementary**
+  embedded-video fetches (`_append_embedded_videos`, best-effort, up to `--embedded-videos-max`
+  sequential) = **300 s** as today, so a hung embed can never chain 5×1 h stalls onto a page
+  whose primary content already succeeded. Rationale: the wall-clock is a hang-guard; pacing
+  lives in the skill's duration-derived media timeout (Q-057-2).
+
+**W2 — vendor-independent folder inference (`--folder` optional on `prepare`).**
+`--folder` stays required on `apply` and on the `wiki-sync` delegation path (zones always carry
+one); it becomes optional ONLY on interactive/orchestrator `prepare`. With it: byte-identical
+behaviour. Without it, after the normal deterministic fetch (title now known):
+
+1. **Series-stem inference (primary; index+FS only — no app, no vendor).** `_folder.py` (new
+   module) derives a conservative series stem from the detected title — strip ONE trailing
+   episode/index marker (`[004]`, `(4)`, `#4`, `Episode|Part|выпуск|серия|урок N`, trailing bare
+   number, with surrounding dash/colon separators); a residual stem below the floor (≥ 8 chars
+   AND ≥ 2 words) **aborts inference** (over-merge guard, spec Risk 1). The stem is FTS5-quoted
+   (`"`-doubled, phrase-wrapped) into `search_pages(query, vaults=[vault], limit=10)`; hits
+   count as **siblings** only if their `title` OR filename stem *starts with* the stem
+   (casefold + whitespace-normalized) AND no path segment is machinery (leading `_` or
+   `00-Vault-Index`) other than the layout's own `source_subdir`. Each sibling maps to its
+   `--folder`-form folder: vault-relative parent dir with one trailing `source_subdir` segment
+   stripped (stripped-to-empty → the subdir itself, matching karpathy vault-tier `--folder
+   _sources`). Exactly ONE distinct folder → proposal `{folder_inferred, basis:
+   "series-sibling", evidence: [sibling paths], confidence: "high"}`. Several → unresolved with
+   folders as ranked candidates (count desc, then best bm25; cap 5).
+2. **Active-note hint (secondary, optional signal).** Only when (1) is inconclusive:
+   `obsidian-active-note folder --format json` (PATH-resolved via `shutil.which`; 10 s
+   subprocess timeout; exits 3/4/5 = the illustrative unavailable family — the rule is **any
+   non-zero exit → skip**, never a per-code allowlist). Accepted only if the folder resolves
+   INSIDE `--vault-root` and exists → `basis: "active-note"`, `confidence: "medium"`. Absent
+   binary / any non-zero exit / outside-vault / timeout → skipped silently. It is a *hint*, never a
+   contract (the 004 failure mode — "No active file" at the critical moment — degrades to (3)).
+3. **Ask (fallback).** Typed `FOLDER_UNRESOLVED` (exit **2** — the `NO_CONTEXT` precedent:
+   guard ran fine, resolution needs operator input; the typed `error` field disambiguates from
+   malformed-arg envelopes; task-review note resolved Q-057-1) carrying the ranked
+   `candidates[]` (possibly empty).
+
+**No-write + staging invariant (spec hard rule).** On EVERY no-`--folder` outcome (proposal
+AND unresolved) `prepare` writes **nothing inside the vault** — no `_raw/`, no attachments (the
+html skill's temp dir is reclaimed). Instead the converted capture is **staged to a persistent
+tempfile outside the vault** (`wiki-import-staged-*.md`), frontmatter-stamped with `source:` +
+detected `title`/`author`/`date` — every stamped scalar routed through the SAME `_fm_safe`
+newline-strip+quote guard as `ensure_source_frontmatter` (H-6: a hostile page/broadcast title
+cannot break the YAML or inject a key) — (so the local-md re-read keeps slug/provenance), emitted as
+`staged_path` alongside detected `kind`/`title`. The confirmed re-run — `prepare --folder <F>
+--source <staged_path>` — is then **fetch-free**: a 70-min broadcast is never transcribed twice.
+Images are the one staged loss: re-run the ORIGINAL URL when attachments matter (cheap html
+case); the expensive transcript case has none (Q-057-3). Envelope actions: `folder_proposed`
+(exit 0) / `FOLDER_UNRESOLVED` (exit 2).
+
+**Companion rule (prompt layer).** `templates/CLAUDE.md.tmpl` + `skills/wiki-import/SKILL.md` +
+`workflows/wiki-import.md`: the FIRST move on a missing folder is now "omit `--folder` and let
+`prepare` infer from a same-series sibling" (vault search, vendor-independent);
+`obsidian-active-note` is demoted to the secondary hint it always was (§2.2.1 unchanged — this
+reorders *guidance*, not the resolver).
+
+**W3 — announcement-tweet detection (no junk `_raw`).**
+On the html path of an `ambiguous_x_status` URL (no `--video`), after a successful reader
+extraction, `dispatch_fetch` runs a **pure string heuristic** `_announcement_only(md)`
+(Decision-17: no new network): the body links a first-party broadcast/space
+(`https://(x|twitter).com/i/(broadcasts|spaces)/<id>` — absolute-URL form of the §2.3.2 router's
+`_X_BROADCAST_RE` shape, allowlisted hosts only) **AND** the normalized prose (the
+`_is_x_login_wall` normalization: frontmatter/links/markdown stripped) is under
+`_X_ANNOUNCEMENT_PROSE_FLOOR = 600` (the login-wall floor 220 stays separate — different
+failure, different bound). Both gates must fire (spec Risk 2: a substantive tweet that also
+links a broadcast passes through). On match `dispatch_fetch` reclaims the html temp/attachments
+dir and returns a typed marker; `prepare` emits `{action: "announcement_only", broadcast_url,
+hint: "re-run on the broadcast URL or pass --video"}` with **exit 0** and writes nothing — the
+short-circuit sits BEFORE kind detection, so `--kind auto` can no longer mislabel the chrome
+`thread`. With `--video` the existing §2.3.2 concat path runs unchanged (the heuristic never
+executes); a normal text tweet (no broadcast link) is byte-identical to today.
+
+**Invariants preserved:** Decision-17 (deterministic inference/heuristics; the one LLM step
+stays the orchestrator's) · Class A/B/C (nothing new authored; inference *derives* from the
+rebuildable index + FS — derive-don't-author) · zero-DDL / P-5 (reads ride the existing
+`search_pages` ABC surface; no new index) · R-3/R-26 (no `_raw` on any non-ok/no-folder path;
+all writes still `validate_inside_vault`; staging deliberately OUTSIDE the vault) · H-6 (W3 is
+string-shape only; the active-note hint shells a local resolver binary, never the network) ·
+vendor-agnostic (primary W2 signal needs no running app/harness). Design rationale: Q-057-1..4.
 
 ## Legacy PARA-import framing (superseded §2.3 — TASK 038; retired TASK 047)
 
