@@ -335,7 +335,7 @@ maintained.
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, promotion rules.
 - **`00-Vault-Index/index.md`** — read-only catalog (auto-generated).
 - **`00-Vault-Index/log/`** — monthly append-only journal.
-- **obsidian-llm-wiki** — the index layer (17 CLIs). Search/RAG: `/wiki-search`
+- **obsidian-llm-wiki** — the index layer (18 CLIs). Search/RAG: `/wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `/wiki-query`, `/wiki-verify-multi`.
   Construction: **`/wiki-import`** (the unified construct path — URL/PDF/office/thread/
   transcript/local file, any layout via config, ADR-007), `/wiki-extract-concepts`,
@@ -344,7 +344,10 @@ maintained.
   `/wiki-merge`, `/wiki-graph` (typed page-to-page edges — implements/supersedes/causes/
   invalidated_by/uses/owns/…, authored one direction, inverse auto-derived). Lifecycle/health:
   `/wiki-init`, `/wiki-reindex`, `/wiki-index-upsert`, `/wiki-index-render`,
-  `/wiki-lint`, `/wiki-health`. Install per its `README.md`; ensure its `bin/` is on `PATH`.
+  `/wiki-lint`, `/wiki-health`, `/wiki-config` (per-folder `.wiki/sync.yaml` interface:
+  inheritance provenance `show`/`tree`, `validate`/`doctor`/`fix`, template `init`,
+  HTML `report --open`, local `serve` web editor — no DB needed).
+  Install per its `README.md`; ensure its `bin/` is on `PATH`.
 - **obsidian-cli** — the skill that drives the *running* Obsidian app via its official
   CLI (Obsidian 1.12+): link-safe `rename`/`move` (the app rewrites backlinks — a plain
   `mv` orphans them), typed properties, tasks, daily notes, Bases queries, history

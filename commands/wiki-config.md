@@ -12,4 +12,6 @@ Wrapper at `bin/wiki-config` handles venv activation; works from any CWD when
 the repo's `bin/` is on `PATH`. See `skills/wiki-config/SKILL.md` for the
 subcommand table, finding taxonomy, and exit semantics. When the human asks
 "which settings does this folder inherit", render the `show` envelope's
-`provenance` map as a table (pointer / value / origin / shadows).
+`provenance` map as a table (pointer / value / origin / shadows). `show` without
+a folder resolves the **active Obsidian note's** folder (then CWD, then vault
+root) — the envelope's `folder_source` says which signal won.

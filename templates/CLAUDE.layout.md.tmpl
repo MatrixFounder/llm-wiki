@@ -222,7 +222,12 @@ wiki-reindex --full --vault ${vault_id}
 
 - **`WIKI_SCHEMA.md`** — vault_id, layout, conventions, optional `index_db`.
 - **`.wiki/layout.yaml`** / **`.wiki/sync.yaml`** — per-vault index + sync tuning.
-- **obsidian-llm-wiki** — the index layer (17 CLIs). Search/RAG: `wiki-search`
+  Inspect/edit the per-folder sync cascade with **`wiki-config`** — `show [<folder>]`
+  (inheritance provenance; defaults to the active note's folder), `validate`/`doctor`/`fix`,
+  `init --template`, `report --open`, `serve` (local web editor). Root-only keys
+  (`zones`/`exclude`/`extensions`/`transcript_dedup`/`tag_namespace`) are IGNORED in a
+  subfolder file — only `resummarize:`/`summarize:` cascade; `wiki-config` flags this.
+- **obsidian-llm-wiki** — the index layer (18 CLIs). Search/RAG: `wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `wiki-query`, `wiki-verify-multi`.
   Event graph: `wiki-graph` (typed page-to-page edges). Construction: **`wiki-import`**
   (the unified construct path — URL/PDF/office/thread/transcript/local file, any layout via

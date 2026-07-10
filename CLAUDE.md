@@ -36,7 +36,8 @@ event graph, cited RAG answers, and a verification layer.
 - *Answer / verify (RAG)* — `wiki-query` (retrieve → cited synthesis → file a
   compounding `_queries/*` page), `wiki-verify-multi` (off-by-default 4-critic audit).
 - *Maintain / lifecycle* — `wiki-config` (TASK 058 — the per-folder `.wiki/sync.yaml`
-  interface: `show`/`tree` per-key inheritance provenance; `validate` across all three
+  interface: `show`/`tree` per-key inheritance provenance (`show` folder defaults to the
+  active Obsidian note's folder → CWD → vault root); `validate` across all three
   config systems; tiered `doctor`/`fix` + `.wiki/backups/`/`restore`; `set`/`unset` via a
   comment-preserving ruamel sandwich; `init` from `templates/sync-profiles/`;
   self-contained HTML `report`; local token-auth `serve` web editor — all

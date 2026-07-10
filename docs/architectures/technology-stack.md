@@ -18,11 +18,24 @@
   deliberate, scoped relaxation of TASK 012's stdlib-only ReDoS posture — justified because no
   pure-stdlib mechanism can interrupt a catastrophic stdlib-`re` match (GIL-held C call;
   verified on CPython 3.14.4). **Resolves Q-017-4.**
+- **Libraries (NEW — TASK 058):** **`ruamel.yaml`** (pin `>=0.18`) — comment-preserving
+  round-trip YAML editing for `wiki-config` writes (`fix`/`set`/`unset`/`init --merge`/serve
+  saves). Imported by exactly ONE module (`wiki_skills/wiki_config/_edit.py`) and **never a
+  security gate**: every write rides the hardened sandwich — our own `SafeLoader`
+  (anchor-ban) + strict schema gate BEFORE, ruamel round-trip, then the same gate AFTER +
+  semantic equality vs a plain-dict oracle + a comment-survival check; any failure →
+  `EditDowngrade`, nothing written. The read path everywhere else stays `pyyaml SafeLoader`.
 
 ### 6.2. Frontend
 
-- **None.** CLI-only tool. Обsidian — внешний viewer markdown (не часть нашей system).
-- **Future**: web UI for `wiki-search` — explicit non-goal (TASK §7c).
+- **Primary surface: CLI.** Обsidian — внешний viewer markdown (не часть нашей system).
+- **`wiki-config` web layer (TASK 058)** — the ONE web surface, deliberately minimal:
+  backend = stdlib `http.server` on `127.0.0.1` (token-auth, zero cookies); frontend =
+  ONE self-contained vanilla-JS/CSS page inlined in `_app_html.py` + the static HTML
+  `report`. **No Node.js, no build step, no JS dependencies** (React/shadcn/Tailwind
+  explicitly declined — user-ratified): the UI is a generic renderer over the
+  schema-derived UI model, which is what keeps new config fields zero-UI-code (R-058-10).
+- **Future**: web UI for `wiki-search` — still an explicit non-goal (TASK §7c).
 
 ### 6.3. Database
 

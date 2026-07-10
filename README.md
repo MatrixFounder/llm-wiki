@@ -126,7 +126,7 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 17 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/` and `wiki_import_article/` packages — the latter is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) over the DAL + shared helpers (`_common`, `_retrieval`, `_sync`, `_resummarize`, `_manifest_consumer`). |
+| **CLIs** | `scripts/wiki_skills/` | 18 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/`, `wiki_import_article/` and `wiki_config/` packages — `wiki_import_article/` is the `wiki-import` CLI, `wiki-import-article` a back-compat alias; `wiki_config/` is the TASK 058 per-folder config interface) over the DAL + shared helpers (`_common`, `_retrieval`, `_sync`, `_resummarize`, `_manifest_consumer`, `_active_note`). |
 | **External acquire skills** | installed per-harness (not vendored) | Composed by `wiki-import` for deterministic fetch+convert — `html` (URL/HTML), `pdf`, `pptx`/office, `transcript-fetcher` (video/`.vtt`). Resolved **vendor-agnostically** (`$WIKI_<BIN>` → dynamic `~/.<harness>/skills` discovery → PATH), so Claude Code / pi / codex / … all work; the one LLM step is the `summarizing-meetings` REASON harness. |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
@@ -486,6 +486,7 @@ files+SQLite can't reach — and keep the index coherent after.*
 | Command | What it does |
 |---|---|
 | `wiki-lint --vault <vid>` (or `--all`) | SQL-level health-check: orphan links, dangling refs, missing-on-disk pages, hash drift, type mismatches, cross-vault concept duplicates. `--mtime-skip` for a faster integrity-relaxed pass. |
+| `wiki-config <subcommand> --vault-root <path>` | (TASK 058) The **per-folder `.wiki/sync.yaml` interface** — `show [<folder>]` (per-key inheritance provenance; folder defaults to the **active Obsidian note's folder** → CWD → vault root) / `tree` / `validate` (40-code taxonomy over all 3 config systems) / tiered `doctor`+`fix` (comment-preserving, backed up to `.wiki/backups/`, `restore` undoes) / `set`+`unset` / `init --template` (`templates/sync-profiles/`) / `report --open` (self-contained HTML inheritance report) / `serve` (local 127.0.0.1 token-auth web editor: schema-driven form + full vault tree with override/delete-config, pending edits + Save all, template quick-setup, restore-from-backup). 100% schema-driven (`x-wiki-*`) — a new config field needs zero UI-code changes. **No DB access** — works while the index is broken. |
 
 ---
 

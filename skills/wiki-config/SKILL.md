@@ -12,7 +12,7 @@ description: >-
   ignored", "validate the sync config", "fix my sync.yaml", "set up this
   folder from a template", "config report", "wiki-config".
 tier: 2
-version: 1.0
+version: 1.1
 ---
 
 # wiki-config
@@ -40,7 +40,7 @@ Key facts the tool encodes so you don't have to remember them:
 
 | Command | Purpose | Exit |
 |---|---|---|
-| `show <folder>` | effective config + per-key provenance (`origin`, `shadows`, root-only scope) | 0 / 2 / 6 broken ancestor |
+| `show [<folder>]` | effective config + per-key provenance (`origin`, `shadows`, root-only scope). Folder optional: defaults to the **active Obsidian note's** folder → CWD (inside vault) → vault root; envelope `folder_source` names the signal | 0 / 2 / 6 broken ancestor |
 | `tree` | vault-wide override map (defines / overridden_by / ignored; never aborts) | 0 |
 | `validate [<folder>] [--strict] [--json-sidecar J] [--report M]` | ALL findings (40-code taxonomy), 3 config systems | 6 on error-severity; `--strict` promotes warnings |
 | `doctor [--report M]` | validate + tiered repair PLAN (read-only; diffs in the report) | 0 |
@@ -49,12 +49,13 @@ Key facts the tool encodes so you don't have to remember them:
 | `init <folder> --template <n> [--var k=v] [--merge\|--force]` | template setup (level-enforced; regex vars ReDoS-gated; re-init byte-identical) | 0 / 1 / 2 / 6 / 7 exists |
 | `templates` | list builtin + `<vault>/.wiki/templates/*` (builtin wins collisions) | 0 |
 | `restore <folder> [--list\|--to TS] [--yes]` | reversible restore from `.wiki/backups/` (retention 10) | 0 / 2 / 7 |
-| `report [--open] [--out P] [--all-folders] [--md P]` | ONE self-contained HTML file: tree + badges default/ROOT/HERE/↑ancestor/⛔IGNORED + copy-paste fix commands | 0 |
-| `serve [--port N] [--open]` | local web editor: schema-driven form (hints, enum dropdowns, inherited placeholders, override/reset, regex tester) + YAML tab | runs until Ctrl-C |
+| `report [--open] [--out P] [--all-folders] [--md P]` | ONE self-contained HTML file: hierarchical tree (configured spine + ancestors) + badges default/ROOT/HERE/↑ancestor/⛔IGNORED + copy-paste fix commands | 0 |
+| `serve [--port N] [--open]` | local web editor: schema-driven form (hints, enum dropdowns, inherited placeholders, override/reset, regex tester) + YAML tab. Full vault tree (unconfigured folders dimmed; Override here / Delete config), collapsible + expand/collapse-all (state persisted), per-folder **pending edits** kept across switches (red tree dots + *Save all N*), template Quick setup / re-init in the panel header, **restore-from-backup** picker (amber banner when a folder HAD a config) | runs until Ctrl-C |
 
 ## Invocation
 
 ```bash
+wiki-config show --vault-root ~/Vault   # no folder → the active Obsidian note's folder
 wiki-config show "06 - Business Development/Встречи" --vault-root ~/Vault
 wiki-config validate --strict --json-sidecar /tmp/plan.json
 wiki-config fix --from-plan /tmp/plan.json --yes
