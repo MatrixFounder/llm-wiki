@@ -94,12 +94,44 @@ def _maybe_report(args: argparse.Namespace, text: str) -> str | None:
     return str(target)
 
 
+def _default_folder(vault_root: Path) -> tuple[Path, str]:
+    """No folder argument → (folder, source). Priority (the interactive loop —
+    open a note in Obsidian, run `wiki-config show`, see ITS folder's config):
+
+      1. the ACTIVE Obsidian note's folder (ADR-008 `obsidian-active-note`,
+         optional + bounded — silently unavailable when Obsidian is closed);
+      2. the folder the operator is standing in (CWD inside the vault);
+      3. the vault root."""
+    from scripts.wiki_skills._active_note import active_note_folder
+
+    hint = active_note_folder(vault_root, timeout_s=5)
+    if hint:
+        resolved = _resolve_folder(hint, vault_root)
+        if resolved is not None:
+            return resolved, "active-note"
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return vault_root, "vault-root"
+    resolved = _resolve_folder(str(cwd), vault_root)
+    if resolved is not None:
+        return resolved, "cwd"
+    return vault_root, "vault-root"
+
+
 def _cmd_show(args: argparse.Namespace) -> int:
     vault_root = _resolve_vault_root(args)
     if vault_root is None:
         return emit({"error": "VAULT_ROOT_NOT_FOUND",
                      "hint": "pass --vault-root or run inside a vault"}, 2)
-    folder = _resolve_folder(args.folder, vault_root)
+    if args.folder is None:
+        folder, folder_source = _default_folder(vault_root)
+    else:
+        maybe = _resolve_folder(args.folder, vault_root)
+        if maybe is None:
+            return emit({"error": "FOLDER_NOT_FOUND", "field": "folder",
+                         "hint": "folder must exist inside the vault"}, 2)
+        folder, folder_source = maybe, "argument"
     if folder is None:
         return emit({"error": "FOLDER_NOT_FOUND", "field": "folder",
                      "hint": "folder must exist inside the vault"}, 2)
@@ -113,6 +145,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         "action": "shown",
         "vault_root": str(vault_root),
         "folder": prov.folder,
+        "folder_source": folder_source,
         "effective": prov.effective,
         "provenance": {
             ptr: origin.to_json() for ptr, origin in prov.origins.items()
@@ -629,7 +662,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "show",
         help="effective config + per-key provenance for one folder",
     )
-    show.add_argument("folder", help="vault-relative (or absolute) folder; '.' = vault root")
+    show.add_argument("folder", nargs="?", default=None,
+                      help="vault-relative (or absolute) folder; '.' = vault "
+                           "root; omitted = the ACTIVE Obsidian note's folder "
+                           "when resolvable, else the CURRENT folder (CWD) "
+                           "when inside the vault, else the vault root")
     show.add_argument("--vault-root", default=None,
                       help="vault root (default: walk up from CWD to WIKI_SCHEMA.md)")
     show.add_argument("--report", default=None,

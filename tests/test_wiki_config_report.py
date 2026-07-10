@@ -125,6 +125,37 @@ def test_report_cli_envelope_and_md_projection(
     assert "wiki-config tree" in md_text
 
 
+def test_report_includes_ancestors_of_configured_folders(tmp_path: Path) -> None:
+    """Real-vault feedback: the nav must read as a hierarchy — a configured
+    deep folder pulls its unconfigured ANCESTORS into the spine."""
+    _folder_yaml(tmp_path, _ROOT)
+    deep = tmp_path / "03 - Learning" / "Courses" / "Rukovoditel"
+    _folder_yaml(deep, "summarize:\n  profile: lesson\n")
+    html_text = _render(tmp_path)
+    # both intermediate ancestors present, marked as inherited-only (no own file)
+    assert "03 - Learning" in html_text and "Courses" in html_text
+    assert "inherited only" in html_text
+    # unrelated unconfigured folders still hidden by default
+    (tmp_path / "Unrelated").mkdir()
+    assert "Unrelated" not in _render(tmp_path)
+
+
+def test_report_nested_root_only_keys_get_root_badge(tmp_path: Path) -> None:
+    """Real-vault dogfood bug: /transcript_dedup/enabled rendered an anonymous
+    inherited badge — nested pointers of a root-only block must fall back to
+    the block's own origin (ROOT), never an empty ↑."""
+    _folder_yaml(tmp_path, (
+        "transcript_dedup:\n"
+        "  enabled: true\n"
+        "  identity: before-first-dot\n"
+    ))
+    html_text = _render(tmp_path)
+    assert "↑ </span>" not in html_text and '">↑ <' not in html_text
+    # both nested rows (enabled, identity) carry the ROOT badge inherited
+    # from the /transcript_dedup block origin
+    assert html_text.count('class="badge b-root">ROOT') >= 2
+
+
 def test_report_all_folders_includes_unconfigured(tmp_path: Path) -> None:
     _folder_yaml(tmp_path, _ROOT)
     (tmp_path / "Plain").mkdir()

@@ -85,6 +85,85 @@ def test_show_bad_vault_root_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 2 and env["error"] == "VAULT_ROOT_NOT_FOUND"
 
 
+def test_show_defaults_to_cwd_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`wiki-config show` with NO folder argument targets the CURRENT folder."""
+    _folder_yaml(tmp_path, _ROOT)
+    zone = tmp_path / "Zone"
+    _folder_yaml(zone, "summarize:\n  profile: meeting\n")
+    monkeypatch.chdir(zone)
+    code, env = _run(capsys, ["show", "--vault-root", str(tmp_path)])
+    assert code == 0 and env["folder"] == "Zone"
+    assert env["provenance"]["/summarize/profile"]["origin"] == "Zone"
+    # CWD outside the vault → fall back to the vault root
+    outside = tmp_path.parent / "elsewhere-058"
+    outside.mkdir(exist_ok=True)
+    monkeypatch.chdir(outside)
+    code, env = _run(capsys, ["show", "--vault-root", str(tmp_path)])
+    assert code == 0 and env["folder"] == "."
+
+
+def test_show_no_args_inside_registered_vault(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zero arguments: vault root via WIKI_SCHEMA.md walk-up, folder = CWD."""
+    _folder_yaml(tmp_path, _ROOT)
+    (tmp_path / "WIKI_SCHEMA.md").write_text(
+        "---\nvault_id: demo\nschema_version: '5.0'\n---\n", encoding="utf-8")
+    zone = tmp_path / "Zone"
+    _folder_yaml(zone, "summarize:\n  profile: lesson\n")
+    monkeypatch.chdir(zone)
+    code, env = _run(capsys, ["show"])
+    assert code == 0 and env["folder"] == "Zone"
+    assert env["effective"]["summarize"]["profile"] == "lesson"
+
+
+def _stub_active_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                      script_body: str) -> None:
+    import os
+    import stat
+
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "obsidian-active-note"
+    stub.write_text("#!/bin/sh\n" + script_body, encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+
+def test_show_defaults_to_active_note_folder_over_cwd(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The interactive loop: the ACTIVE Obsidian note's folder wins over CWD."""
+    import json as _json
+
+    vault = tmp_path / "vault"
+    _folder_yaml(vault, _ROOT)
+    notes = vault / "03 - Learning"
+    _folder_yaml(notes, "summarize:\n  profile: lesson\n")
+    cwd_zone = vault / "Elsewhere"
+    cwd_zone.mkdir()
+    payload = _json.dumps({"path": "03 - Learning", "abs": str(notes)})
+    _stub_active_note(tmp_path, monkeypatch, f"echo '{payload}'\n")
+    monkeypatch.chdir(cwd_zone)
+    code, env = _run(capsys, ["show", "--vault-root", str(vault)])
+    assert code == 0
+    assert env["folder"] == "03 - Learning"
+    assert env["folder_source"] == "active-note"
+    # resolver unavailable (exit 3) → falls back to CWD
+    _stub_active_note(tmp_path, monkeypatch, "exit 3\n")
+    code, env = _run(capsys, ["show", "--vault-root", str(vault)])
+    assert code == 0
+    assert env["folder"] == "Elsewhere" and env["folder_source"] == "cwd"
+    # explicit argument always wins
+    code, env = _run(capsys, ["show", ".", "--vault-root", str(vault)])
+    assert env["folder"] == "." and env["folder_source"] == "argument"
+
+
 def test_relative_vault_root_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

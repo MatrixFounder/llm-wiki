@@ -38,6 +38,7 @@ _MAX_NODES = 5000
 class FolderSection:
     label: str  # "." for root
     status: str = "ok"  # ok | invalid | unreadable
+    has_config: bool = False  # this folder carries its own .wiki/sync.yaml
     error_detail: str = ""
     rows: list[dict[str, Any]] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -70,7 +71,14 @@ def build_report_model(
         elif finding.kind.severity == "warning":
             model.warnings += 1
 
+    # The configured spine: folders that HAVE a sync.yaml, plus all their
+    # ANCESTORS (so the nav reads as a hierarchy, not disjoint leaves), plus
+    # the root. Unconfigured siblings stay hidden unless --all-folders.
     labels = {n.folder for n in scan_tree(vault_root)}
+    for label in list(labels):
+        parts = label.split("/")
+        for i in range(1, len(parts)):
+            labels.add("/".join(parts[:i]))
     labels.add(".")
     if all_folders:
         import os
@@ -89,13 +97,22 @@ def build_report_model(
     for label in sorted(labels, key=str.casefold):
         section = FolderSection(label=label)
         folder = vault_root if label == "." else vault_root / label
+        section.has_config = (folder / ".wiki" / "sync.yaml").is_file()
         try:
             prov = compute_folder_provenance(folder, vault_root)
             rows: list[tuple[str, Any]] = []
             for key, block in prov.effective.items():
                 _flatten(block, f"/{key}", rows)
             for pointer, value in rows:
+                # A nested pointer with no own origin entry (e.g. the leaves of
+                # a root-only block like /transcript_dedup/enabled) inherits
+                # the NEAREST ancestor pointer's origin — otherwise it renders
+                # as an anonymous inherited badge (real-vault dogfood bug).
                 origin = prov.origins.get(pointer)
+                probe = pointer
+                while origin is None and "/" in probe.lstrip("/"):
+                    probe = probe.rsplit("/", 1)[0]
+                    origin = prov.origins.get(probe)
                 section.rows.append({
                     "pointer": pointer,
                     "value": json.dumps(value, ensure_ascii=False),
@@ -122,7 +139,7 @@ def build_report_model(
             section.commands.append(
                 ("Repair (plan first)",
                  f"wiki-config fix --dry-run --vault-root {root_arg}"))
-        if section.status == "ok" and not section.rows:
+        if section.status == "ok" and not section.has_config:
             section.commands.append(
                 ("Quick setup from a template",
                  f"wiki-config init {folder_arg} --template meeting-zone "
@@ -257,7 +274,9 @@ def _row_html(row: dict[str, Any], section_label: str) -> str:
 
 def _section_html(section: FolderSection) -> str:
     anchor = _anchor(section.label)
-    chip = f'<span class="chip c-{section.status}">{_esc(section.status)}</span>'
+    status_label = section.status if section.has_config or section.status != "ok" \
+        else "inherited only"
+    chip = f'<span class="chip c-{section.status}">{_esc(status_label)}</span>'
     parts: list[str] = [
         f'<section class="folder" id="{anchor}" '
         f'data-label="{_esc_attr(section.label)}">',
@@ -304,10 +323,15 @@ def render_html(model: ReportModel) -> str:
                      else "warning" if any(f.get("severity") == "warning"
                                            for f in section.findings) else "info")
             marks = f'<span class="f-{worst}">⚠</span>'
+        depth = 0 if section.label == "." else section.label.count("/") + 1
+        name = section.label if depth <= 1 else section.label.rsplit("/", 1)[1]
+        dot = "●" if section.has_config else '<span class="muted">○</span>'
         nav_items.append(
             f'<a href="#{_anchor(section.label)}" '
+            f'style="padding-left:{0.5 + depth * 0.9:.1f}rem" '
+            f'title="{_esc_attr(section.label)}" '
             f'data-label="{_esc_attr(section.label)}">'
-            f"<span>{_esc(section.label)}</span>{marks}</a>")
+            f"<span>{dot} {_esc(name)}</span>{marks}</a>")
         sections.append(_section_html(section))
     truncated = ('<p class="f-warning">tree truncated at '
                  f"{_MAX_NODES} folders</p>" if model.truncated else "")
