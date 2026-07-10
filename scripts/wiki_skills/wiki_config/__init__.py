@@ -53,10 +53,16 @@ from ._report_md import render_show_report, render_tree_report
 
 
 def _resolve_vault_root(args: argparse.Namespace) -> Path | None:
-    """`--vault-root` flag → CWD walk-up to WIKI_SCHEMA.md → None."""
+    """`--vault-root` flag → CWD walk-up to WIKI_SCHEMA.md → None.
+
+    Always RESOLVED absolute: every downstream `relative_to(vault_root)` label
+    computation assumes it (a relative flag like `samples/foo` must work)."""
     flag = getattr(args, "vault_root", None)
     if flag:
-        root = Path(flag)
+        try:
+            root = Path(flag).resolve()
+        except OSError:
+            return None
         return root if root.is_dir() else None
     try:
         return find_vault_root(Path.cwd())

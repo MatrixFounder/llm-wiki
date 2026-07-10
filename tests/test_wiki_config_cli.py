@@ -85,6 +85,24 @@ def test_show_bad_vault_root_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 2 and env["error"] == "VAULT_ROOT_NOT_FOUND"
 
 
+def test_relative_vault_root_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dogfood regression (TASK 058): `--vault-root samples/foo` (relative)
+    must resolve — every label computation assumes an absolute root."""
+    vault = tmp_path / "vaults" / "demo"
+    zone = vault / "Zone"
+    _folder_yaml(vault, _ROOT)
+    _folder_yaml(zone, "summarize:\n  profile: meeting\n")
+    monkeypatch.chdir(tmp_path)
+    code, env = _run(capsys, ["show", "Zone", "--vault-root", "vaults/demo"])
+    assert code == 0
+    assert env["provenance"]["/summarize/profile"]["origin"] == "Zone"
+    code, env = _run(capsys, ["tree", "--vault-root", "vaults/demo"])
+    assert code == 0 and env["files"] == 2
+
+
 def test_show_broken_ancestor_exit_6(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
