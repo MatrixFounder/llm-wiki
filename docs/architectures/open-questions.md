@@ -1602,3 +1602,46 @@
   classification leaks, missing-in-index, `check_drift`, cross-vault duplicates). 247 + 328
   body lines — both land under the cap with headroom, and future R-15-family rules have an
   obvious home.
+
+### 11n. TASK 057 — wiki-import video robustness / folder inference / announcement detection (design rationale)
+
+- **Q-057-1 (RESOLVED) — `FOLDER_UNRESOLVED` exits 2, not a new code.** Candidates weighed:
+  a new dedicated exit vs reuse. `EXIT_BAD_ARG = 2` is documented "malformed argument value
+  (bad JSON, missing field)"; an inference that ran cleanly but could not resolve is a semantic
+  stretch of *malformed* — but the family precedent is `wiki-query`'s `NO_CONTEXT` (retrieval
+  ran fine, nothing usable → exit 2): "the required input is effectively missing" is the shared
+  meaning, callers branch on the **typed `error` field**, and the exit-code space stays small
+  and stable (Decision-17 contract). A NEW code would churn every caller table (SKILL.md,
+  wiki-sync's delegation map, tests) for zero disambiguation gain. Reuse 2.
+- **Q-057-2 (RESOLVED) — wall-clock 3600 s scoped to PRIMARY transcript fetches only.** The
+  task-review flagged that a global 300→3600 raise hands *supplementary* embedded-video fetches
+  (`_append_embedded_videos`, up to `--embedded-videos-max` **sequential** best-effort calls)
+  a 5×1 h worst-case stall on a page whose primary content already succeeded — a worse failure
+  mode than today. Resolution: ONE env knob (`WIKI_TRANSCRIPT_TIMEOUT_S`, set → overrides both
+  roles uniformly — operator-explicit), but the built-in default splits primary (unambiguous
+  video / x-status `--video`) = 3600 vs embeds = 300 (today's value). The wall-clock is a
+  hang-guard, not a pacing knob — pacing (fragment concurrency, media budget) belongs to the
+  skill's own duration-derived defaults, which wiki-import forwards but never re-derives
+  (single source of truth).
+- **Q-057-3 (RESOLVED) — staging lives in a persistent OUT-OF-VAULT tempfile, not a vault
+  staging dir.** The spec's hard rule is "do not write `_raw` into a guessed folder before the
+  folder is confirmed". A vault-internal staging area (`.wiki/staging/`) would (a) create a new
+  Class-A-looking tree the indexer must learn to ignore, (b) leak junk into a curated vault on
+  an abandoned proposal, and (c) violate the repo-is-not-a-vault symmetry of "machinery dirs are
+  layout-owned". A persistent `tempfile` (`wiki-import-staged-*.md`, frontmatter-stamped with
+  `source:`/title/author/date) costs nothing to abandon, keeps the vault byte-identical on every
+  no-folder outcome, and makes the confirmed re-run fetch-free via the existing local-md path
+  (adopt-in-place guards don't trigger: the file is outside the vault). Residual: staged
+  attachments are NOT kept — re-run the original URL when images matter (cheap html case; the
+  expensive transcript case has none).
+- **Q-057-4 (RESOLVED) — announcement heuristic is dispatch-side, AND-gated, constants-tuned.**
+  Placement: `dispatch_fetch` (not `prepare`) so the html temp/attachments dir is reclaimed at
+  the point the ok-result is replaced, and the short-circuit lands BEFORE kind detection
+  (`--kind auto` can no longer mislabel chrome as `thread`). Gate: BOTH a first-party
+  broadcast/space absolute URL (allowlisted `x.com`/`twitter.com` hosts, `/i/(broadcasts|
+  spaces)/` shape — the §2.3.2 router's regex family) AND normalized prose <
+  `_X_ANNOUNCEMENT_PROSE_FLOOR = 600` (login-wall floor 220 stays a separate constant —
+  different failure, different bound; reader output for a bare announcement is chrome-heavy, so
+  the floor is deliberately above 220 but conservative). False-negative cost = today's junk
+  `_raw` (no regression); false-positive cost = a substantive tweet dropped — guarded by the
+  AND-gate + `--video`/explicit re-run always available (spec Risk 2).

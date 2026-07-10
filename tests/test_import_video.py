@@ -410,3 +410,122 @@ def test_detect_kind_orthogonal_transcript_body_is_meeting():
     body = "\n".join(f"[00:0{i}] Speaker {i}: words words words" for i in range(8))
     kind, _ = detect_kind(body, "https://youtu.be/abc", {})
     assert kind == "meeting"   # transcript-shaped body → meeting via _looks_like_transcript
+
+
+# ---------------------------------------------------------------- TASK 057 W1: robustness knobs
+def _argv_capture_run(seen):
+    """subprocess.run double: records every transcript argv; html writes a page."""
+    def fake_run(argv, **kw):
+        if TBIN in argv:
+            seen.append({"argv": list(argv), "timeout": kw.get("timeout")})
+            out = Path(argv[argv.index("--out") + 1])
+            out.write_text("body\n", encoding="utf-8")
+            Path(str(out) + ".stat.json").write_text(
+                json.dumps(_transcript_stat()), encoding="utf-8")
+            return _cp(argv, 0)
+        if H2M in argv:
+            (Path(argv[3]) / "p.md").write_text(
+                "---\ntitle: T\n---\n\nTweet prose.\n", encoding="utf-8")
+            return _cp(argv, 0)
+        return _cp(argv, 0)
+    return fake_run
+
+
+def _flag_val(argv, flag):
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def test_w1_flags_reach_argv_unambiguous_video(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    r = _dispatch("https://x.com/i/broadcasts/1abc",
+                  concurrent_fragments=8, media_timeout_sec=2400)
+    assert r.ok
+    assert _flag_val(seen[0]["argv"], "--concurrent-fragments") == "8"
+    assert _flag_val(seen[0]["argv"], "--media-timeout-sec") == "2400"
+
+
+def test_w1_flags_reach_argv_x_status_video(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    r = _dispatch("https://x.com/jack/status/123", video=True,
+                  concurrent_fragments=4, media_timeout_sec=900)
+    assert r.ok
+    assert _flag_val(seen[0]["argv"], "--concurrent-fragments") == "4"
+    assert _flag_val(seen[0]["argv"], "--media-timeout-sec") == "900"
+
+
+def test_w1_flags_reach_argv_embedded_path(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    monkeypatch.setattr(_fetch, "_download_raw_html", lambda url: (
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'))
+    r = _dispatch("https://example.com/article", embedded_videos=True,
+                  concurrent_fragments=6, media_timeout_sec=1200)
+    assert r.ok and seen, "embed transcript fetch must have run"
+    assert _flag_val(seen[0]["argv"], "--concurrent-fragments") == "6"
+    assert _flag_val(seen[0]["argv"], "--media-timeout-sec") == "1200"
+
+
+def test_w1_flags_omitted_absent_on_all_paths(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    monkeypatch.setattr(_fetch, "_download_raw_html", lambda url: (
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'))
+    _dispatch("https://x.com/i/broadcasts/1abc")
+    _dispatch("https://x.com/jack/status/123", video=True)
+    _dispatch("https://example.com/article", embedded_videos=True)
+    assert len(seen) == 3
+    for rec in seen:
+        assert "--concurrent-fragments" not in rec["argv"]
+        assert "--media-timeout-sec" not in rec["argv"]
+
+
+# ---------------------------------------------------------------- TASK 057 W1-3: scoped wall-clock
+def test_w1_wallclock_scoped_primary_vs_embed(monkeypatch):
+    monkeypatch.delenv("WIKI_TRANSCRIPT_TIMEOUT_S", raising=False)
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    monkeypatch.setattr(_fetch, "_download_raw_html", lambda url: (
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'))
+    _dispatch("https://x.com/i/broadcasts/1abc")                      # primary
+    _dispatch("https://example.com/article", embedded_videos=True)    # supplementary
+    assert seen[0]["timeout"] == 3600   # primary hang-guard covers a ≥60-min broadcast
+    assert seen[1]["timeout"] == 300    # embeds keep the old bound (Q-057-2)
+
+
+def test_w1_wallclock_env_overrides_both_roles(monkeypatch):
+    monkeypatch.setenv("WIKI_TRANSCRIPT_TIMEOUT_S", "120")
+    assert _fetch._transcript_timeout(primary=True) == 120
+    assert _fetch._transcript_timeout(primary=False) == 120
+
+
+def test_w1_wallclock_env_garbage_falls_back_per_role(monkeypatch):
+    monkeypatch.setenv("WIKI_TRANSCRIPT_TIMEOUT_S", "soon")
+    assert _fetch._transcript_timeout(primary=True) == 3600
+    assert _fetch._transcript_timeout(primary=False) == 300
+
+
+def test_w1_media_timeout_raises_wallclock(monkeypatch):
+    # Phase-4 logic F1: an explicit media budget larger than the wall-clock must RAISE
+    # the hang-guard (budget + headroom), never be silently SIGKILLed at 3600.
+    monkeypatch.delenv("WIKI_TRANSCRIPT_TIMEOUT_S", raising=False)
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    _dispatch("https://x.com/i/broadcasts/1abc", media_timeout_sec=5400)
+    assert seen[0]["timeout"] == 5400 + 300
+    seen.clear()
+    _dispatch("https://x.com/i/broadcasts/1abc", media_timeout_sec=900)
+    assert seen[0]["timeout"] == 3600      # small budget never LOWERS the hang-guard
+
+
+def test_w1_media_timeout_never_inflates_embed_wallclock(monkeypatch):
+    # Phase-4 cycle-2 NEW-1: the media-budget wall-clock raise is PRIMARY-scoped — on the
+    # embed role the skill ignores the knob (X-only) so the 300s supplementary bound holds.
+    monkeypatch.delenv("WIKI_TRANSCRIPT_TIMEOUT_S", raising=False)
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    monkeypatch.setattr(_fetch, "_download_raw_html", lambda url: (
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'))
+    _dispatch("https://example.com/article", embedded_videos=True, media_timeout_sec=86400)
+    assert seen[0]["timeout"] == 300

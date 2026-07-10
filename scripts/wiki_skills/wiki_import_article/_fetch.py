@@ -153,6 +153,17 @@ _X_LOGIN_URL_MARKERS = ("/i/flow/login", "onboarding/web?mode=login", "mode=logi
 _X_LOGIN_TEXT_MARKERS = ("Log in", "Sign up")
 _X_LOGIN_MARKERS = _X_LOGIN_URL_MARKERS + _X_LOGIN_TEXT_MARKERS
 _X_PROSE_FLOOR = 220
+# TASK 057 (W3, Q-057-4): an x-status whose capture is just "<title>" + a link to a Broadcast/
+# Space (+ chrome) is an ANNOUNCEMENT — importing the html is pure junk. AND-gated: BOTH a
+# first-party broadcast/space link AND normalized prose under this floor (deliberately above
+# the 220 login-wall floor — reader output for a bare announcement is chrome-heavy; a
+# substantive tweet that merely links a broadcast must pass through — spec Risk 2).
+_X_ANNOUNCEMENT_PROSE_FLOOR = 600
+# absolute-URL form of the _X_BROADCAST_RE route shape; allowlisted hosts only (H-6).
+# id alphabet [A-Za-z0-9_-] aligns with the routing regex's \w (Phase-4 logic F2: a
+# mismatch would truncate the surfaced broadcast_url at the first _/- and 404 the hint).
+_X_BROADCAST_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:x|twitter)\.com/i/(?:broadcasts|spaces)/[A-Za-z0-9_-]+", re.I)
 
 # ---- TASK 044: video sources via the transcript-fetcher skill ----------------
 # Video-host classification (R-1) — pure URL-shape, label-boundary matched (reuses `_X_HOSTS`).
@@ -162,7 +173,16 @@ _VIDEO_HOSTS_SKOOL = ("skool.com",)
 _X_BROADCAST_RE = re.compile(r"/i/(?:broadcasts|spaces)/\w", re.I)   # has no usable text path
 _X_STATUS_RE = re.compile(r"/[^/]+/status/\d+", re.I)               # text OR text+video (ambiguous)
 _SKOOL_LESSON_RE = re.compile(r"/classroom/", re.I)                # a lesson page (host alone ≠ video)
-_TRANSCRIPT_TIMEOUT_DEFAULT = 300                                   # Q-044-4 (env-overridable)
+# TASK 057 (W1-3, Q-057-2): the subprocess wall-clock is a HANG-GUARD, not a pacing knob
+# (pacing = the skill's own duration-derived media timeout). Scoped by role: a PRIMARY fetch
+# (the URL IS the content — unambiguous video / x-status --video) must cover parallel download
+# + ASR of a ≥60-min broadcast; a SUPPLEMENTARY embedded-video fetch (best-effort, up to
+# --embedded-videos-max sequential calls) keeps the old 300 s so hung embeds can never chain
+# multi-hour stalls onto a page whose primary content already succeeded. Q-044-4 lineage:
+# $WIKI_TRANSCRIPT_TIMEOUT_S (set → overrides BOTH roles) is unchanged; an explicit
+# --transcript-media-timeout may additionally raise the PRIMARY hang-guard (never embeds).
+_TRANSCRIPT_TIMEOUT_PRIMARY_S = 3600
+_TRANSCRIPT_TIMEOUT_EMBED_S = 300
 
 # Embedded-video discovery on a not_video html page (R-13). Discovery runs over RAW HTML (the html
 # skill strips <iframe>/<video> before Markdown), so ad-exclusion is FIRST-CLASS & always-on.
@@ -196,8 +216,13 @@ class FetchResult:
 
 def _fm_safe(value: str) -> str:
     """Frontmatter-scalar-safe: strip control/newlines + quotes + backslashes so an injected
-    source value cannot break the YAML, inject a key, or escape the closing quote (H-6)."""
-    return re.sub(r'[\x00-\x1f\x7f"\\]+', " ", str(value or "")).strip()
+    source value cannot break the YAML, inject a key, or escape the closing quote (H-6).
+    Includes the FULL `str.splitlines()` boundary set — NEL/LS/PS (\\x85 \\u2028 \\u2029) are
+    line boundaries to `splitlines()` even though they are not \\n (Phase-4 security F1: an
+    interior \\u2028 in a hostile title could smuggle a `classification:` "line" past the
+    naive frontmatter parser and suppress the real quarantine stamp)."""
+    return re.sub("[\\x00-\\x1f\\x7f\\x85\\u2028\\u2029\"\\\\]+", " ",
+                  str(value or "")).strip()
 
 
 def ensure_source_frontmatter(raw_text: str, source: str) -> str:
@@ -211,6 +236,27 @@ def ensure_source_frontmatter(raw_text: str, source: str) -> str:
     if _FM_RE.match(raw_text):                       # existing FM at the very start
         return re.sub(r"\A---\n", f'---\nsource: "{src}"\n', raw_text, count=1)
     return f'---\nsource: "{src}"\n---\n\n{raw_text}'
+
+
+def stamp_metadata_frontmatter(raw_text: str, *, title: str | None = None,
+                               author: str | None = None,
+                               date: str | None = None) -> str:
+    """TASK 057 (W2 staging): fill MISSING `title:`/`author:`/`date:` frontmatter scalars so a
+    staged out-of-vault capture round-trips its detected metadata through the local-md re-read
+    (slug + provenance survive the fetch-free confirmed re-run). Existing keys always win;
+    every stamped scalar routes through the same `_fm_safe` newline-strip+quote guard as
+    `ensure_source_frontmatter` (H-6: a hostile page/broadcast title cannot break the YAML or
+    inject a key). No-op when there is nothing to add."""
+    fm = _parse_frontmatter(raw_text)
+    additions = [f'{key}: "{_fm_safe(val)}"'
+                 for key, val in (("title", title), ("author", author), ("date", date))
+                 if val and not fm.get(key)]
+    if not additions:
+        return raw_text
+    block = "\n".join(additions)
+    if _FM_RE.match(raw_text):                       # existing FM at the very start
+        return re.sub(r"\A---\n", f"---\n{block}\n", raw_text, count=1)
+    return f"---\n{block}\n---\n\n{raw_text}"
 
 
 def inject_classification(raw_text: str, level: str) -> str:
@@ -231,12 +277,16 @@ def inject_classification(raw_text: str, level: str) -> str:
 # ---- helpers ---------------------------------------------------------------
 
 def _parse_frontmatter(md: str) -> dict[str, str]:
-    """Pull title/author/date out of an `html`-skill YAML frontmatter block (best effort)."""
+    """Pull title/author/date out of an `html`-skill YAML frontmatter block (best effort).
+    Splits on `\\n` ONLY — never `str.splitlines()`, whose wider boundary set (NEL/LS/PS)
+    would let an exotic separator inside a quoted scalar masquerade as a new key line
+    (Phase-4 security F1 defense-in-depth; PyYAML folds those separators, this naive
+    parser must not out-split it)."""
     m = _FM_RE.match(md)
     out: dict[str, str] = {}
     if not m:
         return out
-    for line in m.group(1).splitlines():
+    for line in m.group(1).split("\n"):
         if ":" in line and not line.startswith(" "):
             k, _, v = line.partition(":")
             out[k.strip().lower()] = v.strip().strip('"').strip("'")
@@ -284,6 +334,15 @@ def _arxiv_pdf_url(url: str) -> str | None:
     return f"https://arxiv.org/pdf/{m.group(1)}" if m else None
 
 
+def _normalized_prose(md: str) -> str:
+    """The shared X-capture prose normalization (login-wall + announcement heuristics):
+    drop frontmatter, drop `[..](..)`/`![..](..)` links, strip markdown punctuation,
+    collapse whitespace. Behaviour-identical to the pre-057 inline login-wall code."""
+    body = _FM_RE.sub("", md)                                   # drop frontmatter
+    body = re.sub(r"!?\[[^\]]*\]\([^)]*\)", " ", body)          # drop [..](..) / ![..](..)
+    return re.sub(r"\s+", " ", re.sub(r"[#>*`_|\[\]()\-]", " ", body)).strip()
+
+
 def _is_x_login_wall(md: str, target: str) -> bool:
     """True iff `target` is an x.com/twitter URL whose `html`-skill output is just the
     logged-out login chrome (no post text) — so the caller fails instead of writing
@@ -294,10 +353,22 @@ def _is_x_login_wall(md: str, target: str) -> bool:
         return False
     if not any(mark in md for mark in _X_LOGIN_MARKERS):
         return False
-    body = _FM_RE.sub("", md)                                   # drop frontmatter
-    body = re.sub(r"!?\[[^\]]*\]\([^)]*\)", " ", body)          # drop [..](..) / ![..](..)
-    prose = re.sub(r"\s+", " ", re.sub(r"[#>*`_|\[\]()\-]", " ", body)).strip()
-    return len(prose) < _X_PROSE_FLOOR
+    return len(_normalized_prose(md)) < _X_PROSE_FLOOR
+
+
+def _announcement_only(md: str) -> str | None:
+    """TASK 057 (W3): the broadcast/space URL when `md` (an x-status reader capture) is a
+    contentless ANNOUNCEMENT of it, else None. AND-gated (Q-057-4): a first-party
+    `/i/broadcasts/<id>` / `/i/spaces/<id>` link must be present AND the normalized prose
+    must sit under `_X_ANNOUNCEMENT_PROSE_FLOOR` — a substantive tweet that also links a
+    broadcast is NOT dropped. Searches the RAW markdown (links live in `[..](..)` targets,
+    which the prose normalization strips). Pure string-shape — no network (Decision-17)."""
+    m = _X_BROADCAST_URL_RE.search(md)
+    if m is None:
+        return None
+    if len(_normalized_prose(md)) >= _X_ANNOUNCEMENT_PROSE_FLOOR:
+        return None
+    return m.group(0)
 
 
 # ---- fetch strategies ------------------------------------------------------
@@ -353,6 +424,15 @@ def _fetch_html(html_bin: str, target: str, *, download_images: bool = False) ->
         return _fail("no_output")
     if _is_x_login_wall(md, target):  # logged-out X chrome only → no post text
         _cleanup()
+        # Phase-4 logic F6: a login-walled ANNOUNCEMENT (prose < 220 AND a broadcast link)
+        # must still surface the broadcast_url + re-route hint (exit 0), not a dead-end
+        # FETCH_FAILED — the actionable link is right there in the chrome.
+        bc_url = _announcement_only(md)
+        if bc_url is not None:
+            return FetchResult(ok=False, engine="html", error={
+                "error": "AnnouncementOnly", "type": "AnnouncementOnly", "exit_code": 0,
+                "details": {"kind": "announcement_only",
+                            "broadcast_url": bc_url, "url": target}})
         return FetchResult(ok=False, engine="html", error={
             "error": "x.com returned only the logged-out login wall (no post text "
                      "captured); save the thread/article as a .webarchive while logged "
@@ -637,12 +717,14 @@ def _transcript_python(script_path: str) -> str:
     return str(venv_py) if venv_py.exists() else "python3"
 
 
-def _transcript_timeout() -> int:
+def _transcript_timeout(primary: bool = True) -> int:
+    """Wall-clock for one transcript-fetcher subprocess. `WIKI_TRANSCRIPT_TIMEOUT_S` set →
+    that value for BOTH roles; else 3600 s primary / 300 s embed (Q-057-2)."""
+    default = _TRANSCRIPT_TIMEOUT_PRIMARY_S if primary else _TRANSCRIPT_TIMEOUT_EMBED_S
     try:
-        return max(1, int(os.environ.get("WIKI_TRANSCRIPT_TIMEOUT_S",
-                                         str(_TRANSCRIPT_TIMEOUT_DEFAULT))))
+        return max(1, int(os.environ.get("WIKI_TRANSCRIPT_TIMEOUT_S", str(default))))
     except ValueError:
-        return _TRANSCRIPT_TIMEOUT_DEFAULT
+        return default
 
 
 def _transcript_origin(stat: dict[str, Any]) -> str:
@@ -693,12 +775,18 @@ def _map_transcript_error(rc: int, stderr: str, url: str) -> FetchResult:
 def _fetch_transcript(transcript_bin: str, url: str, *, lang: str,
                       max_duration_min: float | None = None,
                       cookies_from_browser: str | None = None,
-                      cookies_file: str | None = None) -> FetchResult:
+                      cookies_file: str | None = None,
+                      concurrent_fragments: int | None = None,
+                      media_timeout_sec: int | None = None,
+                      primary: bool = True) -> FetchResult:
     """URL → transcript via the transcript-fetcher skill (R-3). Shells out (argv array — NF-3a)
     to the skill's own venv python, reads the `.txt` + sibling `.stat.json`, sets
     `engine="transcript:<origin>"`, and maps typed exits. Temp dir reclaimed in a `finally`
     (R-3g). `--with-description` (so the stat carries title/uploader/date — S0) + `--lang`
-    (ALWAYS, never the skill's `ru` default — C-3) + `--json-errors` are always passed."""
+    (ALWAYS, never the skill's `ru` default — C-3) + `--json-errors` are always passed.
+    TASK 057 (W1): `concurrent_fragments`/`media_timeout_sec` forward the skill's X-media
+    robustness knobs — None OMITS the flag so the skill's own env/`.env`/duration-derived
+    defaults rule (the policy stays skill-owned, never re-derived here)."""
     bin_path = require_bin(transcript_bin, "transcript")
     tmpdir = tempfile.mkdtemp(prefix="wiki-import-transcript-")
     out_txt = Path(tmpdir) / "t.txt"
@@ -710,16 +798,30 @@ def _fetch_transcript(transcript_bin: str, url: str, *, lang: str,
         argv += ["--cookies-from-browser", cookies_from_browser]
     if cookies_file:
         argv += ["--cookies-file", cookies_file]
+    if concurrent_fragments is not None:
+        argv += ["--concurrent-fragments", str(concurrent_fragments)]
+    if media_timeout_sec is not None:
+        argv += ["--media-timeout-sec", str(media_timeout_sec)]
 
     def _fail(kind: str) -> FetchResult:
         return FetchResult(ok=False, engine="transcript", error={
             "error": "FetchFailed", "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
             "details": {"url": url, "kind": kind}})
 
+    # Phase-4 logic F1: an explicit --transcript-media-timeout larger than the wall-clock
+    # would be silently SIGKILLed at the wall-clock — the exact W1 clip this task removes.
+    # The operator's media budget therefore RAISES the hang-guard to budget + headroom —
+    # on the PRIMARY role only (cycle-2 NEW-1): the skill applies the media budget to X
+    # media alone, and embeds are youtube/vimeo-allowlisted, so on the embed role the knob
+    # is a guaranteed no-op child-side and must never inflate the 300 s supplementary
+    # bound (Q-057-2: hung embeds must not chain multi-hour stalls).
+    wall_timeout = _transcript_timeout(primary)
+    if primary:
+        wall_timeout = max(wall_timeout, (media_timeout_sec or 0) + 300)
     try:
         try:
             proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=_transcript_timeout(), env=_skill_env())
+                                  timeout=wall_timeout, env=_skill_env())
         except subprocess.TimeoutExpired:
             return _fail("timeout")
         except (OSError, ValueError):
@@ -750,14 +852,18 @@ def _fetch_x_status_with_video(html_bin: str, transcript_bin: str, url: str, *, 
                                download_images: bool = False,
                                max_duration_min: float | None = None,
                                cookies_from_browser: str | None = None,
-                               cookies_file: str | None = None) -> FetchResult:
+                               cookies_file: str | None = None,
+                               concurrent_fragments: int | None = None,
+                               media_timeout_sec: int | None = None) -> FetchResult:
     """Decision 3 (R-5): `--video` on an x-status → CONCATENATE the tweet prose (html) with the
     video transcript. A transcript failure (no-media/auth/rate/dep) degrades to html-only when the
     tweet text is available; only when html ALSO fails is the transcript error surfaced."""
     html_res = _fetch_html(html_bin, url, download_images=download_images)
     try:
         tr = _fetch_transcript(transcript_bin, url, lang=lang, max_duration_min=max_duration_min,
-                               cookies_from_browser=cookies_from_browser, cookies_file=cookies_file)
+                               cookies_from_browser=cookies_from_browser, cookies_file=cookies_file,
+                               concurrent_fragments=concurrent_fragments,
+                               media_timeout_sec=media_timeout_sec)
     except ImportArticleError:
         # video dep-missing: the tweet text is still useful → html-only WHEN html succeeded; but if
         # html ALSO failed (e.g. a login-walled tweet) re-raise so prepare surfaces the actionable
@@ -840,7 +946,9 @@ def _discover_embedded_videos(raw_html: str) -> list[tuple[str, str]]:
 
 
 def _append_embedded_videos(res: FetchResult, page_url: str, *, transcript_bin: str,
-                            lang: str, max_n: int) -> None:
+                            lang: str, max_n: int,
+                            concurrent_fragments: int | None = None,
+                            media_timeout_sec: int | None = None) -> None:
     """R-13: discover allowlisted, NON-AD video embeds on a `not_video` page and APPEND their
     transcripts to `res.raw_text` (best-effort, additive — a per-embed failure NEVER aborts the
     page; contrast the hard-fail on an unambiguous_video URL). Records the full skip-reason log on
@@ -862,7 +970,12 @@ def _append_embedded_videos(res: FetchResult, page_url: str, *, transcript_bin: 
             log.append({"url": url, "reason": "cap"})
             continue
         try:
-            tr = _fetch_transcript(transcript_bin, url, lang=lang)
+            # embeds forward the W1 knobs too (the skill ignores them on non-X hosts);
+            # primary=False → the 300 s supplementary wall-clock (Q-057-2)
+            tr = _fetch_transcript(transcript_bin, url, lang=lang,
+                                   concurrent_fragments=concurrent_fragments,
+                                   media_timeout_sec=media_timeout_sec,
+                                   primary=False)
         except ImportArticleError:
             log.append({"url": url, "reason": "transcript-failure:dep"})
             continue
@@ -891,7 +1004,9 @@ def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
                    embedded_videos: bool = False, embedded_videos_max: int = 5,
                    lang: str = "en", max_duration_min: float | None = None,
                    cookies_from_browser: str | None = None,
-                   cookies_file: str | None = None) -> FetchResult:
+                   cookies_file: str | None = None,
+                   concurrent_fragments: int | None = None,
+                   media_timeout_sec: int | None = None) -> FetchResult:
     """Route `source` (URL or local file) to transcript / html / pdf and return a FetchResult.
 
     TASK 044 prepends a media-tier BEFORE the html branch: an `unambiguous_video` URL goes to the
@@ -915,21 +1030,41 @@ def dispatch_fetch(source: str, *, html_bin: str, pdf_extract_bin: str,
         return _fetch_transcript(transcript_bin or "", source, lang=lang,
                                  max_duration_min=max_duration_min,
                                  cookies_from_browser=cookies_from_browser,
-                                 cookies_file=cookies_file)
+                                 cookies_file=cookies_file,
+                                 concurrent_fragments=concurrent_fragments,
+                                 media_timeout_sec=media_timeout_sec)
     if is_url and host_class == "ambiguous_x_status" and video:
         return _fetch_x_status_with_video(
             html_bin, transcript_bin or "", source, lang=lang,
             download_images=download_images, max_duration_min=max_duration_min,
-            cookies_from_browser=cookies_from_browser, cookies_file=cookies_file)
+            cookies_from_browser=cookies_from_browser, cookies_file=cookies_file,
+            concurrent_fragments=concurrent_fragments,
+            media_timeout_sec=media_timeout_sec)
 
     # --- existing dispatch (unchanged for not_video / default x-status) ---
     if is_url and not bare.endswith(".pdf"):
         res = _fetch_html(html_bin, source, download_images=download_images)
         if res.ok:
+            # TASK 057 (W3): an x-status WITHOUT --video whose capture merely announces a
+            # Broadcast/Space → typed marker, never a junk _raw. Reclaim the html temp dir
+            # HERE (the ok-result is being replaced; prepare's _imgtmp owner never sees it) —
+            # None-guarded: the no-images path already cleaned up (attachments_dir=None).
+            if host_class == "ambiguous_x_status" and not video:
+                bc_url = _announcement_only(res.raw_text or "")
+                if bc_url is not None:
+                    if res.attachments_dir:
+                        shutil.rmtree(res.attachments_dir.parent, ignore_errors=True)
+                    return FetchResult(ok=False, engine="html", error={
+                        "error": "AnnouncementOnly", "type": "AnnouncementOnly",
+                        "exit_code": 0,
+                        "details": {"kind": "announcement_only",
+                                    "broadcast_url": bc_url, "url": source}})
             # R-13: optionally append non-ad embedded-video transcripts on a not_video page
             if embedded_videos and host_class == "not_video":
                 _append_embedded_videos(res, source, transcript_bin=transcript_bin or "",
-                                        lang=lang, max_n=embedded_videos_max)
+                                        lang=lang, max_n=embedded_videos_max,
+                                        concurrent_fragments=concurrent_fragments,
+                                        media_timeout_sec=media_timeout_sec)
             return res
         # the html skill says "HTML-only article has no HTML, use the PDF" → fall back.
         kind = (res.error or {}).get("details", {}).get("kind")
