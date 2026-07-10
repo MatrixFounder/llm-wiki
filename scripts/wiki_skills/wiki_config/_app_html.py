@@ -9,11 +9,18 @@ inherited values render as placeholders with the origin badge and an
 "override here / reset" control; root-only fields are disabled outside the
 vault root. A new schema field appears here with ZERO edits (R-058-10).
 
-Form layout (real-vault feedback, 2026-07-11): the field label is the LEAF key
-name with a nesting breadcrumb (`detect › mirror`), never the full JSON pointer
-(those overflowed onto the inputs); fields group under sub-block headings;
-long schema descriptions clamp to two lines and expand on click; a sticky
-action bar carries Save + a pending-changes counter.
+Real-vault feedback rounds (2026-07-11):
+  * field labels are LEAF key names + a nesting breadcrumb (full pointers
+    overflowed onto inputs); sub-block headings; clamped expandable hints;
+    sticky action bar; taller multi-line list fields.
+  * the nav shows the FULL folder hierarchy — configured folders highlighted,
+    unconfigured dimmed-but-clickable (open → inherited values, Save = "Create
+    override here"); configured folders carry "✕ delete config".
+  * the tree is COLLAPSIBLE per folder (chevrons + collapse/expand-all,
+    state persisted in localStorage), and unsaved edits are PER-FOLDER:
+    switching folders keeps them, red dots mark dirty folders (a collapsed
+    ancestor inherits the dot), a header "Save all (N)" flushes everything,
+    and closing the tab with pending edits warns first.
 
 Kept as a Python module holding one string so mypy/pytest cover its wiring;
 the page itself is served by `_server.py` under a strict CSP.
@@ -43,38 +50,51 @@ body{margin:0;background:var(--bg);color:var(--fg);font-size:15px}
 code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
 header{position:sticky;top:0;z-index:5;background:var(--panel);
-  border-bottom:1px solid var(--line);padding:.65rem 1.4rem;display:flex;
+  border-bottom:1px solid var(--line);padding:.6rem 1.4rem;display:flex;
   gap:1rem;align-items:center;box-shadow:var(--shadow)}
 header h1{font-size:.95rem;margin:0;letter-spacing:.01em}
 header .vault{color:var(--muted);font-size:.78rem;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap;max-width:38rem}
-#status{margin-left:auto;font-size:.82rem;font-weight:600}
+  text-overflow:ellipsis;white-space:nowrap;max-width:30rem}
+#saveAll{margin-left:auto}
+#saveAll[hidden]{display:none}
+#status{font-size:.82rem;font-weight:600}
 #status.ok{color:var(--ok)}#status.err{color:var(--err)}
 
-main{display:grid;grid-template-columns:minmax(14rem,19rem) 1fr;gap:1.1rem;
+main{display:grid;grid-template-columns:minmax(15rem,20rem) 1fr;gap:1.1rem;
   padding:1.1rem 1.4rem;max-width:92rem;margin:0 auto}
 @media (max-width:880px){main{grid-template-columns:1fr}nav{position:static;max-height:none}}
 
 nav{position:sticky;top:3.6rem;align-self:start;max-height:calc(100vh - 5rem);
   overflow:auto;background:var(--panel);border:1px solid var(--line);
   border-radius:.8rem;padding:.45rem;box-shadow:var(--shadow)}
-nav .navtitle{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--muted);padding:.35rem .6rem}
-nav button{display:flex;width:100%;justify-content:space-between;gap:.5rem;
-  text-align:left;background:none;border:0;color:var(--fg);
-  padding:.4rem .6rem;font-size:.86rem;border-radius:.5rem;cursor:pointer}
-nav button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-nav button:hover{background:var(--line-soft)}
-nav button.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
-nav button.dim span:first-child{color:var(--muted);font-weight:400}
-nav button.active.dim span:first-child{color:var(--accent)}
-nav .cfgdot{color:var(--accent);font-size:.6rem;vertical-align:middle}
+.navhead{display:flex;align-items:center;gap:.4rem;padding:.2rem .4rem .45rem}
+.navhead .navtitle{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);flex:1}
+.navrow{display:flex;align-items:stretch}
+.navrow .chev{background:none;border:0;color:var(--muted);cursor:pointer;
+  width:1.3rem;flex:0 0 1.3rem;padding:0;font-size:.7rem;border-radius:.35rem}
+.navrow .chev:hover{background:var(--line-soft);color:var(--fg)}
+.navrow .chev.leaf{visibility:hidden;cursor:default}
+.navrow .item{display:flex;flex:1;min-width:0;justify-content:space-between;
+  gap:.5rem;text-align:left;background:none;border:0;color:var(--fg);
+  padding:.34rem .5rem;font-size:.85rem;border-radius:.5rem;cursor:pointer;
+  align-items:center}
+.navrow .item span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navrow .item:hover{background:var(--line-soft)}
+.navrow .item.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.navrow .item.dim span.nm{color:var(--muted);font-weight:400}
+.navrow .item.active.dim span.nm{color:var(--accent)}
+.cfgdot{color:var(--accent);font-size:.6rem;vertical-align:middle}
+.pdot{color:var(--err);font-size:.72rem;font-weight:700}
+.navnote{font-size:.7rem;color:var(--muted);padding:.35rem .6rem}
 
 #panel{background:var(--panel);border:1px solid var(--line);
   border-radius:.8rem;box-shadow:var(--shadow);min-height:22rem;
   display:flex;flex-direction:column;overflow:hidden}
 .panelhead{padding:.9rem 1.3rem .0rem}
-.panelhead h2{margin:0 0 .6rem;font-size:1.05rem;overflow-wrap:anywhere}
+.panelhead h2{margin:0 0 .35rem;font-size:1.05rem;overflow-wrap:anywhere}
+.confignote{font-size:.78rem;color:var(--muted);margin:.1rem 0 .6rem;
+  display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
 .tabs{display:flex;gap:.2rem;border-bottom:1px solid var(--line)}
 .tabs button{background:none;border:0;border-bottom:2px solid transparent;
   color:var(--muted);padding:.5rem .9rem;font-size:.88rem;cursor:pointer;font-weight:600}
@@ -129,8 +149,6 @@ button.small{background:var(--panel);border:1px solid var(--line);color:var(--fg
   border-radius:.45rem;padding:.2rem .6rem;font-size:.73rem;cursor:pointer}
 button.small:hover{border-color:var(--accent);color:var(--accent)}
 button.small.danger:hover{border-color:var(--err);color:var(--err)}
-.confignote{font-size:.78rem;color:var(--muted);margin:.1rem 0 .6rem;
-  display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
 button.primary{background:var(--accent);border:0;color:#fff;border-radius:.55rem;
   padding:.5rem 1.3rem;font-weight:700;font-size:.88rem;cursor:pointer;
   box-shadow:var(--shadow)}
@@ -167,9 +185,16 @@ button.primary:disabled{opacity:.5;cursor:default;box-shadow:none}
 </style></head>
 <body>
 <header><h1>wiki-config</h1><span id="vault" class="vault"></span>
+<button class="primary" id="saveAll" hidden>Save all</button>
 <span id="status"></span></header>
 <main>
-<nav><div class="navtitle">Configured folders</div><div id="tree"></div></nav>
+<nav>
+  <div class="navhead"><span class="navtitle">Folders</span>
+    <button class="small" id="expandAll" title="expand all">⊞</button>
+    <button class="small" id="collapseAll" title="collapse all">⊟</button>
+  </div>
+  <div id="tree"></div>
+</nav>
 <div id="panel"><div class="panelbody"><p class="muted">Loading…</p></div></div>
 </main>
 <script>
@@ -177,10 +202,13 @@ button.primary:disabled{opacity:.5;cursor:default;box-shadow:none}
 const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
 const HDR = {"X-Wiki-Config-Token": token};
 const JHDR = {...HDR, "Content-Type": "application/json"};
-let SCHEMA = [];          // [{pointer,kind,scope,enum,default,description,format}]
-let FOLDER = null;        // /api/folder payload for the selected folder
-let DIRTY = new Map();    // pointer -> {op,value}
+let SCHEMA = [];            // [{pointer,kind,scope,enum,default,description,format}]
+let FOLDER = null;          // /api/folder payload for the selected folder
+let TREE = null;            // cached /api/tree payload
 let SEL = ".";
+const PENDING = new Map();  // rel -> Map(pointer -> {op,value}) — survives switching
+const BASEHASH = new Map(); // rel -> file hash captured when the folder loaded
+let COLLAPSED = new Set();
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g,
@@ -194,8 +222,19 @@ const setStatus = (text, ok) => {
   const el = $("#status");
   el.textContent = text;
   el.className = ok ? "ok" : (ok === false ? "err" : "");
-  if (text) setTimeout(() => { el.textContent = ""; el.className = ""; }, 4500);
+  if (text) setTimeout(() => { el.textContent = ""; el.className = ""; }, 5000);
 };
+
+// ---------- pending-edit state ----------------------------------------------
+const pendingFor = (rel) => {
+  if (!PENDING.has(rel)) PENDING.set(rel, new Map());
+  return PENDING.get(rel);
+};
+const dirtyFolders = () =>
+  [...PENDING.entries()].filter(([, m]) => m.size).map(([rel]) => rel);
+window.addEventListener("beforeunload", (e) => {
+  if (dirtyFolders().length) { e.preventDefault(); e.returnValue = ""; }
+});
 
 // ---------- data helpers ---------------------------------------------------
 const byPointer = (obj, pointer) => pointer.split("/").filter(Boolean)
@@ -204,62 +243,129 @@ const parts = (pointer) => pointer.split("/").filter(Boolean);
 const topKey = (pointer) => parts(pointer)[0];
 const leafKey = (pointer) => parts(pointer).at(-1);
 const midPath = (pointer) => parts(pointer).slice(1, -1).join(" › ");
+const isUnder = (rel, ancestor) =>
+  ancestor === "." ? rel !== "." : rel !== ancestor && rel.startsWith(ancestor + "/");
 
-// ---------- tree ------------------------------------------------------------
+// ---------- collapsible tree --------------------------------------------------
+const lsKey = () => "wiki-config-collapsed:" + ((TREE && TREE.vault_root) || "");
+const loadCollapsed = () => {
+  try { COLLAPSED = new Set(JSON.parse(localStorage.getItem(lsKey()) || "[]")); }
+  catch { COLLAPSED = new Set(); }
+};
+const saveCollapsed = () => {
+  try { localStorage.setItem(lsKey(), JSON.stringify([...COLLAPSED])); }
+  catch { /* private mode */ }
+};
+
 async function loadTree() {
   const {body} = await api("/api/tree", {headers: HDR});
+  TREE = body;
   $("#vault").textContent = body.vault_root || "";
-  // Full hierarchy: EVERY folder, configured ones highlighted (●), the rest
-  // dimmed but clickable — clicking shows their inherited settings, editable.
-  const folders = body.folders && body.folders.length
-    ? body.folders
-    : [".", ...(body.nodes || []).map((n) => n.folder)]
-        .map((rel) => ({rel, configured: true}));
-  const byRel = new Map((body.nodes || []).map((n) => [n.folder, n]));
+  loadCollapsed();
+  renderTree();
+}
+
+function renderTree() {
+  const folders = (TREE.folders && TREE.folders.length
+    ? TREE.folders
+    : [".", ...(TREE.nodes || []).map((n) => n.folder)]
+        .map((rel) => ({rel, configured: true})))
+    .slice().sort((a, b) => a.rel.localeCompare(b.rel));
+  const rels = folders.map((f) => f.rel);
+  const hasKids = (rel) => rels.some((r) => isUnder(r, rel));
+  const hidden = (rel) => [...COLLAPSED].some((c) => isUnder(rel, c));
+  const byRel = new Map((TREE.nodes || []).map((n) => [n.folder, n]));
   const tree = $("#tree");
   tree.innerHTML = "";
-  folders
-    .sort((a, b) => a.rel.localeCompare(b.rel))
-    .forEach(({rel, configured}) => {
-      const node = byRel.get(rel);
-      const marks = node && node.ignored && node.ignored.length ? "⛔"
-        : (node && node.error ? "⚠" : "");
-      const depth = rel === "." ? 0 : rel.split("/").length;
-      const name = rel === "." ? "(vault root)" : rel.split("/").at(-1);
-      const dot = configured ? '<span class="cfgdot">● </span>' : "";
-      const b = document.createElement("button");
-      b.style.paddingLeft = (0.6 + Math.max(0, depth - 1) * 0.9) + "rem";
-      b.title = rel + (configured ? " — has its own config" : " — inherited only");
-      if (!configured) b.classList.add("dim");
-      b.innerHTML = `<span>${dot}${esc(name)}</span><span>${marks}</span>`;
-      b.onclick = () => select(rel, b);
-      b.dataset.label = rel;
-      if (rel === SEL) b.classList.add("active");
-      tree.appendChild(b);
-    });
-  if (body.truncated) {
+  folders.forEach(({rel, configured}) => {
+    if (hidden(rel)) return;
+    const node = byRel.get(rel);
+    const marks = node && node.ignored && node.ignored.length ? "⛔"
+      : (node && node.error ? "⚠" : "");
+    const depth = rel === "." ? 0 : rel.split("/").length;
+    const name = rel === "." ? "(vault root)" : rel.split("/").at(-1);
+    const dot = configured ? '<span class="cfgdot">● </span>' : "";
+    const kids = hasKids(rel);
+    const row = document.createElement("div");
+    row.className = "navrow";
+    row.style.paddingLeft = (Math.max(0, depth - (rel === "." ? 0 : 1)) * 0.85) + "rem";
+    const chev = document.createElement("button");
+    chev.className = "chev" + (kids ? "" : " leaf");
+    chev.textContent = COLLAPSED.has(rel) ? "▸" : "▾";
+    chev.title = COLLAPSED.has(rel) ? "expand" : "collapse";
+    if (kids) chev.onclick = (e) => {
+      e.stopPropagation();
+      COLLAPSED.has(rel) ? COLLAPSED.delete(rel) : COLLAPSED.add(rel);
+      saveCollapsed();
+      renderTree();
+    };
+    const item = document.createElement("button");
+    item.className = "item" + (configured ? "" : " dim")
+      + (rel === SEL ? " active" : "");
+    item.title = rel + (configured ? " — has its own config" : " — inherited only");
+    item.dataset.label = rel;
+    item.innerHTML = `<span class="nm">${dot}${esc(name)}</span>`
+      + `<span><span class="pdot" data-pdot="${esc(rel)}"></span> ${marks}</span>`;
+    item.onclick = () => select(rel, item);
+    row.appendChild(chev);
+    row.appendChild(item);
+    tree.appendChild(row);
+  });
+  if (TREE.truncated) {
     const note = document.createElement("div");
-    note.className = "navtitle";
+    note.className = "navnote";
     note.textContent = "tree truncated at 5000 folders";
     tree.appendChild(note);
   }
-  const other = document.createElement("button");
-  other.innerHTML = "<span class='muted'>+ other folder…</span>";
-  other.onclick = () => {
+  const other = document.createElement("div");
+  other.className = "navrow";
+  other.innerHTML = `<button class="chev leaf">▸</button>
+    <button class="item"><span class="nm muted">+ other folder…</span></button>`;
+  other.querySelector(".item").onclick = () => {
     const rel = prompt("Vault-relative folder path:");
-    if (rel) select(rel, other);
+    if (rel) select(rel, null);
   };
   tree.appendChild(other);
+  updateDots();
 }
+
+function updateDots() {
+  const dirty = dirtyFolders();
+  document.querySelectorAll("[data-pdot]").forEach((el) => {
+    const rel = el.dataset.pdot;
+    const own = dirty.includes(rel);
+    // a COLLAPSED ancestor shows the dot for its hidden dirty descendants
+    const below = COLLAPSED.has(rel) && dirty.some((d) => isUnder(d, rel));
+    el.textContent = own ? "●" : (below ? "◦" : "");
+    el.title = own ? "unsaved changes here"
+      : (below ? "unsaved changes inside" : "");
+  });
+  const saveAll = $("#saveAll");
+  if (saveAll) {
+    saveAll.hidden = dirty.length === 0;
+    saveAll.textContent = `Save all (${dirty.length})`;
+  }
+}
+
+$("#expandAll").onclick = () => { COLLAPSED.clear(); saveCollapsed(); renderTree(); };
+$("#collapseAll").onclick = () => {
+  const rels = (TREE.folders || []).map((f) => f.rel);
+  rels.forEach((rel) => {
+    if (rels.some((r) => isUnder(r, rel)) && rel !== ".") COLLAPSED.add(rel);
+  });
+  saveCollapsed();
+  renderTree();
+};
 
 async function select(label, btn) {
   SEL = label;
-  document.querySelectorAll("nav button").forEach((x) =>
-    x.classList.toggle("active", x === btn));
+  document.querySelectorAll("nav .item").forEach((x) =>
+    x.classList.toggle("active", btn ? x === btn : x.dataset.label === label));
   const {status, body} = await api(
     "/api/folder?rel=" + encodeURIComponent(label), {headers: HDR});
   if (status !== 200) { setStatus(body.error || "load failed", false); return; }
-  FOLDER = body; DIRTY = new Map();
+  FOLDER = body;
+  BASEHASH.set(label, body.hash);
   renderPanel("form");
 }
 
@@ -314,7 +420,7 @@ function fieldState(spec) {
   const ownVal = FOLDER.own ? byPointer(FOLDER.own, spec.pointer) : undefined;
   const eff = byPointer(FOLDER.effective || {}, spec.pointer);
   const prov = (FOLDER.provenance || {})[spec.pointer] || {};
-  const dirty = DIRTY.get(spec.pointer);
+  const dirty = pendingFor(FOLDER.rel).get(spec.pointer);
   return {ownVal, eff, prov, dirty};
 }
 
@@ -334,7 +440,8 @@ function badgeFor(spec, st) {
 function inputFor(spec, st, id) {
   const disabled = (spec.scope === "root-only" && !FOLDER.is_root) ? "disabled" : "";
   const current = st.dirty && st.dirty.op === "set" ? st.dirty.value
-    : (st.ownVal !== undefined ? st.ownVal : undefined);
+    : (st.dirty && st.dirty.op === "unset" ? undefined
+      : (st.ownVal !== undefined ? st.ownVal : undefined));
   const inherited = st.eff === undefined ? spec.default : st.eff;
   const placeholder = current === undefined
     ? `inherited: ${esc(JSON.stringify(inherited === undefined ? null : inherited))}`
@@ -414,8 +521,7 @@ function renderForm() {
     }
     html += "</fieldset>";
   }
-  const saveLabel = FOLDER.hash ? "Save changes"
-    : "Create override here";
+  const saveLabel = FOLDER.hash ? "Save this folder" : "Create override here";
   const saveNote = FOLDER.hash
     ? "schema-gated · comment-preserving · backed up to .wiki/backups/"
     : "creates this folder's .wiki/sync.yaml with ONLY the fields you set";
@@ -426,7 +532,7 @@ function renderForm() {
   body.innerHTML = html;
   $("#saveForm").onclick = saveForm;
   body.querySelectorAll("[data-reset]").forEach((b) => b.onclick = () => {
-    DIRTY.set(b.dataset.reset, {op: "unset"});
+    pendingFor(FOLDER.rel).set(b.dataset.reset, {op: "unset"});
     renderPanel("form");
     updateDirtyCount();
   });
@@ -441,29 +547,32 @@ function renderForm() {
 }
 
 function updateDirtyCount() {
+  const size = pendingFor(SEL).size;
   const el = $("#dirtyCount");
-  if (el) el.textContent = DIRTY.size
-    ? `${DIRTY.size} unsaved change${DIRTY.size > 1 ? "s" : ""}` : "";
+  if (el) el.textContent = size
+    ? `${size} unsaved change${size > 1 ? "s" : ""}` : "";
   const save = $("#saveForm");
-  if (save) save.disabled = !DIRTY.size;
+  if (save) save.disabled = !size;
+  updateDots();
 }
 
 function wireField(spec, id) {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener("input", () => {
+    const pending = pendingFor(FOLDER.rel);
     let value = el.value;
     if (value === "") {
-      const st0 = FOLDER.own ? byPointer(FOLDER.own, spec.pointer) : undefined;
-      if (st0 !== undefined) DIRTY.set(spec.pointer, {op: "unset"});
-      else DIRTY.delete(spec.pointer);
+      const own = FOLDER.own ? byPointer(FOLDER.own, spec.pointer) : undefined;
+      if (own !== undefined) pending.set(spec.pointer, {op: "unset"});
+      else pending.delete(spec.pointer);
       updateDirtyCount();
       return;
     }
     if (spec.kind === "boolean") value = value === "true";
     else if (spec.kind === "array")
       value = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
-    DIRTY.set(spec.pointer, {op: "set", value});
+    pending.set(spec.pointer, {op: "set", value});
     updateDirtyCount();
   });
   const sample = document.getElementById(id + "-sample");
@@ -481,6 +590,46 @@ function wireField(spec, id) {
   });
 }
 
+// ---------- saving -----------------------------------------------------------
+async function saveOne(rel) {
+  const pending = pendingFor(rel);
+  if (!pending.size) return {ok: true};
+  const edits = [...pending.entries()].map(([pointer, e]) =>
+    ({pointer, op: e.op, value: e.value}));
+  const {status, body} = await api("/api/write", {method: "POST", headers: JHDR,
+    body: JSON.stringify({rel, edits, expected_hash: BASEHASH.get(rel)})});
+  if (status === 200) {
+    PENDING.delete(rel);
+    BASEHASH.set(rel, body.hash);
+    return {ok: true, backup: body.backup};
+  }
+  return {ok: false, error: `${body.error || "save failed"}: ${body.detail || ""}`};
+}
+
+async function saveForm() {
+  const result = await saveOne(FOLDER.rel);
+  if (result.ok) {
+    setStatus("saved ✓ (backup: " + (result.backup || "new file") + ")", true);
+    select(SEL, document.querySelector("nav .item.active"));
+    loadTree();
+  } else setStatus(result.error, false);
+}
+
+async function saveAll() {
+  const rels = dirtyFolders();
+  const failed = [];
+  for (const rel of rels) {
+    const result = await saveOne(rel);
+    if (!result.ok) failed.push(`${rel}: ${result.error}`);
+  }
+  if (failed.length) setStatus(`saved ${rels.length - failed.length}/${rels.length}; `
+    + `FAILED — ${failed.join(" · ")}`, false);
+  else setStatus(`saved all (${rels.length}) ✓`, true);
+  select(SEL, document.querySelector("nav .item.active"));
+  loadTree();
+}
+$("#saveAll").onclick = saveAll;
+
 async function deleteConfig() {
   const target = FOLDER.rel === "." ? ".wiki/sync.yaml"
     : FOLDER.rel + "/.wiki/sync.yaml";
@@ -490,26 +639,11 @@ async function deleteConfig() {
   const {status, body} = await api("/api/delete-config", {method: "POST",
     headers: JHDR, body: JSON.stringify({rel: FOLDER.rel})});
   if (status === 200) {
+    PENDING.delete(FOLDER.rel);
     setStatus("config deleted ✓ (backup: " + (body.backup || "—") + ")", true);
-    select(SEL, document.querySelector("nav button.active"));
+    select(SEL, document.querySelector("nav .item.active"));
     loadTree();
   } else setStatus(body.error || "delete failed", false);
-}
-
-async function saveForm() {
-  if (!DIRTY.size) { setStatus("nothing to save", true); return; }
-  const edits = [...DIRTY.entries()].map(([pointer, e]) =>
-    ({pointer, op: e.op, value: e.value}));
-  const {status, body} = await api("/api/write", {method: "POST", headers: JHDR,
-    body: JSON.stringify({rel: FOLDER.rel, edits,
-                          expected_hash: FOLDER.hash})});
-  if (status === 200) {
-    setStatus("saved ✓ (backup: " + (body.backup || "new file") + ")", true);
-    select(SEL, document.querySelector("nav button.active"));
-    loadTree();
-  } else {
-    setStatus(`${body.error || "save failed"}: ${body.detail || ""}`, false);
-  }
 }
 
 // ---------- yaml tab ----------------------------------------------------------
@@ -537,10 +671,12 @@ function renderYaml() {
     const {status, body: r} = await api("/api/write", {method: "POST",
       headers: JHDR,
       body: JSON.stringify({rel: FOLDER.rel, text: area.value,
-                            expected_hash: FOLDER.hash})});
+                            expected_hash: BASEHASH.get(FOLDER.rel)})});
     if (status === 200) {
+      PENDING.delete(FOLDER.rel);
       setStatus("saved ✓", true);
-      select(SEL, document.querySelector("nav button.active"));
+      select(SEL, document.querySelector("nav .item.active"));
+      loadTree();
     } else setStatus(`${r.error || "save failed"}: ${r.detail || ""}`, false);
   };
 }
@@ -568,7 +704,7 @@ function renderFindings() {
       body: JSON.stringify({id: b.dataset.fix})});
     setStatus(status === 200 ? "fixed ✓ (backup taken)" : "fix failed",
               status === 200);
-    select(SEL, document.querySelector("nav button.active"));
+    select(SEL, document.querySelector("nav .item.active"));
     loadTree();
   });
 }
@@ -605,7 +741,7 @@ async function renderTemplates() {
       body: JSON.stringify({rel: FOLDER.rel, template: sel.value, vars})});
     setStatus(status === 200 ? `applied ${sel.value} ✓`
       : `${r.error || "failed"}`, status === 200);
-    select(SEL, document.querySelector("nav button.active"));
+    select(SEL, document.querySelector("nav .item.active"));
     loadTree();
   };
 }
@@ -627,7 +763,7 @@ async function renderTemplates() {
   }
   SCHEMA = body.fields || [];
   await loadTree();
-  const rootBtn = document.querySelector('nav button[data-label="."]');
+  const rootBtn = document.querySelector('nav .item[data-label="."]');
   if (rootBtn) rootBtn.click();
 })();
 </script></body></html>
