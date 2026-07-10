@@ -43,6 +43,19 @@ $defs:
 
   # ----------------------------------------------------------------------------
   # SyncConfig — the merged config the dispatcher consumes.
+  #
+  # `x-wiki-scope` (TASK 058, annotation-only — instance validation is unaffected):
+  # the per-key consumption scope, previously implicit in resolver code.
+  #   * `root-only`  — consumed ONLY from `<vault_root>/.wiki/sync.yaml`
+  #                    (`load_sync_config`); silently ignored in a subfolder file
+  #                    (wiki-config surfaces that as NON_CASCADING_KEY_IN_SUBFOLDER).
+  #   * `cascading`  — per-folder Option-A cascade: every ancestor's RAW block is
+  #                    deep-merged deepest-wins (`_resummarize.resolve_policy` /
+  #                    `resolve_summarize`).
+  # `x-wiki-format` marks strings needing special validation/UI (regex → ReDoS
+  # gate + live tester; glob → liveness check; path → safe-subpath check).
+  # wiki-config's UI model is generated from these annotations at runtime, so a
+  # new key added here surfaces in the form/report with zero interface-code edits.
   # ----------------------------------------------------------------------------
   SyncConfig:
     type: object
@@ -52,11 +65,15 @@ $defs:
         type: array
         items: {type: string}
         default: []
+        x-wiki-scope: root-only
+        x-wiki-format: glob
         description: 'Vault-root-relative globs of sync zones (advisory; `wiki-sync scan <zone>` takes an explicit zone).'
       exclude:
         type: array
         items: {type: string}
         default: []
+        x-wiki-scope: root-only
+        x-wiki-format: glob
         description: >
           Vault-root-relative globs pruned from the walk. A NON-`.md` match is
           pruned immediately; a `.md` match is still read so a `#wiki/keep` tag
@@ -64,15 +81,20 @@ $defs:
       tag_namespace:
         type: string
         default: 'wiki'
+        x-wiki-scope: root-only
         description: 'Routing-tag namespace; `#<ns>/{raw,skip,keep}` + a `<ns>:` frontmatter field.'
       extensions:
         $ref: '#/$defs/Extensions'
+        x-wiki-scope: root-only
       resummarize:
         $ref: '#/$defs/Resummarize'
+        x-wiki-scope: cascading
       transcript_dedup:
         $ref: '#/$defs/TranscriptDedup'
+        x-wiki-scope: root-only
       summarize:
         $ref: '#/$defs/Summarize'
+        x-wiki-scope: cascading
 
   # ----------------------------------------------------------------------------
   # Summarize (TASK 046 P3) — per-zone distil knobs that wiki-sync passes to the
@@ -102,6 +124,7 @@ $defs:
         description: 'File concept pages (default true). false → `--no-concepts` (defer to /wiki-extract-concepts).'
       target_subdir:
         type: string
+        x-wiki-format: path
         description: 'Optional subfolder under the topic folder where the summary note files (e.g. "_summary"). Default "" (the topic folder itself).'
 
   # ----------------------------------------------------------------------------
@@ -206,6 +229,7 @@ $defs:
         enum: [stem-relpath, group-key]
       group_key:
         type: string
+        x-wiki-format: regex
         description: 'shorthand regex applied to BOTH sides (default `^(\d+)`); superseded by `key`.'
         # NOTE (TASK 021): the default `^(\d+)` + leading-zero normalisation define a
         # leading-zero-INSENSITIVE numeric equivalence class (`01`/`1`/`001` → key `1`;
@@ -220,8 +244,8 @@ $defs:
     type: object
     additionalProperties: false
     properties:
-      raw_regex: {type: string}
-      summary_regex: {type: string}
+      raw_regex: {type: string, x-wiki-format: regex}
+      summary_regex: {type: string, x-wiki-format: regex}
       template:
         type: string
         description: 'string.Template over named groups → the comparable key (e.g. ${module}-${lesson}).'
