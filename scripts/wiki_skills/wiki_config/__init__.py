@@ -25,8 +25,18 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfigError
 from scripts.wiki_skills._common import atomic_write_text, emit
 
-from ._findings import histogram, render_findings_report, sort_findings
+from ._backups import list_backups, restore_backup, write_backup
+from ._doctor import FixPlan, apply_plans, build_plans, render_fix_report
+from ._edit import EditDowngrade, PointerEdit, rewrite_text
+from ._findings import (
+    ConfigFinding,
+    TAXONOMY,
+    histogram,
+    render_findings_report,
+    sort_findings,
+)
 from ._lint import lint_vault
+from ._uimodel import SCOPE_ROOT_ONLY, build_ui_model
 from ._provenance import (
     FolderProvenance,
     TreeNode,
@@ -190,6 +200,226 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return emit(envelope, 6 if gate else 0)
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND",
+                     "hint": "pass --vault-root or run inside a vault"}, 2)
+    findings, files_checked = lint_vault(vault_root)
+    findings = sort_findings(findings)
+    plans, manual = build_plans(findings, vault_root)
+    envelope: dict[str, Any] = {
+        "action": "doctored",
+        "vault_root": str(vault_root),
+        "files_checked": files_checked,
+        "plans": [p.to_json() for p in plans],
+        "manual": [f.to_json() for f in manual],
+        **histogram(findings),
+    }
+    report_path = _maybe_report(
+        args, render_fix_report(plans, manual, [], str(vault_root)))
+    if report_path:
+        envelope["report"] = report_path
+    return emit(envelope)
+
+
+def _cmd_fix(args: argparse.Namespace) -> int:
+    import json
+
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND",
+                     "hint": "pass --vault-root or run inside a vault"}, 2)
+    expected_hashes: dict[str, str] | None = None
+    if args.from_plan:
+        try:
+            sidecar = json.loads(Path(args.from_plan).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return emit({"error": "PLAN_UNREADABLE", "field": "from-plan"}, 2)
+        findings = [
+            ConfigFinding(
+                code=str(e.get("code", "")), system=str(e.get("system", "sync")),
+                file=str(e.get("file", "")), pointer=str(e.get("pointer", "")),
+                message=str(e.get("message", "")),
+                data=dict(e.get("data") or {}),
+                file_hash=e.get("file_hash"),
+            )
+            for e in sidecar
+            if isinstance(e, dict) and str(e.get("code", "")) in TAXONOMY
+        ]
+        expected_hashes = {
+            f.file: f.file_hash for f in findings
+            if f.file_hash and f.system == "sync" and f.kind.tier != "manual"
+        }
+    else:
+        findings, _checked = lint_vault(vault_root)
+        findings = sort_findings(findings)
+    plans, manual = build_plans(findings, vault_root)
+    results, diffs, exit_code = apply_plans(
+        vault_root, plans,
+        yes=bool(args.yes), dry_run=bool(args.dry_run),
+        no_backup=bool(args.no_backup), expected_hashes=expected_hashes,
+    )
+    if expected_hashes is not None and any(r.status == "drifted" for r in results):
+        drifted = next(r for r in results if r.status == "drifted")
+        return emit({"error": "CONFIG_DRIFTED", "file": drifted.file,
+                     "hint": "the file changed since the plan was made — re-run "
+                             "doctor and fix from a fresh plan"}, 2)
+    envelope: dict[str, Any] = {
+        "action": "fixed",
+        "vault_root": str(vault_root),
+        "dry_run": bool(args.dry_run),
+        "files": [r.to_json() for r in results],
+        "manual": [f.code for f in manual],
+    }
+    report_path = _maybe_report(
+        args, render_fix_report(plans, manual, diffs, str(vault_root)))
+    if report_path:
+        envelope["report"] = report_path
+    return emit(envelope, 0 if args.dry_run else exit_code)
+
+
+def _cmd_restore(args: argparse.Namespace) -> int:
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND",
+                     "hint": "pass --vault-root or run inside a vault"}, 2)
+    folder = _resolve_folder(args.folder, vault_root)
+    if folder is None:
+        return emit({"error": "FOLDER_NOT_FOUND", "field": "folder"}, 2)
+    entries = list_backups(folder)
+    if args.list:
+        return emit({"action": "backups",
+                     "folder": args.folder,
+                     "backups": [e.__dict__ for e in entries]})
+    if not entries:
+        return emit({"error": "NO_BACKUPS", "folder": args.folder}, 2)
+    if args.to:
+        matches = [e for e in entries if args.to in e.name]
+        if len(matches) != 1:
+            return emit({"error": "BACKUP_NOT_FOUND" if not matches
+                         else "BACKUP_AMBIGUOUS", "field": "to",
+                         "candidates": [e.name for e in matches][:5]}, 2)
+        target = matches[0]
+    else:
+        target = entries[0]
+    if not args.yes:
+        return emit({"action": "restore-plan", "folder": args.folder,
+                     "would_restore": target.name,
+                     "hint": "re-run with --yes to overwrite the live sync.yaml "
+                             "(the current file is backed up first)"}, 7)
+    try:
+        restored_from, backup_of_current = restore_backup(folder, target.name)
+    except (FileNotFoundError, ValueError, OSError):
+        return emit({"error": "RESTORE_FAILED", "folder": args.folder}, 5)
+    from scripts.wiki_index.sync_config import _load_validated_raw
+
+    valid = True
+    try:
+        _load_validated_raw(folder)
+    except SyncConfigError:
+        valid = False
+    return emit({"action": "restored", "folder": args.folder,
+                 "restored_from": restored_from,
+                 "backup_of_current": backup_of_current,
+                 "restored_file_valid": valid})
+
+
+def _parse_cli_value(text: str) -> tuple[Any, bool]:
+    """CLI value → YAML scalar or flat list of scalars. Returns (value, ok)."""
+    import yaml as _yaml
+
+    try:
+        value = _yaml.safe_load(text)
+    except _yaml.YAMLError:
+        return None, False
+    if isinstance(value, dict):
+        return None, False
+    if isinstance(value, list) and any(isinstance(i, (dict, list)) for i in value):
+        return None, False
+    return value, True
+
+
+def _apply_single_edit(
+    vault_root: Path, folder: Path, folder_arg: str, edit: PointerEdit,
+    *, no_backup: bool,
+) -> int:
+    """Shared set/unset write path: sandwich + backup + TOCTOU + atomic write."""
+    target = folder / ".wiki" / "sync.yaml"
+    wiki_dir = folder / ".wiki"
+    if wiki_dir.exists() and (wiki_dir.is_symlink() or not wiki_dir.is_dir()):
+        return emit({"error": "WIKI_DIR_INVALID", "folder": folder_arg,
+                     "hint": ".wiki exists but is not a plain directory"}, 2)
+    existed = target.is_file()
+    if existed and target.is_symlink():
+        return emit({"error": "SYMLINK_REFUSED", "folder": folder_arg}, 2)
+    before = target.read_text(encoding="utf-8") if existed else ""
+    try:
+        after = rewrite_text(before, [edit])
+    except SyncConfigError as exc:
+        return emit({"error": exc.code, "field": "sync-config",
+                     "reason": exc.reason, "detail": exc.detail,
+                     "hint": "the CURRENT file fails its gate — run "
+                             "wiki-config doctor first"}, 6)
+    except EditDowngrade as exc:
+        code = 2 if "not present" in exc.detail else 6
+        return emit({"error": "EDIT_REFUSED", "detail": exc.detail}, code)
+    backup = None
+    if existed and not no_backup:
+        backup = write_backup(folder)
+    if existed and target.read_text(encoding="utf-8") != before:
+        return emit({"error": "CONFIG_DRIFTED", "folder": folder_arg}, 2)
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(target, after)
+    rel = target.relative_to(vault_root).as_posix()
+    return emit({"action": edit.op, "file": rel, "pointer": edit.pointer,
+                 "backup": backup})
+
+
+def _cmd_set(args: argparse.Namespace) -> int:
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND"}, 2)
+    folder = _resolve_folder(args.folder, vault_root)
+    if folder is None:
+        return emit({"error": "FOLDER_NOT_FOUND", "field": "folder"}, 2)
+    model = build_ui_model()
+    if args.pointer not in model:
+        import difflib
+
+        close = difflib.get_close_matches(args.pointer, list(model), 3, 0.4)
+        return emit({"error": "UNKNOWN_POINTER", "field": "pointer",
+                     "did_you_mean": close}, 2)
+    top = "/" + args.pointer.lstrip("/").split("/")[0]
+    spec = model[top]
+    if spec.scope == SCOPE_ROOT_ONLY and folder.resolve() != vault_root.resolve():
+        return emit({"error": "SCOPE_ROOT_ONLY", "pointer": args.pointer,
+                     "hint": f"'{top.lstrip('/')}' is consumed ONLY from the "
+                             "vault-root sync.yaml — set it there (wiki-config "
+                             "set . ...), a subfolder copy is silently ignored"}, 2)
+    value, ok = _parse_cli_value(args.value)
+    if not ok:
+        return emit({"error": "INVALID_VALUE", "field": "value",
+                     "hint": "pass a YAML scalar or a flat list of scalars"}, 2)
+    return _apply_single_edit(vault_root, folder, args.folder,
+                              PointerEdit("set", args.pointer, value),
+                              no_backup=bool(args.no_backup))
+
+
+def _cmd_unset(args: argparse.Namespace) -> int:
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND"}, 2)
+    folder = _resolve_folder(args.folder, vault_root)
+    if folder is None:
+        return emit({"error": "FOLDER_NOT_FOUND", "field": "folder"}, 2)
+    if not (folder / ".wiki" / "sync.yaml").is_file():
+        return emit({"error": "NO_CONFIG", "folder": args.folder}, 2)
+    return _apply_single_edit(vault_root, folder, args.folder,
+                              PointerEdit("unset", args.pointer),
+                              no_backup=bool(args.no_backup))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="wiki-config",
@@ -240,6 +470,72 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--report", default=None,
                           help="also write a grouped markdown report to this path")
     validate.set_defaults(func=_cmd_validate)
+
+    doctor = sub.add_parser(
+        "doctor",
+        help="validate + a tiered repair PLAN (read-only; diffs via --report)",
+    )
+    doctor.add_argument("--vault-root", default=None)
+    doctor.add_argument("--report", default=None,
+                        help="write plans + manual findings as markdown")
+    doctor.set_defaults(func=_cmd_doctor)
+
+    fix = sub.add_parser(
+        "fix",
+        help="apply repair plans: SAFE tier always, CONFIRM tier with --yes "
+             "(without --yes: safe applied, confirm listed, exit 7)",
+    )
+    fix.add_argument("--vault-root", default=None)
+    fix.add_argument("--from-plan", default=None,
+                     help="a validate --json-sidecar file; enables the "
+                          "all-or-nothing hash drift pre-check (CONFIG_DRIFTED)")
+    fix.add_argument("--yes", action="store_true",
+                     help="also apply confirm-tier fixes")
+    fix.add_argument("--dry-run", action="store_true",
+                     help="plan only, write nothing, exit 0")
+    fix.add_argument("--no-backup", action="store_true",
+                     help="skip the .wiki/backups/ copy before writes")
+    fix.add_argument("--report", default=None,
+                     help="write plans + applied unified diffs as markdown")
+    fix.set_defaults(func=_cmd_fix)
+
+    restore = sub.add_parser(
+        "restore",
+        help="restore a folder's sync.yaml from .wiki/backups/ "
+             "(reversible: the current file is backed up first)",
+    )
+    restore.add_argument("folder")
+    restore.add_argument("--vault-root", default=None)
+    restore.add_argument("--list", action="store_true",
+                         help="list available backups, restore nothing")
+    restore.add_argument("--to", default=None,
+                         help="a backup name or unique timestamp fragment "
+                              "(default: the newest backup)")
+    restore.add_argument("--yes", action="store_true",
+                         help="actually overwrite (without it: plan + exit 7)")
+    restore.set_defaults(func=_cmd_restore)
+
+    set_cmd = sub.add_parser(
+        "set",
+        help="set one key by JSON pointer (comment-preserving; schema-gated; "
+             "refuses a root-only key in a subfolder)",
+    )
+    set_cmd.add_argument("folder", help="'.' = vault root")
+    set_cmd.add_argument("pointer", help="e.g. /summarize/profile")
+    set_cmd.add_argument("value", help="YAML scalar or flat list, e.g. meeting")
+    set_cmd.add_argument("--vault-root", default=None)
+    set_cmd.add_argument("--no-backup", action="store_true")
+    set_cmd.set_defaults(func=_cmd_set)
+
+    unset_cmd = sub.add_parser(
+        "unset",
+        help="remove one key by JSON pointer (comment-preserving where possible)",
+    )
+    unset_cmd.add_argument("folder")
+    unset_cmd.add_argument("pointer")
+    unset_cmd.add_argument("--vault-root", default=None)
+    unset_cmd.add_argument("--no-backup", action="store_true")
+    unset_cmd.set_defaults(func=_cmd_unset)
 
     return p
 
