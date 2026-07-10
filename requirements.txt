@@ -14,3 +14,4 @@ mypy>=1.7
 types-PyYAML>=6.0
 types-jsonschema>=4.20
 types-regex
+ruamel.yaml>=0.18

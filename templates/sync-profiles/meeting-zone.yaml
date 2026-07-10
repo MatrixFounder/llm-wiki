@@ -1,0 +1,15 @@
+# wiki-config template: meeting-zone v1.0.0
+# level: subfolder
+# purpose: meeting-transcript zone — pyramid digests, attendees stay in frontmatter
+#
+# Forces `--kind meeting` on every source in this zone (auto-detect can misread
+# a raw transcript as an article) and keeps concept-page filing OFF so meeting
+# attendees do not become `_concepts/` person pages. Flip `extract_concepts` to
+# true if this zone's meetings ARE knowledge-dense — the pyramid grammar already
+# drops `type: person` candidates (TASK 052); `/wiki-extract-concepts` can
+# densify any note later.
+summarize:
+  profile: meeting
+  extract_concepts: false
+resummarize:
+  mode: if-missing

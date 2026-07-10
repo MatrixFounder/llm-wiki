@@ -43,12 +43,19 @@ class SyncConfigError(ValueError):
     """A `.wiki/sync.yaml` that fails the size cap, the anchor-ban, or the strict
     schema. Carries a stable ``code`` (always ``"INVALID_SYNC_CONFIG"``) + a short
     ``detail`` that NEVER contains the offending config value (CWE-209/CWE-117) —
-    the CLI maps it to exit 6."""
+    the CLI maps it to exit 6.
 
-    def __init__(self, code: str, detail: str) -> None:
+    ``reason`` (TASK 058, additive) is a machine-stable failure class
+    (``SYMLINK | OUTSIDE_VAULT | UNRESOLVABLE | SIZE_CAP | ALIAS | ANCHOR | PARSE |
+    NOT_MAPPING | SCHEMA | UNSAFE_SUBDIR``) so `wiki-config validate` can classify
+    without parsing the English ``detail`` string. Default ``""`` keeps every
+    pre-existing constructor call byte-identical in behavior."""
+
+    def __init__(self, code: str, detail: str, *, reason: str = "") -> None:
         super().__init__(f"{code}: {detail}")
         self.code = code
         self.detail = detail
+        self.reason = reason
 
 
 # --------------------------------------------------------------------------- #
@@ -176,10 +183,14 @@ class _NoAliasSafeLoader(yaml.SafeLoader):
         self, parent: yaml.nodes.Node | None, index: int
     ) -> yaml.nodes.Node | None:
         if self.check_event(yaml.events.AliasEvent):  # type: ignore[no-untyped-call]
-            raise SyncConfigError("INVALID_SYNC_CONFIG", "yaml alias is not allowed")
+            raise SyncConfigError(
+                "INVALID_SYNC_CONFIG", "yaml alias is not allowed", reason="ALIAS"
+            )
         event = self.peek_event()  # type: ignore[no-untyped-call]
         if getattr(event, "anchor", None) is not None:
-            raise SyncConfigError("INVALID_SYNC_CONFIG", "yaml anchor is not allowed")
+            raise SyncConfigError(
+                "INVALID_SYNC_CONFIG", "yaml anchor is not allowed", reason="ANCHOR"
+            )
         return super().compose_node(parent, index)
 
 
@@ -216,6 +227,7 @@ def _validate(merged: dict[str, Any]) -> None:
         raise SyncConfigError(
             "INVALID_SYNC_CONFIG",
             "schema validation failed at: " + ", ".join(pointers),
+            reason="SCHEMA",
         )
 
 
@@ -268,7 +280,8 @@ def _parse_summarize(block: Any) -> SummarizeConfig | None:
         raise SyncConfigError(
             "INVALID_SYNC_CONFIG",
             "summarize.target_subdir must be a safe relative path "
-            "(no leading '/', no '..' segment, no backslash/control chars)")
+            "(no leading '/', no '..' segment, no backslash/control chars)",
+            reason="UNSAFE_SUBDIR")
     return SummarizeConfig(
         profile=str(block.get("profile") or "auto"),
         diagrams=bool(block.get("diagrams", False)),
@@ -315,21 +328,25 @@ def _load_validated_raw(root: Path) -> dict[str, Any]:
     # symlinked LEAF `sync.yaml`; (b) resolve the FULL path + re-validate it is
     # inside `root`, so a symlinked parent `.wiki/` cannot redirect the read out.
     if path.is_symlink():
-        raise SyncConfigError("INVALID_SYNC_CONFIG", "config is a symlink")
+        raise SyncConfigError("INVALID_SYNC_CONFIG", "config is a symlink", reason="SYMLINK")
     try:
         validate_inside_vault(path, root)
     except PathTraversalError as exc:
         raise SyncConfigError(
-            "INVALID_SYNC_CONFIG", "config resolves outside the vault"
+            "INVALID_SYNC_CONFIG", "config resolves outside the vault",
+            reason="OUTSIDE_VAULT",
         ) from exc
     except OSError as exc:
         raise SyncConfigError(
-            "INVALID_SYNC_CONFIG", "config path is unresolvable"
+            "INVALID_SYNC_CONFIG", "config path is unresolvable",
+            reason="UNRESOLVABLE",
         ) from exc
 
     # (1) size cap — refuse BEFORE reading the bytes.
     if path.stat().st_size > WIKI_SYNC_CONFIG_MAX_BYTES:
-        raise SyncConfigError("INVALID_SYNC_CONFIG", "config exceeds the 256 KiB cap")
+        raise SyncConfigError(
+            "INVALID_SYNC_CONFIG", "config exceeds the 256 KiB cap", reason="SIZE_CAP"
+        )
 
     # (2) anchor-ban parse. PyYAML's composer is recursive, so a sub-cap but
     # deeply-nested anchorless payload raises `RecursionError` (not `YAMLError`) —
@@ -340,11 +357,15 @@ def _load_validated_raw(root: Path) -> dict[str, Any]:
     except SyncConfigError:
         raise
     except (yaml.YAMLError, RecursionError, ValueError) as exc:
-        raise SyncConfigError("INVALID_SYNC_CONFIG", "config is not parseable") from exc
+        raise SyncConfigError(
+            "INVALID_SYNC_CONFIG", "config is not parseable", reason="PARSE"
+        ) from exc
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise SyncConfigError("INVALID_SYNC_CONFIG", "config must be a YAML mapping")
+        raise SyncConfigError(
+            "INVALID_SYNC_CONFIG", "config must be a YAML mapping", reason="NOT_MAPPING"
+        )
 
     # (3) strict schema.
     _validate(raw)

@@ -113,6 +113,7 @@ The functional components and the connection diagram between them:
 | RAG Query Layer (`wiki-query`) | retrieve → cited synthesis → filed `_queries/` page |
 | **Native-App Control Skill** (`obsidian-cli`) | prompt-layer routing/safety over the live Obsidian app (§2.2) |
 | **Sync Dispatcher** (`wiki-sync`) | batch driver: scan → delegate per item to `wiki-import` (evolution below) |
+| **Config Interface** (`wiki-config`, TASK 058) | per-folder `.wiki/sync.yaml` operator surface: inheritance provenance (mirror-of-merge fold, equivalence-gated vs the real resolver), 3-system validate, tiered doctor/fix (ruamel sandwich — comment survival is a checked invariant; backups+restore, TOCTOU), templates, HTML report, local token-auth web editor; 100% schema-driven (`x-wiki-*` annotations) → new fields need zero UI code; no DB access |
 
 **Sync Dispatcher evolution:**
 1. **TASK 018 / R-11** — format+content classifier → scan-plan + orchestrated convert/ingest/upsert/skip.

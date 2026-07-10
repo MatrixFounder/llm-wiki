@@ -1,0 +1,18 @@
+# wiki-config template: connector-zone v1.0.0
+# level: subfolder
+# purpose: connector-fed zone — if-changed freshness over stable external keys (TASK 051 / R-18)
+#
+# For a folder that a CONNECTOR feeds: any exporter producing ONE FILE PER
+# BUSINESS OBJECT (a Jira issue, a newsletter edition, a channel thread) with a
+# STABLE FILENAME = the object's external key (`PROJ-123.md` → stable slug →
+# in-place refresh + stable [[wikilinks]]). `wiki-sync scan <zone>` then keeps
+# the zone fresh cheaply: unchanged file → skip (no re-LLM); changed content →
+# re-summarised in place; new object → ingested. The connector itself is NOT
+# shipped here — see the manual's "connector contract" section.
+resummarize:
+  # if-changed: re-summarise a source IFF its recorded content hash no longer
+  # matches the file (the freshness mode for machine-materialised zones).
+  mode: if-changed
+summarize:
+  profile: article
+  extract_concepts: true

@@ -1,0 +1,25 @@
+# wiki-config template: root-baseline v1.0.0
+# level: root
+# var tag_namespace (string): routing-tag namespace [default: wiki]
+# purpose: vault-root starter — the ROOT-ONLY keys (zones/exclude/dedup) live here
+#
+# Every top-level key below is ROOT-ONLY: consumed from the vault-root
+# sync.yaml and SILENTLY IGNORED in a subfolder file (`wiki-config validate`
+# flags that as NON_CASCADING_KEY_IN_SUBFOLDER). Only `resummarize:` and
+# `summarize:` cascade per folder.
+#
+# Advisory zone globs (`wiki-sync scan <zone>` takes an explicit zone anyway):
+zones: []
+# Globs pruned from every scan — inboxes, daily notes, attachments, e.g.:
+#   - '_inbox/**'
+#   - 'Attachments/**'
+exclude: []
+tag_namespace: '${tag_namespace}'
+# Default re-summarise gate for the whole vault (folders can override deeper).
+resummarize:
+  mode: if-missing
+# Uncomment to keep only the best transcript FORMAT per recording:
+# transcript_dedup:
+#   enabled: true
+#   identity: stem
+#   prefer_ext: ['.txt', '.vtt', '.srt']

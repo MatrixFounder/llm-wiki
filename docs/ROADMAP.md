@@ -852,6 +852,39 @@ end-to-end. **Files**: `config/layout-config.schema.yaml` (+`$defs`),
 (`find_ontology_violations`), `lint.py`, `scripts/wiki_skills/wiki_health.py`,
 `scripts/wiki_index/layouts/cybos.yaml`.
 
+### R-22. Per-folder config interface — `wiki-config` (18th CLI) ✅ SHIPPED (TASK 058, 2026-07-11)
+
+**Status: SHIPPED** as TASK 058 (`docs/tasks/task-058-wiki-config-interface`, branch
+`task-058-wiki-config-interface`). The operator interface for the per-folder
+`.wiki/sync.yaml` system that TASK 019/046 shipped as hand-authored YAML.
+Delivered: **provenance** (`show`/`tree` — per-key `default`/`root`/inherited-from/
+defined-HERE/ignored, computed by a mirror-of-`deep_merge` fold release-gated by an
+equivalence test against the REAL `resolve_policy`/`resolve_summarize`; the resolver is
+untouched); **validate** (whole-tree, all-findings, 40-code taxonomy across all three
+config systems; typo suggestions via the loader's own validator; regex health incl.
+the bounded dead-mirror probe; exit 6 on errors, `--strict` promotes warnings);
+**doctor/fix** (tiered SAFE/CONFIRM/MANUAL; the ruamel "sandwich" — hardened gate
+before AND after every write + exact semantic equality + comment-survival as a CHECKED
+invariant, any failure downgrades to MANUAL and writes nothing; `.wiki/backups/`
+retention 10 + reversible `restore`; TOCTOU hash pinning, `--from-plan` all-or-nothing);
+**set/unset** (schema-driven pointer+scope checks — a root-only key in a subfolder is
+refused with the root hint); **templates** (`templates/sync-profiles/`: meeting-zone /
+lessons-mirror / connector-zone / article-zone / root-baseline; strict comment headers,
+ReDoS-gated regex vars, level enforcement, byte-identical re-init, `--merge` append-only
+verified against the deep_merge oracle, vault-local `.wiki/templates/` with builtin-wins
+shadowing, TEMPLATE_DRIFT lint); **HTML report** (`report --open` — one self-contained
+CSP file, badges default/ROOT/HERE/↑ancestor/⛔IGNORED, shlex-quoted copy-paste fix
+commands); **web editor** (`serve` — stdlib http.server, 127.0.0.1 + fragment token +
+`X-Wiki-Config-Token`/hmac, zero cookies, Host allowlist; vanilla-JS form rendered at
+runtime from the schema with hints/enum-dropdowns/inherited-placeholders/live
+`group_key` tester + raw-YAML tab; explicit user decision AGAINST React/Node — zero
+build, zero JS deps). **Evolution invariant (tested):** the whole interface is generated
+from `config/sync-config.schema.yaml` + new `x-wiki-scope`/`x-wiki-format` annotations —
+a new config field surfaces in form/report/validate/typo-suggestions with ZERO
+interface-code changes. One new dep (`ruamel.yaml`, write-mechanics only — never a
+security gate); one additive touch to hardened code (`SyncConfigError.reason`). No DB
+access (works with a broken index — the recovery path). 116 new tests.
+
 ---
 
 ## P2 — Cross-project indexing

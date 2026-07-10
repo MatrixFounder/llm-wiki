@@ -248,7 +248,7 @@ pip install -r requirements.txt
 # 3. Symlink wrappers, skills, and commands into user-global Claude Code dirs
 bash bin/install-globally.sh
 
-# Done — all 17 wiki-* CLIs are on PATH + linked as /wiki-* slash commands.
+# Done — all 18 wiki-* CLIs are on PATH + linked as /wiki-* slash commands.
 ```
 
 `bin/install-globally.sh` is **safe + idempotent** — it creates what's missing, repairs its own

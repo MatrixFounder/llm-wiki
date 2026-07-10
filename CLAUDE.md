@@ -14,7 +14,7 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**17 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**18 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
 
 - *Construct* — `wiki-import` (the unified external-source on-ramp **and per-source
   engine** — URL/HTML/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/thread/transcript →
@@ -35,7 +35,13 @@ event graph, cited RAG answers, and a verification layer.
 - *Resolve entities* — `wiki-confirm` / `wiki-alias` / `wiki-merge`.
 - *Answer / verify (RAG)* — `wiki-query` (retrieve → cited synthesis → file a
   compounding `_queries/*` page), `wiki-verify-multi` (off-by-default 4-critic audit).
-- *Maintain / lifecycle* — `wiki-lint` (SQL health + R-15 lifecycle-drift, gates `--strict`),
+- *Maintain / lifecycle* — `wiki-config` (TASK 058 — the per-folder `.wiki/sync.yaml`
+  interface: `show`/`tree` per-key inheritance provenance; `validate` across all three
+  config systems; tiered `doctor`/`fix` + `.wiki/backups/`/`restore`; `set`/`unset` via a
+  comment-preserving ruamel sandwich; `init` from `templates/sync-profiles/`;
+  self-contained HTML `report`; local token-auth `serve` web editor — all
+  schema-driven via `x-wiki-*` annotations, zero UI code per new field; no DB access),
+  `wiki-lint` (SQL health + R-15 lifecycle-drift, gates `--strict`),
   `wiki-health` (R-15 coverage gaps — read-only, always exit 0), `wiki-reindex`
   (`--full`/`--delta`), `wiki-init`.
 
