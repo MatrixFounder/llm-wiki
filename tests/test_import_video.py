@@ -504,3 +504,16 @@ def test_w1_wallclock_env_garbage_falls_back_per_role(monkeypatch):
     monkeypatch.setenv("WIKI_TRANSCRIPT_TIMEOUT_S", "soon")
     assert _fetch._transcript_timeout(primary=True) == 3600
     assert _fetch._transcript_timeout(primary=False) == 300
+
+
+def test_w1_media_timeout_raises_wallclock(monkeypatch):
+    # Phase-4 logic F1: an explicit media budget larger than the wall-clock must RAISE
+    # the hang-guard (budget + headroom), never be silently SIGKILLed at 3600.
+    monkeypatch.delenv("WIKI_TRANSCRIPT_TIMEOUT_S", raising=False)
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    _dispatch("https://x.com/i/broadcasts/1abc", media_timeout_sec=5400)
+    assert seen[0]["timeout"] == 5400 + 300
+    seen.clear()
+    _dispatch("https://x.com/i/broadcasts/1abc", media_timeout_sec=900)
+    assert seen[0]["timeout"] == 3600      # small budget never LOWERS the hang-guard

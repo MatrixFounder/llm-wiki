@@ -194,3 +194,36 @@ def test_dispatch_announcement_reclaims_html_tempdir(monkeypatch, tmp_path):
     d = (r.error or {}).get("details", {})
     assert d.get("kind") == "announcement_only"
     assert not att.parent.exists()   # reclaimed at the point the ok-result was replaced
+
+
+# ------------------------------------------------ Phase-4 adversarial fixes (cycle 1)
+
+def test_broadcast_id_with_underscore_and_hyphen_captured_fully():  # F2
+    url = "https://x.com/i/broadcasts/1ab_cD-99"
+    md = ANNOUNCEMENT_MD.replace(BC_URL, url)
+    assert _announcement_only(md) == url
+
+
+def test_login_walled_announcement_surfaces_broadcast_not_login_wall(monkeypatch):  # F6
+    md = f"""---
+title: Ep 5
+---
+
+Log in
+
+Sign up
+
+[live]({BC_URL})
+"""
+    monkeypatch.setattr(subprocess, "run", _html_run(md))
+    r = _dispatch("https://x.com/cyberfund/status/123")
+    d = (r.error or {}).get("details", {})
+    assert d.get("kind") == "announcement_only" and d.get("broadcast_url") == BC_URL
+
+
+def test_login_wall_without_broadcast_link_still_login_wall(monkeypatch):  # F6 guard
+    md = "---\ntitle: T\n---\n\nLog in\n\nSign up\n"
+    monkeypatch.setattr(subprocess, "run", _html_run(md))
+    r = _dispatch("https://x.com/cyberfund/status/123")
+    d = (r.error or {}).get("details", {})
+    assert d.get("kind") == "login_wall"

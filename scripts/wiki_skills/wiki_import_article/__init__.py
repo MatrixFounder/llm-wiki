@@ -85,16 +85,25 @@ def _classification_arg(value: str) -> str:
     return value
 
 
-def _positive_int(value: str) -> int:
-    """argparse type for the W1 transcript knobs — ≥ 1, offending value kept out of the
-    error text (CWE-209 posture, mirrors _classification_arg)."""
-    try:
-        n = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError("must be a positive integer") from None
-    if n < 1:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return n
+def _bounded_int(hi: int) -> Any:
+    """argparse type factory for the W1 transcript knobs — 1 ≤ n ≤ hi (Phase-4 security
+    F3: an unbounded concurrency would be forwarded verbatim and could FD/memory-exhaust
+    the child). Offending value kept out of the error text (CWE-209, mirrors
+    _classification_arg)."""
+    def _parse(value: str) -> int:
+        try:
+            n = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"must be an integer in [1, {hi}]") from None
+        if not 1 <= n <= hi:
+            raise argparse.ArgumentTypeError(f"must be an integer in [1, {hi}]")
+        return n
+    return _parse
+
+
+_TRANSCRIPT_CONCURRENCY_MAX = 64        # parallel HLS fragment downloads (child-side sanity)
+_TRANSCRIPT_MEDIA_TIMEOUT_MAX = 86400   # 24 h — beyond any real media budget
 
 
 # kind → preferred note `type:`; layout-safe fallback to "summary" (mapped by every layout)
@@ -204,6 +213,28 @@ def _vault_language(vault_root: Path) -> str:
         return "en"
 
 
+_STAGED_GC_AGE_S = 48 * 3600  # staged captures older than this are abandoned proposals
+
+
+def _gc_staged_captures() -> None:
+    """Age-based sweep of `wiki-import-staged-*.md` tempfiles (Phase-4 F1: the staged
+    capture is deliberately NOT deleted on consume — the fetch-free re-run contract —
+    and an abandoned proposal never gets a consume at all, so without a sweep every
+    no-folder `prepare` leaks one file). Runs at the start of each staging; age-based
+    so a proposal confirmed within the window still finds its staged file. Best-effort:
+    never raises into prepare (correctness over reclamation, mirrors `_gc_attachments`)."""
+    cutoff = datetime.datetime.now().timestamp() - _STAGED_GC_AGE_S
+    try:
+        for f in Path(tempfile.gettempdir()).glob("wiki-import-staged-*.md"):
+            try:
+                if f.is_file() and not f.is_symlink() and f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
 def _stage_capture(args: argparse.Namespace, result: Any) -> Path:
     """TASK 057 (W2-4, Q-057-3): persist the converted capture to a tempfile OUTSIDE the
     vault so the confirmed re-run (`prepare --folder <F> --source <staged_path>`) is
@@ -211,16 +242,18 @@ def _stage_capture(args: argparse.Namespace, result: Any) -> Path:
     `source:` + the detected title/author/date (each `_fm_safe`-guarded — H-6) so the
     local-md re-read keeps slug + provenance; an operator `--classification` stamp is
     applied now too, so the quarantine survives even if the flag is dropped at re-run."""
+    _gc_staged_captures()   # bound accumulation before adding one more (Phase-4 F1)
     md = ensure_source_frontmatter(result.raw_text or "", args.source)
     md = stamp_metadata_frontmatter(md, title=result.title, author=result.author,
                                     date=result.date)
     if getattr(args, "classification", None):
         md = inject_classification(md, args.classification)
     fd, name = tempfile.mkstemp(prefix="wiki-import-staged-", suffix=".md")
-    os.close(fd)
-    staged = Path(name)
-    staged.write_text(md, encoding="utf-8")
-    return staged
+    # write THROUGH the mkstemp fd (0600) — a close-then-reopen-by-name would open a
+    # narrow symlink-swap window on a shared sticky /tmp (Phase-4 security F2)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(md)
+    return Path(name)
 
 
 def _propose_folder(args: argparse.Namespace, cfg: dict[str, Any], vault_root: Path,
@@ -229,6 +262,18 @@ def _propose_folder(args: argparse.Namespace, cfg: dict[str, Any], vault_root: P
     chain (series-sibling → active-note hint → ask), emit `folder_proposed` (exit 0) or
     `FOLDER_UNRESOLVED` (exit 2 — Q-057-1), and write NOTHING inside the vault."""
     staged = _stage_capture(args, result)
+    try:
+        return _propose_folder_staged(args, cfg, vault_root, layout, result, staged)
+    except BaseException:
+        # Phase-4 logic F5: a post-stage fault (make_repo, inference) surfaces as
+        # INTERNAL_ERROR with no staged_path in the envelope — don't strand the file.
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _propose_folder_staged(args: argparse.Namespace, cfg: dict[str, Any],
+                           vault_root: Path, layout: Any, result: Any,
+                           staged: Path) -> int:
     if args.kind == "auto":
         fm = _parse_frontmatter(result.raw_text or "")
         kind, kind_conf = detect_kind(result.raw_text, args.source, fm)
@@ -242,7 +287,10 @@ def _propose_folder(args: argparse.Namespace, cfg: dict[str, Any], vault_root: P
         repo.close()
     if inf.folder is None:
         hint_folder = _folder.active_note_folder(vault_root)   # optional signal, may be None
-        if hint_folder is not None:
+        # Phase-4 logic F10: the hint never OVERRIDES evidence-backed series candidates —
+        # with an ambiguous candidate set it may only PICK one of them; with no candidates
+        # at all it may propose its own folder. An unrelated focused note stays a bystander.
+        if hint_folder is not None and (not inf.candidates or hint_folder in inf.candidates):
             inf = _folder.FolderInference(
                 folder=hint_folder, basis="active-note", confidence="medium",
                 evidence=[], candidates=inf.candidates or [hint_folder])
@@ -269,6 +317,7 @@ def _propose_folder(args: argparse.Namespace, cfg: dict[str, Any], vault_root: P
         "message": "no --folder given and neither a same-series sibling nor an "
                    "active-note hint resolved one — ask the operator, then re-run "
                    "prepare --folder <F> --source <staged_path>.",
+        "vault_id": args.vault,
         "source": args.source,
         "title": result.title,
         "kind": kind,
@@ -369,11 +418,22 @@ def prepare(args: argparse.Namespace) -> int:
         finally:
             if _imgtmp:
                 shutil.rmtree(_imgtmp, ignore_errors=True)
-    assert folder_abs is not None  # set above whenever args.folder is given
+    if folder_abs is None:  # unreachable (set whenever args.folder is given) — but a
+        # plain guard survives `python -O`, an assert would not (Phase-4 logic I-1)
+        return _bad({"error": "INTERNAL_ERROR", "type": "FolderStateError",
+                     "message": "folder resolution state inconsistent"}, EXIT_BAD_ARG)
 
     # 2. slug + raw path (containment + slug validity — R-26). Mint via _MINT_SLUG so a
     # capitalized title under karpathy's `identity` strategy still yields a valid slug.
-    slug = args.slug or _derive_slug(result.title, args.source, _MINT_SLUG)
+    # Phase-4 logic F3: a TITLELESS staged capture must not slugify to the tempfile stem
+    # (`wiki-import-staged-xxxx`) — derive from the staged frontmatter's original `source:`
+    # instead, so the re-run mints the same slug a direct folder-given run would have.
+    _slug_source = args.source
+    if not result.title and Path(args.source).name.startswith("wiki-import-staged-"):
+        _orig = _parse_frontmatter(result.raw_text or "").get("source")
+        if _orig:
+            _slug_source = _orig
+    slug = args.slug or _derive_slug(result.title, _slug_source, _MINT_SLUG)
     if not _is_valid_slug(slug, max_len=None):
         return _bad({"error": "INVALID_SLUG",
                      "message": f"derived slug {slug!r} is not a valid page slug; pass --slug",
@@ -1022,13 +1082,15 @@ def _build_parser() -> argparse.ArgumentParser:
     # TASK 057 (W1): forward the skill's X-media robustness knobs. Omitted (None) → the flag
     # is NOT passed, so the skill's own env/.env/duration-derived defaults rule.
     pp.add_argument("--transcript-concurrency", dest="transcript_concurrency",
-                    type=_positive_int, default=None, metavar="N",
+                    type=_bounded_int(_TRANSCRIPT_CONCURRENCY_MAX), default=None, metavar="N",
                     help="passthrough → transcript-fetcher --concurrent-fragments (parallel HLS "
-                         "fragment downloads for X media; omitted → skill default/env)")
+                         "fragment downloads for X media; omitted → skill default/env; max "
+                         f"{_TRANSCRIPT_CONCURRENCY_MAX})")
     pp.add_argument("--transcript-media-timeout", dest="transcript_media_timeout",
-                    type=_positive_int, default=None, metavar="SEC",
+                    type=_bounded_int(_TRANSCRIPT_MEDIA_TIMEOUT_MAX), default=None, metavar="SEC",
                     help="passthrough → transcript-fetcher --media-timeout-sec (X media download "
-                         "budget; omitted → skill duration-derived default/env)")
+                         "budget; omitted → skill duration-derived default/env; raises the "
+                         "subprocess wall-clock when larger than it)")
     pp.add_argument("--cookies-from-browser", dest="cookies_from_browser", default=None,
                     help="passthrough: load cookies from a local browser (login-walled video)")
     pp.add_argument("--cookies-file", dest="cookies_file", default=None,

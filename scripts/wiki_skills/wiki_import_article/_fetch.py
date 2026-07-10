@@ -159,9 +159,11 @@ _X_PROSE_FLOOR = 220
 # the 220 login-wall floor — reader output for a bare announcement is chrome-heavy; a
 # substantive tweet that merely links a broadcast must pass through — spec Risk 2).
 _X_ANNOUNCEMENT_PROSE_FLOOR = 600
-# absolute-URL form of the _X_BROADCAST_RE route shape; allowlisted hosts only (H-6)
+# absolute-URL form of the _X_BROADCAST_RE route shape; allowlisted hosts only (H-6).
+# id alphabet [A-Za-z0-9_-] aligns with the routing regex's \w (Phase-4 logic F2: a
+# mismatch would truncate the surfaced broadcast_url at the first _/- and 404 the hint).
 _X_BROADCAST_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:x|twitter)\.com/i/(?:broadcasts|spaces)/[A-Za-z0-9]+", re.I)
+    r"https?://(?:www\.)?(?:x|twitter)\.com/i/(?:broadcasts|spaces)/[A-Za-z0-9_-]+", re.I)
 
 # ---- TASK 044: video sources via the transcript-fetcher skill ----------------
 # Video-host classification (R-1) — pure URL-shape, label-boundary matched (reuses `_X_HOSTS`).
@@ -213,8 +215,13 @@ class FetchResult:
 
 def _fm_safe(value: str) -> str:
     """Frontmatter-scalar-safe: strip control/newlines + quotes + backslashes so an injected
-    source value cannot break the YAML, inject a key, or escape the closing quote (H-6)."""
-    return re.sub(r'[\x00-\x1f\x7f"\\]+', " ", str(value or "")).strip()
+    source value cannot break the YAML, inject a key, or escape the closing quote (H-6).
+    Includes the FULL `str.splitlines()` boundary set — NEL/LS/PS (\\x85 \\u2028 \\u2029) are
+    line boundaries to `splitlines()` even though they are not \\n (Phase-4 security F1: an
+    interior \\u2028 in a hostile title could smuggle a `classification:` "line" past the
+    naive frontmatter parser and suppress the real quarantine stamp)."""
+    return re.sub("[\\x00-\\x1f\\x7f\\x85\\u2028\\u2029\"\\\\]+", " ",
+                  str(value or "")).strip()
 
 
 def ensure_source_frontmatter(raw_text: str, source: str) -> str:
@@ -269,12 +276,16 @@ def inject_classification(raw_text: str, level: str) -> str:
 # ---- helpers ---------------------------------------------------------------
 
 def _parse_frontmatter(md: str) -> dict[str, str]:
-    """Pull title/author/date out of an `html`-skill YAML frontmatter block (best effort)."""
+    """Pull title/author/date out of an `html`-skill YAML frontmatter block (best effort).
+    Splits on `\\n` ONLY — never `str.splitlines()`, whose wider boundary set (NEL/LS/PS)
+    would let an exotic separator inside a quoted scalar masquerade as a new key line
+    (Phase-4 security F1 defense-in-depth; PyYAML folds those separators, this naive
+    parser must not out-split it)."""
     m = _FM_RE.match(md)
     out: dict[str, str] = {}
     if not m:
         return out
-    for line in m.group(1).splitlines():
+    for line in m.group(1).split("\n"):
         if ":" in line and not line.startswith(" "):
             k, _, v = line.partition(":")
             out[k.strip().lower()] = v.strip().strip('"').strip("'")
@@ -412,6 +423,15 @@ def _fetch_html(html_bin: str, target: str, *, download_images: bool = False) ->
         return _fail("no_output")
     if _is_x_login_wall(md, target):  # logged-out X chrome only → no post text
         _cleanup()
+        # Phase-4 logic F6: a login-walled ANNOUNCEMENT (prose < 220 AND a broadcast link)
+        # must still surface the broadcast_url + re-route hint (exit 0), not a dead-end
+        # FETCH_FAILED — the actionable link is right there in the chrome.
+        bc_url = _announcement_only(md)
+        if bc_url is not None:
+            return FetchResult(ok=False, engine="html", error={
+                "error": "AnnouncementOnly", "type": "AnnouncementOnly", "exit_code": 0,
+                "details": {"kind": "announcement_only",
+                            "broadcast_url": bc_url, "url": target}})
         return FetchResult(ok=False, engine="html", error={
             "error": "x.com returned only the logged-out login wall (no post text "
                      "captured); save the thread/article as a .webarchive while logged "
@@ -787,10 +807,14 @@ def _fetch_transcript(transcript_bin: str, url: str, *, lang: str,
             "error": "FetchFailed", "type": "FetchFailed", "exit_code": EXIT_FETCH_FAILED,
             "details": {"url": url, "kind": kind}})
 
+    # Phase-4 logic F1: an explicit --transcript-media-timeout larger than the wall-clock
+    # would be silently SIGKILLed at the wall-clock — the exact W1 clip this task removes.
+    # The operator's media budget therefore RAISES the hang-guard to budget + headroom.
+    wall_timeout = max(_transcript_timeout(primary), (media_timeout_sec or 0) + 300)
     try:
         try:
             proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=_transcript_timeout(primary), env=_skill_env())
+                                  timeout=wall_timeout, env=_skill_env())
         except subprocess.TimeoutExpired:
             return _fail("timeout")
         except (OSError, ValueError):

@@ -37,6 +37,12 @@ _CANDIDATES_MAX = 5
 # BOTH ≥ this many characters AND ≥ 2 whitespace-separated words to be trusted.
 _STEM_MIN_CHARS = 8
 _STEM_MIN_WORDS = 2
+# Input cap BEFORE the marker regex (ReDoS posture): `_EPISODE_MARKER_RE`'s separator
+# classes backtrack O(n²) on a separator-flood title (measured 8.8 s at 20k chars), and
+# `title` is attacker-influenceable (a hostile og:title). No real series title exceeds
+# this; a longer one is truncated — the stem is garbage-in-garbage-out anyway there and
+# the sibling filter still gates it.
+_TITLE_MAX_CHARS = 300
 
 # ONE trailing episode/index marker, with surrounding dash/colon/dot separators:
 #   "… [004]" · "… (4)" · "… #4" · "… Episode 12" / "Part 3" / "выпуск 7" / "урок 2"
@@ -91,7 +97,8 @@ def series_stem(title: str | None) -> str | None:
     """
     if not title or not title.strip():
         return None
-    stem = _EPISODE_MARKER_RE.sub("", title.strip(), count=1).strip()
+    capped = title.strip()[:_TITLE_MAX_CHARS]   # ReDoS bound — see _TITLE_MAX_CHARS
+    stem = _EPISODE_MARKER_RE.sub("", capped, count=1).strip()
     if len(stem) < _STEM_MIN_CHARS or len(stem.split()) < _STEM_MIN_WORDS:
         return None
     return stem
@@ -106,12 +113,18 @@ def folder_for_hit(file_path: str, source_subdir: str) -> str | None:
     starting with ``_`` (other than that one trailing source_subdir) or the
     ``00-Vault-Index`` tree — return None (a `_concepts/` page is not a sibling).
     """
+    # machinery-name comparisons are casefolded (Phase-4 logic F8: on a case-insensitive
+    # filesystem `_Sources/` IS the layout's `_sources` — a case-exact compare would drop
+    # a real sibling); the returned folder keeps its on-disk case.
+    sub_cf = source_subdir.casefold()
     parts = list(PurePosixPath(file_path).parent.parts)
     for i, seg in enumerate(parts):
-        is_trailing_subdir = bool(source_subdir) and i == len(parts) - 1 and seg == source_subdir
-        if (seg.startswith("_") or seg == _INDEX_DIR) and not is_trailing_subdir:
+        is_trailing_subdir = (bool(source_subdir) and i == len(parts) - 1
+                              and seg.casefold() == sub_cf)
+        if (seg.startswith("_") or seg.casefold() == _INDEX_DIR.casefold()) \
+                and not is_trailing_subdir:
             return None
-    if source_subdir and parts and parts[-1] == source_subdir:
+    if source_subdir and parts and parts[-1].casefold() == sub_cf:
         parts = parts[:-1]
         if not parts:
             return source_subdir          # vault-tier karpathy: --folder _sources

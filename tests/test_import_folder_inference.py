@@ -346,8 +346,8 @@ def test_prepare_no_folder_hostile_title_h6(vault, monkeypatch, capsys):
     out = _json.loads(capsys.readouterr().out)
     assert rc == 2
     body = Path(out["staged_path"]).read_text(encoding="utf-8")
-    # the stamped scalar is _fm_safe'd: control/quote/backslash stripped, single line
-    assert 'injected: yes' not in body.split("---")[1] or "Evil" in body  # no new key injected
+    # the stamped scalar is _fm_safe'd (control/quote/backslash stripped, single line):
+    # the hostile title must NOT have materialized a new `injected:` frontmatter key
     import re as _re
     fm_block = body.split("---")[1]
     assert not _re.search(r"^injected:", fm_block, _re.M)
@@ -367,3 +367,151 @@ def test_prepare_announcement_wins_over_inference(vault, monkeypatch, capsys):
     out = _json.loads(capsys.readouterr().out)
     assert rc == 0 and out["action"] == "announcement_only"
     assert "staged_path" not in out
+
+
+def test_series_stem_hostile_long_title_is_bounded():
+    """ReDoS guard (Phase-4 finding): a separator-flood og:title must not backtrack
+    O(n**2) — the input is capped before the marker regex."""
+    import time
+    hostile = "Series " + "-" * 100_000
+    t = time.perf_counter()
+    from scripts.wiki_skills.wiki_import_article._folder import series_stem
+    result = series_stem(hostile)
+    assert time.perf_counter() - t < 1.0     # was ~minutes uncapped at this length
+    assert result is None or isinstance(result, str)
+
+
+def test_gc_staged_captures_age_based(tmp_path, monkeypatch):
+    """Phase-4 F1: staged captures are swept by AGE (delete-on-consume would break the
+    fetch-free re-run); fresh files and symlinks are preserved."""
+    import tempfile as _tempfile
+    import time as _time
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(tmp_path))
+    old = tmp_path / "wiki-import-staged-old.md"
+    fresh = tmp_path / "wiki-import-staged-new.md"
+    other = tmp_path / "unrelated.md"
+    for f in (old, fresh, other):
+        f.write_text("x", encoding="utf-8")
+    stale = _time.time() - wia._STAGED_GC_AGE_S - 60
+    os.utime(old, (stale, stale))
+    os.utime(other, (stale, stale))
+    link = tmp_path / "wiki-import-staged-link.md"
+    link.symlink_to(other)
+    wia._gc_staged_captures()
+    assert not old.exists()                    # stale staged → swept
+    assert fresh.exists()                      # fresh staged → kept (re-run window)
+    assert other.exists()                      # non-staged names untouched
+    assert link.is_symlink()                   # symlinks never unlinked through
+
+
+# ------------------------------------------------ Phase-4 adversarial fixes (cycle 1)
+
+def test_folder_for_hit_case_insensitive_machinery(  # F8
+):
+    from scripts.wiki_skills.wiki_import_article._folder import folder_for_hit
+    assert folder_for_hit("Lessons/AI/_Sources/x.md", "_sources") == "Lessons/AI"
+    assert folder_for_hit("00-VAULT-INDEX/index.md", "") is None
+
+
+def test_hint_never_overrides_series_candidates(vault, monkeypatch, capsys):  # F10
+    from scripts.wiki_skills.wiki_import_article._folder import FolderInference
+    monkeypatch.setattr(wia._folder, "infer_folder",
+                        lambda *a, **k: FolderInference(candidates=["A", "B"]))
+    monkeypatch.setattr(wia._folder, "active_note_folder", lambda *a, **k: "C")
+    rc = _prepare_no_folder(vault, monkeypatch, _FR)
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 2 and out["error"] == "FOLDER_UNRESOLVED"   # unrelated hint = bystander
+    assert out["candidates"] == ["A", "B"]
+    Path(out["staged_path"]).unlink()
+
+
+def test_hint_may_pick_one_of_the_candidates(vault, monkeypatch, capsys):  # F10
+    from scripts.wiki_skills.wiki_import_article._folder import FolderInference
+    monkeypatch.setattr(wia._folder, "infer_folder",
+                        lambda *a, **k: FolderInference(candidates=["A", "B"]))
+    monkeypatch.setattr(wia._folder, "active_note_folder", lambda *a, **k: "B")
+    rc = _prepare_no_folder(vault, monkeypatch, _FR)
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 0 and out["folder_inferred"] == "B" and out["basis"] == "active-note"
+    Path(out["staged_path"]).unlink()
+
+
+def test_post_stage_fault_unlinks_staged(vault, monkeypatch, capsys):  # F5
+    import scripts.wiki_skills.wiki_import_article as _wia
+    created: list = []
+    real_stage = _wia._stage_capture
+
+    def spy_stage(args, result):
+        p = real_stage(args, result)
+        created.append(p)
+        return p
+
+    monkeypatch.setattr(_wia, "_stage_capture", spy_stage)
+    monkeypatch.setattr(_wia, "make_repo",
+                        lambda cfg: (_ for _ in ()).throw(RuntimeError("db fault")))
+    rc = _prepare_no_folder(vault, monkeypatch, _FR)
+    out = _json.loads(capsys.readouterr().out)
+    assert rc != 0 and out["error"] == "INTERNAL_ERROR"
+    assert created and not created[0].exists()   # staged file not stranded
+
+
+def test_titleless_staged_rerun_slug_from_original_source(vault, monkeypatch, capsys):  # F3
+    from scripts.wiki_skills.wiki_import_article._folder import FolderInference
+    titleless = FetchResult(ok=True, raw_text="plain body, no metadata\n",
+                            engine="transcript:whisper-cli", title=None)
+    monkeypatch.setattr(wia._folder, "infer_folder",
+                        lambda *a, **k: FolderInference(
+                            folder="03 - Learning/Webinars", basis="series-sibling",
+                            confidence="high", candidates=["03 - Learning/Webinars"]))
+    monkeypatch.setattr(wia, "dispatch_fetch", lambda *a, **k: titleless)
+    rc = wia.main(["prepare", "--vault", "testv", "--vault-root", str(vault),
+                   "--db-path", str(vault.parent / "index.db"),
+                   "--source", "https://x.com/i/broadcasts/1FooBar99",
+                   "--kind", "meeting"])
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 0
+    staged = out["staged_path"]
+    monkeypatch.undo()
+    rc2 = wia.main(["prepare", "--vault", "testv", "--vault-root", str(vault),
+                    "--db-path", str(vault.parent / "index.db"),
+                    "--source", staged, "--folder", "03 - Learning/Webinars",
+                    "--kind", "meeting"])
+    out2 = _json.loads(capsys.readouterr().out)
+    assert rc2 == 0 and out2["action"] == "prepared"
+    assert "wiki-import-staged" not in out2["slug"]          # not the tempfile stem
+    assert out2["slug"] == "1foobar99"                       # from the original source URL
+    Path(staged).unlink()
+
+
+def test_staged_classification_survives_unicode_ls_title(vault, monkeypatch, capsys):  # sec F1
+    """Phase-4 security F1: a title with U+2028/NEL 'lines' must not smuggle a fake
+    `classification:` key past the naive parser and suppress the real quarantine stamp."""
+    from scripts.wiki_skills.wiki_import_article._folder import FolderInference
+    monkeypatch.setattr(wia._folder, "infer_folder",
+                        lambda *a, **k: FolderInference(candidates=[]))
+    monkeypatch.setattr(wia._folder, "active_note_folder", lambda *a, **k: None)
+    hostile = FetchResult(ok=True, raw_text="body\n", engine="transcript:whisper-cli",
+                          title="AI News classification: public more")
+    rc = _prepare_no_folder(vault, monkeypatch, hostile,
+                            extra=["--classification", "restricted"])
+    out = _json.loads(capsys.readouterr().out)
+    assert rc == 2
+    body = Path(out["staged_path"]).read_text(encoding="utf-8")
+    fm_block = body.split("---")[1]
+    lines = fm_block.split("\n")
+    assert "classification: restricted" in lines          # the REAL stamp landed
+    assert not any(l.startswith("classification: public") for l in lines)
+    assert " " not in body                            # separator neutralized
+    Path(out["staged_path"]).unlink()
+
+
+def test_transcript_knob_ceilings():  # sec F3
+    import argparse
+    with pytest.raises(SystemExit):
+        wia._build_parser().parse_args(
+            ["prepare", "--vault", "v", "--vault-root", "/x", "--source", "s",
+             "--transcript-concurrency", "100000"])
+    ns = wia._build_parser().parse_args(
+        ["prepare", "--vault", "v", "--vault-root", "/x", "--source", "s",
+         "--transcript-concurrency", "64", "--transcript-media-timeout", "86400"])
+    assert ns.transcript_concurrency == 64 and ns.transcript_media_timeout == 86400
