@@ -102,7 +102,11 @@
       "Bash(od *)",
       "Bash(cp *)",
       "Bash(mv *)",
-      "Bash(sqlite3 *)"
+      "Bash(sqlite3 *)",
+      "Bash(sleep *)",
+      "Bash(ps *)",
+      "Bash(ffprobe *)",
+      "Bash(mw *)"
     ],
     "deny": [
       "Bash(rm -rf *)",
