@@ -311,6 +311,50 @@ def test_delete_config_falls_back_to_inherited(
     assert c.request("POST", "/api/delete-config", {"rel": "../.."})[0] == 404
 
 
+def test_backups_list_and_restore_after_accidental_delete(
+    client: tuple[Client, Path]
+) -> None:
+    """The accidental-delete recovery loop: edit (backup #1) → delete
+    (backup #2) → list shows BOTH, newest first → restore a CHOSEN one
+    byte-exact; bogus names refused."""
+    c, root = client
+    zone = root / "Zone3"
+    original = "# precious\nsummarize:\n  profile: meeting\n"
+    _folder_yaml(zone, original)
+    # edit → backup #1 (of the original)
+    status, _ = c.request("POST", "/api/write", {
+        "rel": "Zone3",
+        "edits": [{"op": "set", "pointer": "/summarize/profile",
+                   "value": "lesson"}]})
+    assert status == 200
+    edited = (zone / ".wiki" / "sync.yaml").read_text(encoding="utf-8")
+    # delete → backup #2 (of the edited state)
+    status, _ = c.request("POST", "/api/delete-config", {"rel": "Zone3"})
+    assert status == 200
+    assert not (zone / ".wiki" / "sync.yaml").exists()
+    # list: both backups, newest (the edited state) first
+    status, body = c.request("GET", "/api/backups?rel=Zone3")
+    assert status == 200 and len(body["backups"]) == 2
+    names = [b["name"] for b in body["backups"]]
+    assert all(n.startswith("sync.yaml.") for n in names)
+    # restore the OLDER one (the pristine original) — user's choice honored
+    status, body = c.request("POST", "/api/restore",
+                             {"rel": "Zone3", "name": names[-1]})
+    assert status == 200 and body["ok"] is True
+    assert body["restored_file_valid"] is True
+    restored = (zone / ".wiki" / "sync.yaml").read_text(encoding="utf-8")
+    assert restored == original and restored != edited
+    # bogus / traversal-shaped names are refused
+    assert c.request("POST", "/api/restore",
+                     {"rel": "Zone3", "name": "no-such.bak"})[0] == 404
+    assert c.request("POST", "/api/restore",
+                     {"rel": "Zone3", "name": "../../evil"})[0] == 404
+    # a folder with no backups → empty list
+    (root / "Fresh").mkdir()
+    status, body = c.request("GET", "/api/backups?rel=Fresh")
+    assert status == 200 and body["backups"] == []
+
+
 def test_regex_tester(client: tuple[Client, Path]) -> None:
     c, _ = client
     status, body = c.request("POST", "/api/test-regex",

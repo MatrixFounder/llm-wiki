@@ -395,6 +395,7 @@ inherited cascade; a backup is kept in .wiki/backups/">
     <div class="panelhead">
       <h2>${esc(FOLDER.rel === "." ? "(vault root)" : FOLDER.rel)}</h2>
       ${configNote}
+      <div id="restoreRow"></div>
       <div id="tplRow"></div>
       <div class="tabs">
         <button id="tabForm" class="${tab === "form" ? "active" : ""}">Form</button>
@@ -414,6 +415,7 @@ inherited cascade; a backup is kept in .wiki/backups/">
   else if (tab === "yaml") renderYaml();
   renderFindings();
   renderTemplates();
+  renderRestore();
 }
 
 // ---------- schema-driven form ----------------------------------------------
@@ -645,6 +647,58 @@ async function deleteConfig() {
     select(SEL, document.querySelector("nav .item.active"));
     loadTree();
   } else setStatus(body.error || "delete failed", false);
+}
+
+// ---------- restore from backups -------------------------------------------------
+function fmtBackup(entry) {
+  // sync.yaml.20260711T123456.789012Z.bak → "2026-07-11 12:34:56 UTC"
+  const m = entry.name.match(/\.(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
+  const when = m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} UTC`
+                 : entry.mtime || entry.name;
+  const kb = entry.size >= 1024 ? (entry.size / 1024).toFixed(1) + " KiB"
+                                : entry.size + " B";
+  return `${when} · ${kb}`;
+}
+
+async function renderRestore() {
+  const row = $("#restoreRow");
+  row.innerHTML = "";
+  const {status, body} = await api(
+    "/api/backups?rel=" + encodeURIComponent(FOLDER.rel), {headers: HDR});
+  if (status !== 200) return;
+  const backups = body.backups || [];
+  if (!backups.length) return;
+  const hasOwn = !!FOLDER.text;
+  const lead = hasOwn
+    ? `<span class="muted">↺ Restore from backup (${backups.length}):</span>`
+    : `<span style="color:var(--warn);font-weight:600">↺ This folder HAD a
+       config — ${backups.length} backup${backups.length > 1 ? "s" : ""}
+       available:</span>`;
+  row.innerHTML = `${lead}
+    <select id="bakSel">${backups.map((b, i) =>
+      `<option value="${esc(b.name)}">${esc(fmtBackup(b))}${
+        i === 0 ? " (newest)" : ""}</option>`).join("")}</select>
+    <button class="small" id="bakGo">restore</button>`;
+  row.className = "confignote";
+  $("#bakGo").onclick = async () => {
+    const name = $("#bakSel").value;
+    if (!confirm(`Restore ${FOLDER.rel === "." ? "" : FOLDER.rel + "/"}`
+        + `.wiki/sync.yaml from\n${name}?\n\n`
+        + (hasOwn ? "The CURRENT file is backed up first — restore is reversible."
+                  : "The folder gets its config back, byte-exact.")))
+      return;
+    const {status: st, body: r} = await api("/api/restore", {method: "POST",
+      headers: JHDR,
+      body: JSON.stringify({rel: FOLDER.rel, name})});
+    if (st === 200) {
+      PENDING.delete(FOLDER.rel);
+      setStatus("restored ✓" + (r.restored_file_valid === false
+        ? " (note: the restored file no longer passes validation — run doctor)"
+        : ""), true);
+      select(SEL, document.querySelector("nav .item.active"));
+      loadTree();
+    } else setStatus(r.error || "restore failed", false);
+  };
 }
 
 // ---------- yaml tab ----------------------------------------------------------

@@ -39,7 +39,7 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfigError
 
 from ._app_html import APP_HTML
-from ._backups import write_backup
+from ._backups import list_backups, restore_backup, write_backup
 from ._doctor import apply_plans, build_plans
 from ._edit import EditDowngrade, PointerEdit, gate_text, rewrite_text
 from ._findings import sort_findings
@@ -187,6 +187,17 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                     return
                 self._folder_payload(rel, folder)
                 return
+            if url.path == "/api/backups":
+                rel = parse_qs(url.query).get("rel", ["."])[0]
+                folder = self._resolve_rel(rel)
+                if folder is None:
+                    self._json({"error": "FOLDER_NOT_FOUND"}, 404)
+                    return
+                self._json({"backups": [
+                    {"name": e.name, "size": e.size, "mtime": e.mtime}
+                    for e in list_backups(folder)
+                ]})
+                return
             self._json({"error": "NOT_FOUND"}, 404)
 
         def _folder_payload(self, rel: str, folder: Path) -> None:
@@ -249,6 +260,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 "/api/template": self._post_template,
                 "/api/test-regex": self._post_test_regex,
                 "/api/delete-config": self._post_delete_config,
+                "/api/restore": self._post_restore,
             }.get(url.path)
             if route is None:
                 self._json({"error": "NOT_FOUND"}, 404)
@@ -337,6 +349,38 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 self._json({"error": "DELETE_FAILED"}, 409)
                 return
             self._json({"ok": True, "backup": backup})
+
+        def _post_restore(self, body: dict[str, Any]) -> None:
+            """Restore a folder's sync.yaml from a NAMED backup (the recovery
+            path for an accidental delete). The current state — if any — is
+            backed up first, so restore is itself reversible."""
+            rel = str(body.get("rel", "."))
+            folder = self._resolve_rel(rel)
+            if folder is None:
+                self._json({"error": "FOLDER_NOT_FOUND"}, 404)
+                return
+            name = body.get("name")
+            if not isinstance(name, str):
+                self._json({"error": "BAD_REQUEST"}, 400)
+                return
+            try:
+                restored_from, backup_of_current = restore_backup(folder, name)
+            except (FileNotFoundError, ValueError):
+                self._json({"error": "BACKUP_NOT_FOUND"}, 404)
+                return
+            except OSError:
+                self._json({"error": "RESTORE_FAILED"}, 409)
+                return
+            from scripts.wiki_index.sync_config import _load_validated_raw
+
+            valid = True
+            try:
+                _load_validated_raw(folder)
+            except SyncConfigError:
+                valid = False
+            self._json({"ok": True, "restored_from": restored_from,
+                        "backup_of_current": backup_of_current,
+                        "restored_file_valid": valid})
 
         def _post_fix(self, body: dict[str, Any]) -> None:
             plan_id = body.get("id")
