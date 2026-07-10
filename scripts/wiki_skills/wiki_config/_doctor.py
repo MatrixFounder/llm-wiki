@@ -215,9 +215,27 @@ def build_plans(
                                  "inline-expand the anchors/aliases (bounded; "
                                  "comments are NOT preserved — backup keeps the "
                                  "original)", comments_lost=True))
+        elif code in ("SCHEMA_MODELINE_MISSING", "SCHEMA_MODELINE_STALE"):
+            plans.append(FixPlan(plan_id, finding, "modeline", (),
+                                 "insert/refresh the yaml-language-server "
+                                 "modeline (line 1 only; content untouched)"))
         else:
             manual.append(finding)
     return plans, manual
+
+
+def _apply_modeline(text: str) -> str:
+    """Insert or refresh the schema modeline as line 1; the parsed content must
+    be untouched (comment-only change — verified by the caller)."""
+    from ._templates import MODELINE_PREFIX, modeline
+
+    lines = text.splitlines(keepends=True)
+    new_line = modeline() + "\n"
+    if lines and lines[0].startswith(MODELINE_PREFIX):
+        lines[0] = new_line
+    else:
+        lines.insert(0, new_line)
+    return "".join(lines)
 
 
 def _unshare(value: Any) -> Any:
@@ -348,14 +366,22 @@ def apply_plans(
             if kinds == {"expand-anchors"}:
                 after = _expand_anchors_text(before)
             else:
+                work = before
+                if any(p.kind == "modeline" for p in applicable):
+                    work = _apply_modeline(work)
+                    if parse_text_no_schema(work) != parse_text_no_schema(before):
+                        raise EditDowngrade("modeline change altered the content")
                 edits = [e for p in applicable if p.kind == "edit" for e in p.edits]
-                schema_broken = any(
-                    p.finding.code in ("UNKNOWN_KEY", "UNKNOWN_KEY_TYPO",
-                                       "SCHEMA_VIOLATION_ENUM",
-                                       "NON_CASCADING_KEY_IN_SUBFOLDER")
-                    for p in applicable)
-                after = rewrite_text(before, edits,
-                                     require_schema_before=not schema_broken)
+                if edits:
+                    schema_broken = any(
+                        p.finding.code in ("UNKNOWN_KEY", "UNKNOWN_KEY_TYPO",
+                                           "SCHEMA_VIOLATION_ENUM",
+                                           "NON_CASCADING_KEY_IN_SUBFOLDER")
+                        for p in applicable)
+                    after = rewrite_text(work, edits,
+                                         require_schema_before=not schema_broken)
+                else:
+                    after = work
         except (EditDowngrade, SyncConfigError):
             res.status = "manual"
             res.fix_downgraded = True

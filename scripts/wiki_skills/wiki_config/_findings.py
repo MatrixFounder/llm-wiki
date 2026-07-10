@@ -79,7 +79,7 @@ _KINDS: tuple[FindingKind, ...] = (
     FindingKind("PROJECT_OVERRIDE_INVALID", SEV_ERROR, TIER_MANUAL),
     # --- templates (detection lands with the templates subsystem, Phase 4) --- #
     FindingKind("TEMPLATE_DRIFT", SEV_INFO, TIER_MANUAL),
-    FindingKind("SCHEMA_MODELINE_MISSING", SEV_INFO, TIER_SAFE),
+    FindingKind("SCHEMA_MODELINE_MISSING", SEV_INFO, TIER_CONFIRM),
     FindingKind("SCHEMA_MODELINE_STALE", SEV_INFO, TIER_SAFE),
 )
 

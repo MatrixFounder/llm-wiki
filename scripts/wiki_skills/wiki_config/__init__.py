@@ -26,7 +26,7 @@ from scripts.wiki_index.sync_config import SyncConfigError
 from scripts.wiki_skills._common import atomic_write_text, emit
 
 from ._backups import list_backups, restore_backup, write_backup
-from ._doctor import FixPlan, apply_plans, build_plans, render_fix_report
+from ._doctor import apply_plans, build_plans, render_fix_report
 from ._edit import EditDowngrade, PointerEdit, rewrite_text
 from ._findings import (
     ConfigFinding,
@@ -36,6 +36,12 @@ from ._findings import (
     sort_findings,
 )
 from ._lint import lint_vault
+from ._templates import (
+    TemplateError,
+    discover_templates,
+    render_for_init,
+    top_level_blocks,
+)
 from ._uimodel import SCOPE_ROOT_ONLY, build_ui_model
 from ._provenance import (
     FolderProvenance,
@@ -376,6 +382,143 @@ def _apply_single_edit(
                  "backup": backup})
 
 
+def _cmd_templates(args: argparse.Namespace) -> int:
+    vault_root = _resolve_vault_root(args)  # optional for listing builtins
+    registry = discover_templates(vault_root)
+    return emit({"action": "templates",
+                 "templates": [t.to_json() for t in registry.values()]})
+
+
+def _parse_vars(pairs: list[str] | None) -> dict[str, str] | None:
+    out: dict[str, str] = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            return None
+        key, _, value = pair.partition("=")
+        out[key.strip()] = value
+    return out
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    from scripts.wiki_index.config_loader import deep_merge
+
+    from ._edit import gate_text
+
+    vault_root = _resolve_vault_root(args)
+    if vault_root is None:
+        return emit({"error": "VAULT_ROOT_NOT_FOUND"}, 2)
+    folder = _resolve_folder(args.folder, vault_root)
+    if folder is None:
+        return emit({"error": "FOLDER_NOT_FOUND", "field": "folder"}, 2)
+    registry = discover_templates(vault_root)
+    template = registry.get(args.template)
+    if template is None or not template.valid:
+        return emit({"error": "TEMPLATE_NOT_FOUND" if template is None
+                     else "TEMPLATE_INVALID",
+                     "field": "template",
+                     "available": sorted(n for n, t in registry.items() if t.valid)},
+                    1)
+    is_root = folder.resolve() == vault_root.resolve()
+    if template.level == "root" and not is_root:
+        return emit({"error": "TEMPLATE_LEVEL_MISMATCH",
+                     "template": template.name,
+                     "hint": "this template carries ROOT-ONLY keys that a "
+                             "subfolder file silently ignores — init it at the "
+                             "vault root ('.')"}, 2)
+    supplied = _parse_vars(args.var)
+    if supplied is None:
+        return emit({"error": "INVALID_VAR", "field": "var",
+                     "hint": "use --var name=value"}, 2)
+    try:
+        rendered = render_for_init(template, supplied)
+        gate_text(rendered)  # a template bug / hostile var never reaches disk
+    except TemplateError as exc:
+        code = 6 if exc.code == "INVALID_TEMPLATE_VAR" else 2
+        return emit({"error": exc.code, **exc.data}, code)
+    except SyncConfigError as exc:
+        return emit({"error": "TEMPLATE_RENDER_INVALID", "reason": exc.reason,
+                     "detail": exc.detail}, 6)
+
+    wiki_dir = folder / ".wiki"
+    if wiki_dir.exists() and (wiki_dir.is_symlink() or not wiki_dir.is_dir()):
+        return emit({"error": "WIKI_DIR_INVALID", "folder": args.folder}, 2)
+    target = wiki_dir / "sync.yaml"
+    note = ("subfolder template applied at the vault root (level 0 of the "
+            "cascade — it becomes the vault default)"
+            if template.level == "subfolder" and is_root else None)
+    backup = None
+    mode = "create"
+
+    if target.is_file():
+        if target.is_symlink():
+            return emit({"error": "SYMLINK_REFUSED", "folder": args.folder}, 2)
+        existing = target.read_text(encoding="utf-8")
+        if args.force:
+            mode = "force"
+            if not args.no_backup:
+                backup = write_backup(folder)
+            final = rendered
+        elif args.merge:
+            mode = "merge"
+            try:
+                existing_raw = gate_text(existing)
+            except SyncConfigError as exc:
+                return emit({"error": exc.code, "reason": exc.reason,
+                             "detail": exc.detail,
+                             "hint": "the existing file fails its gate — run "
+                                     "wiki-config doctor first"}, 6)
+            rendered_raw = gate_text(rendered)
+            blocks = top_level_blocks(rendered)
+            missing = [k for k in rendered_raw if k not in existing_raw]
+            if not missing:
+                return emit({"action": "initialized", "mode": "merge",
+                             "file": str(target.relative_to(vault_root)),
+                             "merged_blocks": [],
+                             "note": "existing file already covers every "
+                                     "template block — nothing to merge"})
+            appended = "".join(blocks[k] for k in missing if k in blocks)
+            base = existing if existing.endswith("\n") else existing + "\n"
+            final = base + "\n" + appended
+            # planned semantics: template as BASE, existing wins wholesale —
+            # only whole missing top-level blocks are added.
+            planned = deep_merge({k: rendered_raw[k] for k in missing},
+                                 existing_raw)
+            try:
+                verified = gate_text(final) == planned
+            except SyncConfigError:
+                verified = False
+            if not verified:
+                return emit({"error": "MERGE_UNVERIFIABLE",
+                             "hint": "append-only merge could not be proven "
+                                     "equivalent — apply the missing blocks by "
+                                     "hand from the template file"}, 6)
+            merged_blocks = missing
+            if not args.no_backup:
+                backup = write_backup(folder)
+        else:
+            return emit({"action": "init-plan", "error": "CONFIG_EXISTS",
+                         "file": str(target.relative_to(vault_root)),
+                         "hint": "re-run with --merge (append only the blocks "
+                                 "the file lacks; existing keys win) or "
+                                 "--force (replace, with backup)"}, 7)
+    else:
+        final = rendered
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+
+    atomic_write_text(target, final)
+    envelope: dict[str, Any] = {
+        "action": "initialized", "mode": mode,
+        "file": str(target.relative_to(vault_root)),
+        "template": template.name, "version": template.version,
+        "backup": backup,
+    }
+    if mode == "merge":
+        envelope["merged_blocks"] = merged_blocks
+    if note:
+        envelope["note"] = note
+    return emit(envelope)
+
+
 def _cmd_set(args: argparse.Namespace) -> int:
     vault_root = _resolve_vault_root(args)
     if vault_root is None:
@@ -536,6 +679,33 @@ def _build_parser() -> argparse.ArgumentParser:
     unset_cmd.add_argument("--vault-root", default=None)
     unset_cmd.add_argument("--no-backup", action="store_true")
     unset_cmd.set_defaults(func=_cmd_unset)
+
+    init = sub.add_parser(
+        "init",
+        help="set a folder up from a named template (templates/sync-profiles/ "
+             "+ <vault>/.wiki/templates/)",
+    )
+    init.add_argument("folder", help="'.' = vault root")
+    init.add_argument("--template", required=True)
+    init.add_argument("--var", action="append", default=None, metavar="NAME=VALUE",
+                      help="template variable (repeatable); regex vars are "
+                           "ReDoS-gated")
+    mode_group = init.add_mutually_exclusive_group()
+    mode_group.add_argument("--merge", action="store_true",
+                            help="existing file: append only the top-level "
+                                 "blocks it lacks (existing keys win)")
+    mode_group.add_argument("--force", action="store_true",
+                            help="existing file: replace it (backup taken)")
+    init.add_argument("--no-backup", action="store_true")
+    init.add_argument("--vault-root", default=None)
+    init.set_defaults(func=_cmd_init)
+
+    templates = sub.add_parser(
+        "templates",
+        help="list available sync.yaml templates (builtin + vault)",
+    )
+    templates.add_argument("--vault-root", default=None)
+    templates.set_defaults(func=_cmd_templates)
 
     return p
 

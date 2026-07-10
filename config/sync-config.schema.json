@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sergey/obsidian-llm-wiki/config/sync-config.schema.yaml",
+  "title": "sync-config",
+  "description": "Library of $defs. Validate against #/$defs/SyncConfig.",
+  "$defs": {
+    "Extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "convert": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "text": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "skip": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "SyncConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zones": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-wiki-scope": "root-only",
+          "x-wiki-format": "glob",
+          "description": "Vault-root-relative globs of sync zones (advisory; `wiki-sync scan <zone>` takes an explicit zone)."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-wiki-scope": "root-only",
+          "x-wiki-format": "glob",
+          "description": "Vault-root-relative globs pruned from the walk. A NON-`.md` match is pruned immediately; a `.md` match is still read so a `#wiki/keep` tag can rescue it (precedence pinned in the loader).\n"
+        },
+        "tag_namespace": {
+          "type": "string",
+          "default": "wiki",
+          "x-wiki-scope": "root-only",
+          "description": "Routing-tag namespace; `#<ns>/{raw,skip,keep}` + a `<ns>:` frontmatter field."
+        },
+        "extensions": {
+          "$ref": "#/$defs/Extensions",
+          "x-wiki-scope": "root-only"
+        },
+        "resummarize": {
+          "$ref": "#/$defs/Resummarize",
+          "x-wiki-scope": "cascading"
+        },
+        "transcript_dedup": {
+          "$ref": "#/$defs/TranscriptDedup",
+          "x-wiki-scope": "root-only"
+        },
+        "summarize": {
+          "$ref": "#/$defs/Summarize",
+          "x-wiki-scope": "cascading"
+        }
+      }
+    },
+    "Summarize": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "meeting",
+            "lesson",
+            "article"
+          ],
+          "description": "Distil profile → wiki-import `--kind`. `auto` (default): wiki-import prepare auto-detects the content-type. `meeting`/`lesson`: pyramid grammar (meeting-summary / lesson-summary). `article`: the article wrapper.\n"
+        },
+        "diagrams": {
+          "type": "boolean",
+          "description": "Pass `--diagrams` (selective-mermaid overlay) to wiki-import. Default false."
+        },
+        "extract_concepts": {
+          "type": "boolean",
+          "description": "File concept pages (default true). false → `--no-concepts` (defer to /wiki-extract-concepts)."
+        },
+        "target_subdir": {
+          "type": "string",
+          "x-wiki-format": "path",
+          "description": "Optional subfolder under the topic folder where the summary note files (e.g. \"_summary\"). Default \"\" (the topic folder itself)."
+        }
+      }
+    },
+    "TranscriptDedup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "prefer_ext": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.[A-Za-z0-9.]+$"
+          },
+          "description": "Ordered format preference, most-preferred first (default [.txt, .vtt, .srt])."
+        },
+        "identity": {
+          "type": "string",
+          "enum": [
+            "stem",
+            "before-first-dot"
+          ],
+          "description": "Variant-grouping key: 'stem' (filename minus last extension — groups a .vtt with its same-stem .txt) or 'before-first-dot' (filename up to the first '.', for YouTube-id captions like ID.ru.txt / ID.ru-orig.vtt).\n"
+        }
+      }
+    },
+    "Resummarize": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "if-missing",
+            "if-changed",
+            "always",
+            "never"
+          ],
+          "description": "if-missing (default): ingest only if no summary detected; if-changed: re-summarise iff the recorded source_state hash no longer matches the file (TASK 051); always; never."
+        },
+        "detect": {
+          "$ref": "#/$defs/Detect"
+        }
+      }
+    },
+    "Detect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_state": {
+          "type": "boolean",
+          "description": "D1 — a wiki-sync `source_state` hash marker counts as \"summary exists\"."
+        },
+        "provenance_ref": {
+          "$ref": "#/$defs/ProvenanceRef"
+        },
+        "mirror": {
+          "$ref": "#/$defs/Mirror"
+        }
+      }
+    },
+    "ProvenanceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "frontmatter keys checked (string or list value), e.g. [source, sources]."
+        },
+        "match": {
+          "type": "string",
+          "enum": [
+            "vault-rel-path",
+            "basename"
+          ],
+          "description": "How a summary's cited `file:` is matched to a raw source (TASK 019/025). `vault-rel-path` (default): exact full-path equality — strict, only matches summaries that cite the raw by its vault-relative path. `basename`: basenames BOTH the cited value AND the raw target, so it matches summaries citing by basename OR by full path — preferred when source basenames are globally unique (e.g. YouTube-id transcripts) or an existing corpus already cites by basename; its only failure mode is two distinct raws sharing a basename across folders. The default is NOT basename (a default flip could merge such same-basename raws).\n"
+        }
+      }
+    },
+    "Mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "raw_dirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "dir names that anchor a raw tree (e.g. _raw, _transcripts, Transcripts)."
+        },
+        "summary_dir": {
+          "type": "string",
+          "description": "sibling dir holding summaries; \".\" = the raw file's own folder."
+        },
+        "summary_ext": {
+          "type": "string"
+        },
+        "match": {
+          "type": "string",
+          "enum": [
+            "stem-relpath",
+            "group-key"
+          ]
+        },
+        "group_key": {
+          "type": "string",
+          "x-wiki-format": "regex",
+          "description": "shorthand regex applied to BOTH sides (default `^(\\d+)`); superseded by `key`."
+        },
+        "key": {
+          "$ref": "#/$defs/MirrorKey"
+        }
+      }
+    },
+    "MirrorKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "raw_regex": {
+          "type": "string",
+          "x-wiki-format": "regex"
+        },
+        "summary_regex": {
+          "type": "string",
+          "x-wiki-format": "regex"
+        },
+        "template": {
+          "type": "string",
+          "description": "string.Template over named groups → the comparable key (e.g. ${module}-${lesson})."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ignorecase",
+              "unicode"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "type": "object"
+}

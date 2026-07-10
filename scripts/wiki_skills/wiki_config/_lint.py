@@ -140,6 +140,8 @@ class _Linter:
         # label → (raw dict | None on hard failure)
         self.raws: dict[str, dict[str, Any] | None] = {}
         self.hashes: dict[str, str | None] = {}
+        self.texts: dict[str, str] = {}
+        self._templates_registry: dict[str, Any] | None = None
 
     def add(self, code: str, system: str, file: str, pointer: str = "",
             message: str = "", **data: Any) -> None:
@@ -180,7 +182,12 @@ class _Linter:
     def gate_sync_file(self, label: str, d: Path) -> None:
         rel = _sync_rel(label)
         self.files_checked += 1
-        self.hashes[rel] = _sha256(d / ".wiki" / "sync.yaml")
+        path = d / ".wiki" / "sync.yaml"
+        self.hashes[rel] = _sha256(path)
+        try:
+            self.texts[rel] = path.read_text(encoding="utf-8")
+        except OSError:
+            pass
         try:
             self.raws[label] = _load_validated_raw(d)
         except OSError:
@@ -522,6 +529,47 @@ class _Linter:
                                  "group_key/key, e.g. a YAML double-backslash?)")
                 return
 
+    def template_checks(self, label: str) -> None:
+        """TEMPLATE_DRIFT + editor-modeline health for GENERATED files (those
+        carrying the `# wiki-config template:` stamp). Hand-authored files
+        without a stamp are never nagged about modelines."""
+        from ._templates import (
+            MODELINE_PREFIX,
+            SCHEMA_JSON,
+            discover_templates,
+            read_template_stamp,
+        )
+
+        rel = _sync_rel(label)
+        text = self.texts.get(rel)
+        if text is None:
+            return
+        stamp = read_template_stamp(text)
+        if stamp is None:
+            return
+        name, version = stamp
+        if self._templates_registry is None:
+            self._templates_registry = discover_templates(self.vault_root)
+        template = self._templates_registry.get(name)
+        if template is not None and template.valid and template.version != version:
+            self.add("TEMPLATE_DRIFT", "sync", rel,
+                     message=f"created from template '{name}' v{version}; the "
+                             f"registry now ships v{template.version} — consider "
+                             "wiki-config init --merge",
+                     template=name, file_version=version,
+                     registry_version=template.version)
+        first = text.splitlines()[0] if text.splitlines() else ""
+        if first.startswith(MODELINE_PREFIX):
+            if first[len(MODELINE_PREFIX):].strip() != SCHEMA_JSON.as_uri():
+                self.add("SCHEMA_MODELINE_STALE", "sync", rel,
+                         message="the yaml-language-server modeline points at a "
+                                 "stale schema path (fix rewrites line 1 only)")
+        else:
+            self.add("SCHEMA_MODELINE_MISSING", "sync", rel,
+                     message="no yaml-language-server modeline — add one to get "
+                             "live schema hints while editing (fix inserts "
+                             "line 1 only)")
+
     def shadowed_configs(self) -> None:
         root_raw = self.raws.get(".")
         excludes = (root_raw or {}).get("exclude")
@@ -596,6 +644,7 @@ def lint_vault(
         raw = linter.raws.get(label)
         if raw is not None:
             linter.cross_level(label, raw)
+            linter.template_checks(label)
     linter.shadowed_configs()
     for wiki in orphans:
         rel = wiki.relative_to(vault_root).as_posix()

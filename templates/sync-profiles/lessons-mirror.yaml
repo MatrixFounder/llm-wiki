@@ -1,0 +1,27 @@
+# wiki-config template: lessons-mirror v1.0.0
+# level: subfolder
+# var group_key (regex): key-extraction regex applied to BOTH raw and summary stems [default: ^(\d+)]
+# purpose: N:1 mirror-matched course zone — many raw transcripts fold onto one summary per key
+#
+# Raw transcripts live in a `Transcripts/` (or `_raw/`) anchor dir; finished
+# summaries in the sibling `Summary/`. A raw whose composed key already has a
+# summary is skipped (no re-LLM). The default key is the leading number
+# (`02 - intro.vtt` → key `2`); lessons keyed by an 8-digit DATE prefix pass
+# `--var group_key='^(\d{8})'` at init time. Distinct lessons sharing one key
+# collapse (merge/split WARN at scan time) — prefer the finest key that is
+# stable on BOTH sides.
+resummarize:
+  mode: if-missing
+  detect:
+    source_state: true
+    provenance_ref:
+      enabled: true
+      fields: [source, sources]
+    mirror:
+      enabled: true
+      raw_dirs: [Transcripts, _raw]
+      summary_dir: Summary
+      match: group-key
+      group_key: '${group_key}'
+summarize:
+  profile: lesson

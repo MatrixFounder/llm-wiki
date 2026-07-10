@@ -1,0 +1,11 @@
+# wiki-config template: article-zone v1.0.0
+# level: subfolder
+# purpose: article/paper reading zone — article-wrapper grammar, concept pages filed
+#
+# Sources in this zone distil through the article wrapper (full-text kept below
+# the summary) and file `_concepts/` pages (the compounding-knowledge default).
+summarize:
+  profile: article
+  extract_concepts: true
+resummarize:
+  mode: if-missing
