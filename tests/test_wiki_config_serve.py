@@ -252,6 +252,13 @@ def test_template_endpoint_level_and_exists_guards(
     status, _ = c.request("POST", "/api/template",
                           {"rel": "New Zone", "template": "article-zone"})
     assert status == 409
+    # with force → replaced, backup taken (the UI 're-init from template' path)
+    status, body = c.request("POST", "/api/template",
+                             {"rel": "New Zone", "template": "article-zone",
+                              "force": True})
+    assert status == 200 and body["ok"] is True and body["backup"]
+    text = (zone / ".wiki" / "sync.yaml").read_text(encoding="utf-8")
+    assert "article-zone" in text and (zone / ".wiki" / "backups").is_dir()
 
 
 def test_tree_lists_full_hierarchy_with_configured_flags(

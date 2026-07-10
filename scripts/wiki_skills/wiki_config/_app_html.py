@@ -177,8 +177,9 @@ button.primary:disabled{opacity:.5;cursor:default;box-shadow:none}
 .alert{border:1px solid var(--err);border-radius:.6rem;background:
   color-mix(in srgb, var(--err) 7%, var(--panel));padding:.7rem 1rem;
   font-size:.84rem;margin-bottom:1rem}
-#tplRow{display:flex;gap:.6rem;align-items:center;margin-top:1rem;flex-wrap:wrap}
-#tplRow select{max-width:22rem;width:auto}
+#tplRow{display:flex;gap:.6rem;align-items:center;margin:.15rem 0 .7rem;
+  flex-wrap:wrap;font-size:.8rem}
+#tplRow select{max-width:22rem;width:auto;padding:.25rem .5rem;font-size:.8rem}
 .muted{color:var(--muted)}
 #yamlVerdict{font-size:.8rem;margin:.5rem 0}
 #yamlVerdict.bad{color:var(--err)}#yamlVerdict.good{color:var(--ok)}
@@ -394,6 +395,7 @@ inherited cascade; a backup is kept in .wiki/backups/">
     <div class="panelhead">
       <h2>${esc(FOLDER.rel === "." ? "(vault root)" : FOLDER.rel)}</h2>
       ${configNote}
+      <div id="tplRow"></div>
       <div class="tabs">
         <button id="tabForm" class="${tab === "form" ? "active" : ""}">Form</button>
         <button id="tabYaml" class="${tab === "yaml" ? "active" : ""}">YAML</button>
@@ -403,7 +405,6 @@ inherited cascade; a backup is kept in .wiki/backups/">
       ${broken}
       <div id="tabBody"></div>
       <div id="findingsBox" class="findings"></div>
-      <div id="tplRow"></div>
     </div>`;
   $("#tabForm").onclick = () => renderPanel("form");
   $("#tabYaml").onclick = () => renderPanel("yaml");
@@ -712,10 +713,14 @@ function renderFindings() {
 // ---------- templates ------------------------------------------------------------
 async function renderTemplates() {
   const row = $("#tplRow");
-  if (FOLDER.text) { row.innerHTML = ""; return; }  // only offered for empty folders
-  row.innerHTML = `<span class="muted">Quick setup:</span>
+  const hasOwn = !!FOLDER.text;
+  const caption = hasOwn ? "Re-init from template:" : "Quick setup from template:";
+  const goLabel = hasOwn ? "replace…" : "apply";
+  row.innerHTML = `<span class="muted">${caption}</span>
     <select id="tplSel"><option value="">choose a template…</option></select>
-    <button class="small" id="tplGo">apply</button>`;
+    <button class="small" id="tplGo">${goLabel}</button>
+    ${hasOwn ? '<span class="muted">replaces this file — a backup is kept</span>'
+             : ""}`;
   const {body} = await api("/api/templates", {headers: HDR});
   const templates = body.templates || [];
   const sel = $("#tplSel");
@@ -728,6 +733,12 @@ async function renderTemplates() {
   });
   $("#tplGo").onclick = async () => {
     if (!sel.value) return;
+    if (hasOwn && !confirm(
+        `Replace this folder's sync.yaml with the '${sel.value}' template?\n\n`
+        + "The current file goes to .wiki/backups/ first (wiki-config restore "
+        + "undoes this). Hand-authored keys and comments are NOT merged — "
+        + "use `wiki-config init --merge` from the CLI for an additive merge."))
+      return;
     const tpl = templates.find((t) => t.name === sel.value);
     const vars = {};
     for (const v of (tpl && tpl.required_vars) || []) {
@@ -738,7 +749,8 @@ async function renderTemplates() {
     }
     const {status, body: r} = await api("/api/template", {method: "POST",
       headers: JHDR,
-      body: JSON.stringify({rel: FOLDER.rel, template: sel.value, vars})});
+      body: JSON.stringify({rel: FOLDER.rel, template: sel.value, vars,
+                            force: hasOwn})});
     setStatus(status === 200 ? `applied ${sel.value} ✓`
       : `${r.error || "failed"}`, status === 200);
     select(SEL, document.querySelector("nav .item.active"));
