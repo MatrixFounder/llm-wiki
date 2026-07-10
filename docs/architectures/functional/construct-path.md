@@ -483,6 +483,25 @@ all writes still `validate_inside_vault`; staging deliberately OUTSIDE the vault
 string-shape only; the active-note hint shells a local resolver binary, never the network) ·
 vendor-agnostic (primary W2 signal needs no running app/harness). Design rationale: Q-057-1..4.
 
+**Phase-4 adversarial hardening (shipped with the task; 3 fresh-context critics + a verify
+cycle):** staged captures get a 48 h age-based GC sweep (delete-on-consume would break the
+fetch-free re-run; abandoned proposals no longer accumulate); `series_stem` caps its input at
+300 chars (the marker regex backtracks O(n²) on separator-flood titles — measured 8.8 s at
+20 k chars); an explicit `--transcript-media-timeout` RAISES the primary wall-clock
+(budget + headroom) instead of being silently SIGKILLed — primary-scoped only, embeds keep
+300 s (the skill applies the budget to X media alone); a login-walled ANNOUNCEMENT still
+surfaces `broadcast_url` (exit 0) instead of a dead-end FETCH_FAILED; the active-note hint
+never *overrides* evidence-backed series candidates (it may only pick one of them);
+machinery-dir comparisons are casefolded (case-insensitive filesystems); a titleless staged
+re-run derives its `_raw` slug from the staged `source:` (never the tempfile stem); `_fm_safe`
+strips the full `str.splitlines()` boundary set (NEL/LS/PS — a U+2028 title could otherwise
+suppress the `classification:` quarantine stamp via the naive parser, which now also splits on
+`\n` only); the staged capture is written through the 0600 `mkstemp` fd; and the W1 knobs are
+ceiling-bounded (concurrency ≤ 64, media timeout ≤ 24 h). Accepted residuals (documented):
+the 220–600 prose band may drop a substantive short tweet (recoverable via the emitted
+`broadcast_url`/`--video`); the 2-word stem floor disables series inference for space-less
+scripts (degrades to ask); staged captures are cleartext in the OS temp dir until the sweep.
+
 ## Legacy PARA-import framing (superseded §2.3 — TASK 038; retired TASK 047)
 
 > **Superseded (TASK 047).** Retained for history; the retirement is recorded in §2.3 and §2.3.4 above.
