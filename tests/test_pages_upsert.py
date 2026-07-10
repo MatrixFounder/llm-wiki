@@ -131,17 +131,22 @@ def test_e2e_05_replace_refs_atomic(repo):
 
 def test_unit_01_no_insert_or_replace_in_source():
     """M-4 grep guard: `INSERT OR REPLACE` MUST NOT appear as ACTIVE code in
-    sqlite_repository.py. Comment lines (lines whose stripped form starts
-    with `#`) are exempt — they may discuss the anti-pattern."""
-    src_lines = (Path(__file__).parent.parent / "scripts" / "wiki_index" /
-                 "sqlite_repository.py").read_text().splitlines()
+    the SQLite DAL. Comment lines (lines whose stripped form starts with `#`)
+    are exempt — they may discuss the anti-pattern. Layout-agnostic: covers
+    both the historical single module (sqlite_repository.py) and the
+    TASK 056 package (sqlite_repository/*.py)."""
+    base = Path(__file__).parent.parent / "scripts" / "wiki_index" / "sqlite_repository"
+    module = base.with_suffix(".py")
+    sources = [module] if module.exists() else sorted(base.glob("*.py"))
+    assert sources, f"M-4 guard found no DAL source at {base}[.py|/]"
     offenders = []
-    for i, line in enumerate(src_lines, start=1):
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue  # comment lines exempt
-        if re.search(r"INSERT\s+OR\s+REPLACE", line, flags=re.IGNORECASE):
-            offenders.append(f"L{i}: {line.strip()}")
+    for src in sources:
+        for i, line in enumerate(src.read_text().splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue  # comment lines exempt
+            if re.search(r"INSERT\s+OR\s+REPLACE", line, flags=re.IGNORECASE):
+                offenders.append(f"{src.name}:L{i}: {line.strip()}")
     assert offenders == [], (
         "M-4 contract violation — INSERT OR REPLACE in active code:\n"
         + "\n".join(offenders)

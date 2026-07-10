@@ -47,16 +47,63 @@
   - **Outbound**: Concrete implementations (`SQLiteRepository`, future `PostgresRepository`).
 - **Dependencies**: None (это сам по себе абстрактный contract).
 
-#### Component: **SQLiteRepository** (DAL concrete)
+#### Component: **SQLiteRepository** (DAL concrete — domain-package, TASK 056)
 
-- **Type**: Python class implementing `IndexRepository`.
+- **Type**: Python package `scripts/wiki_index/sqlite_repository/` composing one class from
+  per-domain mixins. (Through TASK 055 this was a single 2227-line module; the TASK 056 package
+  conversion preserves the import path — `from scripts.wiki_index.sqlite_repository import
+  SQLiteRepository, AliasCollisionError, VaultRegistrationError` is byte-identical for all
+  callers.)
 - **Purpose**: SQLite-specific implementation. WAL mode, FTS5 queries, JSON-extract для frontmatter, atomic transactions.
 - **Implemented Functions**: ALL `IndexRepository` methods.
+- **Composition** (one module per table-family; method bodies relocated verbatim from the monolith):
+
+  ```text
+  scripts/wiki_index/sqlite_repository/
+  ├── __init__.py        — assembles SQLiteRepository(<mixins>, IndexRepository); frozen public
+  │                        re-exports: SQLiteRepository, AliasCollisionError,
+  │                        VaultRegistrationError (+ _SCHEMA_PATH defensively); __all__
+  ├── _base.py           — SQLiteRepositoryBase(IndexRepository): db_path, lazy _connect() +
+  │                        PRAGMA block (verbatim), close/__enter__/__exit__, apply_schema,
+  │                        _SCHEMA_PATH, cross-domain stateless helper _in_clause; both
+  │                        exception classes
+  ├── _vaults.py         — vault registry CRUD + _row_to_vault
+  ├── _pages.py          — pages upsert/get/delete + txn helpers + _row_to_page
+  ├── _refs_graph.py     — page_entity_refs + backlinks + typed-edge graph
+  │                        (refs_from/neighbors/edge_chain, concept_pages, mentioning sources)
+  ├── _search.py         — search_pages decomposed into module-private helpers
+  │                        (filter clauses, FTS MATCH assembly, --as-of CTE, row→PageHit)
+  ├── _health_rules.py   — config-driven R-15/R-19 analyses: find_lifecycle_drift,
+  │                        find_coverage_gaps, find_ontology_violations
+  ├── _health_scan.py    — structural integrity scans: orphans, classification
+  │                        leaks/invalid/verified, missing-in-index, check_drift (+2 private
+  │                        helpers), cross-vault duplicates
+  ├── _events.py         — log_events CRUD + batch_runs
+  ├── _entities.py       — entity CRUD, candidates, mentions, aliases, expand_query_aliases
+  ├── _merge.py          — find_alias_collisions, merge_entities, entity lookup helpers
+  └── _state.py          — query/verify/source state + citations (find_pages_citing_source,
+                           all_cited_sources)
+  ```
+
+- **Typing / MRO contract**: every mixin inherits the abstract root `SQLiteRepositoryBase(IndexRepository)`
+  — directly, or transitively through its dependency edge (so public cross-mixin calls —
+  `check_drift → get_vault` — type-check against the ABC).
+  Exactly **two declared mixin-dependency edges** cover the only cross-domain *private* calls in
+  the monolith: `_SearchMixin(_PagesMixin)` (uses `_row_to_page`) and `_MergeMixin(_EntitiesMixin)`
+  (uses `_recompute_mentions`). The composite base tuple **omits** the super-mixins
+  `_PagesMixin`/`_EntitiesMixin` (inherited transitively) — this guarantees C3 linearization.
+  `mypy --strict` clean with zero `type: ignore`. Module size cap ≤ 500 lines.
+- **Postgres mirror convention** (ROADMAP P3; SQLITE-VS-POSTGRES.md §4): a future
+  `postgres_repository/` package mirrors this per-domain module layout over `psycopg`; each
+  module docstring carries a `dialect:` tag marking its SQL portability (generic vs SQLite-only:
+  FTS5 MATCH/bm25/snippet in `_search`, `json_extract`/`json_each` in health/search, the PRAGMA
+  block + `user_version` in `_base`). Skills/CLIs are unaffected by backend choice — they speak
+  `IndexRepository` via `make_repo` only.
 - **Technologies**: `sqlite3` (stdlib, version ≥ 3.38), `python-slugify`, `python-frontmatter`. Опц. `sqlite-vec` (.dylib/.so) для future vector layer.
 - **Interfaces**:
   - **Inbound**: Through `IndexRepository` interface.
   - **Outbound**: SQLite filesystem (`<db_path>.db`).
-- **Dependencies**: SQLite library (system или bundled). DDL из `sql/wiki-index.sql` (= `SCHEMA-DRAFT.sql`).
+- **Dependencies**: SQLite library (system или bundled). DDL из `sql/wiki-index-v2.sql` (runtime `_SCHEMA_PATH` в `_base.py`; тот же файл применяет `factory.apply_schema_if_missing`).
 
 #### Component: **wiki-index-upsert** (Skill — standalone-only entry point)
 
