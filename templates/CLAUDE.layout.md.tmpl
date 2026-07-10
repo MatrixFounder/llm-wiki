@@ -227,6 +227,14 @@ wiki-reindex --full --vault ${vault_id}
   Event graph: `wiki-graph` (typed page-to-page edges). Construction: **`wiki-import`**
   (the unified construct path — URL/PDF/office/thread/transcript/local file, any layout via
   config, ADR-007), `wiki-sync` (mixed-zone driver), `wiki-index-upsert`, `wiki-extract-concepts`.
+  **Target folder unknown? Do NOT guess — omit `--folder`** (TASK 057): `wiki-import prepare`
+  infers it from a same-series sibling in the index (`folder_proposed` + evidence + an
+  out-of-vault `staged_path`; re-run `--folder "<F>" --source <staged_path>` = fetch-free),
+  falls back to the `obsidian-active-note` hint (secondary, optional), else returns
+  `FOLDER_UNRESOLVED` + candidates → ask the user; nothing is filed until the folder is
+  confirmed. An x-status that merely ANNOUNCES a Broadcast/Space yields
+  `{action:"announcement_only", broadcast_url}` (exit 0, nothing filed) — re-run on the
+  broadcast URL or pass `--video`.
   Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint` (+ lifecycle-drift &
   ontology-violation, both gate `--strict`), `wiki-health` (`coverage` R-15 + `ontology`
   R-19; always exit 0), `wiki-index-render`. Install per its `README.md`; ensure its
