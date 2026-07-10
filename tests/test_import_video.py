@@ -517,3 +517,15 @@ def test_w1_media_timeout_raises_wallclock(monkeypatch):
     seen.clear()
     _dispatch("https://x.com/i/broadcasts/1abc", media_timeout_sec=900)
     assert seen[0]["timeout"] == 3600      # small budget never LOWERS the hang-guard
+
+
+def test_w1_media_timeout_never_inflates_embed_wallclock(monkeypatch):
+    # Phase-4 cycle-2 NEW-1: the media-budget wall-clock raise is PRIMARY-scoped — on the
+    # embed role the skill ignores the knob (X-only) so the 300s supplementary bound holds.
+    monkeypatch.delenv("WIKI_TRANSCRIPT_TIMEOUT_S", raising=False)
+    seen: list = []
+    monkeypatch.setattr(subprocess, "run", _argv_capture_run(seen))
+    monkeypatch.setattr(_fetch, "_download_raw_html", lambda url: (
+        '<iframe src="https://www.youtube.com/embed/abc123"></iframe>'))
+    _dispatch("https://example.com/article", embedded_videos=True, media_timeout_sec=86400)
+    assert seen[0]["timeout"] == 300

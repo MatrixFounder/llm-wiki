@@ -179,7 +179,8 @@ _SKOOL_LESSON_RE = re.compile(r"/classroom/", re.I)                # a lesson pa
 # + ASR of a ≥60-min broadcast; a SUPPLEMENTARY embedded-video fetch (best-effort, up to
 # --embedded-videos-max sequential calls) keeps the old 300 s so hung embeds can never chain
 # multi-hour stalls onto a page whose primary content already succeeded. Q-044-4 lineage:
-# $WIKI_TRANSCRIPT_TIMEOUT_S (set → overrides BOTH roles) is unchanged.
+# $WIKI_TRANSCRIPT_TIMEOUT_S (set → overrides BOTH roles) is unchanged; an explicit
+# --transcript-media-timeout may additionally raise the PRIMARY hang-guard (never embeds).
 _TRANSCRIPT_TIMEOUT_PRIMARY_S = 3600
 _TRANSCRIPT_TIMEOUT_EMBED_S = 300
 
@@ -809,8 +810,14 @@ def _fetch_transcript(transcript_bin: str, url: str, *, lang: str,
 
     # Phase-4 logic F1: an explicit --transcript-media-timeout larger than the wall-clock
     # would be silently SIGKILLed at the wall-clock — the exact W1 clip this task removes.
-    # The operator's media budget therefore RAISES the hang-guard to budget + headroom.
-    wall_timeout = max(_transcript_timeout(primary), (media_timeout_sec or 0) + 300)
+    # The operator's media budget therefore RAISES the hang-guard to budget + headroom —
+    # on the PRIMARY role only (cycle-2 NEW-1): the skill applies the media budget to X
+    # media alone, and embeds are youtube/vimeo-allowlisted, so on the embed role the knob
+    # is a guaranteed no-op child-side and must never inflate the 300 s supplementary
+    # bound (Q-057-2: hung embeds must not chain multi-hour stalls).
+    wall_timeout = _transcript_timeout(primary)
+    if primary:
+        wall_timeout = max(wall_timeout, (media_timeout_sec or 0) + 300)
     try:
         try:
             proc = subprocess.run(argv, capture_output=True, text=True,
