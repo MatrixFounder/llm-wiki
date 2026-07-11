@@ -1,0 +1,4 @@
+[bases] Project Tracker
+[terminal:terminal] Terminal
+[file-explorer] Files
+[search] Search

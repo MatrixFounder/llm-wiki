@@ -97,6 +97,14 @@ def test_markdown_tabs_filters_to_notes() -> None:
     assert [t["title"] for t in md] == ["GitHub Setup", "Weekly Review"]
 
 
+def test_open_file_tabs_keeps_bases_excludes_chrome() -> None:
+    # TASK 060: a Base tab (view-type `bases`, live-verified) is a real open FILE — not chrome —
+    # but must stay OUT of the strict markdown_tabs() used by the descriptor `match` HIGH path.
+    tabs = oan.parse_tabs(_fix("obsidian-tabs-with-base.txt"))
+    assert [t["title"] for t in oan.open_file_tabs(tabs)] == ["Project Tracker"]
+    assert oan.markdown_tabs(tabs) == []
+
+
 def test_match_descriptor_unique_and_none_and_many() -> None:
     md = oan.markdown_tabs(oan.parse_tabs(_TABS_WITH_NOTES))
     assert [t["title"] for t in oan.match_descriptor(md, "github")] == ["GitHub Setup"]
@@ -196,6 +204,66 @@ def test_resolve_focused_recent_open_fallback(monkeypatch: pytest.MonkeyPatch) -
     assert res["source"] == "recent-open"
     assert res["path"] == rel
     assert res["abs"].endswith(rel)
+
+
+def test_resolve_focused_recent_open_fallback_for_base_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # TASK 060 repro: a `.base` file is focused/open (no markdown tab open at all — `tabs` shows
+    # only `[bases] …` + chrome). `obsidian file` (bare) still says "No active file" (live-verified:
+    # Obsidian's active-file pointer doesn't recognize a Bases view) — before the fix, the
+    # markdown-only `_recents_md`/`list_open_notes` filters ALSO dropped the `.base` recents entry,
+    # so `resolve_focused` had no fallback and wrongly reported "nothing is open".
+    rel = "Projects/Project Tracker.base"
+    tsv = _fix("obsidian-file-base.tsv")
+
+    def fake(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+        if args == ["file"]:
+            return subprocess.CompletedProcess(args, 0, stdout="Error: No active file.", stderr="")
+        if args[:1] == ["file"] and any(a.startswith("path=") for a in args):
+            return subprocess.CompletedProcess(args, 0, stdout=tsv, stderr="")
+        if args == ["tabs"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_fix("obsidian-tabs-with-base.txt"), stderr="")
+        if args == ["recents"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{rel}\n", stderr="")
+        if args == ["vault", "info=path"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_ROOT + "\n", stderr="")
+        if args == ["vault", "info=name"]:
+            return subprocess.CompletedProcess(args, 0, stdout="ObsidianNotes\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", fake)
+    res = oan.resolve_focused()
+    assert res["source"] == "recent-open"
+    assert res["path"] == rel
+    assert res["abs"].endswith(rel)
+
+
+def test_resolve_folder_for_base_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The exact user-facing question this closes: "which folder is open?" while a `.base` is
+    # focused must derive the containing folder instead of exiting NO_ACTIVE_FILE.
+    rel = "Projects/Project Tracker.base"
+    tsv = _fix("obsidian-file-base.tsv")
+
+    def fake(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+        if args == ["file"]:
+            return subprocess.CompletedProcess(args, 0, stdout="Error: No active file.", stderr="")
+        if args[:1] == ["file"] and any(a.startswith("path=") for a in args):
+            return subprocess.CompletedProcess(args, 0, stdout=tsv, stderr="")
+        if args == ["tabs"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_fix("obsidian-tabs-with-base.txt"), stderr="")
+        if args == ["recents"]:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{rel}\n", stderr="")
+        if args == ["vault", "info=path"]:
+            return subprocess.CompletedProcess(args, 0, stdout=_ROOT + "\n", stderr="")
+        if args == ["vault", "info=name"]:
+            return subprocess.CompletedProcess(args, 0, stdout="ObsidianNotes\n", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(oan.shutil, "which", lambda _: "/usr/local/bin/obsidian")
+    monkeypatch.setattr(oan, "_run_obsidian", fake)
+    res = oan.resolve_folder()
+    assert res["path"] == "Projects" and res["abs"] == _ROOT + "/Projects"
+    assert res["note_path"] == rel and res["source"] == "recent-open"
 
 
 def test_resolve_focused_no_active_and_no_open_recent_reraises(monkeypatch: pytest.MonkeyPatch) -> None:

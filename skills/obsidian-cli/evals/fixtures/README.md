@@ -15,11 +15,26 @@ Real captured output from the live `obsidian` CLI, used by `tests/test_obsidian_
 | `obsidian-tabs-ids.txt` | `obsidian tabs ids` | `[view-type] Title\t<id>` (TASK 041 S0) |
 | `obsidian-recents.txt` | `obsidian recents` | recently-opened vault-relative PATHS (TASK 041 S0) |
 | `obsidian-vaults-verbose.tsv` | `obsidian vaults verbose` | `name\tpath` per vault (TASK 041 S0) |
+| `obsidian-tabs-with-base.txt` | `obsidian tabs` (a Base focused, no markdown open) | `[bases] Title` — the live-verified view-type for an open Obsidian Base (TASK 060) |
+| `obsidian-file-base.tsv` | `obsidian file path=<a .base file>` | a `.base` file's `file` info TSV — same shape as markdown, `extension\tbase` (TASK 060) |
 
 **Provenance (TASK 041 S0 captures):** `obsidian 1.12.7 (installer 1.12.7)`, macOS (Darwin),
 captured 2026-06-20 against the registered `obsidian-llm-wiki` vault (the active vault at capture
 time had no markdown note open — hence the `No active file` capture; `obsidian-file-active.tsv` was
 taken with an explicit `path=` to pin the identical output FORMAT).
+
+**Provenance (TASK 060, `.base` fixtures):** `obsidian 1.12.7`, macOS, captured 2026-07-11 against a
+real vault with an Obsidian Base file open and focused. Confirms: (a) `tabs` reports a Base tab as
+`[bases] <Title>` (no extension in the title, same as markdown); (b) `obsidian file` (bare, no
+`path=`/`file=`) still returns `Error: No active file` even though the Base is the genuinely-focused
+leaf — Obsidian's own active-file pointer doesn't recognize a Bases view, which is exactly why the
+`recent-open` fallback (not the primary `active` path) is how a focused Base ever resolves; (c)
+`obsidian file path=<x>.base` returns the same TSV shape as a markdown file (`extension\tbase`); (d)
+`obsidian file file=<title-without-extension>` — the wikilink-style resolve `match`/`resolve_title`
+depend on — does **NOT** find a `.base` file by bare title (`Error: File "X" not found.`); it only
+resolves when the extension is appended (`file=<title>.base`). (d) is why the descriptor `match` HIGH
+path stays markdown-only (see `markdown_tabs` docstring) rather than being widened alongside
+`open_file_tabs`.
 
 ## TASK 041 S0 capability decision (the entry gate)
 

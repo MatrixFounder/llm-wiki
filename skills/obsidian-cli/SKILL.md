@@ -8,16 +8,8 @@ description: >-
   note", "obsidian cli". NOT for knowledge lookup about vault content; use wiki-search or
   wiki-query first. Vendor-agnostic.
 tier: 2
-version: 1.2
+version: 1.3
 ---
-<!-- Changelog: v1.2 — add the `folder` resolver mode (derive the open note's CONTAINING folder
-     for skills that take a FOLDER, not a file — e.g. `wiki-sync scan <zone>`); folder ops are
-     folder-WIDE (larger blast radius) so the caller echoes "folder ← note" and confirms per the
-     confidence gate. v1.1 (TASK 041 / ADR-008) — add "Active-note resolution" (pathless "edit the
-     note" → confidence-gated resolution of the active/open tab via the `obsidian-active-note`
-     wrapper); amend the Targeting-discipline footgun rule (resolve-then-explicit-`path=`, never the
-     implicit default). v1.0 (TASK 029) — initial skill. -->
-
 
 # obsidian-cli
 
@@ -92,9 +84,14 @@ takes the NAME, e.g. `obsidian vaults verbose`.)*
 
 `focused` returns a `source` field: **`active`** = the focused editor's file; **`recent-open`** =
 there was *no* active file (the focused leaf is a non-markdown view — typically the **integrated
-terminal the agent runs in**), so it fell back to the most-recently-opened note that is still an
-open tab (resolved by exact `path=`). `recent-open` is a heuristic → treat as MEDIUM (**always
-show the path**); exit 3 now means *nothing relevant is open at all*.
+terminal the agent runs in**, but also a genuinely-focused **Obsidian Base** (`.base`): Obsidian's
+own active-file pointer doesn't recognize a Bases view either, live-verified), so it fell back to
+the most-recently-opened FILE **of any type** that is still an open tab (resolved by exact `path=`
+— extension-agnostic, TASK 060). `recent-open` is a heuristic → treat as MEDIUM (**always show the
+path**); exit 3 now means *nothing relevant is open at all*. Note the asymmetry: this bare-ref /
+`recent-open` / `folder` path resolves any open file (note, Base, canvas, pdf, image, …); the
+**descriptor** `match` path below stays **markdown-only** (a `.base` can't be uniquely
+`file=`-resolved by bare title — only markdown notes support that wikilink-style lookup).
 
 `match` guards the no-ask path twice: the descriptor must match exactly ONE open `[markdown]`
 tab **and** that title must `file=`-resolve to a **vault-unique basename** (else the wikilink

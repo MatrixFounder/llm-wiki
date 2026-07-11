@@ -74,6 +74,22 @@ _ERROR_PREFIX = "Error:"  # obsidian errors (No active file / File "X" not found
 _TAB_RE = re.compile(r"^\[([^\]]+)\]\s*(.*)$")
 _TAB_ID_RE = re.compile(r"\t([0-9a-fA-F]{6,})\s*$")  # trailing `\t<hexid>` from `tabs ids`
 
+# Obsidian UI CHROME view-types (sidebars/panes) — never a file's content. An EXCLUDE-list
+# generalizes to content view-types we haven't hardcoded (canvas, pdf, image, audio, video,
+# excalidraw, kanban, …) instead of missing each one until it breaks, which is exactly the
+# gap TASK 060 hit: `.base` (view-type `bases`, live-captured 2026-07-11) was invisible to
+# the old markdown-only filter. `terminal:*` (the agent's own integrated-terminal pane) is
+# matched by prefix since its title varies (`terminal:documentation`, `terminal:terminal`, …).
+_CHROME_VIEW_TYPES = frozenset({
+    "file-explorer", "search", "bookmarks", "backlink", "outgoing-link", "tag",
+    "outline", "all-properties", "advanced-tables-toolbar", "empty", "release-notes",
+    "graph", "localgraph",
+})
+
+
+def _is_chrome_view(view_type: str) -> bool:
+    return view_type in _CHROME_VIEW_TYPES or view_type.startswith("terminal:")
+
 
 class ResolveError(Exception):
     """Carries a wrapper exit code for a resolution failure."""
@@ -137,8 +153,27 @@ def parse_tabs(text: str) -> list[dict[str, str]]:
 
 
 def markdown_tabs(tabs: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Filter parsed tabs to the ``markdown`` view-type (the note tabs)."""
+    """Filter parsed tabs to the ``markdown`` view-type (the note tabs).
+
+    Strict markdown-only — feeds ``match``/``resolve_title``'s wikilink-style ``file=<title>``
+    resolve, which (live-verified) only resolves a bare title for markdown notes; a non-markdown
+    file (e.g. a Base) needs its extension appended, which a tab TITLE alone doesn't carry. So
+    the descriptor/HIGH note-editing path stays markdown-scoped by design. For "is any file open"
+    orientation (recent-open matching, folder derivation) use ``open_file_tabs`` instead.
+    """
     return [t for t in tabs if t.get("view_type") == "markdown"]
+
+
+def open_file_tabs(tabs: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Open tabs that are a real vault FILE of any type (note, Base, canvas, pdf, image, …).
+
+    Broader than ``markdown_tabs`` (an EXCLUDE-list over known UI chrome, see
+    ``_CHROME_VIEW_TYPES``) — used only for orientation (matching a ``recents`` entry that is
+    still open; deriving a folder from whatever is focused), never for the descriptor ``match``
+    HIGH path, since those resolve by exact ``path=``, not the extension-sensitive wikilink
+    ``file=<title>``.
+    """
+    return [t for t in tabs if not _is_chrome_view(t.get("view_type", ""))]
 
 
 def match_descriptor(notes: list[dict[str, str]], descriptor: str) -> list[dict[str, str]]:
@@ -188,23 +223,32 @@ def _resolve_file(file_arg: Optional[str], vault: Optional[str], *, missing_code
     return _enrich(info, vault)
 
 
-def _recents_md(vault: Optional[str]) -> list[str]:
-    """Recently-opened vault-relative ``.md`` paths, most-recent first."""
+def _recents_files(vault: Optional[str]) -> list[str]:
+    """Recently-opened vault-relative paths of any file type, most-recent first.
+
+    No longer ``.md``-only (TASK 060 / ADR-008 follow-up): ``obsidian recents`` also lists
+    Bases/canvas/pdf/image/… and even bare FOLDER entries (no extension, seen when navigating
+    via the file explorer). Folder entries are harmless to keep here — the per-line
+    ``obsidian file path=`` probe below simply finds no ``path`` key for a folder and moves on.
+    """
     out = _obs(["recents"], _base(vault)).stdout
-    return [ln.strip() for ln in out.splitlines() if ln.strip().lower().endswith(".md")]
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
 def _recent_open_note(vault: Optional[str]) -> Optional[dict[str, str]]:
-    """The most-recently-opened note that is STILL an open tab → {…, source: recent-open}.
+    """The most-recently-opened FILE that is STILL an open tab → {…, source: recent-open}.
 
     Fallback for when there is no active *file* — e.g. the focused leaf is Obsidian's
-    integrated terminal (where the agent runs), so ``obsidian file`` returns nothing even
-    though notes are open. "The note I have open" = most-recent ``recents`` entry that is
-    also an open markdown tab. Resolved by EXACT ``path=`` (no wikilink ambiguity). It is a
-    heuristic → MEDIUM confidence; the caller should show + confirm it.
+    integrated terminal (where the agent runs) OR a non-markdown view Obsidian's own
+    ``file`` command doesn't treat as "active" (live-verified for Bases: a focused ``.base``
+    tab still yields ``Error: No active file``). "The file I have open" = most-recent
+    ``recents`` entry that is also an open tab of ANY type (``open_file_tabs``, not just
+    markdown). Resolved by EXACT ``path=`` (no wikilink ambiguity, so the extension doesn't
+    need to be known up front). It is a heuristic → MEDIUM confidence; the caller should show
+    + confirm it.
     """
-    open_stems = {t.get("title", "").strip().lower() for t in list_open_notes(vault)}
-    for rel in _recents_md(vault):
+    open_stems = {t.get("title", "").strip().lower() for t in list_open_files(vault)}
+    for rel in _recents_files(vault):
         if Path(rel).stem.strip().lower() not in open_stems:
             continue
         info = parse_file_info(_obs(["file", f"path={rel}"], _base(vault)).stdout)
@@ -243,9 +287,19 @@ def resolve_title(title: str, vault: Optional[str] = None) -> dict[str, str]:
 
 
 def list_open_notes(vault: Optional[str] = None) -> list[dict[str, str]]:
-    """List open markdown tabs (title + view-type)."""
+    """List open markdown tabs (title + view-type). Feeds the descriptor ``match`` HIGH path."""
     _require_cli()
     return markdown_tabs(parse_tabs(_obs(["tabs"], _base(vault)).stdout))
+
+
+def list_open_files(vault: Optional[str] = None) -> list[dict[str, str]]:
+    """List open tabs that are a real vault file of any type (title + view-type).
+
+    Broader than ``list_open_notes`` — feeds orientation only (``_recent_open_note``'s
+    open-stem check), never the descriptor ``match`` HIGH path (see ``open_file_tabs``).
+    """
+    _require_cli()
+    return open_file_tabs(parse_tabs(_obs(["tabs"], _base(vault)).stdout))
 
 
 def _vaults_map() -> dict[str, str]:
