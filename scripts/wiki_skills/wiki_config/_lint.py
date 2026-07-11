@@ -42,6 +42,7 @@ from scripts.wiki_index.config_loader import (
 )
 from scripts.wiki_index.layout_config import LayoutConfigError, resolve_layout_config
 from scripts.wiki_index.sync_config import (
+    WIKI_SYNC_CONFIG_MAX_BYTES,
     SyncConfigError,
     _get_validator,
     _load_validated_raw,
@@ -130,6 +131,23 @@ def _glob_matches_label(pattern: str, label: str) -> bool:
     return fnmatch.fnmatch(label, pattern)
 
 
+def _glob_probe_unbounded(pattern: str) -> bool:
+    """True when a NON-matching `Path.glob(pattern)` could force a full,
+    uncapped vault walk — measured: a missing `<literal-dir>/**` prefix lets
+    pathlib short-circuit in microseconds (the literal component is checked
+    for existence before any recursion), but a `**` with no preceding literal
+    directory (e.g. `**/x`, `*/**`) scales with vault size regardless of a
+    match. `**` counts only as a WHOLE path component (glob semantics); a
+    `**` glued into a bigger segment degrades to ordinary (bounded) `*`."""
+    parts = pattern.split("/")
+    for i, part in enumerate(parts):
+        if part != "**":
+            continue
+        prefix = parts[:i]
+        return not prefix or any(set(p) & set("*?[]") for p in prefix)
+    return False
+
+
 class _Linter:
     def __init__(self, vault_root: Path, model: dict[str, FieldSpec] | None) -> None:
         self.vault_root = vault_root
@@ -209,8 +227,16 @@ class _Linter:
         validator singleton the loader uses."""
         from scripts.wiki_index.sync_config import _NoAliasSafeLoader
 
+        path = d / ".wiki" / "sync.yaml"
         try:
-            raw = yaml.load((d / ".wiki" / "sync.yaml").read_text(encoding="utf-8"),
+            # Re-apply the loader's own 256 KiB cap: the FIRST read already
+            # passed it, but a TOCTOU swap between that read and this re-parse
+            # could feed an arbitrarily large anchorless YAML (the anchor ban
+            # alone doesn't bound a huge flat document's parse cost).
+            if path.stat().st_size > WIKI_SYNC_CONFIG_MAX_BYTES:
+                self.add("PARSE_ERROR", "sync", rel, message="config changed during lint")
+                return
+            raw = yaml.load(path.read_text(encoding="utf-8"),
                             Loader=_NoAliasSafeLoader)
         except Exception:  # drifted between the two reads — report the verdict only
             self.add("PARSE_ERROR", "sync", rel, message="config changed during lint")
@@ -344,6 +370,13 @@ class _Linter:
                 continue
             for i, pat in enumerate(value):
                 if not isinstance(pat, str):
+                    continue
+                if _glob_probe_unbounded(pat):
+                    # an un-anchored recursive pattern forces pathlib to walk
+                    # the WHOLE vault on a non-match; skip the liveness probe
+                    # rather than pay for a per-click full traversal (the
+                    # dominant `<zone>/**` shape stays checked — it
+                    # short-circuits on a missing literal prefix either way).
                     continue
                 try:
                     hit = next(iter(self.vault_root.glob(pat)), None)

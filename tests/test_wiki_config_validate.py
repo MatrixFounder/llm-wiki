@@ -72,6 +72,24 @@ def test_size_cap(tmp_path: Path) -> None:
     assert "SIZE_CAP" in _codes(findings)
 
 
+def test_enumerate_schema_errors_reapplies_size_cap(tmp_path: Path) -> None:
+    """Finding 6a: the schema-error enumeration pass re-reads the file to list
+    ALL violations — it must re-apply the loader's 256 KiB cap rather than
+    trust the FIRST read, which a TOCTOU swap could have outgrown (an
+    anchorless-but-huge document is still expensive to parse)."""
+    from scripts.wiki_skills.wiki_config._lint import _Linter, WIKI_SYNC_CONFIG_MAX_BYTES
+
+    _folder_yaml(tmp_path, "zones: []\n")
+    oversized = "zones:\n" + "  - 'x'\n" * (WIKI_SYNC_CONFIG_MAX_BYTES // 8 + 100)
+    assert len(oversized.encode("utf-8")) > WIKI_SYNC_CONFIG_MAX_BYTES
+    (tmp_path / ".wiki" / "sync.yaml").write_text(oversized, encoding="utf-8")
+
+    linter = _Linter(tmp_path, None)
+    linter._enumerate_schema_errors(".", tmp_path, ".wiki/sync.yaml")
+    assert [f.code for f in linter.findings] == ["PARSE_ERROR"]
+    assert linter.findings[0].message == "config changed during lint"
+
+
 # --------------------------------------------------------------------------- #
 # schema enumeration: typo layering (pass 1)
 # --------------------------------------------------------------------------- #
@@ -189,6 +207,31 @@ def test_zone_glob_no_match_and_live(tmp_path: Path) -> None:
     zone_hits = _by_code(findings, "ZONE_GLOB_NO_MATCH")
     assert len(zone_hits) == 1 and zone_hits[0].pointer == "/zones/1"
     assert len(_by_code(findings, "EXCLUDE_GLOB_NO_MATCH")) == 1
+
+
+def test_glob_probe_unbounded_classification() -> None:
+    """Finding 6b: only patterns where pathlib CANNOT short-circuit on a
+    missing literal prefix (measured: `<literal>/**` resolves in
+    microseconds even on a big vault; a leading/un-anchored `**` scales with
+    vault size) are flagged as unbounded."""
+    from scripts.wiki_skills.wiki_config._lint import _glob_probe_unbounded
+
+    assert _glob_probe_unbounded("_inbox/**") is False
+    assert _glob_probe_unbounded("Zone/Sub/**") is False
+    assert _glob_probe_unbounded("*.md") is False  # no ** at all
+    assert _glob_probe_unbounded("**/x.md") is True
+    assert _glob_probe_unbounded("*/**") is True
+
+
+def test_check_globs_skips_unbounded_pattern_no_full_walk(tmp_path: Path) -> None:
+    """A NON-matching un-anchored recursive pattern is silently skipped
+    (finding 6b) rather than forcing a full-vault probe on every lint; the
+    common `<zone>/**` shape (finding's OWN example) stays checked."""
+    _folder_yaml(tmp_path, "zones: ['**/nope.md', 'Ghost/**']\n")
+    findings, _ = lint_vault(tmp_path)
+    by_pointer = {f.pointer: f.code for f in findings if f.code == "ZONE_GLOB_NO_MATCH"}
+    assert "/zones/0" not in by_pointer          # unbounded shape — skipped
+    assert by_pointer.get("/zones/1") == "ZONE_GLOB_NO_MATCH"  # bounded — still checked
 
 
 def test_orphan_wiki_dir(tmp_path: Path) -> None:

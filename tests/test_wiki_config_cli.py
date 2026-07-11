@@ -244,3 +244,26 @@ def test_tree_report_sidecar(
     ])
     assert code == 0
     assert "wiki-config tree" in report_file.read_text(encoding="utf-8")
+
+
+def test_show_root_only_nested_block_gets_root_origin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Finding 4: a leaf of a CONFIGURED root-only nested block (here
+    `transcript_dedup.enabled`) must carry a ROOT origin — not be silently
+    omitted from `provenance` (JSON) or rendered blank (the `--report` md) —
+    even though the origin-assignment fold never visits nested leaves of a
+    root-only key."""
+    _folder_yaml(tmp_path, "transcript_dedup:\n  enabled: true\n")
+    report_file = tmp_path / "show.md"
+    code, env = _run(capsys, [
+        "show", ".", "--vault-root", str(tmp_path), "--report", str(report_file),
+    ])
+    assert code == 0
+    assert env["effective"]["transcript_dedup"]["enabled"] is True
+    prov = env["provenance"]["/transcript_dedup/enabled"]
+    assert prov["origin"] == "root"
+    text = report_file.read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines()
+              if "/transcript_dedup/enabled" in line)
+    assert "| root" in row or "root |" in row

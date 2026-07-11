@@ -28,8 +28,9 @@ from typing import Any
 from scripts.wiki_index.sync_config import SyncConfigError
 
 from ._findings import ConfigFinding
-from ._provenance import compute_folder_provenance, scan_tree
+from ._provenance import compute_folder_provenance, resolve_origin, scan_tree
 from ._report_md import _flatten
+from ._uimodel import build_ui_model
 
 _MAX_NODES = 5000
 
@@ -94,12 +95,17 @@ def build_report_model(
                 break
 
     root_arg = shlex.quote(str(vault_root))
+    # ONE schema parse (not one per folder) + one memo of loaded ancestor
+    # raws (the vault root, above all, would otherwise reload once per row).
+    ui_model = build_ui_model()
+    raw_cache: dict[Path, dict[str, Any] | SyncConfigError] = {}
     for label in sorted(labels, key=str.casefold):
         section = FolderSection(label=label)
         folder = vault_root if label == "." else vault_root / label
         section.has_config = (folder / ".wiki" / "sync.yaml").is_file()
         try:
-            prov = compute_folder_provenance(folder, vault_root)
+            prov = compute_folder_provenance(
+                folder, vault_root, model=ui_model, raw_cache=raw_cache)
             rows: list[tuple[str, Any]] = []
             for key, block in prov.effective.items():
                 _flatten(block, f"/{key}", rows)
@@ -108,11 +114,7 @@ def build_report_model(
                 # a root-only block like /transcript_dedup/enabled) inherits
                 # the NEAREST ancestor pointer's origin — otherwise it renders
                 # as an anonymous inherited badge (real-vault dogfood bug).
-                origin = prov.origins.get(pointer)
-                probe = pointer
-                while origin is None and "/" in probe.lstrip("/"):
-                    probe = probe.rsplit("/", 1)[0]
-                    origin = prov.origins.get(probe)
+                origin = resolve_origin(prov.origins, pointer)
                 section.rows.append({
                     "pointer": pointer,
                     "value": json.dumps(value, ensure_ascii=False),
@@ -297,7 +299,7 @@ def _section_html(section: FolderSection) -> str:
             severity = str(finding.get("severity", "info"))
             pointer = str(finding.get("pointer") or "")
             parts.append(
-                f'<li class="f-{_esc(severity)}"><strong>'
+                f'<li class="f-{_esc_attr(severity)}"><strong>'
                 + _esc(str(finding.get("code", ""))) + "</strong>"
                 + (f" <code>{_esc(pointer)}</code>" if pointer else "")
                 + " — " + _esc(str(finding.get("message", ""))) + "</li>")

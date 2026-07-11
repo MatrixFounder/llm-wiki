@@ -23,7 +23,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from scripts.wiki_index.config_loader import deep_merge
 from scripts.wiki_index.sync_config import (
@@ -77,6 +77,21 @@ class Origin:
         if self.note:
             out["note"] = self.note
         return out
+
+
+def resolve_origin(origins: Mapping[str, Origin], pointer: str) -> Origin | None:
+    """`origins.get(pointer)`, falling back to the NEAREST ANCESTOR pointer's
+    origin when the exact pointer carries none of its own — the leaves of a
+    configured, nested root-only block (e.g. `/transcript_dedup/enabled`) get
+    no per-leaf origin entry from the assignment fold above; they inherit the
+    block's own (root) origin. Additive only: never overrides an entry that
+    already exists at `pointer` itself."""
+    origin = origins.get(pointer)
+    probe = pointer
+    while origin is None and "/" in probe.lstrip("/"):
+        probe = probe.rsplit("/", 1)[0]
+        origin = origins.get(probe)
+    return origin
 
 
 @dataclass(frozen=True)
@@ -220,15 +235,23 @@ def compute_folder_provenance(
     folder: Path,
     vault_root: Path,
     model: dict[str, FieldSpec] | None = None,
+    raw_cache: dict[Path, dict[str, Any] | SyncConfigError] | None = None,
 ) -> FolderProvenance:
     """Effective config + per-pointer provenance for `folder`.
 
     Raises `SyncConfigLevelError` (a `SyncConfigError`) when ANY ancestor level
     fails the hardened load — matching the resolver, which would refuse the scan:
-    an effective config computed over a broken level would be a lie."""
+    an effective config computed over a broken level would be a lie.
+
+    `raw_cache` (default `None` → a fresh, call-local dict — fully
+    backward-compatible) memoizes `_load_validated_raw` per ancestor DIR so a
+    caller building provenance for MANY folders (e.g. `_report.py`'s
+    per-folder loop) loads each shared ancestor (the vault root, above all)
+    exactly once instead of once per folder."""
     ui = model if model is not None else build_ui_model()
     cascading = top_level_keys(ui, SCOPE_CASCADING)
     root_only = top_level_keys(ui, SCOPE_ROOT_ONLY)
+    cache = raw_cache if raw_cache is not None else {}
 
     chain = _ancestor_dirs(folder / "_probe_", vault_root)
     raws: list[tuple[str, dict[str, Any]]] = []
@@ -236,10 +259,17 @@ def compute_folder_provenance(
     for d in chain:
         label = _rel_label(d, vault_root)
         has_file[label] = (d / ".wiki" / "sync.yaml").is_file()
-        try:
-            raws.append((label, _load_validated_raw(d)))
-        except SyncConfigError as exc:
-            raise SyncConfigLevelError(label, exc) from exc
+        cached = cache.get(d)
+        if cached is None:
+            try:
+                cached = _load_validated_raw(d)
+            except SyncConfigError as exc:
+                cache[d] = exc
+                raise SyncConfigLevelError(label, exc) from exc
+            cache[d] = cached
+        elif isinstance(cached, SyncConfigError):
+            raise SyncConfigLevelError(label, cached)
+        raws.append((label, cached))
 
     rel_folder = _rel_label(folder, vault_root)
     prov = FolderProvenance(folder="." if rel_folder == ROOT_LABEL else rel_folder)
@@ -317,6 +347,41 @@ def compute_folder_provenance(
 # tree
 # --------------------------------------------------------------------------- #
 
+# Same bound + truncation contract as the `/api/tree` endpoint (bounded
+# operator-facing scan, never a full-vault crawl with no ceiling).
+_TREE_WALK_CAP = 5000
+
+
+@dataclass(frozen=True)
+class WalkedFolder:
+    """One directory visited by `walk_vault_tree` — label + resolved path +
+    whether it carries its own `.wiki/sync.yaml`."""
+
+    label: str
+    path: Path
+    configured: bool
+
+
+def walk_vault_tree(vault_root: Path) -> tuple[list[WalkedFolder], bool]:
+    """The ONE walk feeding both the `/api/tree` flat folder list and
+    `scan_tree`'s configured-node map (previously two separate `os.walk`s —
+    one here, one in `_server.py`). Capped at `_TREE_WALK_CAP` visited dirs;
+    the second return value mirrors the endpoint's `truncated` semantics."""
+    out: list[WalkedFolder] = []
+    truncated = False
+    for dirpath, dirnames, _filenames in os.walk(vault_root, followlinks=False):
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in _PRUNE_DIRS and not d.startswith(".")
+        )
+        d = Path(dirpath)
+        label = _rel_label(d, vault_root)
+        label = "." if label == ROOT_LABEL else label
+        out.append(WalkedFolder(label, d, (d / ".wiki" / "sync.yaml").is_file()))
+        if len(out) >= _TREE_WALK_CAP:
+            truncated = True
+            break
+    return out, truncated
+
 
 def _is_descendant(child: str, parent: str) -> bool:
     if parent == ".":
@@ -324,31 +389,24 @@ def _is_descendant(child: str, parent: str) -> bool:
     return child != parent and child.startswith(parent + "/")
 
 
-def scan_tree(
-    vault_root: Path, model: dict[str, FieldSpec] | None = None
+def scan_tree_from_walk(
+    walked: list[WalkedFolder], model: dict[str, FieldSpec] | None = None
 ) -> list[TreeNode]:
-    """Every configured folder (has `.wiki/sync.yaml`) with what it defines,
-    which deeper folders override each cascading pointer, and which of its keys
-    are silently ignored. A broken file yields an `error` node — the scan never
-    aborts (unlike `show`, which must not lie about ONE folder's effective view)."""
+    """`scan_tree`'s node-building pass over an ALREADY-WALKED folder list (no
+    filesystem walk of its own) — the piece `/api/tree` reuses to avoid a
+    second `os.walk` over the same vault."""
     ui = model if model is not None else build_ui_model()
     cascading = set(top_level_keys(ui, SCOPE_CASCADING))
 
     configured: list[tuple[str, dict[str, Any] | None, dict[str, str] | None]] = []
-    for dirpath, dirnames, _filenames in os.walk(vault_root, followlinks=False):
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in _PRUNE_DIRS and not d.startswith(".")
-        )
-        d = Path(dirpath)
-        if not (d / ".wiki" / "sync.yaml").is_file():
+    for wf in walked:
+        if not wf.configured:
             continue
-        label = _rel_label(d, vault_root)
-        label = "." if label == ROOT_LABEL else label
         try:
-            configured.append((label, _load_validated_raw(d), None))
+            configured.append((wf.label, _load_validated_raw(wf.path), None))
         except SyncConfigError as exc:
             configured.append(
-                (label, None,
+                (wf.label, None,
                  {"code": exc.code, "reason": exc.reason, "detail": exc.detail})
             )
 
@@ -390,3 +448,17 @@ def scan_tree(
                 overridden[pointer] = deeper
         nodes.append(TreeNode(label, defines, ignored_by_node[label], overridden))
     return nodes
+
+
+def scan_tree(
+    vault_root: Path, model: dict[str, FieldSpec] | None = None
+) -> list[TreeNode]:
+    """Every configured folder (has `.wiki/sync.yaml`) with what it defines,
+    which deeper folders override each cascading pointer, and which of its keys
+    are silently ignored. A broken file yields an `error` node — the scan never
+    aborts (unlike `show`, which must not lie about ONE folder's effective view).
+    Bounded by `walk_vault_tree`'s `_TREE_WALK_CAP` — a truncated scan stays
+    silent here (this narrow API has no truncation slot); `/api/tree` surfaces
+    the real flag by calling `walk_vault_tree` + `scan_tree_from_walk` directly."""
+    walked, _truncated = walk_vault_tree(vault_root)
+    return scan_tree_from_walk(walked, model)

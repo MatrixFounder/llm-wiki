@@ -31,6 +31,37 @@ class BackupEntry:
     mtime: str
 
 
+class WikiDirSymlinkError(Exception):
+    """`<folder>/.wiki` (or its `sync.yaml` leaf) is a symlink, or the leaf's
+    resolved target escapes the vault — refused before any mutation touches
+    the path (CWE-59). Fixed, value-free detail; never echoes the resolved
+    target."""
+
+    code = "WIKI_DIR_SYMLINK"
+
+    def __init__(self) -> None:
+        super().__init__("`.wiki` path is a symlink or escapes the vault")
+
+
+def ensure_wiki_writable(folder: Path, vault_root: Path, *, name: str = "sync.yaml") -> None:
+    """The ONE choke-point guard for every MUTATING path onto
+    `<folder>/.wiki/<name>` (write / delete / backup / restore — CLI and serve
+    alike). A pre-planted `.wiki -> outside-dir` symlink redirects writes,
+    deletes and backups outside the vault; the READ path already refuses this
+    (`sync_config._load_validated_raw` step 0b resolves the full leaf path and
+    re-validates containment) but every WRITE path used to check only the
+    LEAF, missing a symlinked `.wiki` directory itself. Raises
+    `WikiDirSymlinkError` when: `.wiki` is a symlink; the `<name>` leaf is a
+    symlink; or (when `.wiki` exists) the RESOLVED leaf path falls outside
+    `vault_root.resolve()`."""
+    wiki_dir = folder / ".wiki"
+    target = wiki_dir / name
+    if wiki_dir.is_symlink() or target.is_symlink():
+        raise WikiDirSymlinkError()
+    if wiki_dir.exists() and not target.resolve().is_relative_to(vault_root.resolve()):
+        raise WikiDirSymlinkError()
+
+
 def _backups_dir(folder: Path) -> Path:
     return folder / ".wiki" / BACKUP_DIR
 
@@ -96,6 +127,11 @@ def restore_backup(
     source = _backups_dir(folder) / backup_name
     if not source.is_file() or source.is_symlink():
         raise FileNotFoundError(backup_name)
+    # Read BEFORE backing up the current file: a full KEEP set means the
+    # backup-of-current write below prunes the OLDEST entry, which is exactly
+    # `source` when restoring the oldest backup — reading first avoids losing
+    # the very content being restored.
+    restored_text = source.read_text(encoding="utf-8")
     pre = write_backup(folder, name=name)
-    atomic_write_text(folder / ".wiki" / name, source.read_text(encoding="utf-8"))
+    atomic_write_text(folder / ".wiki" / name, restored_text)
     return backup_name, pre

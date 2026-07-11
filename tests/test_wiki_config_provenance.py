@@ -284,6 +284,93 @@ def test_scan_tree_survives_broken_file(tmp_path: Path) -> None:
     assert nodes["."].error is None
 
 
+def test_walk_vault_tree_capped_and_truncated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 3a: `scan_tree`'s walk was uncapped; `walk_vault_tree` (the ONE
+    walk `scan_tree` and `/api/tree` now share — finding 2c) must stop at the
+    cap and report truncation, matching the endpoint's prior 5000-dir
+    contract."""
+    from scripts.wiki_skills.wiki_config import _provenance as prov_mod
+
+    monkeypatch.setattr(prov_mod, "_TREE_WALK_CAP", 3)
+    _folder_yaml(tmp_path, _ROOT_FULL)
+    for i in range(10):
+        (tmp_path / f"Extra{i}").mkdir()
+    walked, truncated = prov_mod.walk_vault_tree(tmp_path)
+    assert truncated is True
+    assert len(walked) == 3
+
+
+def test_scan_tree_from_walk_matches_scan_tree(tmp_path: Path) -> None:
+    """`/api/tree`'s single-walk path (`walk_vault_tree` + `scan_tree_from_walk`)
+    must produce the SAME nodes as the `scan_tree` convenience wrapper it
+    replaced (finding 2c: previously TWO separate `os.walk`s over the vault)."""
+    from scripts.wiki_skills.wiki_config._provenance import (
+        scan_tree_from_walk,
+        walk_vault_tree,
+    )
+
+    _folder_yaml(tmp_path, _ROOT_FULL)
+    lessons = tmp_path / "Lessons"
+    _folder_yaml(lessons, _CHILD_GROUP_KEY)
+    walked, truncated = walk_vault_tree(tmp_path)
+    assert truncated is False
+    direct = {n.folder: n for n in scan_tree_from_walk(walked)}
+    via_wrapper = {n.folder: n for n in scan_tree(tmp_path)}
+    assert direct.keys() == via_wrapper.keys()
+    for label in direct:
+        assert direct[label] == via_wrapper[label]
+
+
+def test_build_ui_model_memoizes_until_schema_mtime_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 5: `build_ui_model()` must not re-read/re-parse the schema YAML
+    on every call — but a rewrite at the SAME path (new mtime) must still be
+    observed (an mtime-keyed cache, not a bare process-lifetime singleton;
+    this is what keeps a test that swaps the schema path/content correct)."""
+    import os
+
+    import scripts.wiki_skills.wiki_config._uimodel as uimodel_mod
+
+    schema_copy = tmp_path / "sync-config.schema.yaml"
+    schema_copy.write_text(
+        uimodel_mod.SYNC_SCHEMA_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(uimodel_mod, "SYNC_SCHEMA_PATH", schema_copy)
+    monkeypatch.setattr(uimodel_mod, "_MODEL_CACHE", None)
+
+    calls: list[int] = []
+    real_loader = uimodel_mod.load_sync_schema_doc
+
+    def _counting_loader(path: Path | None = None) -> dict[str, Any]:
+        calls.append(1)
+        return real_loader(path)
+
+    monkeypatch.setattr(uimodel_mod, "load_sync_schema_doc", _counting_loader)
+
+    model1 = uimodel_mod.build_ui_model()
+    model2 = uimodel_mod.build_ui_model()
+    assert len(calls) == 1  # second call served from cache, no re-parse
+    assert set(model1) == set(model2)
+    # the two returned dicts must be independent objects (copy-out guard):
+    # mutating one must not corrupt the shared cached model.
+    model1["/__poison__"] = model1["/summarize"]
+    assert "/__poison__" not in uimodel_mod.build_ui_model()
+
+    # a rewrite at the SAME path (forced mtime bump, filesystem-clock-safe)
+    # must invalidate the cache, not serve the stale parse.
+    st = schema_copy.stat()
+    os.utime(schema_copy, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    uimodel_mod.build_ui_model()
+    assert len(calls) == 2
+
+    # an explicit schema_doc (the R-058-10 evolution test's synthetic doc)
+    # always bypasses the cache — never counted, never cached.
+    uimodel_mod.build_ui_model({"$defs": {"SyncConfig": {"properties": {}}}})
+    assert len(calls) == 2
+
+
 def test_evolution_new_schema_field_needs_no_code(tmp_path: Path) -> None:
     """R-058-10: a field added ONLY to the schema doc surfaces everywhere."""
     doc = copy.deepcopy(load_sync_schema_doc())

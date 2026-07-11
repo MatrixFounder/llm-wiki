@@ -24,7 +24,7 @@ import yaml
 
 from scripts.wiki_index.sync_config import SyncConfigError, _load_validated_raw
 
-from ._backups import write_backup
+from ._backups import WikiDirSymlinkError, ensure_wiki_writable, write_backup
 from ._edit import (
     EditDowngrade,
     PointerEdit,
@@ -347,6 +347,12 @@ def apply_plans(
             continue
         if kinds == {"delete-file"}:
             folder = _folder_of_sync_file(vault_root, file_rel)
+            try:
+                ensure_wiki_writable(folder, vault_root)
+            except WikiDirSymlinkError:
+                res.status = "failed"
+                any_failed = True
+                continue
             if not no_backup:
                 res.backup = write_backup(folder)
             try:
@@ -391,9 +397,14 @@ def apply_plans(
             continue
 
         folder = _folder_of_sync_file(vault_root, file_rel)
-        if not no_backup:
-            res.backup = write_backup(folder)
-        # TOCTOU: the file must still be what we planned against.
+        try:
+            ensure_wiki_writable(folder, vault_root)
+        except WikiDirSymlinkError:
+            res.status = "failed"
+            any_failed = True
+            continue
+        # TOCTOU FIRST: the file must still be what we planned against — a
+        # drift-aborted op must not consume a backup KEEP slot.
         try:
             if target.read_text(encoding="utf-8") != before:
                 res.status = "drifted"
@@ -402,6 +413,8 @@ def apply_plans(
             res.status = "failed"
             any_failed = True
             continue
+        if not no_backup:
+            res.backup = write_backup(folder)
         atomic_write_text(target, after)
         try:
             _load_validated_raw(folder)

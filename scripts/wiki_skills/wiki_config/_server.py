@@ -39,13 +39,23 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfigError
 
 from ._app_html import APP_HTML
-from ._backups import list_backups, restore_backup, write_backup
-from ._doctor import apply_plans, build_plans
+from ._backups import (
+    WikiDirSymlinkError,
+    ensure_wiki_writable,
+    list_backups,
+    restore_backup,
+    write_backup,
+)
+from ._doctor import apply_plans, build_plans, FixPlan
 from ._edit import EditDowngrade, PointerEdit, gate_text, rewrite_text
-from ._findings import sort_findings
+from ._findings import ConfigFinding, sort_findings
 from ._lint import lint_vault
-from ._provenance import compute_folder_provenance, scan_tree
-from ._templates import discover_templates, render_for_init, TemplateError
+from ._provenance import (
+    compute_folder_provenance,
+    scan_tree_from_walk,
+    walk_vault_tree,
+)
+from ._templates import discover_templates, render_for_init, SyncTemplate, TemplateError
 from ._uimodel import build_ui_model
 from scripts.wiki_skills._common import atomic_write_text
 
@@ -57,10 +67,49 @@ def _sha256_text(text: str) -> str:
 
 
 class _State:
+    """Server-side session state. Single-threaded/single-writer by
+    construction (module docstring) — cross-request caches below are safe
+    because no request can interleave with another; every mutating POST
+    handler calls `invalidate()` on success so a cache never outlives the
+    state it was computed from."""
+
     def __init__(self, vault_root: Path, token: str) -> None:
         self.vault_root = vault_root
         self.token = token
         self.allowed_hosts: set[str] = set()
+        self._tree_cache: dict[str, Any] | None = None
+        self._lint_cache: tuple[list[ConfigFinding], list[FixPlan]] | None = None
+        self._templates_cache: dict[str, SyncTemplate] | None = None
+
+    def invalidate(self) -> None:
+        self._tree_cache = None
+        self._lint_cache = None
+        self._templates_cache = None
+
+    def lint_and_plans(self) -> tuple[list[ConfigFinding], list[FixPlan]]:
+        if self._lint_cache is None:
+            findings, _files_checked = lint_vault(self.vault_root)
+            plans, _manual = build_plans(sort_findings(findings), self.vault_root)
+            self._lint_cache = (findings, plans)
+        return self._lint_cache
+
+    def tree_payload(self) -> dict[str, Any]:
+        if self._tree_cache is None:
+            walked, truncated = walk_vault_tree(self.vault_root)
+            folders = [{"rel": wf.label, "configured": wf.configured}
+                      for wf in walked]
+            nodes = scan_tree_from_walk(walked)
+            self._tree_cache = {
+                "vault_root": str(self.vault_root),
+                "folders": folders, "truncated": truncated,
+                "nodes": [n.to_json() for n in nodes],
+            }
+        return self._tree_cache
+
+    def templates(self) -> dict[str, SyncTemplate]:
+        if self._templates_cache is None:
+            self._templates_cache = discover_templates(self.vault_root)
+        return self._templates_cache
 
 
 def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
@@ -149,33 +198,10 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 ]})
                 return
             if url.path == "/api/tree":
-                import os
-
-                from ._provenance import _PRUNE_DIRS
-
-                nodes = scan_tree(state.vault_root)
-                folders: list[dict[str, Any]] = []
-                truncated = False
-                for dirpath, dirnames, _files in os.walk(
-                        state.vault_root, followlinks=False):
-                    dirnames[:] = sorted(
-                        d for d in dirnames
-                        if d not in _PRUNE_DIRS and not d.startswith("."))
-                    d = Path(dirpath)
-                    rel = d.relative_to(state.vault_root).as_posix()
-                    folders.append({
-                        "rel": "." if rel == "." else rel,
-                        "configured": (d / ".wiki" / "sync.yaml").is_file(),
-                    })
-                    if len(folders) >= 5000:
-                        truncated = True
-                        break
-                self._json({"vault_root": str(state.vault_root),
-                            "folders": folders, "truncated": truncated,
-                            "nodes": [n.to_json() for n in nodes]})
+                self._json(state.tree_payload())
                 return
             if url.path == "/api/templates":
-                registry = discover_templates(state.vault_root)
+                registry = state.templates()
                 self._json({"templates": [t.to_json() for t in registry.values()
                                           if t.valid and not t.shadowed]})
                 return
@@ -227,10 +253,9 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             except SyncConfigError as exc:
                 payload["broken"] = {"reason": exc.reason, "detail": exc.detail,
                                      "level": getattr(exc, "level", None)}
-            findings, _ = lint_vault(state.vault_root)
+            findings, plans = state.lint_and_plans()
             file_rel = ".wiki/sync.yaml" if rel in (".", "") \
                 else f"{rel}/.wiki/sync.yaml"
-            plans, _manual = build_plans(sort_findings(findings), state.vault_root)
             payload["findings"] = [f.to_json() for f in findings
                                    if f.file == file_rel]
             payload["fix_plans"] = [p.to_json() for p in plans
@@ -285,14 +310,26 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if folder is None:
                 self._json({"error": "FOLDER_NOT_FOUND"}, 404)
                 return
-            target = folder / ".wiki" / "sync.yaml"
-            if target.is_symlink():
-                self._json({"error": "SYMLINK_REFUSED"}, 409)
+            try:
+                ensure_wiki_writable(folder, state.vault_root)
+            except WikiDirSymlinkError:
+                self._json({"error": "WIKI_DIR_SYMLINK"}, 409)
                 return
+            target = folder / ".wiki" / "sync.yaml"
             before = target.read_text(encoding="utf-8") if target.is_file() else ""
+            has_expected = "expected_hash" in body
             expected = body.get("expected_hash")
-            if before and isinstance(expected, str) \
-                    and expected != _sha256_text(before):
+            # An ABSENT key is an opt-out (a scripted caller not tracking
+            # drift at all) — unchanged. A key PRESENT with JSON `null` means
+            # the client's `BASEHASH` was captured when the folder had NO
+            # config yet (_app_html.py: `body.hash` is null exactly then); a
+            # file now existing is itself the drift — two tabs both doing
+            # "create override" must not silently let the second clobber the
+            # first's write.
+            if before and has_expected and (
+                expected is None
+                or (isinstance(expected, str) and expected != _sha256_text(before))
+            ):
                 self._json({"error": "CONFIG_DRIFTED"}, 409)
                 return
             edits_raw = body.get("edits")
@@ -326,6 +363,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             backup = write_backup(folder) if before else None
             (folder / ".wiki").mkdir(parents=True, exist_ok=True)
             atomic_write_text(target, after)
+            state.invalidate()
             self._json({"ok": True, "hash": _sha256_text(after),
                         "backup": backup})
 
@@ -338,6 +376,11 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if folder is None:
                 self._json({"error": "FOLDER_NOT_FOUND"}, 404)
                 return
+            try:
+                ensure_wiki_writable(folder, state.vault_root)
+            except WikiDirSymlinkError:
+                self._json({"error": "WIKI_DIR_SYMLINK"}, 409)
+                return
             target = folder / ".wiki" / "sync.yaml"
             if not target.is_file() or target.is_symlink():
                 self._json({"error": "NO_CONFIG"}, 404)
@@ -348,6 +391,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             except OSError:
                 self._json({"error": "DELETE_FAILED"}, 409)
                 return
+            state.invalidate()
             self._json({"ok": True, "backup": backup})
 
         def _post_restore(self, body: dict[str, Any]) -> None:
@@ -358,6 +402,11 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             folder = self._resolve_rel(rel)
             if folder is None:
                 self._json({"error": "FOLDER_NOT_FOUND"}, 404)
+                return
+            try:
+                ensure_wiki_writable(folder, state.vault_root)
+            except WikiDirSymlinkError:
+                self._json({"error": "WIKI_DIR_SYMLINK"}, 409)
                 return
             name = body.get("name")
             if not isinstance(name, str):
@@ -371,6 +420,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             except OSError:
                 self._json({"error": "RESTORE_FAILED"}, 409)
                 return
+            state.invalidate()
             from scripts.wiki_index.sync_config import _load_validated_raw
 
             valid = True
@@ -387,9 +437,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if not isinstance(plan_id, str):
                 self._json({"error": "BAD_REQUEST"}, 400)
                 return
-            findings, _ = lint_vault(state.vault_root)
-            plans, _manual = build_plans(sort_findings(findings),
-                                         state.vault_root)
+            _findings, plans = state.lint_and_plans()
             selected = [p for p in plans if p.plan_id == plan_id]
             if not selected:
                 self._json({"error": "PLAN_NOT_FOUND"}, 404)
@@ -397,6 +445,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             results, _diffs, exit_code = apply_plans(
                 state.vault_root, selected, yes=True, dry_run=False,
                 no_backup=False)
+            state.invalidate()
             self._json({"ok": exit_code == 0,
                         "files": [r.to_json() for r in results]},
                        200 if exit_code == 0 else 409)
@@ -407,8 +456,13 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if folder is None:
                 self._json({"error": "FOLDER_NOT_FOUND"}, 404)
                 return
+            try:
+                ensure_wiki_writable(folder, state.vault_root)
+            except WikiDirSymlinkError:
+                self._json({"error": "WIKI_DIR_SYMLINK"}, 409)
+                return
             name = body.get("template")
-            registry = discover_templates(state.vault_root)
+            registry = state.templates()
             template = registry.get(str(name))
             if template is None or not template.valid:
                 self._json({"error": "TEMPLATE_NOT_FOUND"}, 404)
@@ -439,6 +493,7 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             backup = write_backup(folder) if target.is_file() else None
             (folder / ".wiki").mkdir(parents=True, exist_ok=True)
             atomic_write_text(target, rendered)
+            state.invalidate()
             self._json({"ok": True, "backup": backup,
                         "template": template.name,
                         "version": template.version})

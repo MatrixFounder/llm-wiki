@@ -95,6 +95,36 @@ def test_invalid_vault_template_listed_unusable(tmp_path: Path) -> None:
     assert registry["broken"].valid is False
 
 
+def test_regex_default_redos_unsafe_marks_template_invalid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Finding 7: a regex-kind var's DEFAULT (not just an operator-supplied
+    override) must be ReDoS/control-char gated at discovery — `check_var_values`
+    normally runs ONLY on operator-supplied values, so an unsafe default used
+    to sail through and would have been written into a live sync.yaml the
+    first time `init` ran without overriding that var."""
+    vdir = tmp_path / ".wiki" / "templates"
+    vdir.mkdir(parents=True)
+    (vdir / "evil-default.yaml").write_text(
+        "# wiki-config template: evil-default v0.1.0\n"
+        "# level: any\n"
+        "# var pattern (regex): unsafe default [default: ^(a|a)+$]\n"
+        "# purpose: finding 7 regression fixture\n"
+        "resummarize:\n"
+        "  detect:\n"
+        "    mirror:\n"
+        "      enabled: true\n"
+        "      group_key: '${pattern}'\n",
+        encoding="utf-8")
+    registry = discover_templates(tmp_path)
+    assert registry["evil-default"].valid is False
+
+    code, env = _run(capsys, ["init", ".", "--template", "evil-default",
+                              "--vault-root", str(tmp_path)])
+    assert code == 1 and env["error"] == "TEMPLATE_INVALID"
+    assert not (tmp_path / ".wiki" / "sync.yaml").is_file()
+
+
 # --------------------------------------------------------------------------- #
 # init
 # --------------------------------------------------------------------------- #

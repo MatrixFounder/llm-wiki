@@ -103,14 +103,7 @@ def _walk(
                 _walk(out, child, defs, f"{pointer}/{name}", scope)
 
 
-def build_ui_model(schema_doc: dict[str, Any] | None = None) -> dict[str, FieldSpec]:
-    """The ordered ``pointer → FieldSpec`` map over `$defs/SyncConfig`.
-
-    Top-level properties carry their own `x-wiki-scope` (missing → root-only, the
-    conservative reading: an unannotated new key is NOT presented as cascading
-    until someone declares it so); every nested pointer inherits its top-level
-    ancestor's scope."""
-    doc = schema_doc if schema_doc is not None else load_sync_schema_doc()
+def _build_ui_model_uncached(doc: dict[str, Any]) -> dict[str, FieldSpec]:
     defs = doc.get("$defs")
     if not isinstance(defs, dict):
         raise ValueError("sync-config schema: missing $defs")
@@ -124,6 +117,38 @@ def build_ui_model(schema_doc: dict[str, Any] | None = None) -> dict[str, FieldS
         scope = str(child.get("x-wiki-scope") or SCOPE_ROOT_ONLY)
         _walk(out, child, defs, f"/{name}", scope)
     return out
+
+
+# (resolved schema path, mtime_ns) → model. Mirrors `sync_config._get_validator`'s
+# process-lifetime singleton, but keyed on mtime (not a bare None-check) so a
+# test that swaps `SYNC_SCHEMA_PATH` — or rewrites the file at the same path —
+# still observes a fresh model instead of a stale cached one.
+_MODEL_CACHE: tuple[tuple[Path, int], dict[str, FieldSpec]] | None = None
+
+
+def build_ui_model(schema_doc: dict[str, Any] | None = None) -> dict[str, FieldSpec]:
+    """The ordered ``pointer → FieldSpec`` map over `$defs/SyncConfig`.
+
+    Top-level properties carry their own `x-wiki-scope` (missing → root-only, the
+    conservative reading: an unannotated new key is NOT presented as cascading
+    until someone declares it so); every nested pointer inherits its top-level
+    ancestor's scope.
+
+    Callers: `/api/schema`, the provenance engine, `scan_tree`, `_Linter` — all
+    on the hot path of a single request/lint run, all re-reading + re-parsing
+    the (unchanging) schema YAML before this cache. An explicit `schema_doc`
+    (the R-058-10 evolution-invariant test's synthetic doc) always bypasses the
+    cache — it is never the shipped file."""
+    if schema_doc is not None:
+        return _build_ui_model_uncached(schema_doc)
+    global _MODEL_CACHE
+    key = (SYNC_SCHEMA_PATH.resolve(), SYNC_SCHEMA_PATH.stat().st_mtime_ns)
+    if _MODEL_CACHE is None or _MODEL_CACHE[0] != key:
+        _MODEL_CACHE = (key, _build_ui_model_uncached(load_sync_schema_doc()))
+    # Current call sites are verified read-only (grep at TASK time); a shallow
+    # copy is cheap insurance against a future caller mutating the dict in
+    # place and corrupting every OTHER caller's shared cached model.
+    return dict(_MODEL_CACHE[1])
 
 
 def top_level_keys(model: dict[str, FieldSpec], scope: str) -> tuple[str, ...]:

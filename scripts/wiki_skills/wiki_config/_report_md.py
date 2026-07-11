@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ._provenance import FolderProvenance, TreeNode
+from ._provenance import FolderProvenance, TreeNode, resolve_origin
 
 
 def _fmt_value(value: Any) -> str:
@@ -44,7 +44,10 @@ def render_show_report(prov: FolderProvenance, vault_root: Path) -> str:
     for key, block in prov.effective.items():
         _flatten(block, f"/{key}", rows)
     for pointer, value in rows:
-        origin = prov.origins.get(pointer)
+        # A nested pointer with no own origin entry (e.g. the leaves of a
+        # configured root-only block like /transcript_dedup/enabled) inherits
+        # the NEAREST ancestor pointer's origin instead of rendering blank.
+        origin = resolve_origin(prov.origins, pointer)
         origin_label = origin.origin if origin else ""
         if origin and origin.scope == "root-only":
             origin_label += " (root-only)"

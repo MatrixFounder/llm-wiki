@@ -25,7 +25,13 @@ from scripts.wiki_index.security import PathTraversalError, validate_inside_vaul
 from scripts.wiki_index.sync_config import SyncConfigError
 from scripts.wiki_skills._common import atomic_write_text, emit
 
-from ._backups import list_backups, restore_backup, write_backup
+from ._backups import (
+    WikiDirSymlinkError,
+    ensure_wiki_writable,
+    list_backups,
+    restore_backup,
+    write_backup,
+)
 from ._doctor import apply_plans, build_plans, render_fix_report
 from ._edit import EditDowngrade, PointerEdit, rewrite_text
 from ._findings import (
@@ -47,9 +53,10 @@ from ._provenance import (
     FolderProvenance,
     TreeNode,
     compute_folder_provenance,
+    resolve_origin,
     scan_tree,
 )
-from ._report_md import render_show_report, render_tree_report
+from ._report_md import _flatten, render_show_report, render_tree_report
 
 
 def _resolve_vault_root(args: argparse.Namespace) -> Path | None:
@@ -141,6 +148,19 @@ def _cmd_show(args: argparse.Namespace) -> int:
         return emit({"error": exc.code, "field": "sync-config",
                      "level": getattr(exc, "level", None),
                      "reason": exc.reason, "detail": exc.detail}, 6)
+    # `prov.origins` has no per-leaf entry for a nested pointer under a
+    # configured root-only block (e.g. /transcript_dedup/enabled) — additive
+    # fill via the nearest-ancestor fallback so `provenance` covers every
+    # pointer `effective` does, without touching entries that already exist.
+    provenance_map = dict(prov.origins)
+    flat_rows: list[tuple[str, Any]] = []
+    for key, block in prov.effective.items():
+        _flatten(block, f"/{key}", flat_rows)
+    for pointer, _value in flat_rows:
+        if pointer not in provenance_map:
+            origin = resolve_origin(prov.origins, pointer)
+            if origin is not None:
+                provenance_map[pointer] = origin
     envelope: dict[str, Any] = {
         "action": "shown",
         "vault_root": str(vault_root),
@@ -148,7 +168,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         "folder_source": folder_source,
         "effective": prov.effective,
         "provenance": {
-            ptr: origin.to_json() for ptr, origin in prov.origins.items()
+            ptr: origin.to_json() for ptr, origin in provenance_map.items()
         },
         "levels": [lvl.to_json() for lvl in prov.levels],
         "warnings": [dict(w) for w in prov.warnings],
@@ -317,6 +337,11 @@ def _cmd_fix(args: argparse.Namespace) -> int:
         "files": [r.to_json() for r in results],
         "manual": [f.code for f in manual],
     }
+    if args.from_plan:
+        # A hashless sidecar (every finding lacked file_hash) silently
+        # disables the advertised all-or-nothing pre-check; make that state
+        # explicit rather than indistinguishable from "checked, all matched".
+        envelope["hash_precheck"] = "ok" if expected_hashes else "skipped-no-hashes"
     report_path = _maybe_report(
         args, render_fix_report(plans, manual, diffs, str(vault_root)))
     if report_path:
@@ -332,6 +357,10 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     folder = _resolve_folder(args.folder, vault_root)
     if folder is None:
         return emit({"error": "FOLDER_NOT_FOUND", "field": "folder"}, 2)
+    try:
+        ensure_wiki_writable(folder, vault_root)
+    except WikiDirSymlinkError:
+        return emit({"error": "WIKI_DIR_SYMLINK", "folder": args.folder}, 2)
     entries = list_backups(folder)
     if args.list:
         return emit({"action": "backups",
@@ -389,15 +418,19 @@ def _apply_single_edit(
     vault_root: Path, folder: Path, folder_arg: str, edit: PointerEdit,
     *, no_backup: bool,
 ) -> int:
-    """Shared set/unset write path: sandwich + backup + TOCTOU + atomic write."""
+    """Shared set/unset write path: sandwich + TOCTOU + backup + atomic write.
+    Drift is checked BEFORE the backup is taken — a drift-aborted op must not
+    consume a `.wiki/backups/` KEEP slot."""
     target = folder / ".wiki" / "sync.yaml"
     wiki_dir = folder / ".wiki"
-    if wiki_dir.exists() and (wiki_dir.is_symlink() or not wiki_dir.is_dir()):
+    if wiki_dir.exists() and not wiki_dir.is_symlink() and not wiki_dir.is_dir():
         return emit({"error": "WIKI_DIR_INVALID", "folder": folder_arg,
                      "hint": ".wiki exists but is not a plain directory"}, 2)
+    try:
+        ensure_wiki_writable(folder, vault_root)
+    except WikiDirSymlinkError:
+        return emit({"error": "WIKI_DIR_SYMLINK", "folder": folder_arg}, 2)
     existed = target.is_file()
-    if existed and target.is_symlink():
-        return emit({"error": "SYMLINK_REFUSED", "folder": folder_arg}, 2)
     before = target.read_text(encoding="utf-8") if existed else ""
     try:
         after = rewrite_text(before, [edit])
@@ -409,11 +442,11 @@ def _apply_single_edit(
     except EditDowngrade as exc:
         code = 2 if "not present" in exc.detail else 6
         return emit({"error": "EDIT_REFUSED", "detail": exc.detail}, code)
+    if existed and target.read_text(encoding="utf-8") != before:
+        return emit({"error": "CONFIG_DRIFTED", "folder": folder_arg}, 2)
     backup = None
     if existed and not no_backup:
         backup = write_backup(folder)
-    if existed and target.read_text(encoding="utf-8") != before:
-        return emit({"error": "CONFIG_DRIFTED", "folder": folder_arg}, 2)
     wiki_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_text(target, after)
     rel = target.relative_to(vault_root).as_posix()
@@ -523,8 +556,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
                      "detail": exc.detail}, 6)
 
     wiki_dir = folder / ".wiki"
-    if wiki_dir.exists() and (wiki_dir.is_symlink() or not wiki_dir.is_dir()):
+    if wiki_dir.exists() and not wiki_dir.is_symlink() and not wiki_dir.is_dir():
         return emit({"error": "WIKI_DIR_INVALID", "folder": args.folder}, 2)
+    try:
+        ensure_wiki_writable(folder, vault_root)
+    except WikiDirSymlinkError:
+        return emit({"error": "WIKI_DIR_SYMLINK", "folder": args.folder}, 2)
     target = wiki_dir / "sync.yaml"
     note = ("subfolder template applied at the vault root (level 0 of the "
             "cascade — it becomes the vault default)"
@@ -533,8 +570,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
     mode = "create"
 
     if target.is_file():
-        if target.is_symlink():
-            return emit({"error": "SYMLINK_REFUSED", "folder": args.folder}, 2)
         existing = target.read_text(encoding="utf-8")
         if args.force:
             mode = "force"

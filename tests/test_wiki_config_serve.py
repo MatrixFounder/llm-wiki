@@ -211,6 +211,34 @@ def test_write_toctou_drift_409(client: tuple[Client, Path]) -> None:
     assert status == 409 and body["error"] == "CONFIG_DRIFTED"
 
 
+def test_write_null_expected_hash_onto_now_existing_file_drifts(
+    client: tuple[Client, Path]
+) -> None:
+    """Finding 2a: `expected_hash: null` means the client's tab loaded a
+    folder with NO config yet — a config now existing (a second tab's
+    concurrent "create override") must still 409, not silently overwrite."""
+    c, root = client
+    zone = root / "TwoTabs"
+    zone.mkdir()
+    _status, folder = c.request("GET", "/api/folder?rel=TwoTabs")
+    assert folder["hash"] is None  # no config at load
+    # a concurrent write lands first
+    status, _ = c.request("POST", "/api/write", {
+        "rel": "TwoTabs",
+        "edits": [{"op": "set", "pointer": "/summarize/profile", "value": "auto"}],
+    })
+    assert status == 200
+    # the first tab's save, still carrying its stale null baseline
+    status, body = c.request("POST", "/api/write", {
+        "rel": "TwoTabs",
+        "edits": [{"op": "set", "pointer": "/summarize/profile", "value": "lesson"}],
+        "expected_hash": None,
+    })
+    assert status == 409 and body["error"] == "CONFIG_DRIFTED"
+    assert "profile: auto" in (zone / ".wiki" / "sync.yaml").read_text(
+        encoding="utf-8")  # the concurrent write survives untouched
+
+
 def test_write_raw_yaml_gated(client: tuple[Client, Path]) -> None:
     c, root = client
     status, _ = c.request("POST", "/api/write",
@@ -259,6 +287,126 @@ def test_template_endpoint_level_and_exists_guards(
     assert status == 200 and body["ok"] is True and body["backup"]
     text = (zone / ".wiki" / "sync.yaml").read_text(encoding="utf-8")
     assert "article-zone" in text and (zone / ".wiki" / "backups").is_dir()
+
+
+def test_cross_request_caches_invalidate_on_every_mutating_post(
+    client: tuple[Client, Path]
+) -> None:
+    """Finding 2b: `/api/tree`, `/api/folder` findings/fix_plans, and
+    `/api/templates` are cached on `_State` between requests — every mutating
+    handler must invalidate ALL of them, or a later GET serves stale data."""
+    c, root = client
+    zone = root / "Zone9"
+    zone.mkdir()
+
+    # /api/tree cache: populate, then mutate via /api/write, must see the
+    # new configured folder — not the cached pre-write snapshot.
+    _status, tree_before = c.request("GET", "/api/tree")
+    before_entry = next(f for f in tree_before["folders"] if f["rel"] == "Zone9")
+    assert before_entry["configured"] is False
+    status, _ = c.request("POST", "/api/write", {
+        "rel": "Zone9",
+        "edits": [{"op": "set", "pointer": "/summarize/profile", "value": "auto"}],
+    })
+    assert status == 200
+    _status, tree_after = c.request("GET", "/api/tree")
+    after_entry = next(f for f in tree_after["folders"] if f["rel"] == "Zone9")
+    assert after_entry["configured"] is True
+
+    # /api/folder findings+fix_plans cache: populate with a fixable finding,
+    # then /api/fix it, must see the finding GONE afterwards.
+    bad = root / "Zone10"
+    _folder_yaml(bad, "summarize:\n  profile: meting\n")  # SCHEMA_VIOLATION_ENUM
+    _status, folder_before = c.request("GET", "/api/folder?rel=Zone10")
+    assert folder_before["fix_plans"]
+    plan_id = folder_before["fix_plans"][0]["id"]
+    status, fix_body = c.request("POST", "/api/fix", {"id": plan_id})
+    assert status == 200 and fix_body["ok"] is True
+    _status, folder_after = c.request("GET", "/api/folder?rel=Zone10")
+    assert folder_after["findings"] == []
+    assert folder_after["fix_plans"] == []
+
+    # /api/templates cache: seed it BEFORE the vault template exists, then
+    # drop one on disk — a stale read must still miss it — and only AFTER a
+    # mutating POST invalidates the cache does it appear.
+    _status, templates_seed = c.request("GET", "/api/templates")
+    assert "custom-zone" not in {t["name"] for t in templates_seed["templates"]}
+    vdir = root / ".wiki" / "templates"
+    vdir.mkdir(parents=True)
+    (vdir / "custom.yaml").write_text(
+        "# wiki-config template: custom-zone v0.1.0\n"
+        "# level: any\n"
+        "# purpose: cache-invalidation regression fixture\n"
+        "summarize:\n  profile: auto\n",
+        encoding="utf-8")
+    _status, templates_stale = c.request("GET", "/api/templates")
+    assert "custom-zone" not in {t["name"] for t in templates_stale["templates"]}
+    status, _ = c.request("POST", "/api/write", {
+        "rel": "Zone9",
+        "edits": [{"op": "set", "pointer": "/summarize/profile", "value": "lesson"}],
+    })
+    assert status == 200
+    _status, templates_fresh = c.request("GET", "/api/templates")
+    assert "custom-zone" in {t["name"] for t in templates_fresh["templates"]}
+
+
+def test_symlinked_wiki_dir_refused_on_every_mutating_endpoint(
+    client: tuple[Client, Path]
+) -> None:
+    """Finding 1b: a pre-planted `.wiki -> outside-dir` symlink must not let
+    write/delete/restore/template redirect outside the vault (CWE-59) — every
+    mutating handler now runs the SAME `ensure_wiki_writable` choke point."""
+    import os
+
+    c, root = client
+    zone = root / "Symlinked"
+    zone.mkdir()
+    outside = root.parent / "outside-symlink-target"
+    outside.mkdir()
+    os.symlink(outside, zone / ".wiki")
+
+    write_status, write_body = c.request("POST", "/api/write", {
+        "rel": "Symlinked",
+        "edits": [{"op": "set", "pointer": "/summarize/profile", "value": "auto"}],
+    })
+    assert write_status == 409 and write_body["error"] == "WIKI_DIR_SYMLINK"
+
+    template_status, template_body = c.request("POST", "/api/template", {
+        "rel": "Symlinked", "template": "meeting-zone"})
+    assert template_status == 409 and template_body["error"] == "WIKI_DIR_SYMLINK"
+
+    delete_status, delete_body = c.request(
+        "POST", "/api/delete-config", {"rel": "Symlinked"})
+    assert delete_status == 409 and delete_body["error"] == "WIKI_DIR_SYMLINK"
+
+    restore_status, restore_body = c.request(
+        "POST", "/api/restore", {"rel": "Symlinked", "name": "sync.yaml.x.bak"})
+    assert restore_status == 409 and restore_body["error"] == "WIKI_DIR_SYMLINK"
+
+    # nothing was ever written into (or read out of) the outside target
+    assert list(outside.iterdir()) == []
+
+
+def test_symlinked_leaf_refused_via_template_endpoint(
+    client: tuple[Client, Path]
+) -> None:
+    """The logic critic's gap: `_post_template` (unlike `_post_write`) carried
+    NO leaf-symlink guard at all before finding 1b's shared choke point."""
+    import os
+
+    c, root = client
+    zone = root / "LeafSymlinked"
+    (zone / ".wiki").mkdir(parents=True)
+    outside_file = root.parent / "planted.yaml"
+    outside_file.write_text("summarize:\n  profile: article\n", encoding="utf-8")
+    os.symlink(outside_file, zone / ".wiki" / "sync.yaml")
+
+    status, body = c.request("POST", "/api/template",
+                             {"rel": "LeafSymlinked", "template": "meeting-zone",
+                              "force": True})
+    assert status == 409 and body["error"] == "WIKI_DIR_SYMLINK"
+    # the planted file outside the vault was never touched
+    assert outside_file.read_text(encoding="utf-8") == "summarize:\n  profile: article\n"
 
 
 def test_tree_lists_full_hierarchy_with_configured_flags(

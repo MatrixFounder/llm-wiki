@@ -266,6 +266,38 @@ async function loadTree() {
   renderTree();
 }
 
+// One O(n) pass (over each rel's OWN "/"-split prefixes) building the set of
+// labels that have at least one descendant among `rels` — equivalent to the
+// old `rels.some(r => isUnder(r, rel))` per row, without the O(n^2) rescan.
+function hasKidsSetFor(rels) {
+  const set = new Set();
+  for (const rel of rels) {
+    if (rel === ".") continue;
+    set.add(".");
+    const segs = rel.split("/");
+    for (let i = 1; i < segs.length; i++) set.add(segs.slice(0, i).join("/"));
+  }
+  return set;
+}
+
+// One O(n) pass (each rel checked against its OWN ancestor prefixes, an O(1)
+// Set lookup each) building which rels are hidden by a COLLAPSED ancestor —
+// equivalent to the old `[...COLLAPSED].some(c => isUnder(rel, c))` per row,
+// without re-spreading COLLAPSED into an array on every single one.
+function hiddenSetFor(rels) {
+  const set = new Set();
+  const rootCollapsed = COLLAPSED.has(".");
+  for (const rel of rels) {
+    if (rel === ".") continue;
+    if (rootCollapsed) { set.add(rel); continue; }
+    const segs = rel.split("/");
+    for (let i = 1; i < segs.length; i++) {
+      if (COLLAPSED.has(segs.slice(0, i).join("/"))) { set.add(rel); break; }
+    }
+  }
+  return set;
+}
+
 function renderTree() {
   const folders = (TREE.folders && TREE.folders.length
     ? TREE.folders
@@ -273,20 +305,20 @@ function renderTree() {
         .map((rel) => ({rel, configured: true})))
     .slice().sort((a, b) => a.rel.localeCompare(b.rel));
   const rels = folders.map((f) => f.rel);
-  const hasKids = (rel) => rels.some((r) => isUnder(r, rel));
-  const hidden = (rel) => [...COLLAPSED].some((c) => isUnder(rel, c));
+  const hasKidsSet = hasKidsSetFor(rels);
+  const hiddenSet = hiddenSetFor(rels);
   const byRel = new Map((TREE.nodes || []).map((n) => [n.folder, n]));
   const tree = $("#tree");
   tree.innerHTML = "";
   folders.forEach(({rel, configured}) => {
-    if (hidden(rel)) return;
+    if (hiddenSet.has(rel)) return;
     const node = byRel.get(rel);
     const marks = node && node.ignored && node.ignored.length ? "⛔"
       : (node && node.error ? "⚠" : "");
     const depth = rel === "." ? 0 : rel.split("/").length;
     const name = rel === "." ? "(vault root)" : rel.split("/").at(-1);
     const dot = configured ? '<span class="cfgdot">● </span>' : "";
-    const kids = hasKids(rel);
+    const kids = hasKidsSet.has(rel);
     const row = document.createElement("div");
     row.className = "navrow";
     row.style.paddingLeft = (Math.max(0, depth - (rel === "." ? 0 : 1)) * 0.85) + "rem";
@@ -351,8 +383,9 @@ function updateDots() {
 $("#expandAll").onclick = () => { COLLAPSED.clear(); saveCollapsed(); renderTree(); };
 $("#collapseAll").onclick = () => {
   const rels = (TREE.folders || []).map((f) => f.rel);
+  const kidsSet = hasKidsSetFor(rels);  // same one-pass structure as renderTree
   rels.forEach((rel) => {
-    if (rels.some((r) => isUnder(r, rel)) && rel !== ".") COLLAPSED.add(rel);
+    if (rel !== "." && kidsSet.has(rel)) COLLAPSED.add(rel);
   });
   saveCollapsed();
   renderTree();
@@ -364,6 +397,7 @@ async function select(label, btn) {
     x.classList.toggle("active", btn ? x === btn : x.dataset.label === label));
   const {status, body} = await api(
     "/api/folder?rel=" + encodeURIComponent(label), {headers: HDR});
+  if (SEL !== label) return;  // a newer select() already won; drop this stale reply
   if (status !== 200) { setStatus(body.error || "load failed", false); return; }
   FOLDER = body;
   BASEHASH.set(label, body.hash);

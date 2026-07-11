@@ -134,10 +134,16 @@ def _load_template_file(path: Path, source: str) -> SyncTemplate:
     if path.stat().st_size > WIKI_SYNC_CONFIG_MAX_BYTES:
         raise TemplateError("TEMPLATE_UNSAFE", "template exceeds the 256 KiB cap")
     tpl = _parse_template_text(path.read_text(encoding="utf-8"), source)
-    # Discovery-time render check with defaults: an unusable template is listed
-    # `valid: false` instead of exploding at init time.
+    # Discovery-time render check with defaults: an unusable OR UNSAFE
+    # template is listed `valid: false` instead of exploding (or writing an
+    # unsafe pattern into a real sync.yaml) at init time. `check_var_values`
+    # normally gates only OPERATOR-supplied values (ReDoS budget / control
+    # chars on a `regex`-kind var) — defaults never went through it, so a
+    # template shipping (or an operator authoring) a ReDoS-unsafe DEFAULT
+    # would sail through unflagged whenever `init` used the default as-is.
     try:
         defaults = {v.name: v.default or "" for v in tpl.variables}
+        check_var_values(tpl, defaults)
         gate_text(substitute_vars(tpl, defaults))
     except (SyncConfigError, TemplateError) as exc:
         return SyncTemplate(**{**tpl.__dict__, "valid": False,
