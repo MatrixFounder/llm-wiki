@@ -141,6 +141,9 @@ wiki-import prepare --vault personal --vault-root . --kind auto \
 wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \
     --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
     --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin
+wiki-config show --vault-root .                                    # which settings does THIS folder inherit? (no arg → the active note's folder)
+wiki-config report --open --vault-root .                           # one self-contained HTML inheritance report (whole cascade)
+wiki-config serve --open --vault-root .                            # local web editor for .wiki/sync.yaml — form + hints + templates + restore
 wiki-index-render --vault personal --auto-indexes                  # (re)generate index/ledger pages
 wiki-init --register-existing --vault .                            # one-time: register this vault
 ```
@@ -196,6 +199,7 @@ the loop on anything that writes (summaries, new notes) and is safe to re-run
 | **Periodic health** | `wiki-lint --vault personal` (orphan-links backlog is expected; drains over time); `--strict` to gate on lifecycle-drift + ontology-violation |
 | **Coverage gaps (typed vaults)** | `wiki-health coverage --vault cybos` — requirements w/o implementer, facts w/o source; a gap is *data*, exits 0 |
 | **Ontology violations (typed vaults)** | `wiki-health ontology --vault cybos` — a mis-typed edge (wrong source/target class) or a `status` outside its enum; a report, exits 0 (the `--strict` rail is `wiki-lint`) |
+| **Which settings does a folder get / broken sync.yaml** | `wiki-config show <folder>` (inheritance provenance) · `validate` · `doctor` → `fix --yes` · `report --open` · `serve` (web editor); works even with a broken index |
 | **Index looks wrong / after a big move** | `wiki-reindex --full --vault personal` (safe — rebuilds from markdown) |
 
 **Tuning** lives in two per-vault files (see the runbook): `<vault>/.wiki/layout.yaml`

@@ -145,6 +145,9 @@ wiki-import prepare --vault personal --vault-root . --kind auto \
 wiki-import apply --vault personal --vault-root . --folder "05 - Материалы/Криптовалюты" --kind "<prepare.kind>" \
     --mode full --raw-rel "<prepare.raw_path>" --source-url "<URL>" \
     --existing-page-slugs '<prepare.existing_page_slugs>' --note-stdin
+wiki-config show --vault-root .                                    # какие настройки наследует ЭТА папка? (без аргумента — папка активной заметки)
+wiki-config report --open --vault-root .                           # один самодостаточный HTML-отчёт о наследовании (весь каскад)
+wiki-config serve --open --vault-root .                            # локальный веб-редактор .wiki/sync.yaml — форма + подсказки + шаблоны + restore
 wiki-index-render --vault personal --auto-indexes                  # (re)generate index/ledger pages
 wiki-init --register-existing --vault .                            # one-time: register this vault
 ```
@@ -199,6 +202,7 @@ layout). Агент держит вас в курсе всего, что пиш�
 | **Периодическое здоровье** | `wiki-lint --vault personal` (бэклог orphan-links ожидаем; со временем дренируется); `--strict` — гейт по lifecycle-drift + ontology-violation |
 | **Пробелы покрытия (типизированные vault'ы)** | `wiki-health coverage --vault cybos` — requirement'ы без реализатора, факты без источника; пробел это данные, exit 0 |
 | **Нарушения онтологии (типизированные vault'ы)** | `wiki-health ontology --vault cybos` — ребро не того типа (неверный класс источника/цели) или `status` вне enum; отчёт, exit 0 (гейт-рельс — `wiki-lint`) |
+| **Какие настройки получает папка / сломан sync.yaml** | `wiki-config show <папка>` (происхождение наследования) · `validate` · `doctor` → `fix --yes` · `report --open` · `serve` (веб-редактор); работает даже со сломанным индексом |
 | **Индекс выглядит неверно / после большого перемещения** | `wiki-reindex --full --vault personal` (безопасно — пересборка из markdown) |
 
 **Тюнинг** живёт в двух per-vault файлах (см. runbook): `<vault>/.wiki/layout.yaml`

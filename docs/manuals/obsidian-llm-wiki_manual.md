@@ -35,6 +35,7 @@
   - [Reference: page types & relation types (the knowledge model)](#reference-page-types--relation-types-the-knowledge-model)
   - [Mixed vault: search-only areas + enrich-able course zones](#mixed-vault-search-only-areas--enrich-able-course-zones)
   - [Automating the mix: `wiki-sync` (per-note routing, conversion, OCR)](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr)
+  - [Configuring folders with `wiki-config` (provenance, repair, templates, web editor)](#configuring-folders-with-wiki-config-provenance-repair-templates-web-editor)
 - [Using the wiki as an external resource for other agents](#using-the-wiki-as-an-external-resource-for-other-agents)
   - [The integration model: JSON envelopes + exit codes](#the-integration-model-json-envelopes--exit-codes)
   - [The `prepare` / `apply` contract (Decision-17)](#the-prepare--apply-contract-decision-17)
@@ -256,7 +257,7 @@ The compounding payoff: turn the corpus into cited answers, and audit them.
 |---|---|
 | **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**. Since **R-15 / TASK 036** it also runs **lifecycle-drift** — a page whose authored `status` *contradicts* the event graph (a `decision` carrying a `superseded-by` edge but still `status: accepted`; one an incident `invalidates` but still live) — and since **R-19 / TASK 054** **ontology-violation** — a page that breaks the declared `ontology:` contract (an edge whose source/target class is out of its `from`/`to`, e.g. a `fact` that `implements` a `risk`; or a `status` outside its class enum). Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans). Both drift and ontology-violation are **advisory by default and gate only `--strict`** (they are true contradictions); `--mtime-skip` trades full-hash integrity for speed. |
 | **`wiki-health`** | Read-only **derived knowledge-health** report (R-15 / TASK 036, ADR-006) — the always-exit-0 sibling of `wiki-lint`'s `--strict`-gating contradictions. **`wiki-health coverage --vault <id> [--class C]`** lists pages **missing an expected relation** — a `requirement` nothing implements, a `capability` no agent provides, a `fact` with no `source:`. **`wiki-health ontology --vault <id> [--class C]`** (R-19 / TASK 054) lists pages **contradicting the declared `ontology:` contract** — an edge whose source/target class is out of its declared domain/range, or a `status` value outside its class enum. Both are computed over frontmatter + the event graph (layout-config-driven `coverage_rules` / `ontology`; the `cybos` layout ships them, other layouts → an empty report) and **always exit 0** (a gap/violation from this surface is *data* — the `--strict` gate for the ontology contradiction is `wiki-lint`). Pure derivation: zero new fields, zero DDL. |
-| **`wiki-config`** | (TASK 058) The interface for the **per-folder `.wiki/sync.yaml`** config the sync dispatcher consumes — the tool that answers *"which settings does this folder actually get, and from where?"*. **`show <folder>`** prints the effective config with per-key provenance (`default` / `root` / inherited-from-`<ancestor>` / defined-HERE, plus what each override shadows); **`tree`** maps every override point vault-wide, incl. the #1 trap — a **root-only key** (`zones`/`exclude`/`extensions`/`transcript_dedup`/`tag_namespace`) sitting in a subfolder file where it is *silently ignored* (only `resummarize:`/`summarize:` cascade). **`validate`** lints ALL config files (sync tree + `.wiki/layout.yaml` + `WIKI_SCHEMA.md`/`.wiki.yaml`) with a 40-code taxonomy — typo suggestions, dead mirror regexes, redundant overrides, list-replace surprises — exit 6 on errors, `--strict` promotes warnings. **`doctor`/`fix`** repair mechanically by safety tier (SAFE auto; CONFIRM needs `--yes`, else exit 7; every write is verified semantically **and comment-survival-checked** before it happens, backed up to `.wiki/backups/` retention 10, TOCTOU-guarded — `restore` undoes). **`set`/`unset`** edit one key (comment-preserving; a root-only key in a subfolder is refused with the root hint); **`init <folder> --template <name>`** scaffolds from `templates/sync-profiles/` (meeting-zone · lessons-mirror · connector-zone · article-zone · root-baseline; regex vars ReDoS-gated; level-enforced; re-init byte-identical). **`report --open`** renders ONE self-contained HTML inheritance report whose nav shows the full folder **hierarchy** (configured spine + their ancestors; `--all-folders` for everything); **`serve`** starts the local (127.0.0.1, token-auth) web editor — a schema-driven form with hints, enum dropdowns, inherited placeholders and a live `group_key` tester, plus a raw-YAML tab. The serve tree shows **every** vault folder (unconfigured ones dimmed — click to inspect the effective config; *Override here* creates its `.wiki/sync.yaml`, *Delete config* returns it to inherited values), is collapsible per folder with expand/collapse-all (state persisted), keeps **unsaved edits per folder** across switches (red dots in the tree + a global *Save all N*), offers template **Quick setup / re-init** from the panel header, and a **restore-from-backup** picker — a folder whose config was accidentally deleted shows an amber *"this folder HAD a config"* banner listing its `.wiki/backups/` by date. `show` works without a folder argument: it defaults to the folder of the **active Obsidian note** (via `obsidian-active-note`), then the CWD when inside the vault, then the vault root — the envelope's `folder_source` says which. Everything is generated from `config/sync-config.schema.yaml` (+`x-wiki-*` annotations) at runtime, so a NEW config field appears in every surface with zero interface-code changes. Needs no DB — it works even while the index is broken. |
+| **`wiki-config`** | (TASK 058) The interface for the **per-folder `.wiki/sync.yaml`** config — answers *"which settings does this folder actually get, and from where?"*. `show` prints per-key inheritance provenance (no folder argument → the **active Obsidian note's** folder, then CWD, then vault root); `tree` maps every override point vault-wide, incl. the #1 trap — a **root-only key** (`zones`/`exclude`/`extensions`/`transcript_dedup`/`tag_namespace`) sitting in a subfolder file where it is *silently ignored* (only `resummarize:`/`summarize:` cascade); `validate` lints ALL three config systems (40-code taxonomy, exit 6 on errors); tiered `doctor`/`fix` repair mechanically (comment-preserving, backed up to `.wiki/backups/`, TOCTOU-guarded, `restore` undoes); `set`/`unset` edit one key; `init --template` scaffolds from `templates/sync-profiles/`; `report --open` renders ONE self-contained HTML inheritance report; `serve` starts the local web editor. Fully schema-driven (`x-wiki-*` annotations) — a NEW config field appears in every surface with zero interface-code changes; needs no DB (works while the index is broken). **Full copy-paste commands + editor tour: [Configuring folders with `wiki-config`](#configuring-folders-with-wiki-config-provenance-repair-templates-web-editor).** |
 | **`wiki-reindex`** | Rebuilds the DB from markdown. `--full` wipes and rebuilds (this is the **rebuildability gate** — if a vault can't survive `--full`, the Class A→B contract is broken); `--delta` does an incremental mtime/hash-based pass after manual edits. The authoritative reconciliation of cache ↔ canon. |
 
 ### 6. Vault lifecycle
@@ -1055,9 +1056,8 @@ never silently dropped.
 **Config** — `<vault>/.wiki/sync.yaml` (optional): `zones`, `exclude`, `tag_namespace`
 (default `wiki`), and `extensions` overrides. Strict schema (a misspelled key is a load
 error); an untrusted file is size-capped (256 KiB) + anchor-banned + symlink-refused.
-Inspect, validate, repair, and edit this file tree with **`wiki-config`** (TASK 058 —
-`show`/`tree` provenance, `doctor`/`fix`, template `init`, `report --open`, `serve`
-web editor; see the CLI table above).
+Inspect, validate, repair, and edit this file tree with **`wiki-config`** — full
+copy-paste commands in [Configuring folders with `wiki-config`](#configuring-folders-with-wiki-config-provenance-repair-templates-web-editor).
 
 **Recipe (test on a copy first):**
 
@@ -1173,6 +1173,93 @@ path, no timestamp → two scans byte-identical). Per-file isolation: one bad fi
 > boundary to keep search-only areas out of the enrich machinery; use `wiki-sync`
 > *inside* an enrich zone to route its heterogeneous drops per-file. See
 > `skills/wiki-sync/SKILL.md` for the full plan-JSON + exit-code contract.
+
+---
+
+### Configuring folders with `wiki-config` (provenance, repair, templates, web editor)
+
+Every folder can carry its own `.wiki/sync.yaml` (see the
+[config-files overview](#vault-configuration-files-overview)). Two facts make hand-editing
+that tree error-prone, and `wiki-config` (TASK 058) exists to encode them for you:
+
+- Only the **`resummarize:`** and **`summarize:`** blocks cascade per folder
+  (deepest wins; partial overrides inherit the parent's other keys; **lists replace,
+  never extend**).
+- `zones` / `exclude` / `extensions` / `transcript_dedup` / `tag_namespace` are
+  **root-only** — placed in a subfolder file they are *silently ignored* (the tool
+  flags this as `NON_CASCADING_KEY_IN_SUBFOLDER`).
+
+**See where every value comes from.** `show` prints the effective config for one folder
+with a per-key origin — `default` (built-in) / `root` / inherited-from-`<ancestor>` /
+defined-HERE — plus what each override shadows. Without a folder argument it resolves
+the folder of the **active Obsidian note** (then the CWD, then the vault root), so you
+can just click into a note and ask:
+
+```bash
+# effective config + per-key origin (no folder → the active note's folder)
+wiki-config show --vault-root ~/Vault
+wiki-config show "06 - Business Development/Встречи" --vault-root ~/Vault
+
+# vault-wide override map: who defines what, who overrides whom, what is IGNORED
+wiki-config tree --vault-root ~/Vault
+```
+
+**Validate and repair.** `validate` lints every config file in the vault — the sync
+tree, `.wiki/layout.yaml`, and `WIKI_SCHEMA.md`/`.wiki.yaml` — against a 40-code
+taxonomy (typo suggestions, dead mirror regexes, redundant overrides, list-replace
+surprises). `doctor` turns the findings into a read-only repair plan; `fix` applies it
+by safety tier (SAFE automatically, CONFIRM only with `--yes`):
+
+```bash
+wiki-config validate --vault-root ~/Vault --strict
+wiki-config doctor   --vault-root ~/Vault --report /tmp/doctor.md
+wiki-config fix      --vault-root ~/Vault --yes
+```
+
+**Edit safely.** Every mutation is comment-preserving and verified before it lands
+(semantic equality + comment survival; an unverifiable edit is downgraded and NOTHING
+is written), backed up to `.wiki/backups/` (retention 10), and TOCTOU-guarded.
+A root-only key in a subfolder is refused with a hint pointing at the root file:
+
+```bash
+wiki-config set   "Lessons" /summarize/profile lesson --vault-root ~/Vault
+wiki-config unset "Lessons" /summarize/diagrams      --vault-root ~/Vault
+
+# accidental delete / bad edit? every mutation left a backup:
+wiki-config restore "Lessons" --list --vault-root ~/Vault
+wiki-config restore "Lessons" --to 20260711T09 --yes --vault-root ~/Vault
+```
+
+**Set up a folder from a template.** Builtin profiles live in
+`templates/sync-profiles/` (`meeting-zone` · `lessons-mirror` · `connector-zone` ·
+`article-zone` · `root-baseline`); a vault can add its own under `.wiki/templates/`:
+
+```bash
+wiki-config templates --vault-root ~/Vault
+wiki-config init "Lessons" --template lessons-mirror --var 'group_key=^(\d{8})' --vault-root ~/Vault
+```
+
+**One-page report & the web editor.** `report --open` renders a single self-contained
+HTML file (hierarchical folder nav; per-key badges `default` / `ROOT` / `HERE` /
+`↑ ancestor` / `⛔ IGNORED`; copy-paste fix commands). `serve` starts a local
+(127.0.0.1, token-authenticated) editor:
+
+```bash
+wiki-config report --open --vault-root ~/Vault
+wiki-config serve  --open --vault-root ~/Vault
+```
+
+The serve UI is a schema-driven form (hints from the schema, enum dropdowns, inherited
+values as placeholders, a live `group_key` tester) plus a raw-YAML tab. Its tree shows
+**every** vault folder: unconfigured ones are dimmed — click to inspect the effective
+config, *Override here* creates the folder's `.wiki/sync.yaml`, *Delete config* returns
+it to inherited values. Unsaved edits survive switching folders (red dots in the tree,
+one global *Save all N*), templates are one click away in the panel header, and a folder
+whose config was accidentally deleted shows a restore banner listing its backups by date.
+Everything — form, report, provenance, validation — is generated at runtime from
+`config/sync-config.schema.yaml` (+ `x-wiki-*` annotations), so a NEW config field
+appears in every surface with zero interface-code changes. The tool needs no DB:
+it works even while the index is broken.
 
 ---
 
