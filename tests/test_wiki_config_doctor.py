@@ -542,3 +542,22 @@ def test_unset_and_missing_pointer(
     code, env = _run(capsys, ["unset", ".", "/summarize/diagrams",
                               "--vault-root", str(tmp_path)])
     assert code == 2 and env["error"] == "EDIT_REFUSED"
+
+
+def test_ensure_wiki_writable_refuses_symlinked_backups_dir(tmp_path: Path) -> None:
+    """vdd-multi iteration-2: the `backups/` leg is an escape one level down —
+    `.wiki` and the leaf are real, `backups/` links outside the vault."""
+    import os
+
+    from scripts.wiki_skills.wiki_config._backups import (
+        WikiDirSymlinkError, ensure_wiki_writable)
+
+    vault = tmp_path / "vault"
+    zone = vault / "Zone"
+    (zone / ".wiki").mkdir(parents=True)
+    (zone / ".wiki" / "sync.yaml").write_text("zones: []\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, zone / ".wiki" / "backups")
+    with pytest.raises(WikiDirSymlinkError):
+        ensure_wiki_writable(zone, vault)

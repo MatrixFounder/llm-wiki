@@ -50,15 +50,22 @@ def ensure_wiki_writable(folder: Path, vault_root: Path, *, name: str = "sync.ya
     deletes and backups outside the vault; the READ path already refuses this
     (`sync_config._load_validated_raw` step 0b resolves the full leaf path and
     re-validates containment) but every WRITE path used to check only the
-    LEAF, missing a symlinked `.wiki` directory itself. Raises
-    `WikiDirSymlinkError` when: `.wiki` is a symlink; the `<name>` leaf is a
-    symlink; or (when `.wiki` exists) the RESOLVED leaf path falls outside
-    `vault_root.resolve()`."""
+    LEAF, missing a symlinked `.wiki` directory itself. The `backups/` leg is
+    guarded too: `write_backup`/`prune_backups`/`restore_backup` all write,
+    delete or read through `<folder>/.wiki/backups/`, so a symlink THERE is
+    the same escape one level down (vdd-multi iteration-2 finding). Raises
+    `WikiDirSymlinkError` when: `.wiki`, the `<name>` leaf, or `backups/` is a
+    symlink; or (when the parent exists) the RESOLVED leaf/backups path falls
+    outside `vault_root.resolve()`."""
     wiki_dir = folder / ".wiki"
     target = wiki_dir / name
-    if wiki_dir.is_symlink() or target.is_symlink():
+    backups_dir = wiki_dir / BACKUP_DIR
+    if wiki_dir.is_symlink() or target.is_symlink() or backups_dir.is_symlink():
         raise WikiDirSymlinkError()
-    if wiki_dir.exists() and not target.resolve().is_relative_to(vault_root.resolve()):
+    root = vault_root.resolve()
+    if wiki_dir.exists() and not target.resolve().is_relative_to(root):
+        raise WikiDirSymlinkError()
+    if backups_dir.exists() and not backups_dir.resolve().is_relative_to(root):
         raise WikiDirSymlinkError()
 
 

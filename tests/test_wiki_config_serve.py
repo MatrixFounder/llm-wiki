@@ -512,3 +512,81 @@ def test_regex_tester(client: tuple[Client, Path]) -> None:
     status, body = c.request("POST", "/api/test-regex",
                              {"pattern": "^(a|a)+$", "sample": "aaaa"})
     assert status == 200 and body["ok"] is False
+
+
+def test_symlinked_backups_dir_refused_on_mutating_endpoints(
+    client: tuple[Client, Path]
+) -> None:
+    """vdd-multi iteration-2 (security): `.wiki` and `sync.yaml` are real, but
+    `.wiki/backups -> outside` — write_backup/prune/restore would write, delete
+    and read THROUGH the symlink (CWE-59 one level down). Every mutating
+    endpoint must refuse before touching the path."""
+    import os
+
+    c, root = client
+    zone = root / "BackupsLinked"
+    _folder_yaml(zone, "summarize:\n  profile: article\n")
+    outside = root.parent / "outside-backups-target"
+    outside.mkdir()
+    os.symlink(outside, zone / ".wiki" / "backups")
+
+    _status, folder = c.request("GET", "/api/folder?rel=BackupsLinked")
+    status, body = c.request("POST", "/api/write", {
+        "rel": "BackupsLinked",
+        "expected_hash": folder["hash"],
+        "edits": [{"op": "set", "pointer": "/summarize/profile",
+                   "value": "meeting"}],
+    })
+    assert status == 409 and body["error"] == "WIKI_DIR_SYMLINK"
+    status, body = c.request("POST", "/api/delete-config",
+                             {"rel": "BackupsLinked"})
+    assert status == 409 and body["error"] == "WIKI_DIR_SYMLINK"
+    status, body = c.request("POST", "/api/restore",
+                             {"rel": "BackupsLinked", "name": "sync.yaml.x.bak"})
+    assert status == 409 and body["error"] == "WIKI_DIR_SYMLINK"
+    # nothing was written into (or deleted from) the outside target, and the
+    # live config is untouched
+    assert list(outside.iterdir()) == []
+    assert (zone / ".wiki" / "sync.yaml").read_text(encoding="utf-8") \
+        == "summarize:\n  profile: article\n"
+
+
+def test_fix_oserror_after_partial_apply_invalidates_caches(
+    client: tuple[Client, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """vdd-multi iteration-2 (logic): an OSError propagating out of
+    `apply_plans` AFTER an earlier file already committed must not leave the
+    `_State` caches stale — the handler answers 500 and invalidates."""
+    import scripts.wiki_skills.wiki_config._server as server_mod
+
+    c, root = client
+    bad = root / "ZoneOsError"
+    _folder_yaml(bad, "summarize:\n  profile: meting\n")  # enum typo → fixable
+    _status, folder = c.request("GET", "/api/folder?rel=ZoneOsError")
+    assert folder["fix_plans"]
+    plan_id = folder["fix_plans"][0]["id"]
+
+    # populate the tree cache, then change the disk BEHIND the server's back —
+    # a cached read must still miss it (proves the cache is live)
+    _status, _tree = c.request("GET", "/api/tree")
+    sneaky = root / "SneakyZone"
+    _folder_yaml(sneaky, "summarize:\n  profile: article\n")
+    _status, tree_stale = c.request("GET", "/api/tree")
+    assert not any(f["rel"] == "SneakyZone" for f in tree_stale["folders"])
+
+    real_apply = server_mod.apply_plans
+
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(server_mod, "apply_plans", _boom)
+    status, body = c.request("POST", "/api/fix", {"id": plan_id})
+    assert status == 500 and body["error"] == "FIX_FAILED"
+    monkeypatch.setattr(server_mod, "apply_plans", real_apply)
+
+    # the failed fix invalidated the caches → the next tree read recomputes
+    # and sees the direct-disk change
+    _status, tree_fresh = c.request("GET", "/api/tree")
+    fresh_entry = next(f for f in tree_fresh["folders"]
+                       if f["rel"] == "SneakyZone")
+    assert fresh_entry["configured"] is True

@@ -35,6 +35,7 @@ from scripts.wiki_index.sync_config import (
 )
 from scripts.wiki_skills._resummarize import _ancestor_dirs
 
+from ._findings import safe_key
 from ._uimodel import (
     SCOPE_CASCADING,
     SCOPE_ROOT_ONLY,
@@ -286,7 +287,11 @@ def compute_folder_provenance(
             elif label == ROOT_LABEL:
                 defines.append(f"/{key}")
             else:
-                ignored.append(key)
+                # display-only list (show envelope / md report / tree node) —
+                # sanitize at the collection point so every surface inherits
+                # the same CWE-209 posture `validate` already applies via
+                # safe_key; `defines` stays raw (pointers must match the merge)
+                ignored.append(safe_key(key))
         rel_file = (f"{label}/" if label != ROOT_LABEL else "") + ".wiki/sync.yaml"
         prov.levels.append(LevelInfo(label, rel_file, tuple(defines), tuple(ignored)))
         if ignored:

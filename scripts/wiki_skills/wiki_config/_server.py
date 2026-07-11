@@ -418,6 +418,9 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
                 self._json({"error": "BACKUP_NOT_FOUND"}, 404)
                 return
             except OSError:
+                # restore_backup can fail AFTER write_backup already committed
+                # the pre-restore snapshot — don't let the caches survive it
+                state.invalidate()
                 self._json({"error": "RESTORE_FAILED"}, 409)
                 return
             state.invalidate()
@@ -442,9 +445,17 @@ def _make_handler(state: _State) -> type[BaseHTTPRequestHandler]:
             if not selected:
                 self._json({"error": "PLAN_NOT_FOUND"}, 404)
                 return
-            results, _diffs, exit_code = apply_plans(
-                state.vault_root, selected, yes=True, dry_run=False,
-                no_backup=False)
+            try:
+                results, _diffs, exit_code = apply_plans(
+                    state.vault_root, selected, yes=True, dry_run=False,
+                    no_backup=False)
+            except OSError:
+                # an unguarded backup/write inside apply_plans can raise AFTER
+                # an earlier file already committed — the caches must not
+                # survive a partial mutation (vdd-multi iteration-2 finding)
+                state.invalidate()
+                self._json({"error": "FIX_FAILED"}, 500)
+                return
             state.invalidate()
             self._json({"ok": exit_code == 0,
                         "files": [r.to_json() for r in results]},

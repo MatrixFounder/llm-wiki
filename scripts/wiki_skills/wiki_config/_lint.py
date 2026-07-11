@@ -229,15 +229,17 @@ class _Linter:
 
         path = d / ".wiki" / "sync.yaml"
         try:
-            # Re-apply the loader's own 256 KiB cap: the FIRST read already
-            # passed it, but a TOCTOU swap between that read and this re-parse
-            # could feed an arbitrarily large anchorless YAML (the anchor ban
-            # alone doesn't bound a huge flat document's parse cost).
-            if path.stat().st_size > WIKI_SYNC_CONFIG_MAX_BYTES:
+            # Re-apply the loader's own 256 KiB cap as a BOUNDED READ (not
+            # stat-then-read — a swap between stat and read would still feed an
+            # arbitrarily large anchorless YAML; reading cap+1 bytes closes the
+            # window entirely: the anchor ban alone doesn't bound a huge flat
+            # document's parse cost).
+            with path.open("rb") as fh:
+                data = fh.read(WIKI_SYNC_CONFIG_MAX_BYTES + 1)
+            if len(data) > WIKI_SYNC_CONFIG_MAX_BYTES:
                 self.add("PARSE_ERROR", "sync", rel, message="config changed during lint")
                 return
-            raw = yaml.load(path.read_text(encoding="utf-8"),
-                            Loader=_NoAliasSafeLoader)
+            raw = yaml.load(data.decode("utf-8"), Loader=_NoAliasSafeLoader)
         except Exception:  # drifted between the two reads — report the verdict only
             self.add("PARSE_ERROR", "sync", rel, message="config changed during lint")
             return
