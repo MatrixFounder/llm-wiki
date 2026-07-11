@@ -2,6 +2,26 @@
 
 > 🇷🇺 Russian mirror: [`obsidian-llm-wiki_manual.ru.md`](obsidian-llm-wiki_manual.ru.md).
 
+> **Who this guide is for.** Engineers meeting this system for the first time. No
+> prior knowledge of the project's jargon is assumed — every term (vault, Class A/B/C,
+> FTS5, layout, `prepare`/`apply`, …) gets a plain-language gloss the first time it
+> appears, and all of them are collected in
+> [Appendix A. Glossary](#appendix-a-glossary). The goal is *understanding*: in two
+> weeks you will forget the flags, but the operating principles should stay.
+
+> **How to read this guide.**
+> - **Bold text** and the "✅ Key takeaways" blocks at the end of each chapter carry
+>   the **principles** — the part worth retaining after the details fade.
+> - Reference tables (command menus, page/relation types, exit codes) are for
+>   *looking things up*, not memorising — skim them on first read.
+> - `TASK NNN` / `ADR-NNN` / `R-NN` markers are pointers into the project's design
+>   history. You can ignore them entirely on first read; they matter only when you
+>   need the rationale behind a behaviour.
+
+> **Sources.** This manual is verified against the real code of this repository at
+> the time of writing. When the manual and the code disagree, **the code wins** —
+> each command's exact contract lives in its `skills/<name>/SKILL.md`.
+
 > **Companion to [`README.md`](../../README.md).** The README is the *entry point*
 > (what the project is, how to install, the command index). **This manual is the
 > *methodology*** — why each command exists, how to work with the vault's markdown
@@ -15,6 +35,7 @@
 
 ## Contents
 
+- [TL;DR — in 60 seconds](#tldr--in-60-seconds)
 - [Overview](#overview)
 - [Why an index layer at all (the methodology)](#why-an-index-layer-at-all-the-methodology)
 - [How to run the commands](#how-to-run-the-commands)
@@ -45,7 +66,62 @@
 - [Health & maintenance, methodologically](#health--maintenance-methodologically)
 - [Anti-patterns (do NOT)](#anti-patterns-do-not)
 - [Command reference appendix](#command-reference-appendix)
+- [Appendix A. Glossary](#appendix-a-glossary)
 - [Related](#related)
+
+---
+
+## TL;DR — in 60 seconds
+
+**The knowledge lives in markdown, not in a database.** Your notes sit in an
+Obsidian **vault** (a folder of markdown files) and are the canonical record —
+"Class A" in this project's vocabulary. Beside them sits a SQLite full-text index
+("Class B"), which is a **100%-rebuildable cache**: you can delete the database at
+any moment and `wiki-reindex --full` recreates it from the markdown, losing nothing.
+
+**Three loops run over that pair.** The *construct* loop turns raw material
+(articles, PDFs, transcripts) into summary notes plus cross-linked concept pages.
+The *search/answer* loop reads the index: fast full-text search, graph traversal,
+and RAG (retrieval-augmented generation — an answer synthesised *only* from
+retrieved notes, with citations) whose answers are filed back as pages, so good
+answers compound. The *maintain* loop (lint, reindex, entity curation) keeps cache
+and canon honest with each other.
+
+**Everything is a shell CLI.** The 18 `wiki-*` commands are ordinary terminal
+programs, each doubling as a `/wiki-*` slash command inside Claude Code. The
+deterministic ones run anywhere; the four LLM-shaped ones (`import`, `query`,
+`verify-multi`, `extract-concepts`) split into a deterministic `prepare` call, an
+agent-owned reasoning step, and a deterministic `apply` call — so any agent, not
+just Claude, can drive them.
+
+**The one discipline that matters:** after you hand-edit markdown, tell the index
+(`wiki-index-upsert` for one file, `wiki-reindex --delta` for many). Markdown is
+canonical; the reindex is how the cache learns.
+
+```mermaid
+flowchart LR
+    RAW["raw source"] -->|"construct<br/>(wiki-import / wiki-sync)"| MD["markdown vault<br/>Class A — canonical"]
+    MD -->|"reindex"| DB["SQLite index<br/>Class B — rebuildable cache"]
+    DB -->|"search / graph / RAG"| ANS["cited answer"]
+    ANS -->|"filed back as a page"| MD
+    MD -.->|"maintain: lint · resolve · render"| DB
+    classDef canon fill:#eef7ee,stroke:#5a5;
+    class MD canon;
+```
+
+| Task | Command |
+|---|---|
+| Bring an existing vault under management | `wiki-init --register-existing --vault /path/to/MyVault` |
+| Full-text search with ranked snippets | `wiki-search "lasso regularization" --vaults personal --limit 5` |
+| Import an external article (agent session; REASON step follows) | `wiki-import prepare --vault personal --vault-root ~/Vault --kind auto --source "https://example.com/article"` |
+| Index one ready note — no LLM | `wiki-index-upsert --vault personal --source ~/Vault/_sources/my-article.md` |
+| Catch the index up after hand-edits | `wiki-reindex --delta --vault personal` |
+| Get a durable, cited RAG answer (agent session) | `wiki-query prepare "compare X and Y" --vault personal --vault-root ~/Vault` |
+| Plan a batch ingest of a folder (writes nothing) | `wiki-sync scan "03 - Learning" --vault personal --dry-run` |
+| Health-check the vault, gate on contradictions | `wiki-lint --vault personal --strict` |
+| List every decision that was live on a date | `wiki-search --tag decision --as-of 2026-04-15 --vaults personal` |
+| Trace a supersession lineage | `wiki-graph chain switch-to-kafka --kind supersedes --vault personal` |
+| See a folder's effective config and where it comes from | `wiki-config show --vault-root ~/Vault` |
 
 ---
 
@@ -69,6 +145,28 @@ layer.
 | **Schema** | `user_version = 7` (`sql/wiki-index-v2.sql`) |
 | **Runtime** | Python 3.14+; deps in `requirements.txt` |
 
+First-use glosses for the table above, in plain language:
+
+- **Vault** — an Obsidian-style folder of markdown notes; the unit this system
+  manages. **Layout** — the on-disk grammar of a vault: which folders hold which
+  kinds of pages.
+- **Class A / B / C** — the data-layering contract (ADR-002 §D8): A = canonical
+  markdown you author; B = derived state that is fully rebuildable from A (the DB,
+  generated ledgers); C = minimal DB-only operational state (locks, audit rows).
+- **FTS5** — SQLite's built-in full-text-search engine; **WAL** — write-ahead
+  logging, a SQLite mode that lets readers and a writer coexist safely.
+- **RAG** — retrieval-augmented generation: retrieve relevant notes first, then
+  have the model answer *only* from them, with citations.
+- **Envelope** — the single line of JSON each CLI prints on stdout; the
+  machine-readable result an agent parses instead of prose.
+- **Frontmatter** — the YAML metadata block (`---` … `---`) at the top of a
+  markdown note; the index reads types, tags, and relations from it.
+
+> **✅ Key takeaways.** This repo is the *index and tooling* layer, not the notes
+> themselves: markdown in the vault is canonical (Class A), the SQLite DB is a
+> disposable cache (Class B/C). Every command is a shell CLI that speaks one JSON
+> envelope plus an exit code, so both humans and agents drive the same surface.
+
 ---
 
 ## Why an index layer at all (the methodology)
@@ -79,8 +177,9 @@ the LLM **incrementally builds and maintains a persistent, interlinked wiki** th
 sits between you and the raw sources. Knowledge **compounds**: each ingest enriches
 the corpus the next query reads.
 
-`wiki-import` does the *file-layer* half of that loop (fetch+convert → REASON →
-synthesise the source note + its `_concepts/` pages; concept compounding is a
+`wiki-import` does the *file-layer* half of that loop (fetch+convert → REASON —
+the LLM summarisation pass, owned by the calling agent rather than by the Python —
+→ synthesise the source note + its `_concepts/` pages; concept compounding is a
 derived Class-B render, not a body-merge). This repo does the half that makes the
 compounding *usable at scale*:
 
@@ -111,6 +210,12 @@ The methodological consequences that every command below serves:
    not resolved. A failed verification is *recorded*, not auto-fixed.
 4. **Good answers compound.** A cited RAG answer is filed back as a first-class
    page, so the next query can find it.
+
+> **✅ Key takeaways.** Standard RAG is stateless; this system inverts it — every
+> ingest and every good answer enriches the corpus the next query reads. Four
+> consequences follow: markdown is canonical and the DB disposable; every fact
+> is auditable to a source; contradictions are surfaced, never auto-resolved; and
+> answers are filed back so knowledge compounds instead of evaporating.
 
 ---
 
@@ -176,7 +281,9 @@ deterministic commands.)
 The same commands are `/wiki-*` slash commands; the agent auto-suggests them on the
 SKILL.md triggers. For `wiki-query` / `wiki-verify-multi` / `wiki-extract-concepts`
 / `wiki-import` this is effectively the *required* surface, because the middle of
-their `prepare`/`apply` contract is an LLM reasoning step the orchestrator owns (see
+their `prepare`/`apply` contract (two deterministic CLI calls — `prepare` stages
+and retrieves, `apply` validates and files) is an LLM reasoning step the
+*orchestrator* — the main agent driving the session — owns (see
 [the `prepare`/`apply` contract](#the-prepare--apply-contract-decision-17)). You
 *can* run their deterministic halves by hand, but then you must do the
 synthesis/critique yourself.
@@ -206,6 +313,12 @@ the contract skill into the system context instead of `Skill({…})`).
 > many. Until you do, `wiki-search` returns stale snippets and `wiki-lint` reports
 > hash drift. The markdown is canonical; the reindex is how the cache learns.
 
+> **✅ Key takeaways.** Obsidian is the *editor* of the canonical markdown; the
+> `wiki-*` commands are ordinary shell CLIs you can run from a terminal, from a
+> terminal embedded in Obsidian, or as `/wiki-*` inside an agent session. Use the
+> plain terminal for deterministic commands and an agent session for the four
+> LLM-shaped ones. Whatever the surface: after a hand-edit, reindex.
+
 ---
 
 ## The command vocabulary, by purpose
@@ -220,8 +333,8 @@ These turn raw material into compounding pages.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp, TASK 046) — reach for it instead of hand-routing a folder of heterogeneous drops file-by-file.<br>• `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (distil / upsert / skip).<br>• The [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes the plan idempotently: each *distil* source is **delegated to `wiki-import`** (which owns fetch+convert, **scanned-PDF OCR**, `.vtt` de-timestamp, the REASON summary + `_concepts/` filing); ready notes go straight to `wiki-index-upsert`; view-sidecars are skipped.<br>• Deterministic driver, no inline summarise/convert; `wiki-sync record` is the per-file commit-marker. |
-| **`wiki-import`** | The **unified construct on-ramp AND per-source engine** (TASK 039/040/046/047; `wiki-import-article` is a back-compat alias).<br>• Hand it **one source** — an external **URL / PDF / office doc / X-thread / meeting transcript / finished summary**, OR a **local raw file** (`--source ./path` — the single-file raw on-ramp that used to be `wiki-enrich`).<br>• It does deterministic fetch+convert → REASON → a summary note **plus** its `_concepts/` pages → indexed, all in one `prepare`/`apply` loop.<br>• Two orthogonal axes: **content-type** (`--kind`, auto-detected) sets the note `type:` + the REASON harness (all content → the ONE universal `summarizing-meetings`; finished `summary` → register), and the vault **LAYOUT (config)** decides where it files (Karpathy `_sources/`+root `_concepts/` vs PARA topic-folder+sibling `_concepts/`, via `resolve_layout_config` — Karpathy is a layout YAML, not a code fork, ADR-007).<br>• If you *already have a finished summary* and want it verbatim, skip the REASON step and use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead.<br>• `prepare` shells out to `html`/`pdf` + emits **`known_concepts`** (reuse them — the discipline that stops dangling `[[wikilinks]]`); `apply` files the note + `_concepts/` with the **collision guard** (a generic `defi` never evicts `Defi.md`). (Diagram: `docs/architectures/functional-architecture.md` §2.3.) |
+| **`wiki-sync`** | The **zone-level dispatcher** (the multi-file on-ramp, TASK 046) — a *zone* is a folder subtree you designate for batch ingest; reach for `wiki-sync` instead of hand-routing a folder of heterogeneous drops file-by-file.<br>• `scan <zone>` classifies *every* file by extension + `#wiki/*` tag + content shape and emits a deterministic **plan** (distil / upsert / skip — *distil* = run raw material through the LLM summarisation into a note; *upsert* = index a ready markdown file as-is).<br>• The [`wiki-sync` workflow](#automating-the-mix-wiki-sync-per-note-routing-conversion-ocr) executes the plan idempotently (a re-run redoes nothing): each *distil* source is **delegated to `wiki-import`** (which owns fetch+convert, **scanned-PDF OCR**, `.vtt` de-timestamp, the REASON summary + `_concepts/` filing); ready notes go straight to `wiki-index-upsert`; view-sidecars are skipped.<br>• Deterministic driver, no inline summarise/convert; `wiki-sync record` is the per-file commit-marker. |
+| **`wiki-import`** | The **unified construct on-ramp AND per-source engine** (TASK 039/040/046/047; `wiki-import-article` is a back-compat alias).<br>• Hand it **one source** — an external **URL / PDF / office doc / X-thread / meeting transcript / finished summary**, OR a **local raw file** (`--source ./path` — the single-file raw on-ramp that used to be `wiki-enrich`).<br>• It does deterministic fetch+convert → REASON → a summary note **plus** its `_concepts/` pages → indexed, all in one `prepare`/`apply` loop.<br>• Two orthogonal axes: **content-type** (`--kind`, auto-detected) sets the note `type:` + the REASON harness (all content → the ONE universal `summarizing-meetings`; finished `summary` → register), and the vault **LAYOUT (config)** decides where it files (Karpathy `_sources/`+root `_concepts/` vs PARA — Projects/Areas/Resources/Archives, a common personal-vault folder method — topic-folder+sibling `_concepts/`, via `resolve_layout_config` — Karpathy is a layout YAML, not a code fork, ADR-007).<br>• If you *already have a finished summary* and want it verbatim, skip the REASON step and use the [pre-made-summary recipe](#registering-a-pre-made-summary-not-raw) instead.<br>• `prepare` shells out to `html`/`pdf` + emits **`known_concepts`** (reuse them — the discipline that stops dangling `[[wikilinks]]`, Obsidian's double-bracket links between notes, "dangling" when the target page doesn't exist); `apply` files the note + `_concepts/` with the **collision guard** (a generic `defi` never evicts `Defi.md`). (Diagram: `docs/architectures/functional-architecture.md` §2.3.) |
 | **`wiki-extract-concepts`** | The *retroactive* on-ramp: given a source page already in the index, it extracts the concepts/entities it mentions but that have no page yet.<br>• Turns implicit knowledge into explicit, linkable pages — each carrying the derived `<!-- BEGIN-AUTO:mentions -->` ledger, regenerated by `wiki-index-render --concept-mentions` (TASK 047).<br>• A two-pass `prepare`/`apply` skill (see [below](#the-prepare--apply-contract-decision-17)).<br>• Use it to *densify* an existing corpus, or after importing many sources at once — **regardless of how the source page got indexed** (imported or hand-registered). |
 | **`wiki-index-upsert`** | The single-file primitive. Indexes one markdown file idempotently (a file-hash match is a no-op). Use it when you've hand-written, hand-edited, **or dropped in a finished summary from elsewhere** and want the index to reflect it immediately without a full reindex — **no LLM, no raw processing**. |
 | **`wiki-append-log`** | Writes a structured event to `log.md` *and* mirrors it to the `log_events` table atomically (flock + fsync, bi-directional M-2 contract). The log is grep-friendly chronological memory for future agent sessions — git diff is for humans, the log is for the next LLM. |
@@ -240,13 +353,20 @@ wiki-index-upsert --vault personal --source ~/Vault/_sources/my-article.md
 wiki-append-log --vault personal --event-type ingest --subject "imported my-article"
 ```
 
+> **✅ Key takeaways.** One engine, three entry points: `wiki-import` for one
+> source (any format, LLM distillation), `wiki-sync` for a whole zone (it plans
+> deterministically and delegates each distil to `wiki-import`), and
+> `wiki-index-upsert` for a note that is already finished (no LLM ever touches
+> it). If you remember only one routing rule: raw material gets distilled,
+> finished notes get upserted.
+
 ### 2. Search & retrieve
 
 The everyday read path — **search before you grep**.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-search`** | FTS5 BM25 full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default — the fast lookup that replaces re-reading raw files.<br>• **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate.<br>• **Metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing* (the `--tag`/`tags=` listing narrows through the existing `pages_fts.tags` index since TASK 035 — identical results, ~4× faster at scale).<br>• **Temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15".<br>• Two optional retrieval-scope filters also ride here (default-OFF): `--audience <level>` (a classification gate) and `--log-access` (read-audit) — see [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
+| **`wiki-search`** | FTS5 BM25 (the standard keyword-relevance ranking formula) full-text search across one or many vaults, ranked with snippets, expanding through entity aliases by default — the fast lookup that replaces re-reading raw files.<br>• **Default search is inflection-tolerant** (TASK 028): bare terms are auto stemmed (matched by word root) + prefixed (per-term by script — Cyrillic→russian, Latin→english) and **ё/е-folded** on both the query and the body corpus, so one typed form finds its siblings and `ещё`/`еще` are one token. `--exact` (`--no-stem`) disables stemming for literal precision (ё/е fold still applies). The body ё/е fold takes effect on the next `wiki-reindex --full`; stemming + the query ё-fold are immediate.<br>• **Metadata filtering**: `--status` / `--severity` / `--where 'field=value'` compile to a `CAST(json_extract(frontmatter_json, …) AS TEXT) = ? OR EXISTS(json_each … = ?)` predicate (not full-text), so hyphenated (`SEV-2`) and numeric (`priority=1`) **scalar** values match by string AND a **list member** matches too (TASK 033) — `--tag decision` (sugar for `--where 'tags=decision'`) lists every typed-class `decision` page in one command; omit the query for a pure metadata *listing* (the `--tag`/`tags=` listing narrows through the existing `pages_fts.tags` index since TASK 035 — identical results, ~4× faster at scale).<br>• **Temporal filtering** (TASK 034): `--as-of YYYY-MM-DD` returns only pages **active on that date** — created on-or-before it AND not yet superseded/invalidated by then, *derived* from `pages.date` + the supersede/invalidate event graph (no LLM, no hand-authored `valid_to`; `valid_from`/`valid_to` are optional overrides). E.g. `--tag decision --as-of 2026-04-15` answers "which decisions were live on 2026-04-15".<br>• Two optional retrieval-scope filters also ride here (default-OFF): `--audience <level>` (a classification gate) and `--log-access` (read-audit) — see [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
 | **`wiki-index-render`** | Regenerates `index.md` — a *read-only projection* of the DB — preserving any operator-authored `<!-- BEGIN-CUSTOM:name -->` blocks. Use it to refresh the human-browsable catalog after imports.<br>• With `--auto-indexes` it also renders Class-B "rebuildable markdown" ledgers (e.g. a `KNOWN_ISSUES.md` rolled up from per-issue source files).<br>• With **`--concept-mentions` (TASK 047)** it regenerates each concept page's `<!-- BEGIN-AUTO:mentions -->## Mentions across sources … <!-- END-AUTO:mentions -->` block — a **derived** "which sources mention this concept" ledger, so concept compounding is a rebuildable render, not a body-merge. |
 
 ```bash
@@ -256,10 +376,17 @@ wiki-search "lasso regularization" --vaults personal --limit 5
 wiki-index-render --vault personal --auto-indexes
 ```
 
+> **✅ Key takeaways.** `wiki-search` is the everyday read path — full-text by
+> default, metadata (`--where`/`--tag`) when you want a listing, `--as-of` when
+> you want a point-in-time view; search before you grep. `wiki-index-render`
+> never authors knowledge: it only *projects* the DB into browsable markdown, and
+> anything it writes is Class B — regenerable, not editable.
+
 ### 3. Resolve entities
 
 The corpus accumulates *candidate* entities (LLM-guessed) and duplicate spellings.
-These commands curate the entity graph so it stays a graph, not a pile.
+These commands curate the entity graph — the network of concept/entity pages and
+the references between them — so it stays a graph, not a pile.
 
 | Command | Why it exists / what it does |
 |---|---|
@@ -276,13 +403,18 @@ wiki-alias hermes-agent --add "Hermes" --vault personal
 wiki-merge hermes-framework hermes-agent --vault personal
 ```
 
+> **✅ Key takeaways.** Entity curation is editorial work the machine cannot do
+> for you: confirm what is real, alias the spellings, merge the duplicates. The
+> payoff is that search expands through aliases and the graph stays navigable.
+> Confirm-state and aliases live in Class A frontmatter — the DB only mirrors them.
+
 ### 4. Answer & verify (RAG)
 
 The compounding payoff: turn the corpus into cited answers, and audit them.
 
 | Command | Why it exists / what it does |
 |---|---|
-| **`wiki-query`** | Retrieval-augmented answering — "good answers can be filed back into the wiki" made durable.<br>• `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex.<br>• Optional retrieval-scope controls — `--min-trust` (a provenance floor) and `--audience` (classification), both folded into `question_hash` so `apply` must repeat them — are covered in [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
+| **`wiki-query`** | Retrieval-augmented answering — "good answers can be filed back into the wiki" made durable.<br>• `prepare` retrieves (FTS5 BM25 + alias/entity-graph expansion); the orchestrator agent synthesises a *cited* answer; `apply` files it as a first-class compounding `_queries/<slug>.md` page (a *slug* is the file-name-safe identifier derived from a title) — indexed, FTS-searchable, with `cited` backlinks that survive a full reindex.<br>• Optional retrieval-scope controls — `--min-trust` (a provenance floor) and `--audience` (classification), both folded into `question_hash` so `apply` must repeat them — are covered in [Policy, provenance & read-audit](#policy-provenance--read-audit-adr-009). |
 | **`wiki-verify-multi`** | An **off-by-default** four-critic prose audit (factual-grounding / logic-coherence / security-injection / completeness-faithfulness) of a filed answer *against the sources it cited*.<br>• Files a `_verifications/verify-<slug>.md` verdict page.<br>• A FAIL **records the verdict and exits non-zero — it never edits the answer**.<br>• Reach for it on high-stakes answers where a silent hallucination would be costly. |
 | **`wiki-graph`** | Read-only **event-graph** traversal (TASK 032/034 / ADR-004): "what did this decision cause / what supersedes X / the lineage."<br>• Traverses the typed page-to-page edges (`implements`/`supersedes`/`causes`/`relates-to`, plus the TASK-034 `invalidated-by`/`activated-by`/`uses`/`owns`, + auto-derived inverses) authored in frontmatter and indexed on reindex.<br>• Subcommands: `backlinks` (inbound) / `neighbors` (one-hop, in/out/both, by `--kind`) / `chain` (bounded supersession/causation lineage).<br>• Pairs with `wiki-query prepare --follow-edges`, which weaves typed-edge neighbors into a cited answer (default OFF; deterministic). |
 
@@ -295,13 +427,19 @@ wiki-verify-multi prepare td-sequential-risks --vault personal --vault-root ~/Va
 wiki-graph chain switch-to-kafka --kind supersedes --vault personal
 ```
 
+> **✅ Key takeaways.** `wiki-query` makes an answer *durable*: retrieved, cited,
+> filed back as a page the next query can find. `wiki-verify-multi` audits a filed
+> answer against its own citations and records a verdict — it never edits the
+> answer. `wiki-graph` reads the typed-edge graph deterministically; no LLM is
+> involved in traversal.
+
 ### 5. Maintain health
 
 | Command | Why it exists / what it does |
 |---|---|
 | **`wiki-lint`** | A SQL-level health-check over one vault or all of them. Run it periodically; the findings have a natural action priority (dangling → contradictions → missing → orphans).<br>• Surfaces **orphan links** (pages with no inbound links), **dangling refs** (`[[X]]` with no page X), **missing-on-disk** pages (DB/disk drift), **hash drift** (a file changed but wasn't reindexed), **type mismatches**, and **cross-vault concept duplicates**.<br>• Since **R-15 / TASK 036** it also runs **lifecycle-drift** — a page whose authored `status` *contradicts* the event graph (a `decision` carrying a `superseded-by` edge but still `status: accepted`; one an incident `invalidates` but still live).<br>• Since **R-19 / TASK 054** it runs **ontology-violation** — a page that breaks the declared `ontology:` contract (an edge whose source/target class is out of its `from`/`to`, e.g. a `fact` that `implements` a `risk`; or a `status` outside its class enum).<br>• Both drift and ontology-violation are **advisory by default and gate only `--strict`** (they are true contradictions); `--mtime-skip` trades full-hash integrity for speed. |
 | **`wiki-health`** | Read-only **derived knowledge-health** report (R-15 / TASK 036, ADR-006) — the always-exit-0 sibling of `wiki-lint`'s `--strict`-gating contradictions.<br>• **`wiki-health coverage --vault <id> [--class C]`** lists pages **missing an expected relation** — a `requirement` nothing implements, a `capability` no agent provides, a `fact` with no `source:`.<br>• **`wiki-health ontology --vault <id> [--class C]`** (R-19 / TASK 054) lists pages **contradicting the declared `ontology:` contract** — an edge whose source/target class is out of its declared domain/range, or a `status` value outside its class enum.<br>• Both are computed over frontmatter + the event graph (layout-config-driven `coverage_rules` / `ontology`; the `cybos` layout ships them, other layouts → an empty report) and **always exit 0** (a gap/violation from this surface is *data* — the `--strict` gate for the ontology contradiction is `wiki-lint`).<br>• Pure derivation: zero new fields, zero DDL. |
-| **`wiki-config`** | (TASK 058) The interface for the **per-folder `.wiki/sync.yaml`** config — answers *"which settings does this folder actually get, and from where?"*.<br>• `show` prints per-key inheritance provenance (no folder argument → the **active Obsidian note's** folder, then CWD, then vault root).<br>• `tree` maps every override point vault-wide, incl. the #1 trap — a **root-only key** (`zones`/`exclude`/`extensions`/`transcript_dedup`/`tag_namespace`) sitting in a subfolder file where it is *silently ignored* (only `resummarize:`/`summarize:` cascade).<br>• `validate` lints ALL three config systems (40-code taxonomy, exit 6 on errors); tiered `doctor`/`fix` repair mechanically (comment-preserving, backed up to `.wiki/backups/`, TOCTOU-guarded, `restore` undoes).<br>• `set`/`unset` edit one key; `init --template` scaffolds from `templates/sync-profiles/`; `report --open` renders ONE self-contained HTML inheritance report; `serve` starts the local web editor.<br>• Fully schema-driven (`x-wiki-*` annotations) — a NEW config field appears in every surface with zero interface-code changes; needs no DB (works while the index is broken).<br>• **Full copy-paste commands + editor tour: [Configuring folders with `wiki-config`](#configuring-folders-with-wiki-config-provenance-repair-templates-web-editor).** |
+| **`wiki-config`** | (TASK 058) The interface for the **per-folder `.wiki/sync.yaml`** config — answers *"which settings does this folder actually get, and from where?"*.<br>• `show` prints per-key inheritance *provenance* — where each effective value comes from (no folder argument → the **active Obsidian note's** folder, then CWD, then vault root).<br>• `tree` maps every override point vault-wide, incl. the #1 trap — a **root-only key** (`zones`/`exclude`/`extensions`/`transcript_dedup`/`tag_namespace`) sitting in a subfolder file where it is *silently ignored* (only `resummarize:`/`summarize:` cascade).<br>• `validate` lints ALL three config systems (40-code taxonomy, exit 6 on errors); tiered `doctor`/`fix` repair mechanically (comment-preserving, backed up to `.wiki/backups/`, TOCTOU-guarded — protected against time-of-check/time-of-use races — and `restore` undoes).<br>• `set`/`unset` edit one key; `init --template` scaffolds from `templates/sync-profiles/`; `report --open` renders ONE self-contained HTML inheritance report; `serve` starts the local web editor.<br>• Fully schema-driven (`x-wiki-*` annotations) — a NEW config field appears in every surface with zero interface-code changes; needs no DB (works while the index is broken).<br>• **Full copy-paste commands + editor tour: [Configuring folders with `wiki-config`](#configuring-folders-with-wiki-config-provenance-repair-templates-web-editor).** |
 | **`wiki-reindex`** | Rebuilds the DB from markdown. `--full` wipes and rebuilds (this is the **rebuildability gate** — if a vault can't survive `--full`, the Class A→B contract is broken); `--delta` does an incremental mtime/hash-based pass after manual edits. The authoritative reconciliation of cache ↔ canon. |
 
 ```bash
@@ -314,6 +452,13 @@ wiki-config show --vault-root ~/Vault
 # incremental reindex after edits
 wiki-reindex --delta --vault personal
 ```
+
+> **✅ Key takeaways.** Two kinds of health surface here and they behave
+> differently: contradictions (lint's drift/ontology findings) can gate a pipeline
+> via `--strict`; gaps (`wiki-health`) are data and always exit 0. `wiki-reindex
+> --full` doubles as the rebuildability proof — if a vault cannot survive it, the
+> Class A→B contract is broken somewhere. `wiki-config` is the safe way to touch
+> the per-folder config tree.
 
 ### 6. Vault lifecycle
 
@@ -366,6 +511,12 @@ is always `--db-path` (a per-command override, mainly for tests) > `index_db`
 `index_db`; remove the key and it's global again, byte-for-byte. **iCloud paths are
 auto-rejected wherever they appear**, to prevent SQLite WAL/shm corruption.
 
+> **✅ Key takeaways.** `wiki-init` is once-per-vault, and the one decision it
+> locks in is where the index lives: global (many vaults, one DB, cross-vault
+> search) or vault-local (the index travels with the vault, but it is an island).
+> Cloud-synced folders must never contain the SQLite files; the tooling refuses
+> iCloud paths for you.
+
 ---
 
 ## Working with documents in Obsidian
@@ -402,6 +553,12 @@ SEPARATE systems** — the vault's *identity* (`WIKI_SCHEMA.md`) and the layout 
 Details: layout override semantics are in **"Custom layouts: the layout engine"**;
 `wiki-sync` in **"Automating the mix: `wiki-sync`"**; the `policy:` block in **"Policy,
 provenance & read-audit"**.
+
+> **✅ Key takeaways.** Two separate config systems, never conflated:
+> `WIKI_SCHEMA.md` says *what vault this is* (identity), `.wiki/layout.yaml` says
+> *how to index it* (grammar). The merge rule that bites: `paths` and
+> `ref_extraction` overrides REPLACE the built-in list wholesale, while `ignore`
+> unions and `type_mapping` deep-merges.
 
 ### The standard (karpathy) layout
 
@@ -452,6 +609,13 @@ Key distinctions:
     two namespaces are independent and **may differ** (e.g. wiki `vault_id: personal` vs
     Obsidian name `ObsidianNotes`).
 
+> **✅ Key takeaways.** The underscore folders are the system-managed half of the
+> vault: `_sources/` holds immutable per-input summaries (leaves), `_concepts/` and
+> `_entities/` hold the additive cross-referenced graph. `index.md` and the ledgers
+> are generated projections — never author knowledge in them. And keep the two ID
+> namespaces apart: the wiki `vault_id` (what `--vault` takes) is not the Obsidian
+> vault name.
+
 ### Page anatomy & the auditability invariants
 
 A concept/entity page (produced by the file layer, indexed by this repo) carries
@@ -492,6 +656,12 @@ fields like `cites:` (→ `cited` refs) and `verifies:` (→ `verifies` refs). T
 `frontmatter_json` column stores the whole block, which is what powers
 `wiki-search --where`.
 
+> **✅ Key takeaways.** Two invariants keep a growing wiki trustworthy: every fact
+> carries a footnote back to its source (auditability), and a disagreement between
+> sources becomes a visible `## Contradictions` block instead of a silent
+> overwrite (the machine surfaces, the operator decides). Break either by hand and
+> the corpus degrades into an unauditable pile.
+
 ### The author's contract: markdown is canonical
 
 Because the DB is a rebuildable cache, **hand-editing markdown is supported and
@@ -507,6 +677,11 @@ expected** — but it has a discipline:
 > **Safety:** `wiki-index-render` and `wiki-reindex --full` overwrite generated
 > markdown (`index.md`, ledgers). Commit to git first. Authored *pages* are never
 > overwritten by these — only the projections are.
+
+> **✅ Key takeaways.** Hand-editing is a supported first-class operation, not a
+> workaround — the whole design exists so you can. The contract is small: tell the
+> index afterwards (upsert or `--delta`), keep new facts footnoted, and change
+> conventions in the layout config rather than file by file.
 
 ### Registering a pre-made summary (not raw)
 
@@ -610,6 +785,12 @@ the upsert and drives the two-pass `wiki-extract-concepts` flow.
 > as *raw input* to the REASON step and produce a **summary-of-your-summary** —
 > double-distilled, with new slugs. Registering directly keeps your text verbatim
 > and canonical. Use `wiki-import` only when the LLM *should* do the distillation.
+
+> **✅ Key takeaways.** Pick the on-ramp by what you hold: raw material →
+> `wiki-import` (the LLM distils it); a finished summary → place it in
+> `_sources/` with frontmatter and `wiki-index-upsert` it verbatim (no LLM).
+> Either way the page ends up equally first-class — `wiki-extract-concepts` does
+> not care how a source got indexed.
 
 ### Custom layouts: the layout engine
 
@@ -733,13 +914,20 @@ Three design facts worth internalising:
   (`layout_config.layout_choices` / `resolve_alias` / `is_two_tier_scaffold`) derives
   everything by globbing that directory. Dropping a new `layouts/<name>.yaml` makes
   `--layout <name>` valid with **zero Python edits**.
-- **Operator regexes are guarded against ReDoS.** Custom `ref_extraction[].regex`
+- **Operator regexes are guarded against ReDoS** (regular-expression denial of
+  service — a pathological pattern that can hang the matcher). Custom `ref_extraction[].regex`
   and `paths[].project_pattern` are checked at *load time* (a stdlib-`re` budget
   gate; a misspelled grammar key is a hard load error, exit 6, not a silent
   flood) and at *runtime* (a per-file deadline via the PyPI `regex` engine with
   `timeout=`, env-overridable via `WIKI_REDOS_BUDGET_S`, default 2.0s — on
   timeout the file is skipped with a WARN, never hangs). Built-in layouts use
   stdlib `re` and pay zero overhead (TASK 012 + 017).
+
+> **✅ Key takeaways.** A vault's shape is YAML config, not code: a new layout is a
+> drop-in file, a new note type is one `type_mapping` line, and no schema change is
+> ever needed. Respect the merge semantics when overriding (`paths` /
+> `ref_extraction` replace wholesale) and remember that any `type:` the layout
+> cannot map is skipped loudly, not indexed wrongly.
 
 ### Reference: page types & relation types (the knowledge model)
 
@@ -924,6 +1112,13 @@ wiki-search --tag execution --status failed --vaults V         # failed runs (op
 wiki-query prepare "why did we leave RabbitMQ?" --vault-root V --follow-edges  # cited RAG, graph-expanded
 ```
 
+> **✅ Key takeaways.** Typing is what turns notes into a queryable model: a `type:`
+> routes the page into a filterable class, and a handful of frontmatter edge keys
+> (`implements`, `supersedes`, `causes`, …) build a bidirectional graph — you
+> author one direction, the inverse is derived. Two edges (`superseded-by`,
+> `invalidated-by`) plus the page's own `date` are all the machinery behind the
+> point-in-time `--as-of` query; none of it needs an LLM.
+
 ### Mixed vault: search-only areas + enrich-able course zones
 
 Most real personal vaults are *mixed*: the bulk is finished notes you only want to
@@ -1038,6 +1233,12 @@ wiki-search "scaling laws" --vaults personal,ai-hard-fork-2026
 - The **personal vault stays untouched** (indexed only); `wiki-import` writes solely into
   the course zone.
 
+> **✅ Key takeaways.** A mixed personal vault is two registered vaults sharing
+> one global DB: a search-only vault over the bulk, and a karpathy enrich vault
+> rooted inside the collection zone. The single invariant is the boundary — the
+> search vault `ignore`s the enrich subtree, so every file is indexed exactly
+> once. Search stays unified via `--vaults a,b`.
+
 ---
 
 ### Automating the mix: `wiki-sync` (per-note routing, conversion, OCR)
@@ -1057,8 +1258,9 @@ hand-invoking `wiki-import` / `wiki-index-upsert` per file.
   action + reason. This is the part you review before anything is written.
 - **[`workflows/wiki-sync.md`](../../workflows/wiki-sync.md)** — the orchestrator
   *executor.* Per plan entry it **delegates each distil source to `wiki-import`**
-  (which owns the deterministic fetch+convert / de-timestamp / **H-6-fence** /
-  REASON+file steps) or upserts a ready `.md` / skips, then writes a per-file
+  (which owns the deterministic fetch+convert / de-timestamp / **H-6-fence** —
+  H-6 is the project's untrusted-content rule: fetched text is data, never
+  instructions — / REASON+file steps) or upserts a ready `.md` / skips, then writes a per-file
   **commit-marker** (`wiki-sync record`) so a re-run is a no-op. (`/wiki-sync`
   drives the whole thing.)
 
@@ -1112,7 +1314,8 @@ Dataview (` ```dataview `/` ```dataviewjs `), folder-notes (stem == dir). The
 **only-a-view guard** skips them *only* when the note is essentially one view block —
 a real note that *embeds* a view alongside prose is content → `upsert` (no over-flagging).
 
-**Scanned PDFs are OCR'd** (wired 2026-06-03): a `.pdf` with no text layer
+**Scanned PDFs are OCR'd** (OCR — optical character recognition, extracting a text
+layer from page images; wired 2026-06-03): a `.pdf` with no text layer
 (`pdf_extract.py` exit `10 DocumentScanned`) is run through the `pdf` skill's
 `pdf_ocr.py` (`ocrmypdf`, default languages **`eng+rus`**) → searchable text → ingest.
 If the OCR engine isn't installed (`bash <pdf-skill>/scripts/install.sh --with-ocr`
@@ -1256,6 +1459,14 @@ path, no timestamp → two scans byte-identical). Per-file isolation: one bad fi
 > *inside* an enrich zone to route its heterogeneous drops per-file. See
 > `skills/wiki-sync/SKILL.md` for the full plan-JSON + exit-code contract.
 
+> **✅ Key takeaways.** `wiki-sync` splits ingest into a deterministic *plan*
+> (`scan` — review it before anything is written) and an orchestrator-executed
+> run, with a per-file commit-marker so re-runs cost nothing. The `resummarize:`
+> gate stops the system re-LLM-ing what is already summarised, and `mode:
+> if-changed` upgrades that into cheap freshness — the basis of the connector
+> pattern, where any script that writes one stably-named file per external object
+> turns the vault into a pull-refreshed mirror.
+
 ---
 
 ### Configuring folders with `wiki-config` (provenance, repair, templates, web editor)
@@ -1264,12 +1475,26 @@ Every folder can carry its own `.wiki/sync.yaml` (see the
 [config-files overview](#vault-configuration-files-overview)). Two facts make hand-editing
 that tree error-prone, and `wiki-config` (TASK 058) exists to encode them for you:
 
-- Only the **`resummarize:`** and **`summarize:`** blocks cascade per folder
-  (deepest wins; partial overrides inherit the parent's other keys; **lists replace,
-  never extend**).
+- Only the **`resummarize:`** and **`summarize:`** blocks *cascade* per folder —
+  i.e. a deeper folder's file overrides its ancestors' values (deepest wins;
+  partial overrides inherit the parent's other keys; **lists replace, never
+  extend**).
 - `zones` / `exclude` / `extensions` / `transcript_dedup` / `tag_namespace` are
   **root-only** — placed in a subfolder file they are *silently ignored* (the tool
   flags this as `NON_CASCADING_KEY_IN_SUBFOLDER`).
+
+How a key's effective value is resolved for a given folder:
+
+```mermaid
+flowchart TD
+    K{"is the key<br/>root-only?"}
+    K -->|"yes (zones · exclude · extensions ·<br/>transcript_dedup · tag_namespace)"| R["only the ROOT .wiki/sync.yaml counts;<br/>a subfolder copy is IGNORED<br/>(flagged NON_CASCADING_KEY_IN_SUBFOLDER)"]
+    K -->|"no (resummarize · summarize)"| C["walk root → … → this folder:<br/>the DEEPEST file defining the key wins"]
+    C --> P["keys the winner does not define<br/>are inherited from the ancestors;<br/>a LIST value REPLACES, never extends"]
+    P --> D["nothing defined anywhere →<br/>the built-in default"]
+    classDef warn fill:#fdd,stroke:#c66;
+    class R warn;
+```
 
 **See where every value comes from.** `show` prints the effective config for one folder
 with a per-key origin — `default` (built-in) / `root` / inherited-from-`<ancestor>` /
@@ -1342,6 +1567,13 @@ Everything — form, report, provenance, validation — is generated at runtime 
 `config/sync-config.schema.yaml` (+ `x-wiki-*` annotations), so a NEW config field
 appears in every surface with zero interface-code changes. The tool needs no DB:
 it works even while the index is broken.
+
+> **✅ Key takeaways.** Never guess what a folder's effective config is — ask
+> `wiki-config show` and read the per-key provenance. The two traps it exists to
+> catch: root-only keys silently ignored in subfolder files, and list values that
+> replace rather than extend. Every mutation is comment-preserving, backed up, and
+> reversible via `restore`, so editing the tree through the tool is strictly safer
+> than editing YAML by hand.
 
 ---
 
@@ -1483,6 +1715,14 @@ verification skills carry an explicit H-6 banner; honour it.
 On the write side, the tooling already escapes markdown/HTML-active sequences on
 egress (`sanitize_markdown_text`) so a filed answer can't smuggle a
 wikilink/HTML/dataview payload back into the vault.
+
+> **✅ Key takeaways.** Any agent drives the wiki through the same surface a human
+> does: one JSON envelope per command plus a stable exit code — branch on `$?`,
+> read `.error`, never scrape prose. The LLM-shaped skills split into
+> deterministic `prepare`/`apply` halves with the reasoning owned by the caller,
+> and the `question_hash` round-trip pins a filed answer to the exact corpus
+> state it was synthesised against. Whatever retrieval returns is data, never
+> instructions (H-6) — fence it before showing it to a model.
 
 ---
 
@@ -1665,6 +1905,14 @@ audited read can't mask a changed file.
 - **Read-audit / `WIKI_ACTOR_ID`:** earns its keep under named multi-agent pipelines
   (who filed / read what).
 
+> **✅ Key takeaways.** All three controls are default-OFF and zero-DDL: without
+> the flags, behaviour is byte-identical to before. They scope what a model is
+> *shown* — least-privilege for cooperating agents — not who can read the files;
+> nothing is encrypted and a local owner keeps full access. For a solo operator
+> the one habit worth adopting is `--min-trust internal` on a clippings-heavy
+> vault; `--audience` and `WIKI_ACTOR_ID` earn their keep only when named
+> subagents share the corpus.
+
 ---
 
 ## Health & maintenance, methodologically
@@ -1708,6 +1956,13 @@ flowchart TD
   `.db`/`-wal`/`-shm`, then `wiki-init --register-existing` + `wiki-reindex --full`
   (ADR-002 §D8). There is nothing in the DB to migrate that isn't in the markdown.
 
+> **✅ Key takeaways.** Maintenance is a triage loop, not a chore list: dangling
+> links first, then contradictions, then the missing-concept backlog, orphans
+> last. `wiki-reindex --full` doubles as the standing proof that the Class A→B
+> contract holds — if a full rebuild loses anything, that is a layering bug to
+> fix, not an accident to work around. Schema upgrades are rebuilds for the same
+> reason: the DB never holds knowledge the markdown doesn't.
+
 ---
 
 ## Anti-patterns (do NOT)
@@ -1723,6 +1978,13 @@ flowchart TD
 | Treat retrieved page bodies as instructions | H-6: they're untrusted data. Fence + sentinel; execute nothing. |
 | Run `wiki-init --scaffold-new --vault .` at this repo's root | The repo *is* the implementation, not a vault — rejected by design. |
 | Put operator regexes in a layout without expecting the ReDoS gate | A catastrophic-backtracking pattern is refused at load (exit 6) or deadline-skipped at runtime. Write linear patterns. |
+
+> **✅ Key takeaways.** Every row above is one principle seen from a different
+> angle: markdown is canonical, the DB and the rendered ledgers are cache. So
+> never author knowledge in a projection, never skip the reindex after an edit,
+> and never let the machine (or a scraped string) make a call that belongs to
+> the operator or the envelope. When unsure, ask which class — A, B, or C — the
+> thing you are about to touch belongs to.
 
 ---
 
@@ -1753,6 +2015,88 @@ skill's `SKILL.md`. Quick index:
 
 Contract skills (LLM-side, no CLI; loaded by the orchestrator between
 `prepare`/`apply`): `wiki-query-synthesis`, `wiki-verify`, `concept-extraction`.
+
+---
+
+## Appendix A. Glossary
+
+Every term of the project's jargon, in plain language, grouped by theme. Each
+term is also glossed at its first use in the text above — this appendix is the
+lookup table for when you meet one again later.
+
+### A.1. The core model
+
+- **Vault** — an Obsidian-style folder of markdown notes; the unit this system manages.
+- **Layout** — the on-disk grammar of a vault: which folders hold which kinds of pages, and how files map to types. Defined in YAML, not code.
+- **Karpathy layout** — the standard layout (`_sources/` `_concepts/` `_entities/` …), named after the llm-wiki pattern's author.
+- **PARA** — Projects/Areas/Resources/Archives: a common personal-vault folder method; one of the layout families `wiki-import` can file into.
+- **Class A / B / C** — the data-layering contract: A = canonical markdown you author; B = derived state fully rebuildable from A (the DB, generated ledgers); C = minimal DB-only operational state (locks, audit rows).
+- **Frontmatter** — the YAML metadata block (`---` … `---`) at the top of a markdown note; the index reads types, tags, and relations from it.
+- **Wikilink** — Obsidian's `[[double-bracket]]` link between notes; "dangling" when the target page does not exist.
+- **Slug** — the file-name-safe identifier derived from a title (e.g. `my-article`).
+- **Footnote citation** — the `[^src-…]` markdown footnote that ties a claim on a concept page back to its source page; the auditability invariant.
+- **Contradiction block** — the `## Contradictions` section the tooling inserts when sources disagree; the operator resolves it, the machine only surfaces it.
+- **Projection / ledger** — generated, read-only markdown rendered *from* the DB (`index.md`, `KNOWN_ISSUES.md`-style roll-ups); Class B, never hand-authored.
+- **`vault_id`** — the wiki's identifier for a registered vault (what `--vault`/`--vaults` take); independent of the Obsidian vault *name*.
+- **`WIKI_SCHEMA.md`** — the vault's identity card: `vault_id`, `layout:`, optional `index_db:` and `policy:`; also `wiki-init`'s discovery marker.
+
+### A.2. The index and search machinery
+
+- **FTS5** — SQLite's built-in full-text-search engine, the backbone of `wiki-search`.
+- **BM25** — the standard keyword-relevance ranking formula FTS5 uses to order hits.
+- **WAL** — write-ahead logging, a SQLite mode that lets readers and a writer coexist safely.
+- **Stemming** — matching a word by its root so one typed form finds its inflected siblings; `--exact` turns it off.
+- **Reindex (`--full` / `--delta`)** — rebuilding the DB from markdown: `--full` wipes and rebuilds (the rebuildability gate), `--delta` catches recent edits incrementally.
+- **Hash drift** — a file changed on disk but the index was not told; `wiki-lint` flags it.
+- **mtime** — a file's modification timestamp; what `--delta` uses to spot changes cheaply.
+- **Idempotent** — safe to re-run: an unchanged input is a no-op (e.g. `wiki-index-upsert` on a matching file hash).
+- **Zero-DDL** — a feature that adds no database schema change; it rides existing columns such as `frontmatter_json`.
+- **`user_version`** — SQLite's schema version stamp (7 here); a bump means a rebuild, never an in-place `ALTER`.
+- **Global vs vault-local index** — one shared DB for all vaults (default) vs an `index_db:` DB that travels inside one vault (an island: no cross-DB search).
+
+### A.3. Commands, contracts, and ingest
+
+- **Envelope** — the single line of JSON each CLI prints on stdout; the machine-readable result an agent parses instead of prose.
+- **Exit code** — the numeric process result (`$?`) an integrating script branches on before reading the envelope.
+- **Orchestrator** — the main agent driving a session; it owns the LLM reasoning step between `prepare` and `apply`.
+- **`prepare` / `apply`** — the two deterministic halves of an LLM-shaped skill: `prepare` stages and retrieves, `apply` validates and files; the reasoning in between belongs to the calling agent (Decision-17).
+- **Decision-17** — the design rule that the Python plumbing carries no LLM calls (`no import anthropic`); any agent can therefore drive the skills.
+- **REASON step** — the LLM summarisation pass inside `wiki-import` (the `summarizing-meetings` harness), owned by the calling agent, not by Python.
+- **Distil** — run raw material through the LLM summarisation into a note; **upsert** — index a ready markdown file as-is, no LLM.
+- **Zone** — a folder subtree you designate for batch ingest with `wiki-sync`.
+- **Commit-marker / `source_state`** — the per-file "done" record `wiki-sync record` writes on full success, making re-runs no-ops.
+- **Connector** — any small script you own that writes one stably-named markdown file per external object into a zone; with `mode: if-changed` the vault becomes a pull-refreshed mirror.
+- **OCR** — optical character recognition: extracting a text layer from scanned page images (wired in for text-less PDFs).
+- **Cascade** — per-folder config inheritance: a deeper `.wiki/sync.yaml` overrides its ancestors' values (deepest wins; lists replace, never extend).
+- **Provenance (config)** — where a folder's effective config value comes from: built-in default, root, an ancestor, or the folder itself; `wiki-config show` prints it per key.
+- **Root-only key** — a `sync.yaml` key (`zones`, `exclude`, `extensions`, `transcript_dedup`, `tag_namespace`) that only counts in the vault-root file; in a subfolder it is silently ignored.
+- **TOCTOU** — a time-of-check/time-of-use race: the file changes between validating it and writing it; `wiki-config` mutations are guarded against this.
+- **ReDoS** — regular-expression denial of service: a pathological pattern that can hang the matcher; operator regexes are gated at load and deadlined at runtime.
+
+### A.4. Knowledge model, retrieval, and policy
+
+- **Entity / concept page** — the additive, cross-referenced abstraction pages (`_entities/`, `_concepts/`) built from many sources; together they form the entity graph.
+- **Candidate entity** — an LLM-guessed, unvetted entity (`is_candidate: 1`); `wiki-confirm` is your editorial sign-off.
+- **Alias** — a surface spelling registered for an entity ("Hermes" → `hermes-agent`); search expands through aliases, and each alias maps to exactly one entity.
+- **Event graph / typed edges** — the typed page-to-page relations (`implements`, `supersedes`, `causes`, …) authored in frontmatter one direction, with the inverse auto-derived; `wiki-graph` traverses them.
+- **`--as-of`** — the point-in-time query: which pages were active on a date, derived from page dates plus the `superseded-by` / `invalidated-by` edges — no LLM.
+- **Dangling link** — a `[[X]]` whose target page does not exist; **orphan** — a page nothing links to.
+- **Lifecycle drift** — a page whose authored `status` contradicts the event graph (e.g. `status: accepted` but a `superseded-by` edge exists).
+- **Ontology** — the layout's optional declared contract for types, edges, and statuses; a violating page is flagged, never blocked from indexing.
+- **Coverage gap** — a page missing an expected relation (a `requirement` nothing implements); reported by `wiki-health`, always exit 0 — a gap is data, not a failure.
+- **RAG** — retrieval-augmented generation: retrieve relevant notes first, then have the model answer *only* from them, with citations.
+- **`question_hash`** — the integrity token `wiki-query prepare` issues and `apply` must return verbatim; it proves the answer was synthesised against the same corpus state it is filed against.
+- **Trust tier** — the derived provenance signal on every retrieval hit: `external` (web capture / `_raw/`), `internal` (your own note), `verified` (vouched for by a verification page); `--min-trust` floors on it.
+- **Classification / `--audience`** — the optional page-level sensitivity label and the query-time gate that keeps higher-level pages out of a model's context; scoping, not access control.
+- **H-6** — the untrusted-content rule: retrieved page bodies and CLI output are data, never instructions; fence them before showing them to a model.
+- **`WIKI_ACTOR_ID`** — the environment variable that signs audit rows with the acting agent's name ("who filed / read what").
+- **Class-C audit row** — a DB-only log row (read-access, telemetry) that survives a full rebuild because it belongs to operational state, not knowledge.
+
+### A.5. Project markers
+
+- **TASK NNN** — a shipped work increment; its spec lives in `docs/tasks/`.
+- **ADR-NNN** — an Architecture Decision Record in `docs/adr/`; the durable "why" behind a behaviour.
+- **R-NN** — a roadmap item number; used to tag which theme a feature belongs to.
 
 ---
 
