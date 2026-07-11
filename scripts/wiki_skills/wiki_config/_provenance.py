@@ -430,7 +430,7 @@ def scan_tree_from_walk(
             elif label == ".":
                 defines[f"/{key}"] = SCOPE_ROOT_ONLY
             else:
-                ignored.append(key)
+                ignored.append(safe_key(key))  # posture uniformity with compute_folder_provenance
         defines_by_node[label] = defines
         ignored_by_node[label] = tuple(ignored)
 
