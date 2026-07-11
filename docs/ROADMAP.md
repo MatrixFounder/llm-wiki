@@ -1132,6 +1132,102 @@ the misleading docstring.
 
 ## Done since 2026-05-25
 
+- **TASK 058 (wiki-config-interface, R-22) — 2026-07-11.** The **18th CLI** + the operator
+  interface for the per-folder `.wiki/sync.yaml` cascade: provenance `show`/`tree`,
+  whole-tree `validate`, tiered `doctor`/`fix` + backups/`restore`, schema-driven
+  `set`/`unset`, `templates/sync-profiles/`, a self-contained HTML `report`, and a local
+  token-auth vanilla-JS `serve` web editor — all generated from
+  `config/sync-config.schema.yaml` `x-wiki-*` annotations (a new field surfaces everywhere
+  with zero interface code). One new dep (`ruamel.yaml`, write-mechanics only); no DB access;
+  zero DDL. See the R-22 entry above.
+- **TASK 057 (wiki-import-video-folder-announcement) — 2026-07-10.** `wiki-import`: video
+  robustness (transcript flags pass-through + scoped wall-clock), vendor-independent folder
+  inference (series-stem + active-note hint → proposal/staging when `--folder` is absent),
+  and announcement detection (dispatch marker → prepare exit 0, no writes). Zero DDL.
+- **TASK 056 (modularize-sqlite-dal) — 2026-07-10.** Pure structural refactor — split the
+  `sqlite_repository.py` god-module into a domain-package (Postgres-ready shape); zero
+  behaviour / CLI / schema change.
+- **TASK 055 (wiki-import-note-processing-fixes) — 2026-07-10.** `wiki-import`
+  note-processing fixes (WI-1/2/3) + the P-6 residual.
+- **TASK 054 (formal-ontology-spec, R-19) — 2026-07-09.** The OPTIONAL `ontology:` layout
+  block (cybos only) — `closed_types` + per-`ref_type` edge domain/range + per-class property
+  enums, load-gate-validated; read-side `find_ontology_violations` → `wiki-lint`
+  `ontology-violation` (advisory, gates `--strict`) + `wiki-health ontology` (exit 0). NOT a
+  write gate; OFF ≡ byte-identical; zero DDL. See the R-19 entry above.
+- **TASK 053 (import-sync-robustness) — 2026-07-09.** import/sync robustness:
+  reconcile-with-disk, Unicode-safe keys, no junk `_raw` duplicates.
+- **TASK 052 (meeting-participants-not-concepts) — 2026-07-08.** `wiki-import` routes meeting
+  attendees to `participants:` frontmatter, not `_concepts/` person pages
+  (`extract_concepts:false` + a candidate-framework guard).
+- **TASK 051 (source-freshness, R-18) — 2026-07-08.** The connector substrate:
+  `resummarize.mode: if-changed` (hash-equality gate), a `wiki-import prepare` `is_unchanged`
+  short-circuit, and the connector-contract docs + `templates/connector-zone.sync.yaml`.
+  Turns Epic 6 into "any exporter + a zone config"; zero DDL. See the R-18 entry above.
+- **TASK 050 (read-audit-trust-tier, R-17) — 2026-07-08.** Apply-side audit on every success
+  (cited slugs + action + audience/actor), `WIKI_ACTOR_ID` threading, opt-in retrieval
+  logging, and a derived per-hit `trust` tier (`external<internal<verified`) + `--min-trust`
+  floor — no new authored field; zero DDL. See the R-17 entry above.
+- **TASK 049 (policy-before-model, R-16 / ADR-009 Accepted) — 2026-07-07.** Optional
+  `classification:` page key + vault `policy:` block + `--audience` scope flag, enforced by one
+  pre-LIMIT `search_pages` predicate (fail-closed) so a filtered page never enters any
+  envelope; `classification-leak` lint; OFF ≡ byte-identical; zero DDL. See the R-16 entry above.
+- **TASK 047 (derived-mentions-retire-wiki-enrich) — 2026-07-01.** Concept pages carry a
+  DERIVED "Mentions across sources" ledger (`wiki-index-render --concept-mentions`);
+  `wiki-enrich` + the vendored `wiki_ingest` retired (clean delete) — `wiki-import` is now the
+  sole construct engine.
+- **TASK 046 (converge-construct-path) — 2026-06-30.** `wiki-import` = the per-source engine
+  (universal acquire+normalize + output-grammar toggles); `wiki-sync` = a pure batch DRIVER
+  that delegates each distil source to it per `.wiki/sync.yaml summarize:`.
+- **TASK 045 (wiki-search-obsidian-uri) — 2026-06-30.** `wiki-search` emits native Obsidian
+  URI links in CLI output (JSON `obsidian_url`; OSC 8 TTY link + plain URL in markdown).
+- **TASK 044 (wiki-import-video-sources) — 2026-06-30.** Video sources for `wiki-import` via
+  the `transcript-fetcher` skill.
+- **TASK 043 (pi-support) — 2026-06-21.** First-class `pi` (pi.dev) support: AGENTS.md + pi
+  skills + pi permissions (the vendor-agnostic-parity requirement).
+- **TASK 042 (dogfood-session-fixes) — 2026-06-21.** Dogfood-session error fixes: concept-quote
+  rescue, loud drops (no silent skips), app-data `index_db` carve-out.
+- **TASK 041 (active-note-resolution, ADR-008) — 2026-06-29.** Drive the focused Obsidian tab
+  from the shell — resolve the ACTIVE/open note when a path is omitted.
+- **TASK 040 (config-driven-write-grammar, ADR-007) — 2026-06-20.** Eliminate the Karpathy/PARA
+  code forks — the write-grammar (pyramid digest vs article wrapper) becomes config, selected
+  by `--kind`, orthogonal to the vault layout.
+- **TASK 039 (unify-construct-path) — 2026-06-18.** Content-type-dispatched REASON +
+  layout-aware filing — one construct path for meeting/lesson/article/paper/thread across
+  Karpathy and PARA.
+- **TASK 038 (wiki-import-article-para) — 2026-06-18.** `wiki-import-article`: the PARA construct
+  path (the PARA analog of the retired wiki-enrich/wiki-ingest); now the `/wiki-import` back-compat alias.
+- **TASK 037 (wiki-extract-concepts-layout-aware) — 2026-06-18.** `wiki-extract-concepts` is
+  layout-aware (PARA `_concepts/` support), no longer Karpathy-only.
+- **TASK 036 (derived-knowledge-health, R-15) — 2026-06-16.** Track A (ADR-006): the
+  `lifecycle-drift` `wiki-lint` category (advisory, gates `--strict`) + a new read-only
+  `wiki-health coverage` CLI (**17th**; always exit 0), layout-config-driven rules; zero DDL.
+  See the R-15 entry above.
+- **TASK 035 (fts-narrowed-tag-membership) — 2026-06-16.** FTS-narrowed tag-membership search
+  (closes R-X3-MF-SCAN, the membership branch) — the metadata-membership filter rides the
+  FTS-narrowed candidate set instead of an unindexed scan.
+- **TASK 034 (temporal-agent-memory, R-14) — 2026-06-16.** `wiki-search --as-of DATE`
+  (graph-derived point-in-time "active as of", zero required new fields) + schema **v6→v7**
+  (four inverse-closed edge pairs) + six `cybos` agent-memory page types (config-only). See
+  the R-14 entry above.
+- **TASK 033 (list-membership-metadata-filter) — 2026-06-15.** `wiki-search --where
+  'tags=<class>'` over list-valued frontmatter (+ `--tag` sugar) via a scalar-OR-`json_each`
+  membership predicate; zero DDL. See the R-13 entry above.
+- **TASK 032 (event-graph) — 2026-06-15.** R-13 Phase 2 (ADR-004): typed page-to-page edges
+  (`implements`/`supersedes`/`causes`/… + auto-derived inverses) + schema **v5→v6**; new
+  `wiki-graph` CLI (**16th**) + graph-aware RAG (`wiki-query --follow-edges`). See the R-13
+  entry above.
+- **TASK 031 (typed-knowledge-classes) — 2026-06-13.** R-13 Phase 1 (ADR-003): the 7 typed
+  classes tag-route (zero DDL) via layout `type_mapping`; new built-in `cybos` layout; bundled
+  with R-031-3, the config-driven layout REGISTRY (a new layout is a drop-in YAML). See the
+  R-13 entry above.
+- **TASK 030 (reindex-perf-hardening) — 2026-06-12.** Closes **P-1** (chunked-tx `reindex_full`,
+  measured 2.0×) + rename-aware `--delta` (DF-029-1) + a single-pass pruned walk (closes
+  R-X1-OBS-WALK); zero DDL. See the Performance-hardening section above.
+- **TASK 029 (obsidian-cli skill, R-12) — 2026-06-12.** The `obsidian-cli` skill teaching any
+  LLM agent the native Obsidian 1.12 CLI: a 4-invariant dispatch core
+  (routing/coherence/safety/degradation), T1/T2/T3 command-safety over the verified
+  102-command surface, the mutation→index coherence protocol, ≥8 recipes, 14/14 green
+  behaviour evals; zero new Python, zero DDL. See the R-12 entry above.
 - **TASK 028 (query-stemming-yo-folding) — 2026-06-09.** Query-side, script-aware **stemming**
   (default-on; `--exact`/`--no-stem` opt-out; per-term by script — Cyrillic→`russian`,
   Latin→`english`, pinned pure-Python `snowballstemmer==3.1.1`) + always-on **ё/е folding**
