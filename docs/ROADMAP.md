@@ -3,19 +3,20 @@
 What's deferred after Phase 3a, ordered by priority. Phase 3a (foundation,
 DAL, core ingest, search/lint, reindex, benchmark) is **complete** (see
 [ARCHITECTURE.md](ARCHITECTURE.md) status header). **Phase 3b is
-substantially complete through TASK 028** (2026-06-09): Epic 7 entity
+substantially complete** (frontier: **TASK 059**, 2026-07-11): Epic 7 entity
 resolver (R-3/4/5) + RAG layer (R-6/8), the universal config-driven layout
 engine (R-X1/X2/X3), `wiki-sync` (R-11), vault-local index DBs (TASK 022),
-the installer + real-vault adoption surface (TASK 025/026/027), and
-query-side stemming + ё/е folding (TASK 028) have all shipped. **No active
-task at HEAD** — every remaining roadmap item is **trigger-gated** (see the
-priority legend). **R-12 (`obsidian-cli` skill) SHIPPED 2026-06-12 as TASK 029**
-(native Obsidian CLI control layer; see the P1 entry below). **2026-07-07:
-Enterprise-readiness theme added (R-16…R-19)** — the Karp/Palantir
-ontology-layer gap-closure set headed by
-[ADR-009](adr/ADR-009-policy-before-model.md) (policy-before-model);
-analysis/roadmap only, no active TASK. Archived specs
-under [tasks/](tasks/) + [plans/](plans/).
+the installer + real-vault adoption surface (TASK 025/026/027),
+query-side stemming + ё/е folding (TASK 028), the `obsidian-cli` skill
+(R-12 / TASK 029), the typed-knowledge + event graph (R-13/R-14 —
+ADR-003/004, TASK 031/032/034), and derived knowledge-health (R-15 / TASK 036)
+have all shipped. The **enterprise-readiness theme is now SHIPPED IN FULL**:
+R-16/R-17/R-18/R-19 = TASK 049/050/051/054 and R-22 (`wiki-config`, the 18th
+CLI) = TASK 058, headed by
+[ADR-009](adr/ADR-009-policy-before-model.md) (policy-before-model,
+**Accepted**). **No active task at HEAD** — every remaining roadmap item is
+**trigger-gated** (see the priority legend). Archived specs under
+[tasks/](tasks/) + [plans/](plans/).
 
 Status legend:
 - **P0** — start when there is a concrete trigger / pain
@@ -644,11 +645,16 @@ layout rule pattern). **Files**: `repository.py`/`sqlite_repository.py` (new `fi
 
 ---
 
-## P1–P2 — Enterprise-readiness (ontology-layer hardening)
+## P1–P2 — Enterprise-readiness (ontology-layer hardening) — ✅ COMPLETE (2026-07-11)
+
+**STATUS: fully shipped.** R-16/R-17/R-18/R-19 = TASK 049/050/051/054; R-22
+(`wiki-config`, the 18th CLI) = TASK 058. Every entry below is ✅ SHIPPED — the
+section is retained for the design record.
 
 Theme added 2026-07-07 from the Karp/Palantir "ontology layer" gap audit —
-headed by **[ADR-009](adr/ADR-009-policy-before-model.md)** (Proposed), whose
-Context section carries the full pillar-by-pillar mapping. Verdict in one line:
+headed by **[ADR-009](adr/ADR-009-policy-before-model.md)** (**Accepted**,
+SHIPPED as TASK 049), whose Context section carries the full pillar-by-pillar
+mapping. Verdict in one line:
 pillars **1** (knowledge outside the model, transient context) and **4**
 (swappable model / durable layer) are already complete and mechanically
 enforced (Decision-17); pillar **2** (objects + typed links over sources) is

@@ -133,7 +133,7 @@ state and user preferences, not domain knowledge.
 ## Pointers
 
 - `README.md` — overview, quick start, external dependencies, repo layout.
-- `docs/tasks/` + `docs/plans/` — one spec (+ plan) per shipped task; `docs/TASK.md`/`docs/PLAN.md` hold the **current** task. The shipped-task log lives here and in git — not in this file. ADRs in `docs/adr/` (001 wrap+index · 002 multi-vault/Class-A-B-C · 003 typed classes · 004 event graph · 005 FTS-narrowed membership · 006 derived knowledge health · 007 config-driven write-grammar · 008 active-note resolution · 009 policy-before-model, **Proposed** — heads the ROADMAP R-16…R-19 enterprise-readiness theme).
+- `docs/tasks/` + `docs/plans/` — one spec (+ plan) per shipped task; `docs/TASK.md`/`docs/PLAN.md` hold the **current** task. The shipped-task log lives here and in git — not in this file. ADRs in `docs/adr/` (001 wrap+index · 002 multi-vault/Class-A-B-C · 003 typed classes · 004 event graph · 005 FTS-narrowed membership · 006 derived knowledge health · 007 config-driven write-grammar · 008 active-note resolution · 009 policy-before-model, **Accepted** (SHIPPED TASK 049) — headed the now-complete ROADMAP R-16…R-19 enterprise-readiness theme).
 - `docs/ARCHITECTURE.md` — living INDEX of the system architecture; section bodies
   in `docs/architectures/` (the Q-0XX per-task design rationale is in
   `docs/architectures/open-questions.md`).

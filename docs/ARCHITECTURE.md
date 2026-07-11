@@ -19,7 +19,7 @@
 > [006](./adr/ADR-006-derived-knowledge-health.md) derived knowledge health ·
 > [007](./adr/ADR-007-config-driven-write-grammar.md) config-driven write-grammar (Karpathy = a layout YAML) ·
 > [008](./adr/ADR-008-active-note-resolution.md) active-note resolution ·
-> [009](./adr/ADR-009-policy-before-model.md) policy-before-model retrieval scoping (**Proposed** — heads ROADMAP R-16…R-19 enterprise-readiness).
+> [009](./adr/ADR-009-policy-before-model.md) policy-before-model retrieval scoping (**Accepted**, SHIPPED as TASK 049 — headed the now-complete ROADMAP R-16…R-19 enterprise-readiness theme).
 >
 > **Source spec** (historical): [docs/archive/TASK-ref-v2.md](./archive/TASK-ref-v2.md) — the original pre-implementation v2 reference spec (archived; the living architecture is this document + `docs/architectures/`).
 > **Schema**: [docs/SCHEMA-v2.sql](./SCHEMA-v2.sql) — SQLite DDL (multi-vault, partitioned by `vault_id`).
