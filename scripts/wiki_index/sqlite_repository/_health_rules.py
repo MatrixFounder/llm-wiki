@@ -9,13 +9,21 @@ here; rule-free structural scans belong in `_health_scan`.
 **TASK 061 (R-061-1) — honest denominators.** The three finders above are now
 THIN WRAPPERS over `find_*_report()` (ONE code path — `tests/
 test_health_denominators.py` TC-00-2/TC-01-5 pin `wrapper.<findings> ==
-report.<findings>`, so the two can never drift apart). `find_coverage_gaps_report`
-/ `find_ontology_violations_report` additionally compute a POSITIVELY-DEFINED
-population denominator (how many pages/refs the check's rules actually bind
-to) alongside the findings, so `{"total_gaps": 0}` can no longer be mistaken
-for "0 typed pages were ever examined" (the LIVE-vault bug this task fixes).
-`find_lifecycle_drift_report`'s OWN `pages_examined` is **R-061-2** (bead 061-03,
-`wiki-lint`'s ontology+drift denominators) — it stays a stub `0` here.
+report.<findings>`, so the two can never drift apart). Each `*_report` method
+additionally computes a POSITIVELY-DEFINED population denominator (how many
+pages/refs the check's rules actually bind to) alongside the findings, so
+`{"total_gaps": 0}` can no longer be mistaken for "0 typed pages were ever
+examined" (the LIVE-vault bug this task fixes). FOUR denominators over FOUR
+populations — one per (check, population) pair, never one noun shared across two:
+
+  - `find_coverage_gaps_report`      → `pages_examined`  (⋃ coverage_rules[].class)
+  - `find_lifecycle_drift_report`    → `pages_examined`  (⋃ drift_rules[].class) — a
+    DIFFERENT population under the same noun; safe ONLY because the two never share
+    an envelope (`wiki-health` vs `wiki-lint`) and lint's payload is per-check-keyed
+    (P-061-D). R-061-2, bead 061-03.
+  - `find_ontology_violations_report` → `edges_examined` (⋃ ontology.edges[].edge) AND
+    `property_pages_examined` (⋃ ontology.properties[].class) — ONE call, TWO disjoint
+    populations, hence two denominators (C6).
 
 dialect: SQLite-leaning — heavy `json_extract`/`json_type` over
 `frontmatter_json` (Postgres: `jsonb` `->`/`->>`/`jsonb_typeof`); the
@@ -78,6 +86,29 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         row = conn.execute(
             f"SELECT COUNT(*) FROM page_entity_refs WHERE vault_id = ? AND {clause}",
             [vault_id, *vals]).fetchone()
+        return int(row[0])
+
+    def _count_pages_of_class_with_edge(
+        self, vault_id: str, page_class: str, edge: str
+    ) -> int:
+        """COUNT(*) of `pages` of `page_class` that CARRY the `edge` ref_type — a
+        DRIFT rule's PRECONDITION, verbatim the `$.type = ? AND EXISTS(ref_type = ?)`
+        head of `find_lifecycle_drift_report`'s query (TASK 061 / R-061-2). The
+        `json_type($.status) = 'text'` scalar filter is part of the drift CONDITION,
+        NOT the precondition, so it is deliberately absent here — otherwise a page
+        whose status is absent/list-valued would vanish from the denominator it is
+        legitimately measured against. Both values are bound scalars (no IN-list), so
+        the P-061-C degenerate-`IN ()` guard does not apply."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM pages p WHERE p.vault_id = ? "
+            "AND json_extract(p.frontmatter_json, '$.type') = ? "
+            "AND EXISTS (SELECT 1 FROM page_entity_refs r "
+            "            WHERE r.vault_id = p.vault_id "
+            "              AND r.page_slug = p.slug "
+            "              AND r.page_project = p.project "
+            "              AND r.ref_type = ?)",
+            [vault_id, page_class, edge]).fetchone()
         return int(row[0])
 
     def _count_pages_with_scalar(self, vault_id: str, page_class: str, field: str) -> int:
@@ -156,12 +187,24 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         # P-5) — fine for the small typed vaults; revisit a single CASE/CTE pass only if a
         # typed partition grows large.
         #
-        # TASK 061 (R-061-2 / bead 061-03): `pages_examined` (= pages whose $.type is in
-        # UNION of drift_rules[].class) is `wiki-lint`'s OWN denominator, computed there —
-        # NOT this bead's scope (R-061-1 is coverage + ontology only). Stays `0` here.
+        # TASK 061 (R-061-2 / bead 061-03) — DRIFT'S OWN DENOMINATOR. `pages_examined` =
+        # pages whose AUTHORED $.type is in the UNION of drift_rules[].class (P-061-C: 0
+        # rules ⇒ 0, no SQL). Per-rule `matched` = the rule's PRECONDITION ($.type = class
+        # AND EXISTS(ref_type = edge)) — NOT the same population, and that is the whole
+        # point: `matched` counts only pages that ALREADY CARRY the edge, so a bare
+        # `matched: 0` cannot distinguish "no `decision` pages at all" (today's LIVE state)
+        # from "50 decisions, none carrying a `superseded-by` edge" (the post-TASK-062
+        # state). Both denominators are needed; neither substitutes for the other.
+        classes = {r.page_class for r in rules}
+        pages_examined = self._count_pages_of_classes(vault_id, classes)
         conn = self._connect()
         out: list[DriftHit] = []
+        rule_stats: list[RuleStat] = []
         for rule in rules:
+            # Counted BEFORE the expect/forbid branch, so the degenerate-rule `continue`
+            # below still reports an honest `matched` (bead 061-03).
+            matched = self._count_pages_of_class_with_edge(
+                vault_id, rule.page_class, rule.edge)
             sql = (
                 "SELECT p.slug, p.project, "
                 "CAST(json_extract(p.frontmatter_json, '$.status') AS TEXT) AS status "
@@ -197,15 +240,32 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 # Defensive (critic-security LOW-1, parity with find_coverage_gaps): a
                 # hand-built rule (bypassing the config-load gate) with NEITHER branch would
                 # otherwise build a degenerate `IN ()`. Skip it — never crash, never inject.
+                #
+                # TASK 061 (bead 061-03): the skipped rule STILL gets a RuleStat. Its
+                # PRECONDITION is well-defined (so `matched` is real), only its drift
+                # CONDITION is degenerate — and "this rule examined N pages and found
+                # nothing because the RULE is broken" is precisely the state this task
+                # refuses to render as a silent green. Hence `∀ declared rule` in the
+                # invariant test is a REAL quantifier: no rule is missing from `rule_stats`.
+                rule_stats.append(RuleStat(
+                    page_class=rule.page_class, kind="drift", ref=rule.edge,
+                    matched=matched, findings={"drift": 0},
+                ))
                 continue
             sql += "ORDER BY p.project, p.slug"
-            for r in conn.execute(sql, params).fetchall():
+            rows = conn.execute(sql, params).fetchall()
+            for r in rows:
                 out.append(DriftHit(
                     vault_id=vault_id, page_slug=r["slug"], page_project=r["project"],
                     page_class=rule.page_class, edge=rule.edge,
                     status=r["status"], expected=expected,
                 ))
-        return LifecycleDriftReport(hits=out, pages_examined=0, rule_stats=[])
+            rule_stats.append(RuleStat(
+                page_class=rule.page_class, kind="drift", ref=rule.edge,
+                matched=matched, findings={"drift": len(rows)},
+            ))
+        return LifecycleDriftReport(
+            hits=out, pages_examined=pages_examined, rule_stats=rule_stats)
 
     def find_coverage_gaps_report(
         self, vault_id: str, rules: list[CoverageRule]

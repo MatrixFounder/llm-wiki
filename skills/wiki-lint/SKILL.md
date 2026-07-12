@@ -68,8 +68,41 @@ Or `/wiki-lint [...]`.
 
 ```json
 {"action": "linted", "vault": "<id>", "total_issues": 42,
- "by_category": {"orphan-link": 40, "hash-mismatch": 2}}
+ "by_category": {"orphan-link": 40, "hash-mismatch": 2},
+ "denominators": {"<id>": {
+   "lifecycle-drift":    {"pages_examined": 11,
+                          "by_rule": [{"class": "decision", "kind": "drift",
+                                       "ref": "superseded-by", "matched": 4,
+                                       "findings": {"drift": 2}}]},
+   "ontology-violation": {"edges_examined": 6, "property_pages_examined": 17,
+                          "by_rule": [{"class": "", "kind": "edge", "ref": "implements",
+                                       "matched": 2,
+                                       "findings": {"domain": 0, "range": 1}}]}}}}
 ```
+
+### `denominators` — a `0` is not a green until you know what was examined (TASK 061)
+`by_category` omitting `ontology-violation` means **either** "no contradictions" **or**
+"the check examined nothing". On the real vault it was the latter — 8836
+`page_entity_refs` rows, every one a `mentioned` wikilink, **zero** declared edges — and
+that read as a clean bill of health on the surface that **gates CI**. So both
+config-driven semantic checks (`lifecycle-drift` and `ontology-violation` — the two that
+gate `--strict`) now report their population:
+
+- **`lifecycle-drift`** — `pages_examined` = pages whose authored `$.type` ∈ ⋃
+  `drift_rules[].class`; per-rule `matched` = pages of that class **that already carry the
+  edge**. Both, because `matched: 0` alone cannot tell *"no `decision` pages at all"* from
+  *"50 decisions, none carrying a `superseded-by` edge"*.
+- **`ontology-violation`** — **two** denominators, because one check spans two populations:
+  `edges_examined` (refs whose `ref_type` is in the declared edge vocabulary) and
+  `property_pages_examined` (pages whose `$.type` ∈ ⋃ `properties[].class`).
+- **An absent check key** = "this check does not apply to this layout" (no `drift_rules` /
+  no `ontology:` block ⇒ its no-op fired, no DAL call). That is **not** "examined 0".
+- The other two checks carry no denominator, and that boundary is deliberate:
+  `auto-generated-drift` is a render-hash comparison (no rule population), and the
+  `classification-*` checks ride a `policy:` block that is declared-but-OFF.
+
+Denominators **never gate**: `total_issues`, `by_category` and the `--strict` exit code
+are unaffected by them.
 
 There is no `issues` key and no file paths in stdout — only counts. To **act on
 individual issues** (which file orphaned, which page drifted, which target is

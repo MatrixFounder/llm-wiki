@@ -4,15 +4,15 @@
 Bead 061-00: the three `find_*_report()` DAL methods were STUBS — `findings`
 real (delegated to today's finders), every denominator hardcoded `0`.
 
-Bead 061-01 (THIS revision): `find_coverage_gaps_report` and
-`find_ontology_violations_report` compute REAL denominators (R-061-1 — coverage
-`pages_examined`, ontology `edges_examined` + `property_pages_examined`) and the
-legacy list methods collapse into thin wrappers over the report methods (one
-code path). `find_lifecycle_drift_report`'s OWN `pages_examined` stays a stub
-`0` — that denominator is R-061-2 (bead 061-03, `wiki-lint`'s BOTH-checks fix),
-deliberately NOT this bead's scope (see the RTM: R-061-1 names ONLY
-`find_coverage_gaps` + `find_ontology_violations`; R-061-2 is the one that adds
-drift's own `pages_examined`).
+Bead 061-01: `find_coverage_gaps_report` and `find_ontology_violations_report`
+compute REAL denominators (R-061-1 — coverage `pages_examined`, ontology
+`edges_examined` + `property_pages_examined`) and the legacy list methods collapse
+into thin wrappers over the report methods (one code path).
+
+Bead 061-03 (THIS revision): `find_lifecycle_drift_report`'s OWN `pages_examined`
++ per-rule `matched` land too (R-061-2 — surfaced by `wiki-lint`, whose lint-side
+envelope is tested in `tests/test_lint_denominators.py`). FOUR denominators over
+FOUR populations, none sharing a noun inside one envelope.
 
 TC-00-2 (findings parity, still exercised below) is the load-bearing contract
 that made the wrapper-collapse safe — the two call directions were proven to
@@ -156,17 +156,30 @@ def test_ontology_edges_examined_exact(tmp_path: Path) -> None:
 # --- TC-01-2: untyped fixture ⇒ 0 — THE VACUITY GATE ------------------------
 
 def test_untyped_and_nontyped_class_reads_zero(tmp_path: Path) -> None:
-    # No `type:` at all, PLUS a `type: concept` page — concept is a real class but
-    # NOT one any coverage/ontology rule binds to (a non-typed ADR-003 class), so it
-    # must NOT be counted either. This reproduces the LIVE-vault state (0 examined
-    # despite 713 real `concept` pages) inside CI.
+    # A `type: concept` page — `concept` is a real class but NOT one any coverage/ontology
+    # rule binds to (a non-typed ADR-003 class), so it must NOT be counted. This reproduces
+    # the LIVE-vault state (0 examined despite 713 real `concept` pages) inside CI.
+    #
+    # BEAD 061-03 CORRECTION (found by grepping cybos.yaml's `paths:`, not by reasoning):
+    # this fixture originally filed the page at `_concepts/some-concept.md` — and cybos
+    # ships **no `_concepts/**` glob**, so that page was NEVER INDEXED. The test passed
+    # because `pages` was EMPTY, not because an indexed concept page was correctly
+    # excluded: a check that examined nothing reporting green, INSIDE the test written to
+    # kill that bug (the 8th recurrence of this task's fractal). Nesting it under a
+    # RECURSIVE glob (`facts/**/*.md`) is what actually indexes it — asserted below, so
+    # the fixture can never silently go vacuous again.
     files = {
-        "notes/untyped.md": "---\ntitle: No Type At All\n---\nbody\n",
-        "_concepts/some-concept.md": "---\ntype: concept\ntitle: Some Concept\n---\nbody\n",
+        "facts/_concepts/some-concept.md":
+            "---\ntype: concept\ntitle: Some Concept\n---\nbody\n",
     }
     repo, root = build_cybos_vault(tmp_path, files, vault_id="vacuous")
     cfg = resolve_layout_config(root)
     assert cfg.ontology is not None
+    # THE GUARD: the page is really in `pages`, with `$.type = concept`. Without this,
+    # every assertion below would hold over an empty table and prove nothing.
+    assert repo._connect().execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='vacuous' "
+        "AND json_extract(frontmatter_json, '$.type') = 'concept'").fetchone()[0] == 1
     coverage = repo.find_coverage_gaps_report("vacuous", list(cfg.coverage_rules))
     ontology = repo.find_ontology_violations_report("vacuous", cfg.ontology)
     assert coverage.pages_examined == 0
@@ -297,14 +310,25 @@ def test_untyped_vault_zero_rules_no_sql(tmp_path: Path) -> None:
     repo.close()
 
 
-# --- drift's OWN denominator stays a stub (R-061-2 / bead 061-03 scope) -----
+# --- drift's OWN denominator — LANDED by R-061-2 / bead 061-03 --------------
 
-def test_drift_denominator_still_stub_until_061_03(tmp_path: Path) -> None:
-    # R-061-1 (this bead's RTM scope) is coverage + ontology ONLY. Drift's own
-    # `pages_examined` denominator is R-061-2 (bead 061-03, `wiki-lint`) — pinned
-    # here so it is a VISIBLE, tracked residual, not a silent gap.
+def test_drift_denominator_landed_in_061_03(tmp_path: Path) -> None:
+    # Bead 061-01 shipped this as a VISIBLE, tracked residual (`pages_examined == 0`,
+    # `rule_stats == []`, docstring citing R-061-2) rather than a silent gap. Bead 061-03
+    # closes it, and this test FLIPS to the real numbers — the pin did its job: the
+    # residual could not be forgotten, because forgetting it would have left a test
+    # asserting a stub.
     repo, _root, _cfg, _coverage, drift, _ontology = _reports(tmp_path)
     assert len(drift.hits) > 0            # findings are real (the 4 drift contradictions)
-    assert drift.pages_examined == 0      # denominator: still 061-03's job
-    assert drift.rule_stats == []
+    counts = _type_counts(_FILES)
+    drift_classes = {r.page_class for r in _cfg.drift_rules}
+    assert drift_classes == {"decision", "workflow"}      # census, not belief
+    assert drift.pages_examined == sum(counts.get(c, 0) for c in drift_classes) == 10
+    # cybos ships TWO drift rules on `decision` (superseded-by + invalidated-by) — the
+    # very "two rules, one class" shape that makes a TOTAL-form invariant false. One
+    # RuleStat PER RULE, not per class.
+    assert len(drift.rule_stats) == len(_cfg.drift_rules) == 3
+    for stat in drift.rule_stats:
+        assert stat.kind == "drift"
+        assert stat.findings["drift"] <= stat.matched <= drift.pages_examined
     repo.close()

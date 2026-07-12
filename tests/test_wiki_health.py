@@ -151,11 +151,19 @@ def test_coverage_no_rules_note(tmp_path: Path, capsys) -> None:
 def _untyped_db(tmp_path: Path) -> str:
     """A cybos vault (⇒ rules ARE configured and DO run) whose pages carry no rule-bound
     `$.type` — a `concept` page is a real class, but NOT one any coverage/ontology rule
-    binds to. This is the LIVE-vault state (713 concepts, 0 examined) inside CI."""
+    binds to. This is the LIVE-vault state (713 concepts, 0 examined) inside CI.
+
+    The page is filed under `facts/_concepts/` because cybos ships **no `_concepts/**`
+    glob** (grepped, not assumed): a top-level `_concepts/x.md` is never indexed, and the
+    fixture would then pass over an EMPTY `pages` table — a vacuous test of vacuity. The
+    assertion below pins that it is really indexed."""
     repo, _root = build_cybos_vault(tmp_path, {
-        "notes/untyped.md": "---\ntitle: No Type At All\n---\nbody\n",
-        "_concepts/some-concept.md": "---\ntype: concept\ntitle: Some Concept\n---\nb\n",
+        "facts/_concepts/some-concept.md":
+            "---\ntype: concept\ntitle: Some Concept\n---\nb\n",
     }, vault_id="vacuous")
+    assert repo._connect().execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='vacuous' "
+        "AND json_extract(frontmatter_json, '$.type') = 'concept'").fetchone()[0] == 1
     repo.close()
     return str(tmp_path / "vacuous.db")
 

@@ -23,6 +23,41 @@ class LintIssue:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class LintReport:
+    """TASK 061 / R-061-2 — the issues PLUS what **each config-driven check** examined.
+
+    `wiki-lint` runs FOUR `check_*` functions; **two** are config-driven with a rule
+    POPULATION, and both gate `--strict` (the CI rail) — so both report a denominator.
+    The boundary is STATED, not merely true (a `0` from a check that examined nothing is
+    the bug this task exists to kill, and an unenumerated surface is how it recurs):
+
+      - ``lifecycle-drift``    ✅ — config-driven (`drift_rules`), rule population, `--strict`
+      - ``ontology-violation`` ✅ — config-driven (`ontology:`), rule population, `--strict`
+      - ``auto-generated-drift`` ❌ — a render HASH comparison; there is no rule population,
+        hence no denominator to state
+      - ``classification-*``     ❌ — R-16 policy, gated on a `policy:` block that TASK 061
+        §5 deliberately leaves declared-but-OFF
+
+    ``denominators`` is keyed ``{vault_id: {check_category: payload}}`` — **per-CHECK**, so
+    the ``pages_examined`` noun (drift's population = ⋃ ``drift_rules[].class``) can never
+    collide with the ontology check's edge/property populations inside one envelope.
+    Coverage (`wiki-health`) owns the SAME noun for a THIRD population (⋃
+    ``coverage_rules[].class``); that is safe only because the two never share an envelope.
+    **Any future surface that flattens these payloads MUST re-qualify the noun** —
+    collapsing them reruns the two-populations-one-denominator bug on a new surface
+    (PLAN 061 P-061-D).
+
+    A check whose no-op fires (no `drift_rules` / no `ontology:` block ⇒ **no DAL call**)
+    contributes NO payload, and a vault with neither contributes no key at all — an absent
+    key means "this check does not apply to this layout", which is different from
+    "examined 0".
+    """
+
+    issues: list[LintIssue]
+    denominators: dict[str, dict[str, Any]]
+
+
 def _safe_surface(s: str) -> str:
     """CWE-117 (F5, vdd-multi): strip control chars + cap an untrusted alias
     surface before it enters an operator-facing lint report (markdown / JSON
@@ -36,10 +71,26 @@ def run_all_checks(
     strict: bool = False, mtime_skip: bool = False,
 ) -> list[LintIssue]:
     """Run SQL-level lint checks across the given vaults (or all if None).
+
+    Back-compat wrapper over `run_all_checks_report` (TASK 061) — signature and return
+    type UNCHANGED for the pre-061 callers (`scripts/benchmark.py:217`, the lint test
+    modules). New callers that want the denominators call the report form."""
+    return run_all_checks_report(
+        repo, vaults=vaults, strict=strict, mtime_skip=mtime_skip).issues
+
+
+def run_all_checks_report(
+    repo: "IndexRepository", *, vaults: list[str] | None = None,
+    strict: bool = False, mtime_skip: bool = False,
+) -> LintReport:
+    """Run SQL-level lint checks across the given vaults (or all if None), returning the
+    issues AND what each config-driven check examined (TASK 061 / R-061-2 — see
+    `LintReport`).
     `mtime_skip` (the `wiki-lint --mtime-skip` opt-in, TASK 017 / P-3) is forwarded
     to `check_drift` — skips the re-hash for mtime-unchanged files (integrity-relaxed;
     default off → always full-hash)."""
     issues: list[LintIssue] = []
+    denominators: dict[str, dict[str, Any]] = {}
     # Resolve each vault's layout grammar ONCE and share it across the config-driven checks
     # below (vdd-multi perf LOW: it was resolved independently per check). Lazy import keeps
     # lint→layout_config off the module import graph (cycle-safe).
@@ -107,15 +158,32 @@ def run_all_checks(
         # resolve the layout grammar ONCE and share it.
         config = resolve_layout_config(v.root_path)
         issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path, config=config))
-        issues.extend(
-            check_lifecycle_drift(repo, vid, v.root_path, strict=strict, config=config))
+        # TASK 061 (R-061-2): BOTH config-driven semantic checks report what they examined
+        # — they are the two that gate `--strict` (the CI rail), and giving a denominator
+        # to only one would leave the other printing `0` with no way to tell an inert check
+        # from a healthy vault. Payload is per-CHECK-keyed (see `LintReport`).
+        per_vault: dict[str, Any] = {}
+        drift_issues, drift_denom = check_lifecycle_drift_report(
+            repo, vid, v.root_path, strict=strict, config=config)
+        issues.extend(drift_issues)
+        if drift_denom is not None:
+            per_vault["lifecycle-drift"] = drift_denom
         # TASK 054 (R-19): ontology-violation — config-driven (`ontology:` block; cybos ships
         # one, others none ⇒ no-op). A contradiction ⇒ advisory, gates `--strict` (ADR-006).
-        issues.extend(
-            check_ontology_violations(repo, vid, v.root_path, strict=strict, config=config))
+        ont_issues, ont_denom = check_ontology_violations_report(
+            repo, vid, v.root_path, strict=strict, config=config)
+        issues.extend(ont_issues)
+        if ont_denom is not None:
+            per_vault["ontology-violation"] = ont_denom
+        if per_vault:
+            # No key at all when NEITHER check applies to this layout — "does not apply"
+            # is not "examined 0", and conflating them would be this task's own bug.
+            denominators[vid] = per_vault
         # TASK 049 (R-6): classification-leak + invalid-classification — gated
         # on the vault actually declaring a `policy:` block (no block ⇒ no DAL
-        # call, no output — the R-15 no-op precedent).
+        # call, no output — the R-15 no-op precedent). NO denominator: policy is
+        # declared-but-OFF by decision (TASK 061 §5), so it has no live rule population
+        # here (`LintReport` states this boundary).
         issues.extend(
             check_classification_policy(repo, vid, v.root_path, strict=strict))
 
@@ -130,7 +198,7 @@ def run_all_checks(
                      "hint": "Consider promoting to the shared root tier "
                              "(relocate the page + wiki-reindex --delta; see WIKI_SCHEMA.md)"},
         ))
-    return issues
+    return LintReport(issues=issues, denominators=denominators)
 
 
 def check_auto_generated_unchanged(
@@ -187,6 +255,17 @@ def check_lifecycle_drift(
     config: "LayoutConfig | None" = None,
 ) -> list[LintIssue]:
     """TASK 036 / R-15 (Slice A1): flag pages whose AUTHORED `status` contradicts their
+    event-graph state. Back-compat wrapper (signature UNCHANGED) over
+    `check_lifecycle_drift_report` — see there for the full contract."""
+    return check_lifecycle_drift_report(
+        repo, vault_id, vault_root, strict=strict, config=config)[0]
+
+
+def check_lifecycle_drift_report(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
+    config: "LayoutConfig | None" = None,
+) -> tuple[list[LintIssue], dict[str, Any] | None]:
+    """TASK 036 / R-15 (Slice A1): flag pages whose AUTHORED `status` contradicts their
     event-graph state (e.g. a decision carrying a `superseded-by` edge but still
     `status: accepted`). Rules are layout-config-driven (`drift_rules`; the `cybos`
     layout ships them), so a layout without them (Karpathy/dev-project/obsidian-personal)
@@ -199,15 +278,22 @@ def check_lifecycle_drift(
     CAVEAT (vdd-multi): drift reads the auto-derived INVERSE edges, which a
     `wiki-reindex --delta` can leave transiently stale on one side of a bidirectionally-
     authored edge until the next `--full` — so `--strict` drift gating assumes a recent
-    `--full`. `config` is reused from `run_all_checks` when provided (else resolved here)."""
+    `--full`. `config` is reused from `run_all_checks` when provided (else resolved here).
+
+    TASK 061 / R-061-2 — returns `(issues, denominators)`. `denominators` is `None` (NOT
+    an empty dict) when the layout ships **no** `drift_rules`: the pre-061 no-op is
+    preserved VERBATIM — no DAL call, and the caller emits no payload, because "this check
+    does not apply to this layout" is a different statement from "examined 0 pages". All
+    counting happens in the DAL (`find_lifecycle_drift_report`); this function adds none."""
     if config is None:
         from scripts.wiki_index.layout_config import resolve_layout_config
         config = resolve_layout_config(vault_root)
     if not config.drift_rules:
-        return []
+        return [], None
     sev: Severity = "error" if strict else "warning"
     out: list[LintIssue] = []
-    for hit in repo.find_lifecycle_drift(vault_id, list(config.drift_rules)):
+    report = repo.find_lifecycle_drift_report(vault_id, list(config.drift_rules))
+    for hit in report.hits:
         out.append(LintIssue(
             category="lifecycle-drift", severity=sev, vault_id=vault_id,
             page_slug=hit.page_slug,
@@ -215,13 +301,29 @@ def check_lifecycle_drift(
                      "edge": hit.edge, "status": hit.status,
                      "expected": hit.expected},
         ))
-    return out
+    # `pages_examined` = pages whose $.type ∈ ⋃ drift_rules[].class; per-rule `matched` =
+    # the rule's PRECONDITION ($.type = class AND the page CARRIES the edge). Both, because
+    # `matched: 0` alone cannot distinguish "no decision pages at all" from "50 decisions,
+    # none carrying a superseded-by edge" (R-061-2's E2 correction).
+    return out, {"pages_examined": report.pages_examined,
+                 "by_rule": [s.to_json() for s in report.rule_stats]}
 
 
 def check_ontology_violations(
     repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
     config: "LayoutConfig | None" = None,
 ) -> list[LintIssue]:
+    """TASK 054 / R-19 — flag pages that CONTRADICT the declared ontology contract.
+    Back-compat wrapper (signature UNCHANGED) over `check_ontology_violations_report` —
+    see there for the full contract."""
+    return check_ontology_violations_report(
+        repo, vault_id, vault_root, strict=strict, config=config)[0]
+
+
+def check_ontology_violations_report(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool,
+    config: "LayoutConfig | None" = None,
+) -> tuple[list[LintIssue], dict[str, Any] | None]:
     """TASK 054 / R-19 — flag pages that CONTRADICT the declared ontology contract: an edge
     whose source/target class is out of the declared `from`/`to` (domain/range), or a
     `status`-style property value out of its enum. Config-driven (`ontology:` block; the
@@ -230,15 +332,24 @@ def check_ontology_violations(
     `--strict` (ADR-006 D-036-2, the same rail); the sibling `wiki-health ontology` is the
     always-exit-0 report view. (`closed_types` is enforced at index time — an out-of-roster
     `$.type` is a reindex SKIP — so it produces no read-side finding here; see Q-054.)
-    `config` is reused from `run_all_checks` when provided (else resolved here)."""
+    `config` is reused from `run_all_checks` when provided (else resolved here).
+
+    TASK 061 / R-061-2 — returns `(issues, denominators)` with the TWO denominators this
+    ONE check needs, because it spans TWO disjoint populations: `edges_examined` (refs whose
+    ref_type is in the declared edge vocabulary — a `mentioned` wikilink is NOT one; on the
+    LIVE vault this reads 0 despite 8836 refs) and `property_pages_examined` (pages whose
+    $.type ∈ ⋃ properties[].class). `None` when the layout declares no `ontology:` block —
+    the pre-061 no-op preserved VERBATIM (no DAL call). All counting happens in the DAL
+    (`find_ontology_violations_report`); this function adds none."""
     if config is None:
         from scripts.wiki_index.layout_config import resolve_layout_config
         config = resolve_layout_config(vault_root)
     if config.ontology is None:
-        return []
+        return [], None
     sev: Severity = "error" if strict else "warning"
     out: list[LintIssue] = []
-    for v in repo.find_ontology_violations(vault_id, config.ontology):
+    report = repo.find_ontology_violations_report(vault_id, config.ontology)
+    for v in report.violations:
         out.append(LintIssue(
             category="ontology-violation", severity=sev, vault_id=vault_id,
             page_slug=v.page_slug,
@@ -246,7 +357,9 @@ def check_ontology_violations(
                      "kind": v.kind, "ref": v.ref, "detail": v.detail,
                      "target": v.target_slug},
         ))
-    return out
+    return out, {"edges_examined": report.edges_examined,
+                 "property_pages_examined": report.property_pages_examined,
+                 "by_rule": [s.to_json() for s in report.rule_stats]}
 
 
 def check_classification_policy(

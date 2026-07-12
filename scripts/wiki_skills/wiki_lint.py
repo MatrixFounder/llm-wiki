@@ -1,4 +1,14 @@
-"""`wiki-lint` CLI — real impl per task-001-29."""
+"""`wiki-lint` CLI — real impl per task-001-29.
+
+TASK 061 / R-061-2 — the envelope carries an additive `denominators` key: what EACH of
+the two config-driven semantic checks actually examined (`lifecycle-drift` and
+`ontology-violation` — the two that gate `--strict`, i.e. the CI rail). Without it,
+`by_category` silently omitting a category is indistinguishable from a check that ran
+against an EMPTY population (on the LIVE vault, `ontology-violation` examined 0 of 8836
+refs — every one was a `mentioned` wikilink, not a declared edge). Denominators never
+gate and never become issues: `total_issues`, `by_category` and the exit-code policy are
+unchanged. See `lint.LintReport` for why the payload is per-CHECK-keyed.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +21,7 @@ from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.lint import (
     render_json_sidecar,
     render_markdown_report,
-    run_all_checks,
+    run_all_checks_report,
 )
 from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
 
@@ -40,8 +50,9 @@ def main(argv: list[str] | None = None) -> int:
         db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
-        issues = run_all_checks(repo, vaults=vaults_list, strict=args.strict,
-                                mtime_skip=args.mtime_skip)
+        report = run_all_checks_report(repo, vaults=vaults_list, strict=args.strict,
+                                       mtime_skip=args.mtime_skip)
+        issues = report.issues
         if args.report:
             Path(args.report).write_text(render_markdown_report(issues))
         if args.json_sidecar:
@@ -58,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
             "vault": args.vault,
             "total_issues": len(issues),
             "by_category": counts,
+            # TASK 061 (additive): {vault_id: {check_category: {denominator, by_rule}}}.
+            # An absent check key = "this check does not apply to this layout" (its no-op
+            # fired; no DAL call) — which is NOT the same as "examined 0", and the two must
+            # not be conflated.
+            "denominators": report.denominators,
         }, exit_code)
     finally:
         repo.close()

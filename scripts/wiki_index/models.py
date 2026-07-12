@@ -541,17 +541,17 @@ class RuleStat:
 
     ``page_class`` is ``""`` for an ontology EDGE rule (it declares `from`/`to`
     CLASS SETS, not a single page class the rule is "of"); ``kind`` distinguishes
-    the rule FAMILY (coverage: ``"edge"``/``"field"``; ontology: ``"edge"``/
-    ``"property"``); ``ref`` is the edge ref_type / frontmatter field name the rule
-    keys on."""
+    the rule FAMILY (coverage: ``"edge"``/``"field"``; lifecycle-drift: ``"drift"``;
+    ontology: ``"edge"``/``"property"``); ``ref`` is the edge ref_type / frontmatter
+    field name the rule keys on."""
 
     page_class: str
     kind: str
     ref: str
     matched: int
     findings: dict[str, int]
-    """Coverage: ``{"gaps": n}``. Ontology edge: ``{"domain": n, "range": n}``.
-    Ontology property: ``{"property": n}``."""
+    """Coverage: ``{"gaps": n}``. Lifecycle-drift: ``{"drift": n}``. Ontology edge:
+    ``{"domain": n, "range": n}``. Ontology property: ``{"property": n}``."""
 
     def to_json(self) -> dict[str, Any]:
         return {"class": self.page_class, "kind": self.kind, "ref": self.ref,
@@ -577,10 +577,19 @@ class CoverageReport:
 class LifecycleDriftReport:
     """``find_lifecycle_drift`` + its denominator (TASK 061 / R-061-2 — surfaced by
     `wiki-lint`). ``pages_examined`` = pages whose AUTHORED ``$.type`` is in the union
-    of every ``drift_rules[].class``. Named ``LifecycleDriftReport`` (NOT ``DriftReport``
-    — that name is already taken by `check_drift`'s filesystem-vs-DB reconciliation
-    report; a shared name across two unrelated denominators would be the very
-    "one mechanism, unenumerated surfaces" bug this task fixes)."""
+    of every ``drift_rules[].class``.
+
+    ``pages_examined`` and per-rule ``matched`` are BOTH needed and neither substitutes
+    for the other: a drift rule's precondition is ``$.type = class`` **AND**
+    ``EXISTS(ref_type = edge)``, so ``matched`` counts only pages that ALREADY CARRY the
+    edge. A bare ``matched: 0`` therefore cannot distinguish *"no `decision` pages at
+    all"* (the LIVE state) from *"50 decisions, none carrying a `superseded-by` edge"*.
+    ``pages_examined`` is what tells those two apart.
+
+    Named ``LifecycleDriftReport`` (NOT ``DriftReport`` — that name is already taken by
+    `check_drift`'s filesystem-vs-DB reconciliation report; a shared name across two
+    unrelated denominators would be the very "one mechanism, unenumerated surfaces" bug
+    this task fixes)."""
 
     hits: list[DriftHit]
     pages_examined: int
