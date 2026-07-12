@@ -31,12 +31,35 @@ wiki-health ontology --vault <id> [--class decision]
 ```
 
 Every invocation prints a one-line JSON envelope. **coverage**: `{action, vault, rules,
-total_gaps, by_class, gaps:[{slug, project, class, kind, missing}]}`. **ontology**:
-`{action, vault, total_violations, by_kind, by_class, violations:[{slug, project, class,
+total_gaps, pages_examined, by_rule, by_class, gaps:[{slug, project, class, kind,
+missing}]}`. **ontology**: `{action, vault, total_violations, edges_examined,
+property_pages_examined, by_rule, by_kind, by_class, violations:[{slug, project, class,
 kind, ref, detail, target}]}` where `kind ∈ {domain, range, property}`. Pipe to
 `python3 -m json.tool`. `--class` restricts to one page class (an unknown class →
 `INVALID_CLASS`, exit 2, without echoing the value); an unknown vault →
 `VAULT_NOT_FOUND`, exit 6. `--db-path` / `--vault-root` resolve the index DB (TASK 022).
+
+### Read the DENOMINATOR, not just the count (TASK 061 / R-061-1)
+`{"total_gaps": 0}` alone is **ambiguous**: it means either "healthy" or "**nothing was
+examined**". So every report envelope also states the population it actually looked at:
+
+- **coverage** — `pages_examined` = pages whose *authored* `$.type` is in ⋃ the (possibly
+  `--class`-filtered) `coverage_rules[].class`. A page with no `type:`, or a non-rule class
+  (`concept`/`moc`/`*-summary`), is **not examined**.
+- **ontology** — **TWO** denominators, because one call spans two populations:
+  `edges_examined` = `page_entity_refs` rows whose `ref_type` is in the contract's declared
+  edge vocabulary (a `mentioned` wikilink is **not** one); `property_pages_examined` = pages
+  whose `$.type` is in ⋃ `properties[].class`. Deliberately *not* one shared `pages_examined`.
+- **`by_rule`** — per rule: `{class, kind, ref, matched, findings}`. `matched` = rows meeting
+  that rule's **precondition**; `findings` is a **dict per kind** (one examined edge row can
+  be *both* a `domain` and a `range` violation).
+- **`note`** — emitted when the denominators are `0` *while rules are configured*: the report
+  says out loud that it is **not a clean bill of health**. (A layout with **no** rules /
+  **no** `ontology:` block gets its own, different note.)
+
+Invariants hold **per rule, against that rule's own family denominator** —
+`findings[k] ≤ matched ≤ <denominator>`. Do **not** read `total_gaps ≤ pages_examined`: two
+rules may target one class, so a page can gap twice and the total can exceed the population.
 
 ## Ontology contract (R-19 / TASK 054)
 `wiki-health ontology` is the **always-exit-0 report** over the layout's declared
