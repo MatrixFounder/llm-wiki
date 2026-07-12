@@ -519,6 +519,96 @@ class OntologyViolation:
     target_slug: str | None = None
 
 
+# -----------------------------------------------------------------------------
+# TASK 061 (R-061-1) — honest denominators. `find_coverage_gaps` /
+# `find_lifecycle_drift` / `find_ontology_violations` report a FINDINGS list but
+# no POPULATION count, so `{"total_gaps": 0}` is indistinguishable from "0 typed
+# pages were ever examined" — the exact LIVE-vault bug this task fixes. These
+# report types add a positively-defined denominator (a COUNT over the pages/refs
+# a check's rules actually bind to) alongside the pre-existing findings list.
+# Zero DDL — computed read-side over `pages.frontmatter_json` + `page_entity_refs`.
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RuleStat:
+    """One rule's DENOMINATOR row (TASK 061 / R-061-1): how many rows met that
+    rule's PRECONDITION (``matched``), and what it found (``findings``). ``findings``
+    is a DICT, not a single int, because ONE examined ontology edge row can be BOTH
+    a ``domain`` and a ``range`` violation simultaneously — summing kinds into one
+    integer would make ``violations_e <= matched_e`` false on correct data (PLAN 061
+    P-061-A), so the invariant is asserted per ``(rule, kind)`` against ``findings[kind]``.
+
+    ``page_class`` is ``""`` for an ontology EDGE rule (it declares `from`/`to`
+    CLASS SETS, not a single page class the rule is "of"); ``kind`` distinguishes
+    the rule FAMILY (coverage: ``"edge"``/``"field"``; ontology: ``"edge"``/
+    ``"property"``); ``ref`` is the edge ref_type / frontmatter field name the rule
+    keys on."""
+
+    page_class: str
+    kind: str
+    ref: str
+    matched: int
+    findings: dict[str, int]
+    """Coverage: ``{"gaps": n}``. Ontology edge: ``{"domain": n, "range": n}``.
+    Ontology property: ``{"property": n}``."""
+
+    def to_json(self) -> dict[str, Any]:
+        return {"class": self.page_class, "kind": self.kind, "ref": self.ref,
+                "matched": self.matched, "findings": dict(self.findings)}
+
+
+@dataclass(frozen=True)
+class CoverageReport:
+    """``find_coverage_gaps`` + its denominator (TASK 061 / R-061-1). ``pages_examined``
+    is a POSITIVE count: pages whose AUTHORED ``$.type`` is in the UNION of every
+    ``coverage_rules[].class`` — a page with no ``$.type``, or a non-typed class
+    (``concept``/``moc``/``*-summary``), was NOT examined and is excluded from this
+    count. Do NOT assert ``len(gaps) <= pages_examined`` — two rules may target the
+    SAME class, so one page can gap twice (RTM constraint 3); assert per-rule instead,
+    via ``rule_stats``, against THIS denominator."""
+
+    gaps: list[CoverageGap]
+    pages_examined: int
+    rule_stats: list[RuleStat]
+
+
+@dataclass(frozen=True)
+class LifecycleDriftReport:
+    """``find_lifecycle_drift`` + its denominator (TASK 061 / R-061-2 — surfaced by
+    `wiki-lint`). ``pages_examined`` = pages whose AUTHORED ``$.type`` is in the union
+    of every ``drift_rules[].class``. Named ``LifecycleDriftReport`` (NOT ``DriftReport``
+    — that name is already taken by `check_drift`'s filesystem-vs-DB reconciliation
+    report; a shared name across two unrelated denominators would be the very
+    "one mechanism, unenumerated surfaces" bug this task fixes)."""
+
+    hits: list[DriftHit]
+    pages_examined: int
+    rule_stats: list[RuleStat]
+
+
+@dataclass(frozen=True)
+class OntologyReport:
+    """``find_ontology_violations`` + its TWO denominators (TASK 061 / R-061-1).
+    A SINGLE call to the finder iterates TWO disjoint populations — edges (for
+    ``domain``/``range`` rules) and pages (for ``property`` rules) — so ONE
+    denominator would silently misreport whichever population it wasn't bound to
+    (e.g. reporting a ref-row count as "pages examined" for property rules, or vice
+    versa). ``edges_examined`` = ``page_entity_refs`` rows whose ``ref_type`` is in
+    the ontology's DECLARED edge vocabulary (⋃ ``ontology.edges[].edge`` — NOT every
+    ref_type; ``mentioned``/``cited``/``verifies`` are excluded by construction, and
+    an UNDECLARED edge like ``verifies`` is not merely absent from the sum but
+    ``validate_ontology``-UNDECLARABLE). ``property_pages_examined`` = pages whose
+    ``$.type`` is in ⋃ ``ontology.properties[].class`` — deliberately NOT named
+    ``pages_examined``: `CoverageReport.pages_examined` already owns that noun for a
+    DIFFERENT population (RTM constraint 4 / Q-061-1)."""
+
+    violations: list[OntologyViolation]
+    edges_examined: int
+    property_pages_examined: int
+    rule_stats: list[RuleStat]
+
+
 @dataclass(frozen=True)
 class ClassificationLeakHit:
     """TASK 049 (R-6): a page whose ``cited``/``verifies`` ref targets a page

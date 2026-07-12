@@ -17,10 +17,13 @@ from typing import Any
 
 from scripts.wiki_index.models import (
     CoverageGap,
+    CoverageReport,
     CoverageRule,
     DriftHit,
     DriftRule,
+    LifecycleDriftReport,
     OntologyConfig,
+    OntologyReport,
     OntologyViolation,
 )
 from scripts.wiki_index.repository import validate_filter_field
@@ -276,4 +279,43 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                     detail=f"{field}={shown!r} not in {list(prop.enum)}",
                 ))
         return out
+
+    # =========================================================================
+    # TASK 061 (R-061-1) — honest denominators. STUB at 061-00 (this commit):
+    # `findings` are REAL (delegate to the finder above); the population
+    # denominators are hardcoded `0` and `rule_stats` is empty. 061-01 replaces
+    # the zeros with the real counts AND collapses the three finders above into
+    # thin wrappers over these report methods (one code path, no drift between
+    # a report's `findings` and the legacy list). This stub's ONLY job is to
+    # prove the shape + the findings-parity contract (tests/test_health_denominators.py
+    # TC-00-2) that makes that collapse safe.
+    # =========================================================================
+
+    def find_coverage_gaps_report(
+        self, vault_id: str, rules: list[CoverageRule]
+    ) -> CoverageReport:
+        # STUB (061-00): denominator computed by 061-01.
+        return CoverageReport(
+            gaps=self.find_coverage_gaps(vault_id, rules),
+            pages_examined=0, rule_stats=[],
+        )
+
+    def find_lifecycle_drift_report(
+        self, vault_id: str, rules: list[DriftRule]
+    ) -> LifecycleDriftReport:
+        # STUB (061-00): denominator computed by 061-03 (R-061-2 — wiki-lint's OWN
+        # `pages_examined` for the drift check; NOT R-061-1's scope).
+        return LifecycleDriftReport(
+            hits=self.find_lifecycle_drift(vault_id, rules),
+            pages_examined=0, rule_stats=[],
+        )
+
+    def find_ontology_violations_report(
+        self, vault_id: str, ontology: OntologyConfig
+    ) -> OntologyReport:
+        # STUB (061-00): BOTH denominators computed by 061-01.
+        return OntologyReport(
+            violations=self.find_ontology_violations(vault_id, ontology),
+            edges_examined=0, property_pages_examined=0, rule_stats=[],
+        )
 

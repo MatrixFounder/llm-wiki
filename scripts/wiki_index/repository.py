@@ -29,15 +29,18 @@ from scripts.wiki_index.models import (
     BatchRun,
     ClassificationLeakHit,
     CoverageGap,
+    CoverageReport,
     CoverageRule,
     DriftHit,
     InvalidClassificationHit,
     DriftReport,
     DriftRule,
     Entity,
+    LifecycleDriftReport,
     LogEvent,
     MergeReport,
     OntologyConfig,
+    OntologyReport,
     OntologyViolation,
     OrphanLink,
     Page,
@@ -413,6 +416,35 @@ class IndexRepository(abc.ABC):
         **zero DDL**. NOT a write gate — reindex still indexes an edge/property-violating
         page. Surfaced by ``wiki-lint`` (``ontology-violation``; gates ``--strict``) +
         ``wiki-health ontology`` (always exit 0)."""
+        ...
+
+    # =========================================================================
+    # TASK 061 (R-061-1/R-061-2) — the SAME three finders above, report-shaped: a
+    # findings list PLUS a positively-defined denominator (population examined) +
+    # per-rule `matched`. The three list-returning methods above are THIN WRAPPERS
+    # over these (one code path — see sqlite_repository/_health_rules.py); a
+    # concrete backend implements the report method, never the reverse.
+    # =========================================================================
+
+    @abc.abstractmethod
+    def find_coverage_gaps_report(
+        self, vault_id: str, rules: list[CoverageRule]
+    ) -> CoverageReport:
+        """`find_coverage_gaps` + its denominator. See `models.CoverageReport`."""
+        ...
+
+    @abc.abstractmethod
+    def find_lifecycle_drift_report(
+        self, vault_id: str, rules: list[DriftRule]
+    ) -> LifecycleDriftReport:
+        """`find_lifecycle_drift` + its denominator. See `models.LifecycleDriftReport`."""
+        ...
+
+    @abc.abstractmethod
+    def find_ontology_violations_report(
+        self, vault_id: str, ontology: OntologyConfig
+    ) -> OntologyReport:
+        """`find_ontology_violations` + its TWO denominators. See `models.OntologyReport`."""
         ...
 
     @abc.abstractmethod
