@@ -236,11 +236,42 @@ external-origin AND verified stays ``external``."""
 
 _HTTP_PREFIXES = ("http://", "https://")
 
+EXTERNAL_PROVENANCE_KEYS: tuple[str, ...] = ("source", "URL", "url")
+"""TASK 061 / R-061-3 — the ONE source of truth for the frontmatter keys whose
+``http(s)://`` SCALAR value marks a page as EXTERNAL origin.
+
+RENDERED INTO BOTH HALVES of the Q-050-3 alignment contract: the Python
+:func:`_is_external` below AND the ``_EXTERNAL_ORIGIN_SQL`` literal in
+``sqlite_repository/_search.py``. The parametrized alignment test in
+``tests/test_trust_tier.py`` is driven from this same tuple, so the two halves
+and their test move together or not at all — a new key cannot drift them apart.
+
+NEVER re-enumerate these keys anywhere else: import the constant. (The key list
+had already been copy-pasted across 6+ surfaces, and that duplication is exactly
+what let the halves and the prose drift. ``tests/test_trust_key_single_source``
+is the executable gate proving ``scripts/`` enumerates them here and nowhere
+else.)
+
+Every entry MUST be a bare identifier (``[A-Za-z_][A-Za-z0-9_]*``): it is
+interpolated into a FIXED ``$.<key>`` JSON path inside SQL *text*, so a key
+carrying a quote would be an injection through our own source. Enforced at
+import, below."""
+
+_PROVENANCE_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+if not all(_PROVENANCE_KEY_RE.fullmatch(k) for k in EXTERNAL_PROVENANCE_KEYS):
+    # A `raise`, not an `assert`: `python -O` strips asserts, and a guard on a
+    # SQL-text interpolation must not evaporate under an optimisation flag.
+    raise ValueError(
+        "EXTERNAL_PROVENANCE_KEYS entries must be bare identifiers — they are "
+        "interpolated into a SQL '$.<key>' JSON path")
+
 
 def _is_external(frontmatter: dict[str, Any] | None, file_path: str) -> bool:
     """External-origin predicate, ALIGNED with the SQL half (Q-050-3):
 
-    - a SCALAR string ``$.source`` / ``$.URL`` / ``$.url`` with an exact
+    - a SCALAR string under one of :data:`EXTERNAL_PROVENANCE_KEYS` (the single
+      source of truth — do not re-list them here) whose value has an exact
       ``http://``/``https://`` ASCII-case-insensitive prefix (never bare
       ``http`` — ``httpx://`` must not match; non-scalar values are NOT
       external — SQL ``json_extract`` of a list/object yields ``[``/``{``
@@ -248,7 +279,7 @@ def _is_external(frontmatter: dict[str, Any] | None, file_path: str) -> bool:
     - OR the page file lives under a ``_raw/`` segment. ASCII-case-insensitive
       (`_RAW/`) to match SQLite ``LIKE``'s default fold."""
     if frontmatter:
-        for key in ("source", "URL", "url"):
+        for key in EXTERNAL_PROVENANCE_KEYS:
             val = frontmatter.get(key)
             if isinstance(val, str) and val.lower().startswith(_HTTP_PREFIXES):
                 return True

@@ -26,6 +26,7 @@ import sqlite3
 from typing import Any
 
 from scripts.wiki_index.models import PageHit
+from scripts.wiki_index.policy import EXTERNAL_PROVENANCE_KEYS
 from scripts.wiki_index.repository import validate_filter_field
 from scripts.wiki_index.sqlite_repository._base import SQLiteRepositoryBase
 from scripts.wiki_index.sqlite_repository._pages import _PagesMixin
@@ -36,6 +37,35 @@ _PAGE_COLS = (
     "p.vault_id, p.slug, p.project, p.type, p.title, p.file_path, "
     "p.tldr, p.date, p.last_modified, p.file_hash, p.frontmatter_json, "
     "p.body_excerpt, p.is_frozen"
+)
+
+# TASK 050 (R-6) / TASK 061 (R-061-3) — the SQL half of the external-origin
+# predicate, RENDERED FROM `policy.EXTERNAL_PROVENANCE_KEYS` so it can never
+# drift from the Python half (`policy._is_external`) that Q-050-3 pins it to.
+# The keys are deliberately NOT re-enumerated here: import the constant.
+#
+# Rationale of each literal (unchanged since TASK 050):
+#   * `_` is a LIKE wildcard, so the `_raw` path segment is ESCAPE'd;
+#   * the `http(s)://` prefix is EXACT — never bare `http`, so `httpx://`
+#     cannot match;
+#   * LIKE's default ASCII-ci fold mirrors the Python half's `.lower()`;
+#   * `json_extract` of a NON-SCALAR yields `[`/`{` text, which the prefix LIKE
+#     rejects — a list/object-valued key is not external on either side;
+#   * COALESCE to '' — an absent key json_extract's to SQL NULL, and
+#     `FALSE OR NULL` = NULL would make `NOT (<ext>)` exclude EVERY unadorned
+#     page (three-valued logic); `'' LIKE 'http://%'` is a clean FALSE.
+# Fixed literals, no bound params. Disjunct count: 2 path + 2 per key.
+_J_EXT = ("COALESCE(CAST(json_extract(p.frontmatter_json, '$.{k}')"
+          " AS TEXT), '')")
+
+_EXTERNAL_ORIGIN_SQL: str = (
+    "(p.file_path LIKE '\\_raw/%' ESCAPE '\\'"
+    " OR p.file_path LIKE '%/\\_raw/%' ESCAPE '\\'"
+    + "".join(
+        f" OR {_J_EXT.format(k=k)} LIKE '{scheme}://%'"
+        for k in EXTERNAL_PROVENANCE_KEYS
+        for scheme in ("http", "https"))
+    + ")"
 )
 
 
@@ -130,33 +160,15 @@ def _min_trust_clauses(min_trust: str | None) -> list[str]:
     parts: list[str] = []
     if min_trust is not None:
         # TASK 050 (R-6): derived-trust floor, pre-LIMIT on all three query
-        # shapes. Predicates are FIXED LITERALS (no params) test-pinned to
-        # policy.trust_tier (Q-050-3): `_` is a LIKE wildcard so the _raw
-        # segment is ESCAPE'd; the http(s):// prefix is exact (never bare
-        # 'http' — httpx:// must not match); LIKE's default ASCII-ci fold
-        # matches the Python .lower() on both halves; json_extract of a
-        # non-scalar yields '['/'{' text, which the prefix LIKE rejects —
-        # non-scalar sources are NOT external on either side.
+        # shapes. The external-origin predicate is `_EXTERNAL_ORIGIN_SQL`
+        # above — fixed literals (no params), rendered from the SAME
+        # `policy.EXTERNAL_PROVENANCE_KEYS` as the Python half it is
+        # test-pinned to (Q-050-3).
         if min_trust not in ("external", "internal", "verified"):
             raise ValueError(
                 "min_trust must be one of external|internal|verified")
-        # COALESCE to '' — an absent key json_extract's to SQL NULL, and
-        # `FALSE OR NULL` = NULL would make `NOT (<ext>)` exclude EVERY
-        # unadorned page (three-valued logic); '' LIKE 'http://%' is a
-        # clean FALSE.
-        _J = ("COALESCE(CAST(json_extract(p.frontmatter_json, '$.{k}')"
-              " AS TEXT), '')")
-        _EXT = (
-            "(p.file_path LIKE '\\_raw/%' ESCAPE '\\'"
-            " OR p.file_path LIKE '%/\\_raw/%' ESCAPE '\\'"
-            + "".join(
-                f" OR {_J.format(k=k)} LIKE '{scheme}://%'"
-                for k in ("source", "URL", "url")
-                for scheme in ("http", "https"))
-            + ")"
-        )
         if min_trust in ("internal", "verified"):
-            parts.append(f" AND NOT {_EXT}")
+            parts.append(f" AND NOT {_EXTERNAL_ORIGIN_SQL}")
         if min_trust == "verified":
             parts.append(
                 " AND EXISTS (SELECT 1 FROM page_entity_refs vr"

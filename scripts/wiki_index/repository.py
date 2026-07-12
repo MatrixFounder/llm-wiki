@@ -258,8 +258,10 @@ class IndexRepository(abc.ABC):
                 (``external < internal < verified``; Q-050-1 MIN-rule). When
                 ``internal``: exclude external-origin pages (``_raw/`` path
                 segment — ``LIKE '\_raw/%' ESCAPE '\'``, the `_` wildcard must
-                be escaped — or an ``http(s)://``-prefixed scalar
-                ``$.source``/``$.URL``/``$.url``). When ``verified``:
+                be escaped — or an ``http(s)://``-prefixed SCALAR under one of
+                ``policy.EXTERNAL_PROVENANCE_KEYS``, the single source of truth
+                from which BOTH halves are rendered — TASK 061 / R-061-3; the
+                keys are deliberately not re-listed here). When ``verified``:
                 additionally require an inbound ``verifies`` ref (EXISTS
                 correlated on ``r.vault_id = p.vault_id``). ``external`` = no
                 clause (the lowest floor). Applied in SQL **pre-LIMIT** on all

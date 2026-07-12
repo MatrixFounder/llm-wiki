@@ -16,9 +16,14 @@ from pathlib import Path
 import pytest
 
 from scripts.wiki_index.models import Page, PageRef, Vault
-from scripts.wiki_index.policy import TRUST_TIERS, trust_tier
+from scripts.wiki_index.policy import (
+    EXTERNAL_PROVENANCE_KEYS,
+    TRUST_TIERS,
+    trust_tier,
+)
 from scripts.wiki_index.reindex import reindex_full
 from scripts.wiki_index.sqlite_repository import SQLiteRepository
+from scripts.wiki_index.sqlite_repository._search import _EXTERNAL_ORIGIN_SQL
 from scripts.wiki_skills import wiki_query
 
 VID = "trust-vault"
@@ -152,6 +157,58 @@ def test_sql_floor_matches_python_on_all_shapes(repo, floor, expected):
 def test_min_trust_rejects_unknown(repo):
     with pytest.raises(ValueError):
         repo.search_pages('"trust corpus"', vaults=[VID], min_trust="bogus")
+
+
+# =============================================================================
+# 061-04 (R-061-3) — ONE key constant renders BOTH halves of the Q-050-3
+# alignment contract, and the alignment corpus is PARAMETRIZED FROM it
+# =============================================================================
+
+@pytest.mark.parametrize("scheme", ("http", "https"))
+@pytest.mark.parametrize("key", EXTERNAL_PROVENANCE_KEYS)
+def test_every_provenance_key_is_external_on_both_halves(repo, key, scheme):
+    """TC-04-1 — for EVERY key in `policy.EXTERNAL_PROVENANCE_KEYS` x scheme,
+    the Python half derives `external` AND the SQL half's `--min-trust internal`
+    floor excludes the page.
+
+    The corpus is generated FROM the constant, so adding a key automatically
+    extends the gate on both halves — that auto-growth IS the anti-drift
+    property Q-050-3 demands (061-06 grows the tuple 3 -> 6 keys and this test
+    goes 6 -> 12 cases with no edit; a key rendered into only ONE half fails
+    here immediately)."""
+    repo.upsert_page(_page(
+        "key-probe", fm_extra={key: f"{scheme}://x.test/a", "status": "open"}))
+    page = repo.get_page(VID, "key-probe", "_vault_")
+
+    # (a) Python half.
+    assert trust_tier(page.frontmatter_json, page.file_path, False) == "external"
+
+    # POSITIVE CONTROL, and it is load-bearing: "the floor excludes it" is
+    # VACUOUSLY true for a page that never matched the query at all. This task
+    # exists because a check that examined nothing reported green — so prove the
+    # page IS retrievable on both shapes before asserting the floor removes it.
+    assert "key-probe" in _slugs(
+        repo.search_pages('"trust corpus"', vaults=[VID]))
+    assert "key-probe" in _slugs(repo.search_pages(
+        None, vaults=[VID], where_fields=[("status", "open")]))
+
+    # (b) SQL half — the floor drops it on the FTS and metadata-scan shapes.
+    assert "key-probe" not in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="internal"))
+    assert "key-probe" not in _slugs(repo.search_pages(
+        None, vaults=[VID], where_fields=[("status", "open")],
+        min_trust="internal"))
+
+
+def test_external_origin_sql_renders_every_key():
+    """TC-04-2 — the SQL literal carries exactly 2 path disjuncts + 2 per key
+    (http, https), and names each key's JSON path. Guards a HALF-APPLIED edit:
+    a key added to the Python constant but not rendered into SQL is precisely
+    the Q-050-3 drift this bead exists to make impossible."""
+    assert _EXTERNAL_ORIGIN_SQL.count("LIKE") == (
+        2 + 2 * len(EXTERNAL_PROVENANCE_KEYS))
+    for key in EXTERNAL_PROVENANCE_KEYS:
+        assert f"'$.{key}'" in _EXTERNAL_ORIGIN_SQL
 
 
 def test_floor_is_pre_limit(tmp_path):
