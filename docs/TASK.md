@@ -280,7 +280,9 @@ collision is **NOT** benign: it is a contract violation ⇒ **refuse the batch, 
 
 ## 7. Out of scope
 
-- Auto-chaining from `wiki-import` (Q-063-2).
+- ~~Auto-chaining from `wiki-import`~~ — **REVERSED by the v6 operator requirement**: it IS in scope, via
+  the config-driven `extract_decisions.enabled` + a dispatch marker (see §5 Q-063-2 and R-063-3′). This
+  stale v5 line is corrected here rather than left to contradict §5.
 - A `meeting-summary` profile that emits typed pages in one pass — plausible later, but it couples the
   summariser to the ontology; prove the separate rail first.
 - Scaling the pilot to other vault zones (deliberately blocked on this task — §1).
