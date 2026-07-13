@@ -25,6 +25,19 @@ populations — one per (check, population) pair, never one noun shared across t
     `property_pages_examined` (⋃ ontology.properties[].class) — ONE call, TWO disjoint
     populations, hence two denominators (C6).
 
+**061 FIX-LOOP (vdd-multi).** Three corrections, all of them the SAME disease one level
+further in — a number that is reported without the population it was measured against:
+
+  - **M1 (perf).** Every denominator was 1 COUNT *per rule* on top of the finder query
+    that already loops per rule (+17 statements / +16 `pages` scans per lint run on
+    cybos's 24 rules). Now ONE grouped histogram per FAMILY — see the helper block below.
+  - **M3.** The ontology EDGE `matched` counted rows the check CANNOT JUDGE (`domain`
+    needs a typed SOURCE, `range` a resolved+typed TARGET). `RuleStat.matched_by_kind`
+    now mirrors `findings` key-for-key, so every numerator has its OWN denominator.
+  - **M4.** A degenerate property rule (empty `enum`) was `continue`d with NO `RuleStat`
+    while its class still counted in `property_pages_examined` — a declared rule missing
+    from `by_rule`. It now emits its stat first, in verbatim parity with drift.
+
 dialect: SQLite-leaning — heavy `json_extract`/`json_type` over
 `frontmatter_json` (Postgres: `jsonb` `->`/`->>`/`jsonb_typeof`); the
 NOT-EXISTS / LEFT-JOIN shapes themselves are portable.
@@ -54,31 +67,60 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
     """Declared-rules analyses: lifecycle drift, coverage gaps, ontology."""
 
     # =========================================================================
-    # TASK 061 (R-061-1) — shared population-count helpers. P-061-C: every
-    # denominator is a COUNT over an `IN (...)` set that MAY be empty (a layout
-    # with no rules, or an ontology with no edges/properties declared). NEVER
-    # compose a degenerate `IN ()` — return 0 before touching SQL (mirrors the
-    # pre-existing hand-built-rule precedent in this module: skip, never crash,
-    # never inject).
+    # TASK 061 (R-061-1) — shared population-count helpers.
+    #
+    # P-061-C: every denominator is a COUNT over an `IN (...)` set that MAY be
+    # empty (a layout with no rules, or an ontology with no edges/properties
+    # declared). NEVER compose a degenerate `IN ()` — return an EMPTY result
+    # before touching SQL (mirrors the pre-existing hand-built-rule precedent in
+    # this module: skip, never crash, never inject).
+    #
+    # 061 FIX-LOOP (vdd-multi critic-performance MED / M1) — these are HISTOGRAMS,
+    # one grouped statement per FAMILY, not one COUNT per RULE. The first cut of
+    # TASK 061 computed `matched` with a fresh `pages` scan per rule ON TOP of the
+    # finder query that already loops per rule: on cybos's 24 declared rules that
+    # was +17 statements (21→38) and +16 full `pages` scans (14→30) per lint run —
+    # a >2× regression of `wiki-health coverage` (3→7 statements). The EDGE family
+    # already did it right (`matched = len(rows)`, free off the fetchall it had to
+    # run anyway); the other three now match that discipline. Zero DDL, NO new
+    # index (P-5) — the fix is query SHAPE (1+N → 1), not a new access path.
+    #
+    # Statement census, per lint run on cybos (3 drift + 7 edge + 11 property rules):
+    #   pre-061  21 statements / 14 `pages` scans
+    #   061 v1   38 statements / 30 `pages` scans   ← the regression
+    #   NOW      25 statements / 16 `pages` scans   (+4 / +2 over the pre-061 baseline:
+    #            one grouped histogram per family, never one COUNT per rule)
     # =========================================================================
 
-    def _count_pages_of_classes(self, vault_id: str, classes: set[str]) -> int:
-        """COUNT(*) of `pages` whose AUTHORED `$.type` is in `classes`. Returns
-        `0` — no query executed — when `classes` is empty."""
+    def _page_class_histogram(self, vault_id: str, classes: set[str]) -> dict[str, int]:
+        """``{page_class: COUNT(*)}`` over `pages` whose AUTHORED ``$.type`` is in
+        ``classes`` — ONE grouped scan for the whole family (the family denominator is
+        ``sum(...)``; a rule's ``matched`` is ``.get(cls, 0)``). A class with no pages is
+        ABSENT from the dict, so callers MUST use ``.get(cls, 0)`` — an absent key means
+        `0`, and rendering it as `0` is exactly what this task is for. Returns ``{}`` —
+        **no query executed** — when ``classes`` is empty (P-061-C)."""
         if not classes:
-            return 0
+            return {}
         conn = self._connect()
         clause, vals = self._in_clause(
             "json_extract(p.frontmatter_json, '$.type')", sorted(classes))
-        row = conn.execute(
-            f"SELECT COUNT(*) FROM pages p WHERE p.vault_id = ? AND {clause}",
-            [vault_id, *vals]).fetchone()
-        return int(row[0])
+        rows = conn.execute(
+            "SELECT json_extract(p.frontmatter_json, '$.type') AS t, COUNT(*) AS n "
+            f"FROM pages p WHERE p.vault_id = ? AND {clause} GROUP BY t",
+            [vault_id, *vals]).fetchall()
+        return {str(r["t"]): int(r["n"]) for r in rows}
 
     def _count_refs_of_types(self, vault_id: str, ref_types: set[str]) -> int:
         """COUNT(*) of `page_entity_refs` rows whose `ref_type` is in
         `ref_types`. Returns `0` — no query executed — when `ref_types` is
-        empty."""
+        empty. ONE statement for the whole edge family (rides `idx_refs_type`;
+        never a `pages` scan), so it is left as a plain COUNT: the edge rules'
+        per-rule `matched` already comes free off their own `fetchall()`.
+
+        NOT derived as `Σ len(rows)` over the edge rules, deliberately: those rows
+        are INNER-JOINed to the owning `pages` row, so an orphaned ref (schema
+        permits one only if the FK is unenforced) would silently shrink the
+        denominator — a denominator that hides rows is the bug this task fixes."""
         if not ref_types:
             return 0
         conn = self._connect()
@@ -88,47 +130,85 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
             [vault_id, *vals]).fetchone()
         return int(row[0])
 
-    def _count_pages_of_class_with_edge(
-        self, vault_id: str, page_class: str, edge: str
-    ) -> int:
-        """COUNT(*) of `pages` of `page_class` that CARRY the `edge` ref_type — a
-        DRIFT rule's PRECONDITION, verbatim the `$.type = ? AND EXISTS(ref_type = ?)`
-        head of `find_lifecycle_drift_report`'s query (TASK 061 / R-061-2). The
-        `json_type($.status) = 'text'` scalar filter is part of the drift CONDITION,
-        NOT the precondition, so it is deliberately absent here — otherwise a page
-        whose status is absent/list-valued would vanish from the denominator it is
-        legitimately measured against. Both values are bound scalars (no IN-list), so
-        the P-061-C degenerate-`IN ()` guard does not apply."""
-        conn = self._connect()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM pages p WHERE p.vault_id = ? "
-            "AND json_extract(p.frontmatter_json, '$.type') = ? "
-            "AND EXISTS (SELECT 1 FROM page_entity_refs r "
-            "            WHERE r.vault_id = p.vault_id "
-            "              AND r.page_slug = p.slug "
-            "              AND r.page_project = p.project "
-            "              AND r.ref_type = ?)",
-            [vault_id, page_class, edge]).fetchone()
-        return int(row[0])
+    def _pages_with_edge_histogram(
+        self, vault_id: str, classes: set[str], edges: set[str]
+    ) -> dict[tuple[str, str], int]:
+        """``{(page_class, ref_type): COUNT(DISTINCT page)}`` — pages of that class which
+        CARRY that ref_type: a DRIFT rule's PRECONDITION (the `$.type = ? AND
+        EXISTS(ref_type = ?)` head of `find_lifecycle_drift_report`'s query), for the WHOLE
+        drift family in ONE grouped probe (M1: was one `pages` scan per rule).
 
-    def _count_pages_with_scalar(self, vault_id: str, page_class: str, field: str) -> int:
-        """COUNT(*) of `pages` of `page_class` whose `$.<field>` is a PRESENT
-        scalar (`json_type(...) = 'text'`) — a value an ontology property rule
-        can actually judge; an ABSENT value is a coverage concern, not a
-        contradiction (mirrors the property-violation finder's own filter, and
-        the R-15 drift scalar-only rule). `field` is `validate_filter_field`-
-        checked THEN bound as a `$.<field>` path (never string-composed).
-        `page_class` is always a single bound scalar (never an IN-list), so no
-        degenerate-SQL guard applies here (P-061-C is an `IN (...)` concern)."""
-        field = validate_filter_field(field)
-        json_path = f"$.{field}"
+        ``COUNT(DISTINCT p.id)`` reproduces the EXISTS semantics exactly — a page carrying
+        the same edge to two targets is ONE matched page, not two (`pages.id` is the
+        INTEGER PRIMARY KEY, so it is a per-page identity, and the join is driven off
+        `idx_refs_type` + the `pages(vault_id, slug, project)` UNIQUE index).
+
+        The `json_type($.status) = 'text'` scalar filter is part of the drift CONDITION,
+        NOT the precondition, so it is deliberately absent here — otherwise a page whose
+        status is absent/list-valued would vanish from the denominator it is legitimately
+        measured against. Returns ``{}`` — no query executed — when either set is empty
+        (P-061-C)."""
+        if not classes or not edges:
+            return {}
         conn = self._connect()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM pages p WHERE p.vault_id = ? "
-            "AND json_extract(p.frontmatter_json, '$.type') = ? "
-            "AND json_type(p.frontmatter_json, ?) = 'text'",
-            [vault_id, page_class, json_path]).fetchone()
-        return int(row[0])
+        cls_clause, cls_vals = self._in_clause(
+            "json_extract(p.frontmatter_json, '$.type')", sorted(classes))
+        ref_clause, ref_vals = self._in_clause("r.ref_type", sorted(edges))
+        rows = conn.execute(
+            "SELECT json_extract(p.frontmatter_json, '$.type') AS t, r.ref_type AS rt, "
+            "COUNT(DISTINCT p.id) AS n "
+            "FROM pages p "
+            "JOIN page_entity_refs r ON r.vault_id = p.vault_id "
+            "                       AND r.page_slug = p.slug "
+            "                       AND r.page_project = p.project "
+            f"WHERE p.vault_id = ? AND {cls_clause} AND {ref_clause} "
+            "GROUP BY t, rt",
+            [vault_id, *cls_vals, *ref_vals]).fetchall()
+        return {(str(r["t"]), str(r["rt"])): int(r["n"]) for r in rows}
+
+    def _property_scalar_histogram(
+        self, vault_id: str, classes: set[str], fields: set[str]
+    ) -> tuple[int, dict[tuple[str, str], int]]:
+        """``(property_pages_examined, {(page_class, field): n})`` in ONE grouped scan
+        (M1: was 1 + one `pages` scan per property rule — 12 statements on cybos).
+
+        ``property_pages_examined`` = pages whose ``$.type`` ∈ ``classes`` (the family
+        denominator). ``n`` = pages of that class whose ``$.<field>`` is a PRESENT scalar
+        (``json_type(...) = 'text'``) — the population an ontology property rule can
+        actually JUDGE; an ABSENT value is a coverage concern, not a contradiction
+        (mirrors the property-violation finder's own filter, and the R-15 drift
+        scalar-only rule).
+
+        One conditional SUM per DISTINCT field (cybos declares 11 property rules over
+        **one** field, `status` → one SUM). Every field is `validate_filter_field`-checked
+        THEN BOUND as a `$.<field>` path — never string-composed; the only composed part is
+        the placeholder COUNT. Returns ``(0, {})`` — no query executed — when ``classes``
+        is empty (P-061-C)."""
+        if not classes:
+            return 0, {}
+        ordered_fields = sorted({validate_filter_field(f) for f in fields})
+        conn = self._connect()
+        clause, vals = self._in_clause(
+            "json_extract(p.frontmatter_json, '$.type')", sorted(classes))
+        sums = "".join(
+            f", SUM(CASE WHEN json_type(p.frontmatter_json, ?) = 'text' THEN 1 ELSE 0 END) "
+            f"AS f{i}" for i in range(len(ordered_fields)))
+        # Param ORDER follows SQL TEXT order: the SELECT-list `?` (one per field) precede
+        # the WHERE-clause `?`s.
+        params: list[Any] = [f"$.{f}" for f in ordered_fields]
+        params += [vault_id, *vals]
+        rows = conn.execute(
+            f"SELECT json_extract(p.frontmatter_json, '$.type') AS t, COUNT(*) AS n{sums} "
+            f"FROM pages p WHERE p.vault_id = ? AND {clause} GROUP BY t",
+            params).fetchall()
+        examined = 0
+        hist: dict[tuple[str, str], int] = {}
+        for r in rows:
+            page_class = str(r["t"])
+            examined += int(r["n"])
+            for i, fld in enumerate(ordered_fields):
+                hist[(page_class, fld)] = int(r[f"f{i}"])
+        return examined, hist
 
     # =========================================================================
     # Legacy list-returning methods — public API (lint.py, wiki_health.py, 4
@@ -195,16 +275,22 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         # `matched: 0` cannot distinguish "no `decision` pages at all" (today's LIVE state)
         # from "50 decisions, none carrying a `superseded-by` edge" (the post-TASK-062
         # state). Both denominators are needed; neither substitutes for the other.
+        #
+        # 061 FIX-LOOP (M1): both numbers come from TWO grouped statements for the WHOLE
+        # family (a class histogram + a (class, ref_type) probe), not from 1 + one scan
+        # per rule.
         classes = {r.page_class for r in rules}
-        pages_examined = self._count_pages_of_classes(vault_id, classes)
+        class_hist = self._page_class_histogram(vault_id, classes)
+        pages_examined = sum(class_hist.values())
+        edge_hist = self._pages_with_edge_histogram(
+            vault_id, classes, {r.edge for r in rules})
         conn = self._connect()
         out: list[DriftHit] = []
         rule_stats: list[RuleStat] = []
         for rule in rules:
-            # Counted BEFORE the expect/forbid branch, so the degenerate-rule `continue`
+            # Read BEFORE the expect/forbid branch, so the degenerate-rule `continue`
             # below still reports an honest `matched` (bead 061-03).
-            matched = self._count_pages_of_class_with_edge(
-                vault_id, rule.page_class, rule.edge)
+            matched = edge_hist.get((rule.page_class, rule.edge), 0)
             sql = (
                 "SELECT p.slug, p.project, "
                 "CAST(json_extract(p.frontmatter_json, '$.status') AS TEXT) AS status "
@@ -237,9 +323,21 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 params.extend(rule.forbid_status)
                 expected = "status not in {" + ", ".join(rule.forbid_status) + "}"
             else:
-                # Defensive (critic-security LOW-1, parity with find_coverage_gaps): a
-                # hand-built rule (bypassing the config-load gate) with NEITHER branch would
+                # Defensive (critic-security LOW-1): a hand-built rule (bypassing the
+                # config-load gate) with NEITHER `expect_status` nor `forbid_status` would
                 # otherwise build a degenerate `IN ()`. Skip it — never crash, never inject.
+                #
+                # 061 FIX-LOOP (critic-logic LOW): this used to claim "parity with
+                # find_coverage_gaps". It is NOT parity — the three finders have THREE
+                # degenerate behaviours, and the honest statement is the enumeration:
+                #   • drift (here)          — a rule with no status branch: SKIP + a RuleStat
+                #     (an examined-but-unjudgeable rule is still reported, never dropped).
+                #   • coverage              — a rule with neither `requires_edge` nor
+                #     `requires_field` does NOT skip: it reaches `validate_filter_field("")`
+                #     and RAISES ValueError (fail-loud; the load-gate makes it unreachable).
+                #   • ontology property     — an empty `enum`: SKIP + a RuleStat (fix-loop M4;
+                #     it used to `continue` with NO RuleStat, silently omitting a declared
+                #     rule from `by_rule` while its class still counted in the denominator).
                 #
                 # TASK 061 (bead 061-03): the skipped rule STILL gets a RuleStat. Its
                 # PRECONDITION is well-defined (so `matched` is real), only its drift
@@ -249,7 +347,8 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 # invariant test is a REAL quantifier: no rule is missing from `rule_stats`.
                 rule_stats.append(RuleStat(
                     page_class=rule.page_class, kind="drift", ref=rule.edge,
-                    matched=matched, findings={"drift": 0},
+                    matched=matched, matched_by_kind={"drift": matched},
+                    findings={"drift": 0},
                 ))
                 continue
             sql += "ORDER BY p.project, p.slug"
@@ -262,7 +361,8 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 ))
             rule_stats.append(RuleStat(
                 page_class=rule.page_class, kind="drift", ref=rule.edge,
-                matched=matched, findings={"drift": len(rows)},
+                matched=matched, matched_by_kind={"drift": matched},
+                findings={"drift": len(rows)},
             ))
         return LifecycleDriftReport(
             hits=out, pages_examined=pages_examined, rule_stats=rule_stats)
@@ -280,16 +380,20 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         # TASK 061 (R-061-1): `pages_examined` = pages whose AUTHORED $.type is in the
         # UNION of every rule's class (P-061-C: 0 rules ⇒ 0, no SQL). Per-rule `matched`
         # = pages of THAT rule's class ALONE — the rule's PRECONDITION (the NOT EXISTS /
-        # empty-field predicate below is the GAP condition, not the precondition). One
-        # extra COUNT scan per rule ($.type unindexed by design, P-5) — fine for the
-        # small typed partitions this ships against.
+        # empty-field predicate below is the GAP condition, not the precondition).
+        #
+        # 061 FIX-LOOP (M1): ONE grouped histogram gives BOTH — `pages_examined` is its
+        # sum, `matched_r` is `.get(class)`. The first cut ran a fresh COUNT scan per rule
+        # ON TOP of the union COUNT (3 rules → 4 scans where 1 suffices; `wiki-health
+        # coverage` went 3 → 7 statements, a >2× regression of the whole command).
         classes = {r.page_class for r in rules}
-        pages_examined = self._count_pages_of_classes(vault_id, classes)
+        class_hist = self._page_class_histogram(vault_id, classes)
+        pages_examined = sum(class_hist.values())
         conn = self._connect()
         out: list[CoverageGap] = []
         rule_stats: list[RuleStat] = []
         for rule in rules:
-            matched = self._count_pages_of_classes(vault_id, {rule.page_class})
+            matched = class_hist.get(rule.page_class, 0)
             params: list[Any] = [vault_id, rule.page_class]
             if rule.requires_edge is not None:
                 sql = (
@@ -332,7 +436,8 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 ))
             rule_stats.append(RuleStat(
                 page_class=rule.page_class, kind=kind, ref=detail,
-                matched=matched, findings={"gaps": len(rows)},
+                matched=matched, matched_by_kind={"gaps": matched},
+                findings={"gaps": len(rows)},
             ))
         return CoverageReport(gaps=out, pages_examined=pages_examined, rule_stats=rule_stats)
 
@@ -420,12 +525,32 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
             )
             # TASK 061: `matched_e` = the rows THIS rule's own query already fetched — free,
             # no extra query (bead-01 spec).
+            #
+            # 061 FIX-LOOP (critic-logic MED / M3) — `matched` alone COUNTS ROWS THE CHECK
+            # CANNOT JUDGE. `domain` fires only when src_type IS NOT NULL; `range` only when
+            # tgt_type IS NOT NULL (NULL for a dangling/entity/ambiguous target). So a vault
+            # with 500 `uses` refs all pointing at `[[ghost]]` reported
+            # `{matched: 500, findings: {domain: 0, range: 0}}` — which READS as "500
+            # examined, all clean" while `range` examined ZERO. That is `{"total_gaps": 0}`
+            # one level down, INSIDE the numbers this task added. We split the NUMERATOR
+            # per kind (P-061-A) but not the DENOMINATOR. `matched_by_kind` closes it —
+            # both counts are FREE off the same fetchall(). `matched` STAYS the row total
+            # (the rule's examined population), so `matched_by_kind[k] <= matched` and the
+            # pinned `domain + range > matched` fixture assertion both keep holding.
             rows = conn.execute(sql, (vault_id, edge.edge)).fetchall()
             domain_count = 0
             range_count = 0
+            # `domain` is a PER-PAGE finding (de-duped below), so its denominator is the
+            # DISTINCT judgeable pages; `range` is per-instance, so its denominator is rows.
+            domain_judgeable: set[tuple[str, str]] = set()
+            range_judgeable = 0
             for row in rows:
                 src_type = row["src_type"]
                 tgt_type = row["tgt_type"]
+                if src_type is not None:
+                    domain_judgeable.add((row["page_slug"], row["page_project"]))
+                if tgt_type is not None:
+                    range_judgeable += 1
                 # Only an EXPLICIT (present, scalar) class is a contradiction — a page with
                 # no authored `$.type` has an unknown class, never a domain/range violation.
                 if src_type is not None and src_type not in frm:
@@ -455,9 +580,12 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
             # TASK 061 (P-061-A): `findings` is a DICT — domain_e ≤ matched_e AND
             # range_e ≤ matched_e hold independently; summing them into one int would make
             # `violations_e ≤ matched_e` false (one examined row can be BOTH a domain AND
-            # a range violation).
+            # a range violation). `matched_by_kind` mirrors it EXACTLY (same key set), so
+            # the honest invariant is `findings[k] ≤ matched_by_kind[k] ≤ matched`.
             rule_stats.append(RuleStat(
                 page_class="", kind="edge", ref=edge.edge, matched=len(rows),
+                matched_by_kind={"domain": len(domain_judgeable),
+                                 "range": range_judgeable},
                 findings={"domain": domain_count, "range": range_count},
             ))
 
@@ -468,17 +596,38 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         #
         # `property_pages_examined` — TASK 061: pages whose $.type is in ⋃
         # ontology.properties[].class (P-061-C: 0 properties ⇒ 0, no SQL).
+        #
+        # 061 FIX-LOOP (M1): ONE grouped scan yields the family denominator AND every
+        # rule's `matched` (one conditional SUM per DISTINCT field — cybos's 11 property
+        # rules all key on `status`, so: one SUM). The first cut ran 1 + 11 scans.
         prop_classes = {p.page_class for p in ontology.properties}
-        property_pages_examined = self._count_pages_of_classes(vault_id, prop_classes)
+        property_pages_examined, prop_hist = self._property_scalar_histogram(
+            vault_id, prop_classes, {p.field for p in ontology.properties})
         for prop in ontology.properties:
-            if not prop.enum:
-                continue  # defensive: a hand-built rule bypassing the load-gate → skip (no `IN ()`)
             field = validate_filter_field(prop.field)
-            json_path = f"$.{field}"
             # TASK 061: `matched_p` = pages of this class carrying a PRESENT scalar for the
-            # field (the rule's precondition) — a SEPARATE count from the violation query
-            # below (which further filters NOT IN enum).
-            matched = self._count_pages_with_scalar(vault_id, prop.page_class, field)
+            # field (the rule's PRECONDITION) — NOT the violation count below (which further
+            # filters NOT IN enum).
+            matched = prop_hist.get((prop.page_class, field), 0)
+            if not prop.enum:
+                # Defensive: a hand-built rule bypassing the load-gate → skip (never a
+                # degenerate `IN ()`).
+                #
+                # 061 FIX-LOOP (critic-logic MED / M4) — it used to `continue` with **no
+                # RuleStat**, while its class STILL contributed to
+                # `property_pages_examined`: a declared rule silently ABSENT from `by_rule`,
+                # so the `∀ declared rule` quantifier in the invariant test held only
+                # because the config load-gate rejects an empty enum — enforced by CONFIG,
+                # not by CODE. Drift's degenerate branch got belt-and-braces; ontology got a
+                # single point of failure. Now they are verbatim parity: emit the RuleStat,
+                # THEN skip.
+                rule_stats.append(RuleStat(
+                    page_class=prop.page_class, kind="property", ref=field,
+                    matched=matched, matched_by_kind={"property": matched},
+                    findings={"property": 0},
+                ))
+                continue
+            json_path = f"$.{field}"
             placeholders = ",".join("?" * len(prop.enum))
             sql = (
                 "SELECT p.slug, p.project, "
@@ -507,7 +656,8 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 ))
             rule_stats.append(RuleStat(
                 page_class=prop.page_class, kind="property", ref=field,
-                matched=matched, findings={"property": len(rows)},
+                matched=matched, matched_by_kind={"property": matched},
+                findings={"property": len(rows)},
             ))
         return OntologyReport(
             violations=out, edges_examined=edges_examined,

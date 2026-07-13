@@ -79,10 +79,10 @@ def test_report_shapes(tmp_path: Path) -> None:
 def test_rule_stat_to_json_shape(tmp_path: Path) -> None:
     from scripts.wiki_index.models import RuleStat
     stat = RuleStat(page_class="requirement", kind="edge", ref="implemented-by",
-                     matched=3, findings={"gaps": 1})
+                     matched=3, matched_by_kind={"gaps": 3}, findings={"gaps": 1})
     assert stat.to_json() == {
         "class": "requirement", "kind": "edge", "ref": "implemented-by",
-        "matched": 3, "findings": {"gaps": 1},
+        "matched": 3, "matched_by_kind": {"gaps": 3}, "findings": {"gaps": 1},
     }
 
 
@@ -331,4 +331,187 @@ def test_drift_denominator_landed_in_061_03(tmp_path: Path) -> None:
     for stat in drift.rule_stats:
         assert stat.kind == "drift"
         assert stat.findings["drift"] <= stat.matched <= drift.pages_examined
+    repo.close()
+
+
+# =============================================================================
+# 061 FIX-LOOP (vdd-multi) — M1 (perf), M3 (per-kind denominator), M4 (degenerate rule)
+# =============================================================================
+
+# --- M3: the ontology EDGE `matched` counted rows the check CANNOT JUDGE -----
+
+_GHOST_FILES = {
+    # `uses` from a `workflow` IS in the declared domain (from: [agent, workflow,
+    # execution]) → no domain violation; both targets are DANGLING, so `tgt_type` is NULL
+    # and the RANGE check cannot judge a single one of these rows. Pre-fix this reported
+    # `{matched: 2, findings: {domain: 0, range: 0}}` — "2 examined, all clean" — while
+    # `range` examined ZERO. `{"total_gaps": 0}` one level down, inside TASK 061's own
+    # numbers.
+    "workflows/wf-a.md":
+        "---\ntype: workflow\ntitle: WF A\nstatus: active\nuses: [[ghost-1]]\n---\nb\n",
+    "workflows/wf-b.md":
+        "---\ntype: workflow\ntitle: WF B\nstatus: active\nuses: [[ghost-2]]\n---\nb\n",
+}
+
+
+def test_m3_edge_matched_by_kind_excludes_unjudgeable_rows(tmp_path: Path) -> None:
+    repo, root = build_cybos_vault(tmp_path, _GHOST_FILES, vault_id="ghostv")
+    cfg = resolve_layout_config(root)
+    assert cfg.ontology is not None
+    # THE ANTI-VACUITY GUARD (the earlier bead shipped a vacuity test that was itself
+    # vacuous — over an EMPTY table): the `uses` refs really are stored, and their targets
+    # really are absent from `pages`.
+    conn = repo._connect()
+    assert conn.execute(
+        "SELECT COUNT(*) FROM page_entity_refs WHERE vault_id='ghostv' "
+        "AND ref_type='uses'").fetchone()[0] == 2
+    assert conn.execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='ghostv' "
+        "AND slug IN ('ghost-1','ghost-2')").fetchone()[0] == 0
+
+    report = repo.find_ontology_violations_report("ghostv", cfg.ontology)
+    uses = next(s for s in report.rule_stats if s.kind == "edge" and s.ref == "uses")
+    assert uses.matched == 2                        # 2 ref rows were fetched...
+    assert uses.findings == {"domain": 0, "range": 0}
+    # ...but only the DOMAIN check could judge them. `range` examined NOTHING, and now
+    # says so instead of hiding inside a `matched` it never applied to.
+    assert uses.matched_by_kind == {"domain": 2, "range": 0}
+    repo.close()
+
+
+def test_m3_matched_by_kind_mirrors_findings_on_every_rule(tmp_path: Path) -> None:
+    """The structural invariant every producer upholds — asserted over ALL THREE finders'
+    rule_stats (`grep -n "RuleStat(" scripts/wiki_index/sqlite_repository/_health_rules.py`
+    → 6 construction sites: drift ×2, coverage ×1, ontology edge ×1, ontology property ×2):
+
+        set(matched_by_kind) == set(findings)   and
+        ∀k: findings[k] <= matched_by_kind[k] <= matched
+    """
+    repo, _root, cfg, coverage, drift, ontology = _reports(tmp_path)
+    stats = [*coverage.rule_stats, *drift.rule_stats, *ontology.rule_stats]
+    assert len(stats) == (len(cfg.coverage_rules) + len(cfg.drift_rules)
+                          + len(cfg.ontology.edges) + len(cfg.ontology.properties)) == 24
+    for stat in stats:
+        assert set(stat.matched_by_kind) == set(stat.findings), stat
+        for kind, n in stat.findings.items():
+            assert n <= stat.matched_by_kind[kind] <= stat.matched, stat
+    repo.close()
+
+
+# --- M4: a degenerate ontology PROPERTY rule is NOT dropped from by_rule -----
+
+def test_m4_degenerate_property_rule_still_gets_a_rulestat(tmp_path: Path) -> None:
+    """Exact mirror of `test_tc_03_4_degenerate_rule_still_gets_a_rulestat` (drift). A
+    hand-built property rule with an EMPTY enum (bypassing the config load-gate, which
+    rejects it) is skipped by the finder — but it STILL gets a RuleStat, because its class
+    still counts toward `property_pages_examined`. Pre-fix the rule VANISHED from
+    `by_rule` while inflating the denominator: the `∀ declared rule` quantifier held only
+    because CONFIG forbade the case, not because the CODE handled it."""
+    import dataclasses
+
+    from scripts.wiki_index.models import OntologyConfig, OntologyProperty
+
+    repo, root = build_cybos_vault(tmp_path, {
+        "decisions/d1.md": "---\ntype: decision\ntitle: D1\nstatus: accepted\n---\nb\n",
+        "decisions/d2.md": "---\ntype: decision\ntitle: D2\nstatus: bogus\n---\nb\n",
+    }, vault_id="degenprop")
+    cfg = resolve_layout_config(root)
+    assert cfg.ontology is not None
+    degenerate = OntologyProperty(page_class="decision", field="status", enum=())
+    ont: OntologyConfig = dataclasses.replace(
+        cfg.ontology, edges=(), properties=(degenerate,))
+
+    report = repo.find_ontology_violations_report("degenprop", ont)
+    assert report.violations == []                  # a no-enum rule can flag nothing...
+    assert report.property_pages_examined == 2      # ...yet its class DID count here
+    assert len(report.rule_stats) == 1              # ...and the rule is PRESENT
+    stat = report.rule_stats[0]
+    assert stat.kind == "property" and stat.ref == "status"
+    assert stat.matched == 2                        # both decisions carry a scalar status
+    assert stat.matched_by_kind == {"property": 2}
+    assert stat.findings == {"property": 0}
+    repo.close()
+
+
+# --- M1: no N+1 — one grouped statement per FAMILY, never one COUNT per rule --
+
+def _statements(repo: SQLiteRepository) -> list[str]:
+    """Every SQL statement the repo's connection executes, captured live."""
+    stmts: list[str] = []
+    repo._connect().set_trace_callback(stmts.append)
+    return stmts
+
+
+def test_m1_statement_census_no_n_plus_one(tmp_path: Path) -> None:
+    """A REGRESSION PIN, not a benchmark: the first cut of TASK 061 computed `matched`
+    with a fresh full `pages` scan PER RULE, on top of the finder query that already loops
+    per rule — 21 → 38 statements per lint run, and a >2× regression of `wiki-health
+    coverage` (3 → 7). Counted, not believed: `sqlite3.set_trace_callback`."""
+    repo, root = build_health_vault(tmp_path)
+    cfg = resolve_layout_config(root)
+    assert cfg.ontology is not None
+    # census of the RULE COUNTS this is asserted against (cybos is the only built-in
+    # layout declaring any) — so a rule added in a later task moves these numbers loudly.
+    n_cov, n_drift = len(cfg.coverage_rules), len(cfg.drift_rules)
+    n_edge, n_prop = len(cfg.ontology.edges), len(cfg.ontology.properties)
+    assert (n_cov, n_drift, n_edge, n_prop) == (3, 3, 7, 11)
+
+    stmts = _statements(repo)
+    repo.find_coverage_gaps_report("hvault", list(cfg.coverage_rules))
+    # ONE class histogram + one gap-finder per rule (was 1 + n_cov + n_cov = 7).
+    assert len(stmts) == 1 + n_cov == 4, stmts
+
+    stmts.clear()
+    repo.find_lifecycle_drift_report("hvault", list(cfg.drift_rules))
+    # ONE class histogram + ONE (class, ref_type) probe + one drift-finder per rule
+    # (was 1 + n_drift + n_drift = 7).
+    assert len(stmts) == 2 + n_drift == 5, stmts
+
+    stmts.clear()
+    repo.find_ontology_violations_report("hvault", cfg.ontology)
+    # ONE refs COUNT (rides idx_refs_type) + one edge-finder per edge rule + ONE property
+    # histogram + one property-finder per property rule (was 1 + n_edge + 1 + 2*n_prop = 31).
+    assert len(stmts) == 1 + n_edge + 1 + n_prop == 20, stmts
+
+    repo._connect().set_trace_callback(None)
+    repo.close()
+
+
+def test_m1_histograms_agree_with_the_per_rule_oracle(tmp_path: Path) -> None:
+    """The collapse 1+N → 1 must not change a single number. Independent oracle: the
+    per-rule COUNT queries the fix DELETED, re-issued here by hand against every rule."""
+    repo, root = build_health_vault(tmp_path)
+    cfg = resolve_layout_config(root)
+    assert cfg.ontology is not None
+    conn = repo._connect()
+
+    coverage = repo.find_coverage_gaps_report("hvault", list(cfg.coverage_rules))
+    for stat, rule in zip(coverage.rule_stats, cfg.coverage_rules, strict=True):
+        oracle = conn.execute(
+            "SELECT COUNT(*) FROM pages p WHERE p.vault_id='hvault' "
+            "AND json_extract(p.frontmatter_json,'$.type') = ?", [rule.page_class]
+        ).fetchone()[0]
+        assert stat.matched == oracle > 0
+
+    drift = repo.find_lifecycle_drift_report("hvault", list(cfg.drift_rules))
+    for stat, drule in zip(drift.rule_stats, cfg.drift_rules, strict=True):
+        oracle = conn.execute(
+            "SELECT COUNT(*) FROM pages p WHERE p.vault_id='hvault' "
+            "AND json_extract(p.frontmatter_json,'$.type') = ? "
+            "AND EXISTS (SELECT 1 FROM page_entity_refs r WHERE r.vault_id=p.vault_id "
+            "  AND r.page_slug=p.slug AND r.page_project=p.project AND r.ref_type = ?)",
+            [drule.page_class, drule.edge]).fetchone()[0]
+        assert stat.matched == oracle
+    assert any(s.matched > 0 for s in drift.rule_stats)   # not vacuously equal to 0
+
+    ontology = repo.find_ontology_violations_report("hvault", cfg.ontology)
+    prop_stats = [s for s in ontology.rule_stats if s.kind == "property"]
+    for stat, prule in zip(prop_stats, cfg.ontology.properties, strict=True):
+        oracle = conn.execute(
+            "SELECT COUNT(*) FROM pages p WHERE p.vault_id='hvault' "
+            "AND json_extract(p.frontmatter_json,'$.type') = ? "
+            "AND json_type(p.frontmatter_json, ?) = 'text'",
+            [prule.page_class, f"$.{prule.field}"]).fetchone()[0]
+        assert stat.matched == oracle
+    assert any(s.matched > 0 for s in prop_stats)         # not vacuously equal to 0
     repo.close()

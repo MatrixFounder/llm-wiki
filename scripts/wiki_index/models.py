@@ -533,11 +533,29 @@ class OntologyViolation:
 @dataclass(frozen=True)
 class RuleStat:
     """One rule's DENOMINATOR row (TASK 061 / R-061-1): how many rows met that
-    rule's PRECONDITION (``matched``), and what it found (``findings``). ``findings``
-    is a DICT, not a single int, because ONE examined ontology edge row can be BOTH
-    a ``domain`` and a ``range`` violation simultaneously — summing kinds into one
-    integer would make ``violations_e <= matched_e`` false on correct data (PLAN 061
-    P-061-A), so the invariant is asserted per ``(rule, kind)`` against ``findings[kind]``.
+    rule's PRECONDITION (``matched``), how many of those each finding KIND could
+    actually judge (``matched_by_kind``), and what it found (``findings``).
+
+    ``findings`` is a DICT, not a single int, because ONE examined ontology edge row
+    can be BOTH a ``domain`` and a ``range`` violation simultaneously — summing kinds
+    into one integer would make ``violations_e <= matched_e`` false on correct data
+    (PLAN 061 P-061-A), so the invariant is asserted per ``(rule, kind)``.
+
+    ``matched_by_kind`` (061 FIX-LOOP, critic-logic M3) mirrors ``findings`` KEY FOR KEY
+    — ``set(matched_by_kind) == set(findings)`` is an invariant every producer upholds.
+    It exists because ``matched`` alone counts rows the check CANNOT JUDGE: an ontology
+    edge rule's ``domain`` fires only on a TYPED source page, its ``range`` only on a
+    RESOLVED + typed target — so a vault whose 500 ``uses`` refs all point at dangling
+    ``[[ghost]]`` links reported ``{matched: 500, findings: {domain: 0, range: 0}}``,
+    which reads as *"500 examined, all clean"* when ``range`` examined **zero**. That is
+    ``{"total_gaps": 0}`` one level down, inside the very numbers TASK 061 added: we had
+    split the NUMERATOR per kind but not the DENOMINATOR. The honest invariant is now
+
+        ∀ kind k:  findings[k] <= matched_by_kind[k] <= matched <= <family>_examined
+
+    and ``matched`` REMAINS the rule's total examined-row count (never a dict), so
+    ``domain + range > matched`` stays legitimately possible (P-061-A) and the
+    fixture that pins it keeps passing.
 
     ``page_class`` is ``""`` for an ontology EDGE rule (it declares `from`/`to`
     CLASS SETS, not a single page class the rule is "of"); ``kind`` distinguishes
@@ -549,13 +567,20 @@ class RuleStat:
     kind: str
     ref: str
     matched: int
+    matched_by_kind: dict[str, int]
+    """The JUDGEABLE population per finding kind — same keys as ``findings``.
+    Coverage: ``{"gaps": m}``. Lifecycle-drift: ``{"drift": m}``. Ontology edge:
+    ``{"domain": distinct typed SOURCE pages, "range": rows with a RESOLVED typed
+    target}``. Ontology property: ``{"property": pages with a PRESENT scalar}``."""
     findings: dict[str, int]
     """Coverage: ``{"gaps": n}``. Lifecycle-drift: ``{"drift": n}``. Ontology edge:
     ``{"domain": n, "range": n}``. Ontology property: ``{"property": n}``."""
 
     def to_json(self) -> dict[str, Any]:
         return {"class": self.page_class, "kind": self.kind, "ref": self.ref,
-                "matched": self.matched, "findings": dict(self.findings)}
+                "matched": self.matched,
+                "matched_by_kind": dict(self.matched_by_kind),
+                "findings": dict(self.findings)}
 
 
 @dataclass(frozen=True)
