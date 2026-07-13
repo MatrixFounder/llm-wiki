@@ -4,9 +4,20 @@ RTM: **R-061-3** (behavior half). Depends on: `061-04`.
 
 ## Goal
 
-Close the observed leak: **18 LIVE pages carry `Source:`** (a case variant) and derive as
+Close the observed leak: LIVE pages carry `Source:` (a case variant) and derive as
 `internal` — the trust layer **fails OPEN**. With `061-04` in place this is a **one-tuple edit**
 plus its honest documentation.
+
+> **CENSUS CORRECTED — this spec said "18 LIVE pages", and 18 is not the fail-open count**
+> (061 VDD iteration-2 / LOW-2). Re-counted read-only against the live vault: **19** pages
+> carry the KEY `Source:`; **18** carry an `http(s)` scalar under it; **13** of those
+> actually derived `internal` (the other 5 were already `external` via a canonical
+> `source`/`url`/`URL` key). **13 is the number** — and the shipped arithmetic always said
+> so (pre-061 external 707 + 13 = 720, + 17 from the H2 shapes = 737). Three surfaces
+> carried "18"/"19" with no executable gate on any of them, inside the very task whose
+> thesis is *a check that examined nothing reports green*. The reconciled number now lives
+> in ONE place — `policy.EXTERNAL_PROVENANCE_KEYS` — **with its re-runnable read-only
+> query beside it**.
 
 ## Changes
 

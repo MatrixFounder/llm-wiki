@@ -87,11 +87,14 @@ Grounding-checked write-back + self-index. No LLM call.
   ref; external origin taints — a verified capture stays `external`). **The operative
   signal for `external` is an `http(s)://` URL in frontmatter** under one of
   `policy.EXTERNAL_PROVENANCE_KEYS` — `source`/`sources`/`url` **and their case variants**
-  `Source`/`SOURCE`/`Sources`/`Url`/`URL` (TASK 061) — **in any of three value shapes: a
-  scalar, a list, or a list of `{…, url: …}` objects** (the `{id, url, file}` element that
-  `generate-detailed-meeting-summary` emits). The list shapes matter: until they were
-  covered, 17 live pages whose provenance was an external URL derived `internal` and passed
-  `--min-trust internal`. A `_raw/` path segment is *also* external,
+  `Source`/`SOURCE`/`Sources`/`Url`/`URL` (TASK 061) — **in any of four value shapes: a
+  scalar, a list, a list of `{…, url: …}` objects** (the `{id, url, file}` element that
+  `generate-detailed-meeting-summary` emits)**, or a top-level `{url: …}` object**. The
+  container shapes matter: until the list shapes were covered, 17 live pages whose
+  provenance was an external URL derived `internal` and passed `--min-trust internal`. What
+  is still NOT external: a URL under a container nested *below* an already-walked one
+  (`sources: [{url: [https://…]}]`) — the walk is a fixed set of positions, never a
+  recursion. A `_raw/` path segment is *also* external,
   but it is a **backstop, not a path you will meet in retrieval**: every built-in layout
   excludes `**/_raw/**` from the index, so a `_raw/` capture is never a hit in normal
   operation. That limb exists for direct `wiki-index-upsert` calls and custom layouts.

@@ -206,19 +206,60 @@ justification was already false.** Pre-061 this paragraph excused the `Source:` 
 on the grounds that *"the framework's own writers use the canonical keys and the `_raw/`
 path anchor."* Both halves were wrong, and the live vault said so:
 
-- **18 pages carried `Source:`** and derived `internal` — the trust layer failed **OPEN**.
-  They are clipper- and hand-authored pages, i.e. exactly the population the excuse
-  assumed away: "our own writers use canonical keys" is not a property of a vault that
-  also holds content the framework did not write.
+- **13 pages carried `Source:` with an external URL AND derived `internal`** — the trust
+  layer failed **OPEN**. They are clipper- and hand-authored pages, i.e. exactly the
+  population the excuse assumed away: "our own writers use canonical keys" is not a
+  property of a vault that also holds content the framework did not write.
 - **The `_raw/` path anchor is not an anchor at all in retrieval** (R-061-7): every
   built-in layout excludes `**/_raw/**` from the index, so **0 of 3267 live pages** are
   external-by-path. It backstops direct upserts, nothing more.
 
+> **The `Source:` census, reconciled** (061 VDD iteration-2 / LOW-2). This doc said
+> **18**, `policy.py` said **19**, the tests said **18**, and nothing executable gated
+> any of them. Both numbers were true **of different nouns**, and *neither was the number
+> a security claim may cite*: **19** pages carry the KEY; **18** of those carry an
+> `http(s)` scalar under it; **13** of those actually derived `internal` (the other 5 were
+> already `external` via a canonical `source`/`url`/`URL` key). The fail-open count is
+> **13** — and the arithmetic below always said so: pre-061 external = **707**, and
+> 707 + 13 = **720**, + 17 = **737**. It never closed on 18. Leaving an unreconciled
+> 18-vs-19 next to a headline correction about *counting the wrong noun* was the same
+> disease, third recurrence. The number now lives in ONE place
+> (`policy.EXTERNAL_PROVENANCE_KEYS`) **with the query beside it**, re-runnable
+> read-only against the live vault (`mode=ro` — never write to it):
+>
+> ```sql
+> -- 13; drop the NOT EXISTS -> 18; drop the type/LIKE guard too -> 19
+> SELECT COUNT(*) FROM pages p WHERE EXISTS (
+>   SELECT 1 FROM json_each(p.frontmatter_json) je
+>    WHERE je.key = 'Source' AND je.type = 'text'
+>      AND (je.value LIKE 'http://%' OR je.value LIKE 'https://%'))
+>   AND NOT EXISTS (
+>   SELECT 1 FROM json_each(p.frontmatter_json) je2
+>    WHERE je2.key IN ('source','url','URL') AND je2.type = 'text'
+>      AND (je2.value LIKE 'http://%' OR je2.value LIKE 'https://%'));
+> ```
+
 `policy.EXTERNAL_PROVENANCE_KEYS` now enumerates the **case variants** *and the plural
 `sources`* from ONE constant rendered into both the Python and the SQL half (Q-050-3
 alignment, parametrized test) — **and the constant carries the VALUE SHAPES too**
-(scalar · list of scalars · list of `{…, url: …}` objects), because enumerating the keys
-without enumerating the shapes is the same bug one level down.
+(scalar · list of scalars · list of `{…, url: …}` objects · top-level `{url: …}` object),
+because enumerating the keys without enumerating the shapes is the same bug one level
+down.
+
+**How far that alignment gate actually reaches — stated, because it used to over-claim**
+(061 VDD iteration-2 / MED-1). The constant renders the **keys** into both halves, and a
+test pins every key into every `IN` list of the SQL, so a key cannot reach one half only.
+It does **not** render the **shapes**, and nothing can: a value shape is *control flow*
+(an `isinstance` ladder in Python, a `je.type` ladder in SQL), not data. The shape table
+in `tests/test_trust_tier.py` is hand-maintained and **neither half reads it** — so a dev
+who widened the Python predicate and forgot the SQL kept all its cross-product cases green
+(measured, not supposed: **108 passed** under exactly that mutation). The shape half is
+therefore gated **differentially** instead:
+`test_sql_and_python_agree_on_generated_frontmatter` generates frontmatter from a grammar
+that does not know the predicate, and requires `trust_tier(...) == "external"` **⟺** the
+row is dropped by `--min-trust internal`. A half-widening fails it in either direction.
+It proves the halves **agree**; the *matrix* proves they are **right** — revert a shape on
+both halves and they agree again. Two gates, neither redundant.
 
 **The "accepted" row below was NOT acceptable — it was a live fail-open, and it is now
 closed** (061 VDD fix-loop / H2). It read: *"List-valued `source:` (a YAML sequence, not a
@@ -231,14 +272,26 @@ derived `internal` and passed `--min-trust internal`, the filter whose entire pu
 the H-6 contract. Both halves agreed with each other throughout; **alignment is not the
 security property — FAIL-CLOSED is.** Live external count: **720 → 737** of 3267.
 
+**A second "accepted" row is also now closed, at 0 live pages** (061 VDD iteration-2 /
+LOW-3). `source: {url: "https://…"}` — a **top-level object** — derived `internal` on both
+halves and passed `--min-trust internal`. It was excused as *"0 live pages, no tool emits
+it"*, which is a fact about **tools**: vault frontmatter is **hand-authored and untrusted
+(H-6)**, and a mapping under `source:` is a natural thing for a human to type. That is the
+*same excuse this very section already retired* for `Source:` — "our own writers use the
+canonical shape" is not a property of a vault that also holds content the framework did
+not write, and repeating it for a second shape would be the disease, not a decision. It is
+closed as a **fourth fixed position** (`_member_is_external` / `_member_sql` are each
+written once and rendered at both member positions) — not recursion, no `json_tree`, no
+new index. It changes **no live page's tier** (re-censused read-only: still 737 of 3267);
+the point is the shape can no longer fail open when someone eventually types it.
+
 What **survives** in (iii), stated rather than assumed:
 
 | Residual | Status |
 |---|---|
 | **Vault-specific provenance keys** (`youtube:`/`teachable:`) | **OPEN — Q-061-4.** Different *keys*, not case variants and not value shapes; still derive `internal`. **9 pages, not the 18 previously recorded here** — the same 9 pages carry *both* keys, and "18" was two key-occurrence counts summed as if they were disjoint page sets (1 of the 9 is external via another key, so **8** actually fail open). Disjoint from the 17 above. Deferred by **mechanism** (needs a per-vault `external_keys:` config surface), **not** by defect. Test-pinned in its known-wrong state so it stays visible. |
 | **Typo-shaped keys** (`uRL:`, `Source_URL:`) | accepted — no tool emits them. NOTE: now that the SQL half is a `json_each` member walk, a true `lower(key)` fold would be **symmetric** across the halves (Q-061-2's rationale for enumerating assumed it could not be) and would close this class. Deliberate follow-up, not a silent widening. |
-| **URL nested deeper than a list-of-objects** (`sources: [{meta: {url: …}}]`), **top-level object** (`source: {url: …}`) | accepted, **0 live pages** — the walk is bounded at 3 levels rather than an unbounded `json_tree` recursion on the hot search path. Both halves agree, and both boundaries are **test-pinned** so the limit stays visible rather than merely true. |
-| **Typo-shaped keys** (`uRL:`, `Source_URL:`) | accepted — no tool emits them; closing the *class* would need key-set inference, not an enumeration |
+| **URL under a container nested BELOW an already-walked container** (`sources: [{url: [https://…]}]`, `sources: [{meta: {url: …}}]`, `sources: [[…]]`) | accepted, **0 live pages** — closing these needs a genuinely recursive descent (a `json_tree` walk on the hot search path), not one more fixed position. That is the line: it is drawn at a property of the **walk**, not at a census. All are **test-pinned** so the limit stays visible rather than merely true. |
 
 The tier remains **advisory, never an authorization boundary** — closing a fail-open leak
 raises the floor; it does not promote `trust` into access control.
