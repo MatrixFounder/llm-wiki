@@ -175,7 +175,12 @@ class IndexRepository(abc.ABC):
         min_trust: str | None = None,
         limit: int = 20,
     ) -> list[PageHit]:
-        """FTS5 + BM25 search, optionally filtered by frontmatter metadata.
+        r"""FTS5 + BM25 search, optionally filtered by frontmatter metadata.
+
+        (RAW docstring: it quotes the SQL ``LIKE '\_raw/%' ESCAPE '\'`` literal
+        below. Un-raw, `\_` is an invalid escape — a SyntaxWarning today and a
+        SyntaxError in a future Python — and `\'` silently rendered as a bare
+        `'`, so the docstring was misquoting the very literal it documents.)
 
         Args:
             query: FTS5 MATCH expression (caller is responsible for escaping
