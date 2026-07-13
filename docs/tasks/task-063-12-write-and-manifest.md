@@ -54,10 +54,14 @@ retry safe (the C-1 invariant, carried over verbatim).
 
 ## Tests (RED first) — `tests/test_extract_decisions_write.py` (new)
 
-- `test_writes_to_the_layout_derived_dir` — cybos ⇒ `decisions/<slug>.md` at the **vault root**;
-  obsidian-personal ⇒ the **sibling** dir. Same candidate, two layouts, two placements.
-  **MUT:** hardcode the sibling ⇒ the cybos assertion RED (and the page would be glob-invisible —
-  the silent loss G4 exists to prevent).
+- `test_writes_to_the_layout_derived_dir` — `cybos` ⇒ `decisions/<slug>.md` at the **vault root**;
+  **`para-typed`** ⇒ the **sibling** dir. Same candidate, two layouts, two placements.
+  ⚠️ **The sibling fixture is `para-typed`, NOT stock `obsidian-personal`** (plan-review **C-2b**;
+  PLAN §1): stock maps **zero** typed classes ⇒ `prepare` refuses it ⇒ nothing is ever written there.
+  `para-typed` = obsidian-personal **+ a `.wiki/layout.yaml`** unioning in the classes — the operator's
+  live vault.
+  **MUT:** hardcode the sibling ⇒ the cybos assertion RED (and the page would be glob-invisible — the
+  silent loss G4 exists to prevent).
 - `test_forward_edges_only_on_disk` — the written frontmatter has `implements:` and **no**
   `implemented-by:`. Then `wiki-reindex --full` ⇒ the inverse **is** in `page_entity_refs`.
   **MUT:** author the inverse ⇒ RED (M-1 broken).

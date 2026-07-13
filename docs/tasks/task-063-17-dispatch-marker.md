@@ -68,13 +68,13 @@ a contradiction into the archive.
 - [ ] **GREP-THE-SURFACES — "the CLIs never call an LLM" is the Decision-17 denominator claim.**
       Enumerate the LLM-shaped skills from CLAUDE.md and assert over **all** of them, not just the two
       this bead touched:
+      ⚠️ **BOTH import forms** (plan-review **M-8**) — the house gate
+      (`tests/test_wiki_sync.py:634-639`) asserts `"import anthropic"` **and** `"from anthropic"`:
       ```bash
-      for m in wiki_query wiki_verify_multi wiki_extract_concepts wiki_extract_decisions \
-               wiki_sync wiki_import_article; do
-        grep -rn "import anthropic" scripts/wiki_skills/$m* && echo "VIOLATION: $m"
-      done
+      grep -rlE "import anthropic|from anthropic" scripts/wiki_skills/ && echo "VIOLATION"
       ```
       Add it as a **test** that globs `scripts/wiki_skills/` so a *new* skill is covered by default.
+      A hand-typed module list is exactly this project's failure mode; so is a one-pattern grep.
 - [ ] The `wiki-import` envelope is **byte-identical** when the block is absent (diff the JSON against
       a pre-change golden).
 

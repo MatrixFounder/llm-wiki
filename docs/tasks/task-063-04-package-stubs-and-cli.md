@@ -80,16 +80,23 @@ later bead "restores parity".
 
 - [ ] `pytest tests/ -q` ≥ 2477 passed. `mypy --strict scripts/` clean (the package is in the
       `scripts/` contract from bead 1 — stubs must be **typed**, not `Any`-shaped).
-- [ ] **GREP-THE-SURFACES — I-2, and it is a denominator claim ("no `import anthropic` anywhere"):**
+- [ ] **GREP-THE-SURFACES — I-2, a denominator claim ("no LLM-client import anywhere").**
+      ⚠️ **BOTH import forms** (plan-review **M-8**): the house precedent
+      `tests/test_wiki_sync.py:634-639` asserts `"import anthropic"` **and** `"from anthropic"`.
+      v1 greps only the first — so `from anthropic import Anthropic` **slips straight through** a gate
+      whose whole purpose is to stop it. *A gate narrower than the precedent it clones is a gate with
+      a documented hole.*
       ```bash
       # enumerate the population, then assert over ALL of it — never spot-check one file
       find scripts/wiki_skills/wiki_extract_decisions -name '*.py' | tee /dev/stderr | \
-        xargs grep -l "import anthropic" ; test $? -ne 0
+        xargs grep -lE "import anthropic|from anthropic" ; test $? -ne 0
       ```
       Add it as a **test** (`test_no_anthropic_import_in_package`) that globs the package dir at
       runtime, so a *new file* added by a later bead is covered automatically. A grep over a
       hand-typed file list would be exactly this project's failure mode.
-- [ ] **MUT:** add `import anthropic` to any file in the package ⇒ that test goes RED.
+- [ ] **MUT (both forms — run each):** add `import anthropic` to any file ⇒ RED; add
+      `from anthropic import Anthropic` to any file ⇒ **also RED**. v1's gate would have passed the
+      second.
 - [ ] `bin/wiki-extract-decisions prepare --help` runs from a clean shell.
 
 ## Rollback

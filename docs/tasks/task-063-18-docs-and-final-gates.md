@@ -41,10 +41,23 @@ thing is what it claims to be.
       sqlite3 <db> 'PRAGMA user_version;'    # → 7
       ```
 - [ ] **Decision-17 (I-2/I-3)**: the globbing test from 063-04/063-17 passes —
-      `grep -rn "import anthropic" scripts/wiki_skills/` ⇒ **no hits**, over the whole tree.
-- [ ] **The property (063-15)**: both halves green on the cybos sample vault, under
-      **`wiki-reindex --full`**. And `grep -rn "\-\-delta" tests/test_extract_decisions_property.py`
-      ⇒ **no hits**.
+      `grep -rlE "import anthropic|from anthropic" scripts/wiki_skills/` ⇒ **no hits**, over the whole
+      tree. ⚠️ **Both forms** (plan-review M-8) — the one-pattern grep PLAN v1 specified lets
+      `from anthropic import Anthropic` through.
+- [ ] **The matcher gate is SCOPED, not global** (plan-review **C-4**): `glob_covers` uses
+      `full_match`; the **3 pre-existing `fnmatch` hits are PINNED** (`layout_config.py:30` import,
+      `:1055` + `:1085` `fnmatchcase` — the TASK-030 per-**segment** matcher, where fnmatch is
+      **correct**). PLAN v1's "grep fnmatch ⇒ 0 hits" **could never go green**, and satisfying it would
+      have **broken the walk**:
+      ```bash
+      grep -c "fnmatch" scripts/wiki_index/layout_config.py     # → 4 (import, docstring, :1055, :1085)
+      ```
+- [ ] **The property (063-15)**: both halves green — on a cybos vault built in **`tmp_path`**
+      (⚠️ **not `samples/`**, which is gitignored ⇒ a skipped acceptance gate; plan-review C-5), under
+      **`wiki-reindex --full`**. And `grep -rn -- "--delta" tests/test_extract_decisions_property.py`
+      ⇒ **no hits**. Confirm **0 skipped** in that module: `pytest ... -rs`.
+- [ ] **G6 is anchored on the SUBMITTED BATCH, not on the rail's own output** (plan-review C-1) —
+      re-run the no-op-`apply` mutation and confirm **G6 FAILS**. If it passes, G6 is not a gate.
 - [ ] **The TASK-058 evolution invariant (the operator's requirement)**: the three `dirs.*` keys are
       live in **`wiki-config show`**, **`report`**, and **`serve`** — verified by *running* them
       against a fixture vault, not by reading the code:
@@ -56,6 +69,9 @@ thing is what it claims to be.
       and `git log -p --stat` for the whole task shows **zero** changes to `_app_html.py`,
       `_server.py`, `_report.py`, `_report_md.py`. *That is the invariant: a new field, zero interface
       code.*
+- [ ] **`samples/` is the DOGFOOD tree, never an acceptance anchor** (plan-review C-5). The manual
+      dogfood lives here: **`wiki-config validate --vault-root samples/<cybos>`** + a `prepare` dry run.
+      Any *automated* gate that needs a vault builds it in `tmp_path`.
 - [ ] **Dogfood** on the live BD vault zone (read-only first): `prepare` on one real protocol ⇒ inspect
       the envelope ⇒ **do not `apply` until the operator reviews the candidates.** The rail's first
       real run is an operator decision, not a plan step.

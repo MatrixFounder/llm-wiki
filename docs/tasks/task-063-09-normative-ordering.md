@@ -37,9 +37,13 @@ And **both halves of the property are blind to it**:
 1. Restructure `apply` so the drop set is computed **before** `validate_ontology` / `validate_refs`
    are called, and both receive the **post-drop** list. Not "call them in the right order" — pass the
    post-drop list as the **only** list they can see, so the wrong batch is not reachable.
-2. After the drop, compute `referenced_dropped = {c for c in survivors
-   if c.edges/links ∩ dropped_slugs}`. Non-empty ⇒ `DROPPED_CANDIDATE_STILL_REFERENCED`, **exit 4,
-   zero writes**, listing each `(survivor, dropped_target)` pair.
+2. After the drop, compute `referenced_dropped` — ⚠️ **over the SAME extracted-ref set G2 uses**
+   (plan-review **m-11**): `extract_refs(rendered_page, config.ref_extraction)` from 063-10, **not** an
+   ad-hoc peek at `c["edges"]`. Otherwise a **bare ID in prose** (`"заменяет DEC-004"`) referencing a
+   dropped candidate would slip past this gate while G2 catches its *unresolved* cousin — two
+   ref-populations, one of them wrong, which is the exact class of bug this bead exists to close.
+   Non-empty ⇒ `DROPPED_CANDIDATE_STILL_REFERENCED`, **exit 4, zero writes**, listing each
+   `(survivor, dropped_target)` pair.
 3. **Escalation, not a warning.** The drop was benign; the *dependency on the drop* is not.
 
 ## Context — files

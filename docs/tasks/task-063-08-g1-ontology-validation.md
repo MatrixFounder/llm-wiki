@@ -69,6 +69,9 @@ output.
   "refused" is not evidence that nothing was written.
 - `test_dev_project_is_vacuous_and_marked` — no `ontology:` ⇒ roster check only,
   `vacuous_validation: true`, `edges_checked == 0`. Green **and honest**.
+  ⚠️ **Reachable only after 063-02** (plan-review **C-2**): stock `dev-project` maps the typed classes
+  but has **no `paths[]` glob** for them ⇒ `prepare` **refuses** the layout ⇒ this test could never
+  have passed as v1 wrote it. 063-02 adds the three globs. It is a hard dependency, not a detail.
 
 ## Exit criteria
 

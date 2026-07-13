@@ -1,7 +1,14 @@
 # TASK 063-05 — **[LOGIC]** `prepare`: the ontology contract, the G4 preflight, the handshake
 
 **Phase**: 2 (the rail) · **RTM**: R-063-1, R-063-3, R-063-5 · **Type**: code · **Effort**: 4h
-**Depends on**: 063-01, 063-02, 063-04 · **Unblocks**: 063-06 … 063-14
+**Depends on**: 063-01, **063-02 (hard — it is what makes `dev-project` supported at all)**, 063-04
+· **Unblocks**: 063-06 … 063-14
+**Revision**: v2 — plan-review **C-2** (the supported-set gate measured one conjunct), **C-2b**, **m-10**
+applied. PLAN §8.
+
+> ⚠️ **Fixtures come from the PLAN §1 ROSTER.** `dev-project` is the `vacuous_validation` fixture — and
+> it is **only supported after 063-02 adds its three `paths[]` globs**. Before that, `prepare` refuses
+> it via its own preflight and every `vacuous_validation` test below is **unreachable**.
 
 ## Goal
 
@@ -100,16 +107,30 @@ Two independent refusals, both **exit 2**, both before any candidate exists:
 ## Exit criteria
 
 - [ ] `pytest tests/ -q` ≥ 2477 passed. `mypy --strict scripts/` clean.
-- [ ] **GREP-THE-SURFACES — "which layouts are supported" is a denominator claim, and the v1 spec got
-      it FACTUALLY WRONG here.** Prove it from the config, in a test that iterates the registry:
+- [ ] ★ **GREP-THE-SURFACES — "which layouts are supported" is a denominator claim. The spec got it
+      wrong in v1. PLAN v1 then got it wrong AGAIN, in the very gate written to stop it** (plan-review
+      **C-2**): it measured `type_mapping` **alone**, which is **1 of G4's 2 conjuncts**, and would
+      have stayed **green while the rail refused `dev-project`**.
+      **G4 support is a CONJUNCTION** — the layout must *map* the classes **AND** its walker must *see*
+      the write path:
       ```python
-      for name in layout_choices():                       # the population, from the code
-          cfg = resolve_layout_config_by_name(name)
-          supported = bool({"decision","requirement","risk"} & set(cfg.type_mapping))
-          assert supported == (name in {"cybos", "dev-project"})   # pin the ANSWER
+      SUPPORTED = {"cybos", "dev-project"}          # PLAN §1 roster; dev-project only AFTER 063-02
+      for name in layout_choices():                 # the population, from the registry
+          cfg  = _config_for(name)                  # real API (m-10): resolve_layout_config /
+                                                    # load_layout_config / _builtin_registry
+          maps = bool({"decision","requirement","risk"} & set(cfg.type_mapping))
+          sees = all(resolve_typed_write_dir(cfg, dir_name=d, source_rel=PROBE_SRC) is not None
+                     for d in ("decisions","requirements","risks"))
+          assert (maps and sees) == (name in SUPPORTED)      # ★ the CONJUNCTION, not either half
       ```
-      A new built-in layout that maps typed classes then **fails this test until someone updates the
-      supported set deliberately** — which is the entire point.
+      **MUT:** assert on `maps` alone ⇒ the test passes **in the broken state**. Run that mutation
+      once, see the false green, then restore the conjunction. *A gate that passes in the broken state
+      is not a gate.*
+      A new built-in layout that maps typed classes **and** can see them then fails this test until
+      someone updates `SUPPORTED` **deliberately** — which is the entire point.
+- [ ] ⚠️ `resolve_layout_config_by_name` **does not exist** (plan-review m-10). The real APIs are
+      `resolve_layout_config(vault_root)`, `load_layout_config(vault_root, root_config)`,
+      `_builtin_registry()`, `layout_choices()`. Build `_config_for(name)` in conftest from those.
 - [ ] The 063-04 stub E2E test is **rewritten** to assert real values (TDD stub-first step 4), not
       deleted.
 - [ ] **MUT:** delete the preflight ⇒ `test_karpathy_prepare_refuses` RED.

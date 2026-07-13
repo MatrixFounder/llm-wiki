@@ -27,11 +27,19 @@ A `supersedes` edge **reconciles the target's `status`** — otherwise cybos's d
 rule = find_drift_rule(config.drift_rules, target_class, "superseded-by")   # may be None
 # value:        rule.expect_status
 # precondition: the DRIFT RULE'S OWN FIRING CONDITION  (_health_rules.py:312-317)
-#   patch  ⟺  json_type($.status) == 'text'   AND   status != rule.expect_status
+#   patch  <=>  json_type($.status) == 'text'   AND   status != rule.expect_status
 ```
 
 - **No rule for that class** (requirement, adr, pattern…) ⇒ **patch NOTHING.** There is no drift to
   prevent, and inventing a status would violate the class's enum.
+- ⚠️ **A rule of the `forbid_status` SHAPE ⇒ also patch NOTHING** (plan-review **M-9**). `DriftRule`
+  carries **exactly one** of `expect_status` / `forbid_status` (`models.py:384-391`), and an
+  operator's `.wiki/layout.yaml` may legitimately declare the `forbid_status` shape for
+  `(class, superseded-by)`. Then **`rule.expect_status is None`** and *there is no value to patch to* —
+  `forbid_status` says what a status must **not** be, which does not determine what it **should** be.
+  Treat it as the same branch as "no rule at all": **`rule is None or rule.expect_status is None ⇒ no
+  patch`.** *This is v2's bug and v3's bug one field further left — the shape neither of them caught —
+  and it is reachable from config, not from code.*
 - **Absent / null / non-scalar status** ⇒ never drifts ⇒ **never patched** (no gratuitous Class-A edit).
 - **Already `expect_status`** ⇒ no-op (idempotent).
 
@@ -97,6 +105,12 @@ rather than shipping an unhandled class).
 - `test_no_reconcile_refuses_the_whole_batch` — `--no-reconcile` + any `supersedes` ⇒ exit 4, zero
   pages. **MUT:** write the pages and skip the patch ⇒ G3 silently broken ⇒ 063-15 RED.
 - `test_patched_page_is_in_the_manifest` — G5's positive half; else `hash-mismatch`.
+- ★ `test_forbid_status_shaped_rule_patches_nothing` (plan-review **M-9**) — a synthetic
+  `.wiki/layout.yaml` declaring `{class: decision, edge: superseded-by, forbid_status: [proposed]}`
+  ⇒ `rule.expect_status is None` ⇒ **zero patches, zero violations, exit 0** (and the target's bytes
+  are unchanged). **MUT:** read `rule.expect_status` unguarded ⇒ the patch value is `None` ⇒ the rail
+  either crashes or writes a null status ⇒ RED. *Reachable from config, not from code — which is why
+  it needs a test and not a comment.*
 
 ## Exit criteria
 
