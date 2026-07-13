@@ -113,7 +113,8 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 ```bash
 # --- Retrieval-scope controls (ADR-009 / TASK 049–050) — all default-OFF ---
 # Provenance floor: prepare hits carry a derived trust tier
-#   external (http(s) source:/url:/URL: or _raw/) < internal < verified (inbound `verifies` edge); origin taints.
+#   external (an http(s) frontmatter key: source:/Source:/SOURCE:/url:/Url:/URL: — _raw/ is a
+#     backstop no built-in layout indexes) < internal < verified (inbound `verifies` edge); origin taints.
 wiki-query prepare "..." --vault personal --vault-root . --min-trust internal   # ground RAG on trusted pages, drop clippings
 # Classification scope: declare `policy: {levels, default_level}` in WIKI_SCHEMA.md, mark pages
 # `classification: <level>`; a page ABOVE the audience never enters context (fail-closed):

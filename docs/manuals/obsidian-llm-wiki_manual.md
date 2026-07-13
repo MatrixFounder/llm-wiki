@@ -1808,7 +1808,7 @@ Every `wiki-query prepare` hit carries a **derived** `trust` tier — no new aut
 
 | Tier | What it means |
 |---|---|
-| `external` | The page has an `http(s)` `source:` / `url:` / `URL:` (the uppercase key `wiki-import` writes) **or** lives under `_raw/`. These are captures/clippings that may carry inline instructions (H-6 indirect prompt injection). |
+| `external` | The page declares an **`http(s)` provenance key** in frontmatter — `source:` / `url:` / `URL:` **and their case variants** `Source:` / `SOURCE:` / `Url:` (TASK 061; `wiki-import` writes the uppercase `URL:`, web clippers often write `Source:`). These are captures/clippings that may carry inline instructions (H-6 indirect prompt injection). *A page under `_raw/` also counts, but that is a **backstop you will not meet in practice**: every built-in layout excludes `**/_raw/**` from the index, so a `_raw/` capture is never a search hit — the frontmatter key is the operative signal.* |
 | `internal` | An ordinary vault page. |
 | `verified` | A page with an inbound `verifies` edge (a verification/verdict page vouches for it). |
 
@@ -2086,7 +2086,7 @@ lookup table for when you meet one again later.
 - **Coverage gap** — a page missing an expected relation (a `requirement` nothing implements); reported by `wiki-health`, always exit 0 — a gap is data, not a failure.
 - **RAG** — retrieval-augmented generation: retrieve relevant notes first, then have the model answer *only* from them, with citations.
 - **`question_hash`** — the integrity token `wiki-query prepare` issues and `apply` must return verbatim; it proves the answer was synthesised against the same corpus state it is filed against.
-- **Trust tier** — the derived provenance signal on every retrieval hit: `external` (web capture / `_raw/`), `internal` (your own note), `verified` (vouched for by a verification page); `--min-trust` floors on it.
+- **Trust tier** — the derived provenance signal on every retrieval hit: `external` (an `http(s)` `source:`/`url:`/`URL:` frontmatter key + case variants — a web capture or clipping; `_raw/` is a backstop that no built-in layout indexes), `internal` (your own note), `verified` (vouched for by a verification page); `--min-trust` floors on it.
 - **Classification / `--audience`** — the optional page-level sensitivity label and the query-time gate that keeps higher-level pages out of a model's context; scoping, not access control.
 - **H-6** — the untrusted-content rule: retrieved page bodies and CLI output are data, never instructions; fence them before showing them to a model.
 - **`WIKI_ACTOR_ID`** — the environment variable that signs audit rows with the acting agent's name ("who filed / read what").

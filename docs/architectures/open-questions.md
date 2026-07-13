@@ -1645,3 +1645,97 @@
   the floor is deliberately above 220 but conservative). False-negative cost = today's junk
   `_raw` (no regression); false-positive cost = a substantive tweet dropped — guarded by the
   AND-gate + `--video`/explicit re-run always available (spec Risk 2).
+
+### 11o. TASK 061 — honest denominators + the two fail-open fixes (design rationale)
+
+> **The unifying thesis, worth carrying forward:** *a check that examined nothing reports green.*
+> `{"total_gaps": 0}` was indistinguishable from a real green — on the LIVE vault the health checks
+> read 0 because **nothing typed existed to examine**, not because anything was healthy. Every
+> "0 violations" observed before this task therefore carried **zero information**.
+>
+> The thesis proved **FRACTAL**: the same failure mode — *asserting that a mechanism covers a
+> surface without enumerating the surfaces it actually covers* — recurred **seven** times inside
+> the spec and plan written to fix it, and **every single instance was caught by a grep, never by
+> reasoning**. A boundary that is STATED is honest; a boundary that is merely TRUE is the disease.
+
+- **Q-061-1 (RESOLVED) — three denominator nouns, because three populations.** Not two. Coverage →
+  `pages_examined`; ontology **edge** rules (domain/range) → `edges_examined`; ontology **property**
+  rules → `property_pages_examined`. Rationale: `find_ontology_violations` iterates **edges** for
+  domain/range **and pages** for property enums, *in one call* — collapsing them onto one noun
+  reproduces the very bug this task fixes (on LIVE it would have answered "how many pages did the
+  ontology check?" with a count of 8836 `mentioned` **refs**). The bare noun `pages_examined` is
+  **never reused** for the property family: coverage already owns that noun for a *different*
+  population (⋃ `coverage_rules[].class` ≠ ⋃ `ontology.properties[].class`). One noun per
+  population, or the honesty fix is itself dishonest.
+  - **Invariants are per-RULE, against that rule's OWN family denominator** — never in total form.
+    `total_gaps ≤ examined` is **FALSE on correct data**: the schema permits two rules on one class,
+    so one page can gap twice. Likewise (P-061-A) domain and range are separate `if` blocks that can
+    BOTH fire on the SAME ref row, so a per-rule sum over kinds is also false ⇒ `RuleStat.findings`
+    is a per-**kind** dict, asserted per (rule × kind).
+
+- **Q-061-2 (RESOLVED) — enumerate the provenance-key case variants from ONE shared constant.**
+  The binding constraint is **Q-050-3 alignment, not performance.** The SQL and Python halves must
+  stay *provably identical*; SQLite `json_extract` paths are case-**sensitive**, so a true fold
+  needs `json_each` + `lower(key)` **in SQL only** — precisely the asymmetric predicate Q-050-3
+  forbids. Enumerating `{source, Source, SOURCE, url, Url, URL}` from one constant keeps both halves
+  *rendered from the same source of truth*, with a parametrized alignment test against future drift.
+  - *Honest limits, stated not buried:* this closes **100% of the observed leak, not the class** — a
+    typo-shaped key (`uRL:`, `Source_URL:`) still fails open (no tool emits those). `SOURCE`/`Url`
+    have **0** live pages and are cheap defense-in-depth (`_EXT` grows 8 → 14 `LIKE` disjuncts) —
+    **not** a P-5 concern, and P-5 (no speculative *indexes*) must not be cited here.
+
+- **Q-061-3 (RESOLVED) — `zones:` advisory marker: Option A′, GENERALIZE, don't badge.** `zones:` is
+  **dead config** — parsed (`sync_config.py`), linted (`ZONE_GLOB_NO_MATCH`), shown by `wiki-config`,
+  and listed in the manual beside the *enforcing* keys, but `iter_sync_candidates()` **never reads
+  it** (grep `\.zones` across `scripts/`: the parse is the ONLY hit). Only `exclude:` scopes the walk.
+  - **Option B rejected for now** (extend `FieldSpec` + an `x-wiki-advisory` badge): `FieldSpec` is a
+    **closed** dataclass and `x-wiki-*` annotations are **hand-read**, so a new *annotation kind*
+    could NOT render with "zero interface code". The TASK 058 / R-058-10 invariant is *a new schema
+    **field** needs no code*, **not** *a new **annotation kind** needs no code*. Deferred until a
+    **second** advisory field exists.
+  - **Plain Option A was also FALSE** — and this is the instructive part. "Just put it in the
+    `description`, which already renders everywhere" assumed a surface set nobody had enumerated. The
+    grep: `FieldSpec.description` was consumed by **`_server.py` alone** (→ `_app_html.py`'s `.hint`);
+    `_report.py` had **0** hits and `_cmd_show` bypassed `build_ui_model` entirely. It rendered in
+    **`serve` ONLY**.
+  - **Adopted: A′.** Make the ONE-TIME change **generic** — render `FieldSpec.description` in `show`
+    (JSON envelope + the markdown sidecar) and in the HTML `report`. The `zones` advisory text is then
+    **data, not code**, and *every future field's description* renders in all sinks with zero further
+    code — this **strengthens** R-058-10 rather than eroding it. Resolved by **nearest ancestor**
+    (mirroring `resolve_origin`), never a bare `pointer in ui_model` test: `_report_md._flatten`
+    recurses on `dict` only, so a list is a **leaf** and `/zones` (which *has* a FieldSpec) is the row
+    pointer — the naive lookup is correct **by coincidence**, and its failure mode is a **silent empty
+    string**, the exact disease this task exists to kill.
+  - **The sink census (stated, so the boundary is honest):** `serve` form hint · `show` JSON envelope ·
+    `show --report` markdown · `report` HTML row. **`tree` is a DELIBERATE exclusion** — it answers
+    *"where is this key overridden?"*, not *"what does it mean"*, and a description per folder × key
+    would drown the override map. It covers **two** commands, not one: `tree --report` **and**
+    `report --md` both call `render_tree_report`.
+
+- **Q-061-4 (OPEN) — vault-specific provenance keys (`youtube:` 9 pages, `teachable:` 9) still derive
+  `internal`.** *Deferred by **mechanism**, NOT by defect.* The mechanism differs (a shared constant
+  vs. a new per-vault `external_keys:` config surface — a new config surface does not belong in a fix
+  task). **The defect does not:** a page whose provenance IS an `http(s)` URL derives as `internal`.
+  The trust contract is about external **origin**, not key spelling.
+  - **Raised stakes.** TASK 061 §5 **withdrew** the `--min-trust` floor (on the live vault `external`
+    ≈ the operator's curated reference library — 693 of 707 external pages are clippings/Learning — so
+    the floor drops the best-scoring hits) and named the **always-on per-hit `trust` annotation** "the
+    valuable half". That annotation is the surface operators actually see, and it **mislabels these 18
+    pages**. So the residual is not "an unused filter leaks"; it is *"the surface the operator actually
+    uses mislabels 18 pages."* Follow-up priority rises accordingly.
+  - **Test-pinned in its known-wrong state** (the task's ethic applied to itself):
+    `tests/test_trust_tier.py::test_vault_specific_provenance_key_still_internal_q0614` asserts
+    `trust == "internal"` **today**; when Q-061-4 lands, the test **flips to `external`**. An invisible
+    residual became a visible, tracked one.
+
+- **Q-061-5 (RESOLVED, corrective) — the `_raw/` limb of the external predicate is a BACKSTOP, not a
+  retrieval signal.** Recorded because **nine living surfaces** (two SKILL.md contracts, an argparse
+  help, two arch docs, four manual/quick-reference sites) told operators that a `_raw/` capture can
+  appear in retrieval. **It cannot in normal operation:** all **4** built-in layout grammars
+  (`karpathy` — also `flat`/`per-project` — `dev-project`, `obsidian-personal`, `cybos`) carry
+  `**/_raw/**` in `ignore`, so no `_raw/` page is ever indexed and the limb cannot fire on a hit.
+  Live vault: **0 of 3267 pages are external-by-path; 100% of the `external` tier is
+  frontmatter-URL-derived.** The **http(s) frontmatter key is the operative signal**; the `_raw/` limb
+  is **kept** (it is correct, just unreachable through the normal index path) for direct
+  `wiki-index-upsert` calls and custom layouts. **No predicate or SQL change** — a docs-only
+  correction, which is the point: the code was right and every description of it was wrong.

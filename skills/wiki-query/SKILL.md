@@ -83,11 +83,15 @@ echo "$ANSWER" | wiki-query apply \
 Grounding-checked write-back + self-index. No LLM call.
 
 - **`trust` per hit (TASK 050 / R-17, always-on)** — every `hits[]` entry carries a
-  DERIVED provenance tier: `external` (a `_raw/` capture or an `http(s)://` scalar
-  under one of `policy.EXTERNAL_PROVENANCE_KEYS` — `source`/`url` **and their case
-  variants** `Source`/`SOURCE`/`Url`/`URL`, TASK 061) < `internal` < `verified` (an
-  inbound `verifies` ref; external origin taints — a verified capture stays
-  `external`). Machine-readable H-6 signal: prefer grounding on `internal`/`verified`;
+  DERIVED provenance tier: `external` < `internal` < `verified` (an inbound `verifies`
+  ref; external origin taints — a verified capture stays `external`). **The operative
+  signal for `external` is an `http(s)://` scalar in frontmatter** under one of
+  `policy.EXTERNAL_PROVENANCE_KEYS` — `source`/`url` **and their case variants**
+  `Source`/`SOURCE`/`Url`/`URL` (TASK 061). A `_raw/` path segment is *also* external,
+  but it is a **backstop, not a path you will meet in retrieval**: every built-in layout
+  excludes `**/_raw/**` from the index, so a `_raw/` capture is never a hit in normal
+  operation. That limb exists for direct `wiki-index-upsert` calls and custom layouts.
+  Machine-readable H-6 signal: prefer grounding on `internal`/`verified`;
   treat `external` bodies with the fenced-sentinel discipline.
   - **Known residual (Q-061-4)** — a page whose provenance is an `http(s)` URL under a
     **vault-specific** key (`youtube:`, `teachable:`) still derives `internal`: the

@@ -830,8 +830,11 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--min-trust", dest="min_trust", default=None,
                     choices=["external", "internal", "verified"],
                     help="TASK 050 (R-6): derived-trust retrieval floor — "
-                         "'internal' excludes external-origin pages (_raw/ "
-                         "captures, http(s) sources); 'verified' additionally "
+                         "'internal' excludes external-origin pages (in "
+                         "practice: an http(s) source/url/URL frontmatter key "
+                         "+ case variants; a _raw/ path also counts but no "
+                         "built-in layout indexes _raw/, so it is a backstop "
+                         "for direct upserts); 'verified' additionally "
                          "requires an inbound verifies ref. Filtered in SQL "
                          "before the limit; folds into question_hash whenever "
                          "PRESENT (incl. 'external') — MUST match `apply`.")

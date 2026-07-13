@@ -195,9 +195,35 @@ project (Q-050-1). Within the §7.6 trust scope this means: (i) content that can
 `type: verification` page (e.g. an H-6 prompt-injection subverting an import REASON
 step) can confer `verified` — the tier raises the bar, it does not gate writes; (ii) a
 page verified only by a RESTRICTED verification page still shows `verified` to a lower
-audience — a 1-bit existence signal, no content; (iii) a hand-authored page citing an
-external source under a non-canonical frontmatter key (`Source:`, list-valued `source:`)
-evades the `external` tier — the framework's own writers use the canonical keys and the
-`_raw/` path anchor. All three are accepted advisory-tier imprecision, consistent with
-the operator-trusted boundary; treat `trust` as a prompt-side signal and
-`--min-trust` as hygiene, never as access control (that is `--audience`'s job).
+audience — a 1-bit existence signal, no content; (iii) a page citing an external source
+under a frontmatter key the derivation does not recognise evades the `external` tier.
+These are accepted advisory-tier imprecision, consistent with the operator-trusted
+boundary; treat `trust` as a prompt-side signal and `--min-trust` as hygiene, never as
+access control (that is `--audience`'s job).
+
+**TASK 061 / R-061-3 addendum — the `Source:` limb of (iii) is CLOSED, and its stated
+justification was already false.** Pre-061 this paragraph excused the `Source:` evasion
+on the grounds that *"the framework's own writers use the canonical keys and the `_raw/`
+path anchor."* Both halves were wrong, and the live vault said so:
+
+- **18 pages carried `Source:`** and derived `internal` — the trust layer failed **OPEN**.
+  They are clipper- and hand-authored pages, i.e. exactly the population the excuse
+  assumed away: "our own writers use canonical keys" is not a property of a vault that
+  also holds content the framework did not write.
+- **The `_raw/` path anchor is not an anchor at all in retrieval** (R-061-7): every
+  built-in layout excludes `**/_raw/**` from the index, so **0 of 3267 live pages** are
+  external-by-path. It backstops direct upserts, nothing more.
+
+`policy.EXTERNAL_PROVENANCE_KEYS` now enumerates the **case variants**
+(`source`/`Source`/`SOURCE`/`url`/`Url`/`URL`) from ONE constant rendered into both the
+Python and the SQL half (Q-050-3 alignment, parametrized test). What **survives** in (iii),
+stated rather than assumed:
+
+| Residual | Status |
+|---|---|
+| **Vault-specific provenance keys** (`youtube:` 9 pages, `teachable:` 9) | **OPEN — Q-061-4.** Different *keys*, not case variants; still derive `internal`. Deferred by **mechanism** (needs a per-vault `external_keys:` config surface), **not** by defect. Test-pinned in its known-wrong state so it stays visible. |
+| **List-valued `source:`** (a YAML sequence, not a scalar) | accepted — the derivation reads scalars |
+| **Typo-shaped keys** (`uRL:`, `Source_URL:`) | accepted — no tool emits them; closing the *class* would need key-set inference, not an enumeration |
+
+The tier remains **advisory, never an authorization boundary** — closing a fail-open leak
+raises the floor; it does not promote `trust` into access control.

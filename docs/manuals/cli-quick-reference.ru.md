@@ -116,7 +116,9 @@ wiki-query prepare "compare X and Y" --vault personal     # retrieves context (L
 ```bash
 # --- Управление областью выдачи (retrieval-scope, ADR-009 / TASK 049–050) — всё по умолчанию ВЫКЛ ---
 # Порог доверия к происхождению: результаты prepare несут производный уровень trust
-#   external (http(s) source:/url:/URL: или _raw/) < internal < verified (входящее ребро `verifies`); происхождение «заражает» (external не поднимается выше).
+#   external (http(s)-ключ во frontmatter: source:/Source:/SOURCE:/url:/Url:/URL: — `_raw/` это backstop,
+#     который ни один встроенный layout не индексирует) < internal < verified (входящее ребро `verifies`);
+#     происхождение «заражает» (external не поднимается выше).
 wiki-query prepare "..." --vault personal --vault-root . --min-trust internal   # строить RAG на доверенных страницах, отбросить веб-клиппинги
 # Область классификации: объявите `policy: {levels, default_level}` в WIKI_SCHEMA.md, помечайте страницы
 # `classification: <level>`; страница ВЫШЕ уровня audience никогда не попадёт в контекст (fail-closed):
