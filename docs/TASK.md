@@ -11,7 +11,7 @@
 - **Effort**: M
 - **Schema**: **zero DDL** (`user_version` 7). Typed classes + edges already exist (ADR-003/004); this task
   only *produces* them. **No `import anthropic`** (Decision-17).
-- **Revision**: **v6**, after four BLOCKING task-reviews + **operator requirements** (2026-07-13):
+- **Revision**: **v7**, after four BLOCKING task-reviews + **operator requirements** (2026-07-13):
   the rail must be **invocable from config** (like its sibling `extract_concepts`), and the **folder names
   must be configurable AND visible in the `wiki-config` editor**. The second requirement exposed a real
   architectural defect in v5 — see R-063-3′. v1 shipped **two factually false claims**, both of the
@@ -191,10 +191,30 @@ three systems, so it has a legitimate home:**
 > Enforced in **BOTH** `wiki-config validate` (a new finding code) **and** the rail's own `prepare`
 > preflight — refuse with an actionable message, never write a page the walker cannot see.
 >
-> ⚠️ **Layout-dependent, so it must be CHECKED, never assumed:** obsidian-personal's generic
-> `[0-9][0-9] - */*/**/*.md` catches **any depth** ⇒ any folder name works (the operator's live vault).
-> **cybos's globs are root-anchored** (`decisions/**/*.md`, no catch-all) ⇒ **only the declared roots work**;
-> a custom name there is refused, not silently dropped.
+> ⚠️ **The matcher is `PurePosixPath.full_match`** (correct recursive `**` semantics, Python 3.13+;
+> `layout_config.py:986`) — **NOT `fnmatch`**. An earlier draft measured with `fnmatch` and reported a false
+> result; the gate MUST use the engine's own matcher. *(Yet another instance of this project's lesson:
+> validate against the real grammar, never an approximation of it.)*
+>
+> **★ TWO AXES, and they are independent — verified with the real matcher, not assumed:**
+>
+> | | **PLACEMENT** (root vs sibling) | **NAME** (`decisions` vs `решения`) |
+> |---|---|---|
+> | **who decides** | **DERIVED from the layout** — never operator-set | **operator-set** in `sync.yaml` (cascading) |
+> | **cybos** (globs root-anchored, `decisions/**/*.md`, no catch-all) | **root** ⇒ `decisions/dec-x.md` ✅ (and `decisions/2026/dec-x.md` ✅) | a custom name is **NOT covered** ⇒ **refused** |
+> | **obsidian-personal + the operator's `paths`** (generic `[0-9][0-9] - */*/**/*.md`) | **sibling** of the source note ✅ | **any name works**, incl. Cyrillic (`решения/`) ✅ |
+>
+> **cybos is not "broken" — it is STRICT BY DESIGN.** Its read globs are explicit and closed, so on a typed
+> vault **the folder name is part of the contract**. A PARA vault's generic glob makes the name free. Both
+> are correct; the gate is what makes the difference *visible* instead of silently losing pages.
+>
+> **★ Q-063-5 — what happens on a name the globs don't cover? *SETTLED: (A) REFUSE with an actionable
+> message.*** Not (B) auto-generating the missing glob: `sync.yaml` mutating `layout.yaml` would erode the
+> deliberate two-config-system split (per-vault **identity/grammar** vs per-folder **policy**) that the whole
+> project maintains. The operator widens the **read grammar** consciously, or picks a covered name — they do
+> not get it silently.
+> Message shape: *"`dirs.decision: 'решения'` is not covered by any `paths[]` glob of layout `cybos`. Use
+> `decisions`, or add `решения/**/*.md` to `.wiki/layout.yaml`."*
 
 **Acceptance:** (a) the three `dirs.*` keys **appear in `wiki-config serve`/`report`/`show` with zero
 interface-code changes** (pin it — this IS the TASK-058 evolution invariant); (b) a `dirs.*` value not
