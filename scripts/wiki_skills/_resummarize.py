@@ -37,11 +37,13 @@ from scripts.wiki_index.layout_config import guarded_search
 from scripts.wiki_index.repository import IndexRepository
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_index.sync_config import (
+    ExtractDecisionsConfig,
     MirrorConfig,
     ResummarizeConfig,
     SummarizeConfig,
     SyncConfigError,
     _load_validated_raw,
+    _parse_extract_decisions,
     _parse_resummarize,
     _parse_summarize,
 )
@@ -74,6 +76,11 @@ class Caches:
     # TASK 046 P3 — per-dir RAW `summarize` block (cascade input) + parsed result (output).
     summarize_raw: dict[Path, dict[str, Any] | None] = field(default_factory=dict)
     summarize: dict[Path, SummarizeConfig] = field(default_factory=dict)
+    # TASK 063 — per-dir RAW `extract_decisions` block (cascade input) + parsed result
+    # (output). The value type is Optional because ABSENT-everywhere is `None`, not a
+    # defaulted config — see `resolve_extract_decisions`.
+    extract_decisions_raw: dict[Path, dict[str, Any] | None] = field(default_factory=dict)
+    extract_decisions: dict[Path, ExtractDecisionsConfig | None] = field(default_factory=dict)
     # vdd-multi PERF-046-1 — the FULL hardened+validated `.wiki/sync.yaml` dict per dir, read
     # ONCE per scan; the resummarize AND summarize cascades both source their block from here,
     # so the same file is no longer read+parsed+validated twice per directory.
@@ -168,6 +175,55 @@ def resolve_summarize(
             merged = deep_merge(merged, block)
     result = _parse_summarize(merged) or SummarizeConfig()
     c.summarize[parent] = result
+    return result
+
+
+def resolve_extract_decisions(
+    path: Path,
+    *,
+    vault_root: Path,
+    caches: Caches | None = None,
+) -> ExtractDecisionsConfig | None:
+    """Resolve the effective `extract_decisions` policy for `path` (TASK 063 /
+    R-063-3′(d)), via the SAME per-folder Option-A cascade as `resolve_summarize`:
+    deep-merge every ancestor's RAW `extract_decisions:` block deepest-wins, then
+    parse ONCE.
+
+    The RAW-then-parse order is what makes a partial override work: a zone that
+    sets only `dirs.risk` inherits the root's `enabled` and its other two dirs.
+    Parse-then-merge would overwrite the parent's `enabled` with the child's
+    *injected default* (`False`) — the override would silently switch the rail off.
+
+    ⚠️ RETURNS `None` WHEN NO LEVEL CONFIGURES IT — and that asymmetry with its
+    sibling `resolve_summarize` (which returns `SummarizeConfig()` DEFAULTS) is
+    deliberate, so it is spelled out here rather than left for a future reader to
+    "fix": `summarize` has a live default behaviour to preserve (the TASK 046 P2
+    delegate), whereas `extract_decisions` absent must mean **the rail is never
+    auto-dispatched** (R-063-3′(c)). A defaulted `ExtractDecisionsConfig()` would
+    read as "configured, and disabled" — the same conflation `show` refuses to make.
+
+    Memoized per `path.parent` on `caches`, and it sources each level's block from
+    the SHARED `_validated_dir` read (PERF-046-1), so adding this third cascade does
+    not re-read `.wiki/sync.yaml` a third time per directory.
+
+    No `found` flag (unlike `resolve_policy`): `_parse_extract_decisions({})` already
+    returns `None`, so a flag guarding that call could never change the outcome — and a
+    condition that cannot change an outcome is exactly the vacuous check this project
+    keeps re-learning to delete."""
+    c = caches or Caches()
+    parent = path.parent
+    if parent in c.extract_decisions:
+        return c.extract_decisions[parent]
+    merged: dict[str, Any] = {}
+    for d in _ancestor_dirs(path, vault_root):
+        if d not in c.extract_decisions_raw:
+            blk = _validated_dir(d, c).get("extract_decisions")
+            c.extract_decisions_raw[d] = blk if isinstance(blk, dict) else None
+        block = c.extract_decisions_raw[d]
+        if block is not None:
+            merged = deep_merge(merged, block)
+    result = _parse_extract_decisions(merged)
+    c.extract_decisions[parent] = result
     return result
 
 

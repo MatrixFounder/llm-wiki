@@ -16,15 +16,18 @@ operator actually sees — are pinned in
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+import scripts.wiki_skills._resummarize as _resummarize
 from scripts.wiki_index.sync_config import (
     ExtractDecisionsDirs,
     SyncConfigError,
     load_extract_decisions_raw,
     load_sync_config,
 )
+from scripts.wiki_skills._resummarize import resolve_extract_decisions
 
 
 def _sync_yaml(root: Path, text: str) -> None:
@@ -133,3 +136,128 @@ def test_raw_loader_returns_the_unparsed_block(tmp_path: Path) -> None:
     inherit its parent's `enabled` only by accident. Mirrors `load_summarize_raw`."""
     _sync_yaml(tmp_path, "extract_decisions:\n  dirs:\n    risk: Риски\n")
     assert load_extract_decisions_raw(tmp_path) == {"dirs": {"risk": "Риски"}}
+
+
+# --------------------------------------------------------------------------- #
+# 063-01 — the per-folder Option-A cascade (R-063-3′(d))
+# --------------------------------------------------------------------------- #
+
+
+def test_absent_at_every_level_is_none(tmp_path: Path) -> None:
+    """No block anywhere in the chain ⇒ `None`. NOT a defaulted-and-disabled config:
+    "never configured" and "configured, off" are different facts, and only the first
+    means the rail must never be auto-dispatched."""
+    zone = tmp_path / "Zone"
+    zone.mkdir()
+    assert resolve_extract_decisions(
+        zone / "note.md", vault_root=tmp_path
+    ) is None
+
+
+def test_partial_override_inherits_parent(tmp_path: Path) -> None:
+    """★ The RAW-then-parse order, which is the whole reason the cascade merges raw
+    dicts instead of parsed dataclasses.
+
+    Root: `{enabled: true, dirs: {decision: decisions}}`. Zone overrides ONE key.
+    The zone must inherit `enabled: true` and the root's `decision`.
+
+    MUT: parse-then-merge (parse each level, then overwrite field-by-field) ⇒ the
+    zone's parsed block carries its INJECTED DEFAULT `enabled=False`, which
+    overwrites the root's `true` — the override silently switches the rail OFF.
+    That is a real failure mode, not a hypothetical: it is what a reader "cleaning
+    up" the resolver into `replace(parent, **child_fields)` would ship.
+    """
+    _sync_yaml(
+        tmp_path,
+        "extract_decisions:\n  enabled: true\n  dirs:\n    decision: decisions\n",
+    )
+    zone = tmp_path / "Zone"
+    zone.mkdir()
+    _sync_yaml(zone, "extract_decisions:\n  dirs:\n    risk: 'риски'\n")
+
+    cfg = resolve_extract_decisions(zone / "note.md", vault_root=tmp_path)
+    assert cfg is not None
+    assert cfg.enabled is True            # inherited — the MUT breaks exactly this
+    assert cfg.dirs.decision == "decisions"    # inherited
+    assert cfg.dirs.risk == "риски"            # overridden
+    assert cfg.dirs.requirement == "requirements"  # neither level set it → default
+
+
+def test_two_zones_resolve_different_names(tmp_path: Path) -> None:
+    """R-063-3′(d), literally: two engagements in ONE vault, two folder grammars.
+    This is the operator's requirement — a Russian-named zone and an English one
+    cannot be forced to share a folder vocabulary."""
+    _sync_yaml(tmp_path, "extract_decisions:\n  enabled: true\n")
+    (tmp_path / "Zone A").mkdir()
+    (tmp_path / "Zone B").mkdir()
+    _sync_yaml(tmp_path / "Zone A", "extract_decisions:\n  dirs:\n    decision: decisions\n")
+    _sync_yaml(tmp_path / "Zone B", "extract_decisions:\n  dirs:\n    decision: 'Решения'\n")
+
+    a = resolve_extract_decisions(tmp_path / "Zone A" / "n.md", vault_root=tmp_path)
+    b = resolve_extract_decisions(tmp_path / "Zone B" / "n.md", vault_root=tmp_path)
+    assert a is not None and b is not None
+    assert (a.dirs.decision, b.dirs.decision) == ("decisions", "Решения")
+    assert a.enabled is b.enabled is True   # both inherit the root's opt-in
+
+
+def test_caches_read_sync_yaml_once_per_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PERF-046-1 survives a THIRD cascade: `extract_decisions` sources its block
+    from the shared `_validated_dir` memo, so N files in one dir read + parse +
+    validate `.wiki/sync.yaml` ONCE — not once more per new cascade.
+
+    MUT: drop the `c.extract_decisions` memo ⇒ 3 calls, RED.
+    """
+    _sync_yaml(tmp_path, "extract_decisions:\n  enabled: true\n")
+    zone = tmp_path / "Zone"
+    zone.mkdir()
+
+    real = _resummarize._validated_dir
+    calls: list[Path] = []
+
+    def _counting(d: Path, c: _resummarize.Caches) -> dict[str, Any]:
+        calls.append(d)
+        return real(d, c)
+
+    monkeypatch.setattr(_resummarize, "_validated_dir", _counting)
+
+    caches = _resummarize.Caches()
+    for name in ("a.md", "b.md", "c.md"):
+        cfg = resolve_extract_decisions(zone / name, vault_root=tmp_path, caches=caches)
+        assert cfg is not None and cfg.enabled is True
+    # 2 dirs (root + Zone) × ONE read each — the second and third file hit the
+    # `c.extract_decisions[parent]` memo and never reach `_validated_dir` at all.
+    assert len(calls) == 2
+
+
+def test_every_cascade_resolver_uses_the_SHARED_hardened_read() -> None:
+    """The exit-criterion grep, promoted to a durable test — and MEASURED from the
+    source rather than asserted in prose.
+
+    A cascade resolver that opened its own `sync.yaml` read would be a SECOND,
+    divergent hardening surface: the size cap, the anchor-ban, the symlink refusal
+    and the strict schema all live in `_load_validated_raw`, and a resolver that
+    skipped it would silently accept a config the others refuse. So: every resolver
+    must use the same ancestor walk, the same memoized hardened read, and the same
+    deep-merge.
+
+    The POPULATION is enumerated here (three resolvers, named). A fourth cascade
+    added without updating this list is the failure this test cannot catch — so the
+    list is asserted against the module's own `resolve_*` surface, not hardcoded.
+    """
+    import inspect
+
+    resolvers = sorted(
+        name for name in dir(_resummarize)
+        if name.startswith("resolve_") and callable(getattr(_resummarize, name))
+    )
+    assert resolvers == ["resolve_extract_decisions", "resolve_policy", "resolve_summarize"], (
+        "a new cascade resolver appeared — add it to the shared-surface contract "
+        "below, or explain why it may bypass the hardened read")
+
+    for name in resolvers:
+        src = inspect.getsource(getattr(_resummarize, name))
+        assert "_ancestor_dirs(" in src, f"{name} does not use the shared ancestor walk"
+        assert "_validated_dir(" in src, f"{name} bypasses the shared hardened read"
+        assert "deep_merge(" in src, f"{name} does not deep-merge (RAW-then-parse)"
