@@ -235,14 +235,36 @@ def test_every_provenance_key_is_external_on_both_halves(repo, key, scheme):
 
 
 def test_external_origin_sql_renders_every_key():
-    """TC-04-2 — the SQL literal carries exactly 2 path disjuncts + 2 per key
-    (http, https), and names each key's JSON path. Guards a HALF-APPLIED edit:
-    a key added to the Python constant but not rendered into SQL is precisely
-    the Q-050-3 drift this bead exists to make impossible."""
-    assert _EXTERNAL_ORIGIN_SQL.count("LIKE") == (
-        2 + 2 * len(EXTERNAL_PROVENANCE_KEYS))
+    """TC-04-2 — the SQL literal names every key from the constant. Guards a
+    HALF-APPLIED edit: a key added to the Python constant but not rendered into
+    SQL is precisely the Q-050-3 drift this gate exists to make impossible."""
     for key in EXTERNAL_PROVENANCE_KEYS:
-        assert f"'$.{key}'" in _EXTERNAL_ORIGIN_SQL
+        assert f"'{key}'" in _EXTERNAL_ORIGIN_SQL, key
+
+
+def test_external_origin_sql_parses_the_blob_exactly_once():
+    """M2 (perf), pinned STRUCTURALLY rather than by a timing assertion.
+
+    The old form emitted one `json_extract(p.frontmatter_json, …)` per
+    (key x scheme) — 6 independent re-parses of the SAME blob per candidate row
+    at TASK 050, and 12 once 061-06 doubled the key list. SQLite does no CSE on
+    row-dependent calls, and this predicate lands on the metadata query shape,
+    which has no index for its ordering: SQLite scans the vault partition and
+    sorts it in a temp b-tree, so the LIMIT does NOT bound predicate evaluation
+    and per-row cost IS the cost.
+
+    The one-`json_each` form parses the blob ONCE per row for ALL keys. These are
+    the invariant:
+      * exactly ONE walk of `p.frontmatter_json`;
+      * ZERO `json_extract` (a reintroduced one is a re-parse per key);
+      * a CONSTANT LIKE count, INDEPENDENT of the key count — which is what makes
+        growing the constant cheap, and is why the case variants are affordable
+        defense-in-depth. Under the old form, every added key cost two more full
+        blob re-parses PER ROW: the 061-06 key growth silently doubled it."""
+    assert _EXTERNAL_ORIGIN_SQL.count("json_each(p.frontmatter_json)") == 1
+    assert _EXTERNAL_ORIGIN_SQL.count("json_extract") == 0
+    assert _EXTERNAL_ORIGIN_SQL.count("LIKE") == 4
+    assert "json_tree" not in _EXTERNAL_ORIGIN_SQL   # no unbounded recursion
 
 
 # =============================================================================

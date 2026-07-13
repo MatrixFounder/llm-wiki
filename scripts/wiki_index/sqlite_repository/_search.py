@@ -39,33 +39,72 @@ _PAGE_COLS = (
     "p.body_excerpt, p.is_frozen"
 )
 
-# TASK 050 (R-6) / TASK 061 (R-061-3) — the SQL half of the external-origin
-# predicate, RENDERED FROM `policy.EXTERNAL_PROVENANCE_KEYS` so it can never
-# drift from the Python half (`policy._is_external`) that Q-050-3 pins it to.
-# The keys are deliberately NOT re-enumerated here: import the constant.
+# TASK 050 (R-6) / TASK 061 (R-061-3) / 061 VDD fix-loop (M2) — the SQL half of
+# the external-origin predicate, RENDERED FROM `policy.EXTERNAL_PROVENANCE_KEYS`
+# so it can never drift from the Python half (`policy._is_external`) that Q-050-3
+# pins it to. The keys are deliberately NOT re-enumerated here: import the constant.
 #
-# Rationale of each literal (unchanged since TASK 050):
+# ONE `json_each` PASS (M2) — a pure refactor: SEMANTICS ARE UNCHANGED, and the
+# untouched trust suite is the equivalence gate.
+#
+# WHY. `json_extract` is a row-dependent scalar call and SQLite does no CSE on
+# those, so the old form re-parsed the WHOLE frontmatter blob once per
+# (key x scheme) — 6 parses/row at TASK 050, and silently 12 after TASK 061-06
+# doubled the key list. That is the tell that the "accepted 6x json_extract" note
+# (open-questions §11j) was never an acceptance but an unowned debt: its cost grew
+# with an edit nobody re-measured. This form parses the blob ONCE per row for ALL
+# keys and short-circuits on the first match, so cost is FLAT in the key count.
+#
+# WHERE IT BITES. The predicate rides all three query shapes, and the *metadata*
+# shape (`FROM pages p WHERE 1=1 ... ORDER BY p.project, p.slug`) has no index for
+# that ordering: SQLite scans the vault partition and sorts it in a TEMP B-TREE,
+# so the LIMIT does NOT bound predicate evaluation — every row in the partition is
+# tested, and per-row cost IS the cost. (`EXPLAIN QUERY PLAN` confirms: `SEARCH p
+# USING INDEX idx_pages_vault_date` + `USE TEMP B-TREE FOR ORDER BY`.) Fixing this
+# by query SHAPE, not by adding an index — P-5 holds, and no DDL (user_version 7).
+#
+# Precedent for the shape: `_where_fields_clauses` below already does
+# `EXISTS (SELECT 1 FROM json_each(p.frontmatter_json, ?) ...)`.
+#
+# Rationale of each literal:
 #   * `_` is a LIKE wildcard, so the `_raw` path segment is ESCAPE'd;
-#   * the `http(s)://` prefix is EXACT — never bare `http`, so `httpx://`
-#     cannot match;
-#   * LIKE's default ASCII-ci fold mirrors the Python half's `.lower()`;
-#   * `json_extract` of a NON-SCALAR yields `[`/`{` text, which the prefix LIKE
-#     rejects — a list/object-valued key is not external on either side;
-#   * COALESCE to '' — an absent key json_extract's to SQL NULL, and
-#     `FALSE OR NULL` = NULL would make `NOT (<ext>)` exclude EVERY unadorned
-#     page (three-valued logic); `'' LIKE 'http://%'` is a clean FALSE.
-# Fixed literals, no bound params. Disjunct count: 2 path + 2 per key.
-_J_EXT = ("COALESCE(CAST(json_extract(p.frontmatter_json, '$.{k}')"
-          " AS TEXT), '')")
+#   * the `http(s)://` prefix is EXACT — never bare `http`, so `httpx://` cannot
+#     match; LIKE's default ASCII-ci fold mirrors the Python half's `.lower()`;
+#   * `je.key IN (...)` is a case-SENSITIVE binary compare — the deliberate twin
+#     of the Python half iterating the constant (enumerate, don't fold: Q-061-2);
+#   * `je.type = 'text'` is the exact twin of Python's `isinstance(val, str)`, and
+#     preserves the old form's semantics: `json_extract` of a NON-scalar yielded
+#     `[`/`{` text which the prefix LIKE rejected, so a list/object-valued key was
+#     not external on either half. It still isn't — THIS COMMIT CHANGES NO
+#     BEHAVIOR. (That scalar-only semantic is itself the H2 fail-open, fixed in
+#     the NEXT commit; keeping the two apart is what makes each reviewable.)
+#   * NO COALESCE is needed any more (and none is present): the old form needed it
+#     because `json_extract` of an ABSENT key yields NULL and `FALSE OR NULL` =
+#     NULL would make `NOT (<ext>)` exclude EVERY unadorned page (three-valued
+#     logic). `EXISTS` is 2-valued — 0 or 1, never NULL — so that hazard is gone
+#     STRUCTURALLY, not by a guard someone must remember. `json_each(NULL)` yields
+#     ZERO ROWS (verified, not assumed), so a NULL-frontmatter row is correctly
+#     non-external; malformed JSON raises here exactly as it did under
+#     `json_extract` (same pre-existing exposure, no new one); and `file_path` is
+#     `NOT NULL` in the schema, so the two path LIKEs cannot be NULL either.
+# Fixed literals, no bound params. LIKE count is now a CONSTANT 4 (2 path + 2
+# scheme), independent of the key count.
+_KEYS_SQL: str = ", ".join(f"'{k}'" for k in EXTERNAL_PROVENANCE_KEYS)
+
+
+def _http_like(col: str) -> str:
+    """`<col>` carries an exact, ASCII-ci `http(s)://` prefix."""
+    return f"({col} LIKE 'http://%' OR {col} LIKE 'https://%')"
+
 
 _EXTERNAL_ORIGIN_SQL: str = (
     "(p.file_path LIKE '\\_raw/%' ESCAPE '\\'"
     " OR p.file_path LIKE '%/\\_raw/%' ESCAPE '\\'"
-    + "".join(
-        f" OR {_J_EXT.format(k=k)} LIKE '{scheme}://%'"
-        for k in EXTERNAL_PROVENANCE_KEYS
-        for scheme in ("http", "https"))
-    + ")"
+    # ONE parse of p.frontmatter_json, for ALL keys.
+    " OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json) je"
+    f"           WHERE je.key IN ({_KEYS_SQL})"
+    f"             AND je.type = 'text' AND {_http_like('je.value')})"
+    ")"
 )
 
 

@@ -1444,6 +1444,25 @@
   predicate (default-OFF, FTS-candidate-set-bounded, ADR-005 posture; latent
   metadata-path cost noted); unbounded `log_events` growth under machine re-query
   loops (retention = P3).
+  - **The `json_extract` acceptance is WITHDRAWN (061 VDD fix-loop / M2).** It was
+    accepted at 6× and silently became **12×** when TASK 061-06 doubled the key list.
+    That is the tell: **an acceptance whose cost grows with a future edit is not an
+    acceptance, it is a debt with no owner** — nobody re-measured, because the note
+    said "accepted". The "FTS-candidate-set-bounded" half of the rationale was also
+    only ever true of the *FTS* shape: the same predicate rides the **metadata** shape
+    (`FROM pages p WHERE 1=1 … ORDER BY p.project, p.slug`), which has no index for
+    that ordering, so SQLite scans the vault partition and sorts it in a temp b-tree —
+    the `LIMIT` does **not** bound predicate evaluation there. The "latent
+    metadata-path cost" that was merely *noted* was the real cost all along.
+    Now **one `json_each` pass**: one blob parse per row for all keys, flat in the key
+    count, **no new index (P-5 holds** — the fix is query-SHAPE-based**)** and no DDL.
+    Measured on a read-only snapshot of the live vault (3267 pages) and a synthetic
+    10k bucket, metadata shape, median of 12: **5.60 → 4.41 ms** live, **12.00 →
+    11.21 ms** at 10k; FTS shape **0.33 → 0.21 ms**. *Honest correction to the finding
+    that raised this:* it estimated ~180 ms vs ~90 ms at 10k against a 100 ms SLO —
+    **that magnitude was wrong by ~15×**, and the SLO was never at risk from this
+    predicate. The rewrite still stands on its own (fewer parses, flat in key count,
+    and it is the *same* change H2 needs), but it is an optimisation, **not** a rescue.
 
 ### 11k. TASK 051 — source freshness / connector substrate (R-18) (design rationale)
 
