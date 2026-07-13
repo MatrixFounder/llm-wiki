@@ -245,10 +245,28 @@ the frontmatter keys whose ``http(s)://`` value marks a page as EXTERNAL origin.
 
 RENDERED INTO BOTH HALVES of the Q-050-3 alignment contract: the Python
 :func:`_is_external` below AND the ``_EXTERNAL_ORIGIN_SQL`` literal in
-``sqlite_repository/_search.py``. The parametrized alignment test in
-``tests/test_trust_tier.py`` is driven from this same tuple *and from the
-declared VALUE SHAPES below*, so the two halves and their test move together or
-not at all — neither a new key nor a new shape can drift them apart.
+``sqlite_repository/_search.py``.
+
+**What the anti-drift gates actually cover — stated precisely, because the
+previous phrasing here over-claimed** (061 VDD iteration-2, MED-1; it said
+"neither a new key nor a new shape can drift them apart", and the SHAPE half of
+that was FALSE):
+
+- **KEYS: rendered.** Both halves render their key lists from THIS tuple, and
+  ``test_external_origin_sql_renders_every_key`` pins each key into every ``IN``
+  list of the SQL. A key added here cannot reach only one half.
+- **SHAPES: NOT rendered — nothing can render them.** A value shape is *control
+  flow* (an ``isinstance`` ladder in Python, a ``je.type`` ladder in SQL); it is
+  not data, so there is no constant for the two halves to share. ``_VALUE_SHAPES``
+  in ``tests/test_trust_tier.py`` is a hand-maintained TEST table, and **neither
+  half renders from it** — so a dev who widens the Python
+  :func:`_value_is_external` and forgets the SQL would keep every alignment case
+  green. That hole is closed by a DIFFERENTIAL test, not by a shared constant:
+  ``test_sql_and_python_agree_on_generated_frontmatter`` generates random
+  frontmatter (scalars/lists/dicts/mixed, ≤4 deep) and asserts
+  ``trust_tier(...) == "external"`` **⟺** the row is dropped by ``--min-trust
+  internal`` — so a HALF-widening fails on a generated case, in either direction.
+  It asserts its own generator reached each shape, so it cannot pass vacuously.
 
 **``sources`` (PLURAL) is here because it is the framework's OWN canonical
 provenance key** — ``IndexRepository.all_cited_sources`` harvests ``sources[]``,
@@ -266,6 +284,25 @@ LIVE pages carry ``sources:``**, and every one of them derived ``internal``.
    same keys* — ``sources: [{id, url: "https://…", file}]`` (**16 live pages**:
    the TASK 023 ``{id, url, file}`` element that
    ``generate-detailed-meeting-summary`` emits, mirrored by ``all_cited_sources``).
+4. a TOP-LEVEL OBJECT with an http(s) TEXT scalar under one of these same keys —
+   ``source: {url: "https://…"}`` (**0 live pages** — closed on the strength of
+   H-6, not of a census; see below).
+
+Shapes 1/3/4 are ONE function on each half (:func:`_member_is_external` /
+``_search._member_sql``), applied at the two member POSITIONS; shape 2 is that
+same function one level in. Four positions, no recursion.
+
+**Why shape 4 is CLOSED at 0 live pages** (061 VDD iteration-2, LOW-3 — an
+explicit DECISION, not an ``isinstance`` side-effect). "No tool emits it" is a
+fact about TOOLS. Vault frontmatter is **hand-authored and untrusted (H-6)**, and
+``source:`` carrying a mapping is a natural thing for a human to type. "Our own
+writers use the canonical shape" is the SAME excuse that ``security.md`` used to
+wave through ``Source:`` — 13 live pages later, it was not true, and a vault that
+also holds content the framework did not write does not have that property. The
+close costs one ``isinstance`` branch and one type-exclusive SQL arm, keeps both
+halves symmetric, and changes NO live page's tier (verified read-only: still 737
+external of 3267). A fail-open shape that is cheap to close and disclosed as live
+does not get to stay open because today's census is zero.
 
 Shapes 2 and 3 were the H2 fail-open: the pre-fix predicate required
 ``isinstance(val, str)`` on BOTH halves, so **17 live pages whose provenance is
@@ -276,17 +313,25 @@ property: **fail-CLOSED is.** ``docs/architectures/security.md`` had even listed
 "list-valued ``source:`` — accepted, the derivation reads scalars" as an accepted
 residual; it was not acceptable, and it is now closed.
 
-**BOUNDED, and the boundary is STATED** (depth ≤ 3 containers, no recursion — a
-``json_tree`` walk would be unbounded on the hot search path). NOT external, on
-BOTH halves, and pinned by tests so the limit stays visible rather than merely
-true:
+**BOUNDED, and the boundary is STATED** (a FIXED set of four positions, no
+recursion — a ``json_tree`` walk would be unbounded on the hot search path). NOT
+external, on BOTH halves, and **each one pinned by a test** so the limit stays
+visible rather than merely true (061 VDD iteration-2, LOW-3: one of these was
+UNPINNED while its four siblings were — the enumeration itself had a hole):
 
-- a top-level OBJECT-valued key — ``source: {url: "https://…"}`` (**0 live pages**;
-  no tool emits it);
-- an http(s) URL nested deeper than a list-of-objects — ``sources: [[…]]``,
+- an http(s) URL under a **LIST inside an object member** —
+  ``sources: [{url: ["https://…"]}]``, ``source: {url: ["https://…"]}``
+  (**0 live pages**);
+- an http(s) URL nested deeper still — ``sources: [[…]]``,
   ``sources: [{meta: {url: …}}]`` (**0 live pages**);
-- an object member under a NON-provenance key — ``sources: [{href: "https://…"}]``
-  (the inner key set IS this constant, so ``href``/``link`` do not count).
+- an object member under a NON-provenance key — ``sources: [{href: "https://…"}]``,
+  ``URL: {u: "https://…"}`` (the inner key set IS this constant, so
+  ``href``/``link``/``u`` do not count).
+
+Why these stay open while shape 4 closed: each needs a walk level *below* an
+already-walked container, i.e. a genuinely recursive descent — not one more fixed
+position. That is the line, and it is drawn at a property of the WALK, not at a
+census.
 
 NEVER re-enumerate these keys anywhere else: import the constant. (The key list
 had already been copy-pasted across 6+ surfaces, and that duplication is exactly
@@ -314,13 +359,43 @@ question, so it belongs in its own change with its own review. Enumeration holds
 here. (LIKE's ASCII-ci fold covers the VALUE, so ``HTTP://`` always matched —
 only the KEY was ever case-sensitive.)
 
-**What this closes, honestly.** Two fail-OPEN leaks, both verified against the
-LIVE DB (read-only census), both invisible to reasoning and caught only by a
-grep:
+**What this closes, honestly — THE CENSUS, reconciled** (061 VDD iteration-2,
+LOW-2). This docstring said "19", ``security.md`` said "18" and the tests said
+"18", with no executable gate on any of them. Both numbers were TRUE — **of
+different nouns** — and *neither was the number that matters*. Re-counted
+read-only against the live DB (3267 pages), the ``Source:`` limb is:
 
-- 19 pages carried ``Source:`` (a case variant) — closed by TASK 061-06.
-- **17 pages carry an external URL under a list-valued ``sources:``** — closed
-  here (shapes 2/3 above). LIVE external count: **720 → 737** of 3267 pages.
+===================================================  =====
+pages carrying the KEY ``Source:`` (any value)         19
+…of those, whose ``Source:`` is an http(s) scalar      18
+…of those, that ACTUALLY derived ``internal`` pre-061  **13**
+===================================================  =====
+
+The 5-page gap: they carry ``Source:`` *and* a canonical ``source``/``url``/``URL``
+URL, so they were already ``external``. **13 is the fail-open count** — the only
+one a security claim may cite. The check that settles it is the arithmetic already
+printed below, which never closed on 18: pre-061 external = **707**; 707 + 13 =
+**720** (TASK 061-06) + 17 = **737** (the H2 shapes). LIVE external count:
+**720 → 737** of 3267. This is the SAME count-the-wrong-noun bug TASK 061 exists
+to kill — third recurrence, inside TASK 061's own accounting.
+
+RE-RUN IT (read-only — this is the operator's real vault; ``mode=ro``, never
+write)::
+
+    sqlite3 "file:$HOME/Library/Application Support/obsidian-llm-wiki/\\
+    personal.db?mode=ro" "
+      SELECT COUNT(*) FROM pages p WHERE EXISTS (
+        SELECT 1 FROM json_each(p.frontmatter_json) je
+         WHERE je.key = 'Source' AND je.type = 'text'
+           AND (je.value LIKE 'http://%' OR je.value LIKE 'https://%'))
+        AND NOT EXISTS (
+        SELECT 1 FROM json_each(p.frontmatter_json) je2
+         WHERE je2.key IN ('source','url','URL') AND je2.type = 'text'
+           AND (je2.value LIKE 'http://%' OR je2.value LIKE 'https://%'));"
+    -- 13   (drop the NOT EXISTS -> 18; drop the type/LIKE guard too -> 19)
+
+The other leg, unchanged and independently re-verified: **17 live pages carry an
+external URL under a list-valued ``sources:``** — closed here (shapes 2/3 above).
 
 It does **not** close the CLASS. A typo-shaped key (``uRL:``, ``Source_URL:``)
 still fails open — no tool emits those. ``SOURCE``/``Url``/``Sources``/``SOURCES``
@@ -365,16 +440,19 @@ def _is_http_scalar(val: object) -> bool:
 
 
 def _member_is_external(member: object) -> bool:
-    """One MEMBER of a list-valued provenance key (shapes 2 and 3 of
-    :data:`EXTERNAL_PROVENANCE_KEYS`): an http(s) scalar, or an OBJECT carrying
-    one under a provenance key — the TASK 023 ``{id, url, file}`` element that
-    ``generate-detailed-meeting-summary`` emits and ``all_cited_sources`` reads.
+    """A MEMBER position (shapes 1, 3 and 4 of :data:`EXTERNAL_PROVENANCE_KEYS`):
+    an http(s) scalar, or an OBJECT carrying one under a provenance key — the
+    TASK 023 ``{id, url, file}`` element that ``generate-detailed-meeting-summary``
+    emits and ``all_cited_sources`` reads, and equally a hand-authored top-level
+    ``source: {url: …}`` mapping.
 
     The inner key set IS the same constant (never a second list — that is how
-    the halves drifted in the first place). Deliberately does NOT recurse: a
-    member that is itself a list/nested object is NOT external. That bound is
-    what keeps the SQL mirror a fixed 3-level walk instead of a ``json_tree``
-    recursion on the hot search path — see the boundary stated on the constant."""
+    the halves drifted in the first place). Deliberately does NOT call itself: a
+    member whose OWN member is a list or a nested object is NOT external. That
+    bound is what keeps the SQL mirror a fixed, enumerable set of positions
+    instead of a ``json_tree`` recursion on the hot search path — see the
+    boundary stated on the constant. SQL twin: ``_search._member_sql``, likewise
+    written ONCE and rendered at BOTH member positions."""
     if _is_http_scalar(member):
         return True
     if isinstance(member, dict):
@@ -384,16 +462,17 @@ def _member_is_external(member: object) -> bool:
 
 
 def _value_is_external(val: object) -> bool:
-    """The VALUE half of the predicate — shape-complete over the three shapes
+    """The VALUE half of the predicate — shape-complete over the FOUR shapes
     declared on :data:`EXTERNAL_PROVENANCE_KEYS` (scalar · list-of-scalars ·
-    list-of-objects), and no others.
+    list-of-objects · top-level object), and no others.
 
-    Structurally mirrors the SQL ``EXISTS(json_each …)`` walk branch-for-branch:
-    ``je.type='text'`` ↔ :func:`_is_http_scalar`; ``je.type='array' AND
-    EXISTS(json_each(je.value))`` ↔ the ``isinstance(val, list)`` any()."""
-    if _is_http_scalar(val):
+    Structurally mirrors the SQL ``EXISTS(json_each …)`` walk branch-for-branch,
+    INCLUDING the reuse: ``_member_sql('je', …)`` ↔ the :func:`_member_is_external`
+    call below (shapes 1 + 4); ``je.type = 'array'`` + ``EXISTS(json_each(je.value))``
+    ↔ the ``isinstance(val, list)`` any() (shapes 2 + 3)."""
+    if _member_is_external(val):   # shapes 1 (scalar) + 4 (top-level object)
         return True
-    if isinstance(val, list):
+    if isinstance(val, list):      # shapes 2 + 3 — the SAME member rule, one level in
         return any(_member_is_external(m) for m in val)
     return False
 

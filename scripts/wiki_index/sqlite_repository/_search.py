@@ -66,11 +66,20 @@ _PAGE_COLS = (
 #     `_where_fields_clauses` below already does `EXISTS (SELECT 1 FROM
 #     json_each(p.frontmatter_json, ?) ...)`.
 #
-# The walk is BOUNDED at 3 levels (page -> key -> list member -> object member),
-# NOT a `json_tree` recursion: an unbounded recursive descent on the hot search
-# path is exactly what we must not introduce, and the nested `json_each(je.value)`
-# only fires for a row that actually carries a LIST-valued provenance key (81 of
-# 3267 live pages), re-parsing that small array text — never the whole blob.
+# The walk is BOUNDED to a FIXED, ENUMERABLE set of positions (page -> key ->
+# {scalar | object member | list member | list member's object member}), NOT a
+# `json_tree` recursion: an unbounded recursive descent on the hot search path is
+# exactly what we must not introduce. The nested `json_each(je.value)` only fires
+# for a row that actually carries a CONTAINER-valued provenance key (81 of 3267
+# live pages), re-parsing that small member text — never the whole blob.
+#
+# `json_each(je.value)` is rendered TWICE (the object arm and the array arm), but
+# `je.type` is a single value — an object is not an array — so AT MOST ONE arm can
+# fire for a given `je` row. Two occurrences in the TEXT, still one member walk at
+# RUNTIME. The invariant that actually bounds per-row cost is unchanged and is the
+# one the tests pin: `json_each(p.frontmatter_json)` appears EXACTLY ONCE (the page
+# blob is parsed once per row, for all keys and all shapes) and `json_extract`
+# NEVER (a reintroduced one is a re-parse).
 #
 # Rationale of each literal:
 #   * `_` is a LIKE wildcard, so the `_raw` path segment is ESCAPE'd;
@@ -89,8 +98,9 @@ _PAGE_COLS = (
 #     correctly non-external; malformed JSON raises on this form exactly as it did
 #     on `json_extract` (same pre-existing exposure, no new one); and `file_path`
 #     is `NOT NULL` in the schema, so the two path LIKEs cannot be NULL either.
-# Fixed literals, no bound params. LIKE count is a CONSTANT 8 (2 path + 2 per
-# walk level), independent of the key count — see `test_external_origin_sql_*`.
+# Fixed literals, no bound params. LIKE count is a CONSTANT 10 (2 path + 2 per
+# member POSITION x 4 positions), independent of the KEY count — which is what
+# makes growing the key tuple cheap. See `test_external_origin_sql_*`.
 _KEYS_SQL: str = ", ".join(f"'{k}'" for k in EXTERNAL_PROVENANCE_KEYS)
 
 
@@ -99,23 +109,40 @@ def _http_like(col: str) -> str:
     return f"({col} LIKE 'http://%' OR {col} LIKE 'https://%')"
 
 
+def _member_sql(alias: str, obj_alias: str) -> str:
+    """The SQL twin of Python's ``policy._member_is_external``: `<alias>` is an
+    http(s) TEXT scalar, OR an OBJECT carrying one under a provenance key.
+
+    RENDERED AT BOTH POSITIONS that need it — the top-level value (shapes 1+4)
+    and a list member (shapes 2+3) — from this ONE function, so the two
+    positions cannot drift apart the way the two HALVES once did. It does not
+    call itself: the nesting is a fixed, enumerable set of levels, never a
+    recursion (a `json_tree` descent on the hot search path is the thing we
+    must not introduce)."""
+    return (
+        f"(({alias}.type = 'text' AND {_http_like(f'{alias}.value')})"
+        f" OR ({alias}.type = 'object' AND EXISTS ("
+        f"      SELECT 1 FROM json_each({alias}.value) {obj_alias}"
+        f"       WHERE {obj_alias}.key IN ({_KEYS_SQL})"
+        f"         AND {obj_alias}.type = 'text'"
+        f"         AND {_http_like(f'{obj_alias}.value')})))"
+    )
+
+
 _EXTERNAL_ORIGIN_SQL: str = (
     "(p.file_path LIKE '\\_raw/%' ESCAPE '\\'"
     " OR p.file_path LIKE '%/\\_raw/%' ESCAPE '\\'"
     # ONE parse of p.frontmatter_json, for ALL keys and ALL value shapes.
     " OR EXISTS (SELECT 1 FROM json_each(p.frontmatter_json) je"
     f"           WHERE je.key IN ({_KEYS_SQL})"
-    # shape 1 — a scalar: `source: https://x/a`
-    f"             AND ((je.type = 'text' AND {_http_like('je.value')})"
-    # shape 2/3 — a list: `sources: ["https://a"]` / `sources: [{url: "https://a"}]`
+    # shapes 1 + 4 — the value AS a member: an http scalar (`source: https://x/a`)
+    # or an OBJECT carrying one under a provenance key (`source: {url: https://x}`).
+    f"             AND ({_member_sql('je', 'jo')}"
+    # shapes 2 + 3 — a LIST whose member is external by the SAME member rule:
+    # `sources: ["https://a"]` / `sources: [{url: "https://a"}]`.
     "                   OR (je.type = 'array' AND EXISTS ("
     "                        SELECT 1 FROM json_each(je.value) jm"
-    f"                       WHERE (jm.type = 'text' AND {_http_like('jm.value')})"
-    "                          OR (jm.type = 'object' AND EXISTS ("
-    "                               SELECT 1 FROM json_each(jm.value) jo"
-    f"                              WHERE jo.key IN ({_KEYS_SQL})"
-    "                                AND jo.type = 'text'"
-    f"                               AND {_http_like('jo.value')}))))))"
+    f"                       WHERE {_member_sql('jm', 'jn')}))))"
     ")"
 )
 
