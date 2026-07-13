@@ -293,7 +293,14 @@ def _section_html(section: FolderSection) -> str:
     anchor = _anchor(section.label)
     status_label = section.status if section.has_config or section.status != "ok" \
         else "inherited only"
-    chip = f'<span class="chip c-{section.status}">{_esc(status_label)}</span>'
+    # `section.status` lands in an ATTRIBUTE (`class`), so it takes `_esc_attr`
+    # (quote=True) like every other attribute here — `_esc` is quote=False and is
+    # for TEXT nodes only. It is a closed set today (ok | invalid | unreadable), so
+    # this is doctrine, not a live escape; the point of the doctrine is that the
+    # NEXT status value does not have to be audited for it. Same shape as the
+    # `f-{_esc_attr(severity)}` precedent below.
+    chip = (f'<span class="chip c-{_esc_attr(section.status)}">'
+            f'{_esc(status_label)}</span>')
     parts: list[str] = [
         f'<section class="folder" id="{anchor}" '
         f'data-label="{_esc_attr(section.label)}">',

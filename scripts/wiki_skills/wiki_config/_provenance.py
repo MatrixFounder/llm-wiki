@@ -17,6 +17,25 @@ declare is preserved rather than dropped — so `effective` covers exactly the
 pointer set `origins` does, and `show` can never emit a provenance pointer with
 no value.
 
+WHAT `effective` DOES NOT MEAN (M6). This module renders what the CONFIG SAYS,
+not what the runtime CONSUMES. A key the schema accepts but no `sync_config`
+dataclass declares would be displayed here — with a level origin, shadowing an
+ancestor — while `_parse_summarize`/`_parse_resummarize`/`_parse_transcript_dedup`
+read only their declared fields and DISCARD it: an operator would believe an inert
+value is in effect. That is true of BOTH paths into `effective` (verified by
+probe, not by reading): the parsed-block overlay below, AND the root-only RAW
+passthrough at the bottom of `compute_folder_provenance` (which predates R-061-4).
+Rather than teach two display paths to detect it, the STATE is made unreachable:
+`tests/test_wiki_config_provenance.py::test_sync_schema_and_dataclasses_can_never_drift`
+walks the whole `$defs` closure and gates `set(schema props) == set(dataclass
+fields)` at every node. While that passes, no such key exists, and the overlay's
+unknown-key branch is a provable no-op on the shipped schema.
+
+Corollary for the R-058-10 evolution invariant: "a new schema field needs no code"
+is a claim about the INTERFACE (it renders in show/report/serve with zero UI code).
+It never meant the field takes EFFECT — that still needs a dataclass field and a
+consumer, and the drift gate is what keeps the two from being confused.
+
 The real resolver (`scripts/wiki_skills/_resummarize.py`) is NOT modified or
 called at runtime; an equivalence test (tests/test_wiki_config_provenance.py)
 release-gates that `parse(merged_here) == resolve_policy()/resolve_summarize()`.
@@ -280,10 +299,17 @@ def _overlay_parsed(raw: Any, parsed: Any) -> Any:
 
     Before this, `effective` was `_to_jsonable(dataclass)`, which renders ONLY
     the declared fields: a schema key the frozen dataclass does not know about
-    (the case TASK 058 §5(c) promises cascades with zero code) was dropped from
-    `effective` while `_assign_origins` — walking the RAW block — still recorded
-    a pointer for it. A pointer with no value, invisible in all four surfaces
-    derived from this dict (show envelope / md sidecar / HTML report / serve form).
+    was dropped from `effective` while `_assign_origins` — walking the RAW block
+    — still recorded a pointer for it. A pointer with no value, invisible in all
+    four surfaces derived from this dict (show envelope / md sidecar / HTML
+    report / serve form).
+
+    SCOPE (M6): this preserves the key for DISPLAY. It does not make it take
+    effect — the runtime parser still discards what it does not declare — so on
+    its own it trades a silent drop for a silent over-promise. The drift gate
+    (see the module docstring) is what makes that input unreachable on the
+    shipped schema; this branch stays as the honest render for a hand-edited or
+    third-party schema, where the key really is present-but-not-consumed.
 
     Key ORDER is the parsed dataclass's field order, with raw-only keys appended,
     so a config with no unknown keys renders exactly as it did before.
@@ -424,6 +450,11 @@ def compute_folder_provenance(
             _tag_defaults(prov.origins, effective_block, f"/{block_name}", SCOPE_CASCADING)
 
     # Root-only keys: consumed from the vault root only (by construction).
+    # The RAW value IS the effective view here (no parser in the loop) — which is
+    # the SECOND path that would over-promise an undeclared schema key (M6; e.g.
+    # `transcript_dedup`, whose runtime `_parse_transcript_dedup` reads only its
+    # three declared fields). Held honest by the same drift gate as the overlay
+    # above, not by a check here — see the module docstring.
     root_raw = raws[0][1] if raws else {}
     for key in root_only:
         pointer = f"/{key}"

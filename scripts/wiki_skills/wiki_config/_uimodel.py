@@ -162,22 +162,37 @@ def top_level_keys(model: dict[str, FieldSpec], scope: str) -> tuple[str, ...]:
 
 
 def resolve_description(model: Mapping[str, FieldSpec], pointer: str) -> str:
-    """The schema description for a rendered row's pointer — falling back to the
-    NEAREST ANCESTOR pointer's description when `pointer` carries no FieldSpec of
-    its own. Returns "" when neither it nor any ancestor declares one.
+    """The schema description for a rendered row's pointer.
 
-    The `resolve_origin` precedent (`_provenance.py`), applied to the other half of
-    a report row. A bare `model[pointer].description` lookup would work on TODAY's
-    shipped schema — `_report_md._flatten` recurses on `dict` ONLY, so a list is a
-    leaf and `/zones` (which HAS a FieldSpec) is the row pointer, never `/zones/0`.
+    A pointer WITH a FieldSpec always gets its OWN description — even when that
+    description is empty. Only a pointer with NO FieldSpec at all falls back to
+    the nearest ANCESTOR that declares one; "" when none does.
+
+    That split is load-bearing (TASK 061 fix-loop / LOW): a described block must
+    never lend its text to a child that has a FieldSpec of its own, or the row
+    for an undescribed field would silently render its PARENT's meaning — a wrong
+    description reads as authoritative, which is worse than a blank one. It is the
+    same asymmetry `resolve_origin` (`_provenance.py`) draws: fall back only where
+    the model is SILENT, never where it has spoken.
+
+    A bare `model[pointer].description` lookup would work on TODAY's shipped
+    schema — `_report_md._flatten` recurses on `dict` ONLY, so a list is a leaf
+    and `/zones` (which HAS a FieldSpec) is the row pointer, never `/zones/0`.
     That is precisely why the bare lookup is a trap: it is correct by coincidence,
-    and its failure mode is a SILENT EMPTY STRING — the exact class of bug (a
-    surface that renders nothing and looks fine) this task exists to kill. Two
-    live pointer classes already fall outside the model:
+    and its failure mode is a SILENT EMPTY STRING. Two live pointer classes
+    already fall outside the model:
       * a raw-only key inside a parsed cascading block (TASK 061 / R-061-4's
         overlay puts `/summarize/<unknown>` into `effective`);
       * an array element, should `_flatten` ever learn to recurse into lists.
-    Both resolve to their declaring block's description instead of to "".
+
+    HONEST BOUNDARY — what the fallback does on the SHIPPED schema TODAY: nothing.
+    Not one object `$def` carries a `description:` (grep `^  [A-Za-z]*:$` +
+    `description` in config/sync-config.schema.yaml — descriptions live on LEAF
+    properties only), so `/summarize/<unknown>` walks to `/summarize` (empty) and
+    resolves to "", not to "its declaring block's description" as this docstring
+    once claimed. The mechanism is live the moment a block gains a `description:`;
+    until then it is a guard, and saying so is the point. Pinned by
+    tests/test_wiki_config_provenance.py::test_resolve_description_*.
 
     Callers (the FieldSpec.description render sinks — grep-enumerated, TASK 061-08):
     `_report._row_html` (HTML report), `_report_md.render_show_report` (the `show`
@@ -187,11 +202,13 @@ def resolve_description(model: Mapping[str, FieldSpec], pointer: str) -> str:
     `wiki-config tree` is a DELIBERATE exclusion: it answers "where is this key
     overridden?", not "what does it mean", and a description per folder x key would
     drown the override map."""
+    spec = model.get(pointer)
+    if spec is not None:
+        return spec.description
     probe = pointer
-    while True:
-        spec = model.get(probe)
-        if spec is not None and spec.description:
-            return spec.description
-        if "/" not in probe.lstrip("/"):
-            return ""
+    while "/" in probe.lstrip("/"):
         probe = probe.rsplit("/", 1)[0]
+        ancestor = model.get(probe)
+        if ancestor is not None and ancestor.description:
+            return ancestor.description
+    return ""

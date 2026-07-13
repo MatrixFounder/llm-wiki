@@ -23,15 +23,17 @@ TASK 061 (R-061-4/5) adds the third property, over the SAME fixtures:
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_type_hints
 
 import pytest
 import yaml
 
 from scripts.wiki_index.sync_config import (
     SummarizeConfig,
+    SyncConfig,
     _load_validated_raw,
     _parse_resummarize,
     _parse_summarize,
@@ -39,6 +41,7 @@ from scripts.wiki_index.sync_config import (
 from scripts.wiki_skills._resummarize import resolve_policy, resolve_summarize
 from scripts.wiki_skills.wiki_config import main
 from scripts.wiki_skills.wiki_config._provenance import (
+    _PARSED_BLOCKS,
     SyncConfigLevelError,
     compute_folder_provenance,
     scan_tree,
@@ -745,16 +748,30 @@ def test_resolve_description_is_nearest_ancestor_not_a_bare_lookup() -> None:
     here means the guard survives a `_flatten` that learns to recurse into lists,
     and it already covers the live case: a raw-only key inside a parsed block
     (R-061-4's overlay puts `/summarize/<unknown>` into `effective`).
+
+    The ancestor fallback fires ONLY where the model is SILENT (no FieldSpec) —
+    never where it has spoken. A field that HAS a FieldSpec and simply declares no
+    `description:` keeps its own empty string: inheriting the block's text there
+    would render a WRONG meaning for that row, and a wrong description reads as
+    authoritative in a way a blank one does not (TASK 061 fix-loop / LOW).
     """
     model = {
         "/blk": FieldSpec(pointer="/blk", kind="object", scope="cascading",
                           description="block text"),
         "/blk/leaf": FieldSpec(pointer="/blk/leaf", kind="string",
                                scope="cascading", description="leaf text"),
+        # HAS a FieldSpec, declares NO description — the regression case.
+        "/blk/undescribed": FieldSpec(pointer="/blk/undescribed", kind="string",
+                                      scope="cascading"),
         "/bare": FieldSpec(pointer="/bare", kind="array", scope="root-only"),
     }
     # own description wins
     assert resolve_description(model, "/blk/leaf") == "leaf text"
+    # spec PRESENT, description EMPTY → its own "", NOT the described ancestor's
+    assert resolve_description(model, "/blk/undescribed") == ""
+    # ...and not via the child route either (a nested pointer under it still walks
+    # past the silent node to the nearest ancestor that DOES declare one).
+    assert resolve_description(model, "/blk/undescribed/x") == "block text"
     # no FieldSpec at all → NEAREST ANCESTOR, not ""
     assert resolve_description(model, "/blk/unknown_key") == "block text"
     assert resolve_description(model, "/blk/deep/deeper") == "block text"
@@ -763,6 +780,31 @@ def test_resolve_description_is_nearest_ancestor_not_a_bare_lookup() -> None:
     # nothing anywhere → "" (never a KeyError)
     assert resolve_description(model, "/nonexistent") == ""
     assert resolve_description(model, "/nonexistent/deep") == ""
+
+
+def test_resolve_description_fallback_is_inert_on_the_shipped_schema() -> None:
+    """The BOUNDARY, stated as a test instead of as a docstring claim.
+
+    `resolve_description`'s ancestor fallback is documented to resolve a raw-only
+    key like `/summarize/<unknown>` "to its declaring block's description". On the
+    SHIPPED schema that yields **""** — not one object `$def` carries a
+    `description:` (they live on leaf properties only), so there is nothing to
+    inherit. The mechanism is a guard for a surface that does not exist yet;
+    asserting the guard without asserting its (empty) surface is exactly the
+    vacuous-green disease TASK 061 exists to kill.
+
+    If a block ever gains a `description:`, this test goes RED — deliberately.
+    The flip is real behavior (every undescribed raw-only key under it starts
+    rendering that text), so it should be an explicit edit here + in the
+    `resolve_description` docstring, not a silent change in the report.
+    """
+    model = build_ui_model()
+    described_objects = [p for p, s in model.items()
+                         if s.kind == "object" and s.description]
+    assert described_objects == []
+    assert resolve_description(model, "/summarize/future_knob") == ""
+    # ...while a LEAF property's own description is of course rendered.
+    assert resolve_description(model, "/zones").startswith("ADVISORY")
 
 
 def test_shipped_schema_zones_is_the_only_advisory_field() -> None:
@@ -774,3 +816,180 @@ def test_shipped_schema_zones_is_the_only_advisory_field() -> None:
     model = build_ui_model()
     advisory = [p for p, s in model.items() if "ADVISORY" in s.description]
     assert advisory == ["/zones"]
+
+
+# --------------------------------------------------------------------------- #
+# M6 (VDD fix-loop) — the schema ↔ dataclass drift GATE
+#
+# R-061-4 fixed a silent DROP by making `effective` show a schema key the frozen
+# dataclass does not declare. That turned an invisible pointer into a VISIBLE
+# OVER-PROMISE: `show` reports the key as an *effective* value with a level
+# origin, but the RUNTIME parsers (`sync_config._parse_*`) read only their
+# DECLARED fields and discard the rest — so `wiki-sync` would never honor it. A
+# display gap became a false claim of effect, which is strictly more dangerous.
+#
+# The fix is not to revert the overlay (R-061-5 pins it, and the no-dangling-
+# pointer invariant needs it) but to make the offending STATE UNREACHABLE: if the
+# schema and the dataclasses can never drift, no key can be schema-known and
+# dataclass-unknown, the overlay is a provable no-op on the shipped schema, and
+# the over-promise cannot be constructed.
+#
+# CENSUS — every path by which a value reaches `show.effective`. This is the
+# output of `grep -n "\.effective\[" scripts/`, not a belief; it returns THREE
+# writes, ALL in `_provenance.py`, and the gate below must cover all three or the
+# "unreachable" claim is itself the disease (a mechanism asserted to cover a
+# surface without enumerating the surfaces it covers). Hence the walk spans the
+# WHOLE `$defs` closure, not just the two parsed blocks the M6 finding named:
+#   1. `compute_folder_provenance` — parsed cascading blocks (`summarize` /
+#      `resummarize`) → `_overlay_parsed` (R-061-4) PRESERVES the undeclared key.
+#      This is the path the finding named.
+#   2. `compute_folder_provenance` — root-only keys (`extensions` /
+#      `transcript_dedup` / the scalars) → RAW PASSTHROUGH
+#      (`prov.effective[key] = root_raw[key]`). The finding did NOT name this one;
+#      it predates R-061-4 and over-promises IDENTICALLY — VERIFIED, not assumed:
+#      with `future_knob` added to `$defs/TranscriptDedup`, `show` renders
+#      `{'enabled': True, 'future_knob': 'kept'}` while the runtime
+#      `TranscriptDedupConfig` drops it. `_parse_transcript_dedup` is a real
+#      consumer, so this is a real leak, and the gate covers `TranscriptDedup`.
+#   3. `compute_folder_provenance` — the absent-key branch
+#      (`prov.effective[key] = spec.default`). Not a raw passthrough: it renders
+#      the SCHEMA's own declared default. It over-promises in the same way if that
+#      key has no dataclass field (the default would display as effective while
+#      nothing consumes it), and the same name-set equality forbids it.
+# Every OTHER surface (`_report.py`, `_server.py`, `__init__.py`) READS
+# `compute_folder_provenance().effective` — none constructs its own — so gating
+# the three writes above gates all four rendered surfaces.
+# --------------------------------------------------------------------------- #
+
+# The ONE declared exception to `schema prop name == dataclass field name`: the
+# schema's `extensions` BLOCK is FLATTENED by `SyncConfig` into three prefixed
+# scalar fields instead of a nested dataclass. Declared here so the gate reads
+# the exception as data — and so a SECOND flattening cannot be smuggled in
+# silently (an unmapped $ref-to-object with no matching dataclass field FAILS).
+_FLATTENED: dict[tuple[str, str], tuple[str, str]] = {
+    # (owning $def, schema prop) -> (child $def, the owning dataclass's prefix)
+    ("SyncConfig", "extensions"): ("Extensions", "extensions_"),
+}
+
+
+def _def_props(defs: dict[str, Any], def_name: str) -> dict[str, Any]:
+    node = defs[def_name]
+    props = node.get("properties")
+    assert isinstance(props, dict), f"$defs/{def_name}: no `properties`"
+    return props
+
+
+def _ref_target(child: dict[str, Any]) -> str | None:
+    """The `#/$defs/X` a schema property points at, else None."""
+    ref = child.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        return ref.removeprefix("#/$defs/")
+    return None
+
+
+def _nested_dataclass(hint: Any) -> type | None:
+    """The dataclass inside a field annotation (`X` or `X | None`), else None."""
+    args = [a for a in get_args(hint) if a is not type(None)] or [hint]
+    for arg in args:
+        if isinstance(arg, type) and dataclasses.is_dataclass(arg):
+            return arg
+    return None
+
+
+def _assert_def_matches_dataclass(
+    defs: dict[str, Any], def_name: str, cls: type, visited: set[str]
+) -> None:
+    """`set(schema props) == set(dataclass fields)` for `$defs/<def_name>`, then
+    recurse through every nested (schema $ref ⇄ dataclass field) pair."""
+    visited.add(def_name)
+    props = _def_props(defs, def_name)
+    hints = get_type_hints(cls)
+
+    expected: set[str] = set()
+    for prop, child in props.items():
+        flat = _FLATTENED.get((def_name, prop))
+        if flat is None:
+            expected.add(prop)
+            continue
+        child_def, prefix = flat
+        assert _ref_target(child) == child_def
+        child_props = _def_props(defs, child_def)
+        for grandchild in child_props.values():
+            assert _ref_target(grandchild) is None, (
+                f"$defs/{child_def} nests an object, but the declared flattening "
+                f"expands exactly ONE scalar level into `{cls.__name__}`")
+        visited.add(child_def)
+        expected |= {f"{prefix}{p}" for p in child_props}
+
+    actual = {f.name for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
+    assert expected == actual, (
+        f"$defs/{def_name} ⇄ {cls.__name__} DRIFT — "
+        f"schema-only (accepted by the config, DISCARDED by the parser, yet "
+        f"displayed by `wiki-config show` as an effective value): "
+        f"{sorted(expected - actual)}; "
+        f"dataclass-only (consumed at runtime, invisible in the schema — a "
+        f"config setting it is rejected as INVALID_SYNC_CONFIG): "
+        f"{sorted(actual - expected)}")
+
+    for prop, child in props.items():
+        if (def_name, prop) in _FLATTENED:
+            continue
+        target = _ref_target(child)
+        is_object = target is not None and isinstance(
+            defs[target].get("properties"), dict)
+        nested = _nested_dataclass(hints[prop])
+        assert is_object == (nested is not None), (
+            f"$defs/{def_name}.{prop}: schema says "
+            f"{'object' if is_object else 'scalar/array'}, "
+            f"{cls.__name__}.{prop} says "
+            f"{'dataclass' if nested is not None else 'scalar/array'}")
+        if target is not None and nested is not None:
+            _assert_def_matches_dataclass(defs, target, nested, visited)
+
+
+def test_sync_schema_and_dataclasses_can_never_drift() -> None:
+    """M6 — the gate that makes the over-promise UNREACHABLE.
+
+    Walks the schema's ENTIRE `$defs` closure from `SyncConfig` alongside the
+    dataclass tree the runtime actually consumes, asserting name-set equality at
+    every node. A key that the schema accepts but no dataclass declares — the
+    exact input `_overlay_parsed` (R-061-4) would surface as an effective value
+    with a level origin, and that `_parse_*` would then silently discard — cannot
+    exist while this passes.
+
+    The two directions of drift both fail here, and neither is cosmetic:
+      * schema-only → `wiki-config show` OVER-PROMISES (an inert value displayed
+        as effective, shadowing a real ancestor value: the M6 finding);
+      * dataclass-only → the runtime consumes a key that
+        `additionalProperties: false` REJECTS at load (exit 6, unreachable knob).
+
+    Completeness is asserted, not assumed: `visited == set($defs)` fails if a
+    future `$def` is unreachable from `SyncConfig` (i.e. never checked here).
+    It is the same discipline as the surface census above — a gate that gates
+    nothing is this task's own disease.
+
+    Relationship to `test_parsed_block_unknown_key_reaches_effective`: that test
+    fabricates the drift in a PATCHED schema copy (a third-party/hand-edited
+    schema can still do this, and the overlay must stay honest for it — hence no
+    revert). THIS test proves the SHIPPED schema never contains it.
+    """
+    doc = load_sync_schema_doc()
+    defs = doc["$defs"]
+    visited: set[str] = set()
+    _assert_def_matches_dataclass(defs, "SyncConfig", SyncConfig, visited)
+
+    assert visited == set(defs), (
+        f"$defs unreachable from SyncConfig (so NEVER drift-checked): "
+        f"{sorted(set(defs) - visited)}")
+
+    # Every PARSED cascading block (`_PARSED_BLOCKS` — the R-061-4 overlay's own
+    # table) is a `SyncConfig` property backed by a nested dataclass, so the walk
+    # above necessarily covered it. Reads the table instead of naming the blocks:
+    # a future parsed block is gated with zero edits here.
+    hints = get_type_hints(SyncConfig)
+    for block in _PARSED_BLOCKS:
+        assert block in _def_props(defs, "SyncConfig"), (
+            f"parsed block `{block}` is not a SyncConfig schema property")
+        assert _nested_dataclass(hints[block]) is not None, (
+            f"parsed block `{block}` has no dataclass — the overlay would have "
+            f"nothing to overlay, and every key in it would be schema-only")
