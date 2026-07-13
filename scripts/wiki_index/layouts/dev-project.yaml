@@ -55,6 +55,17 @@ paths:
   # path_type_fallback is the defensive net.
   - {glob: "_queries/**/*.md",       type: query,        project: "_vault_"}
   - {glob: "_verifications/**/*.md", type: verification, project: "_vault_"}
+  # --- TASK 063 (R-063-3 / G4): the TYPED-KNOWLEDGE write surface. Exactly the
+  # DF-049-1 lesson above, one layer up: `type_mapping` already ROUTES
+  # decision/requirement/risk (see below), but with no glob to SEE them, a page
+  # written to `decisions/` is invisible to the walk — written, never indexed,
+  # zero lint issues. `type_mapping` is one half of support; a read glob is the
+  # other, and a layout with only the first half is not supported, it is a trap.
+  # Additive: no such directory exists in a dev-project vault today, so the walk
+  # is byte-identical until someone creates one (measured before/after).
+  - {glob: "decisions/**/*.md",    type: decision,    project: "_vault_"}
+  - {glob: "requirements/**/*.md", type: requirement, project: "_vault_"}
+  - {glob: "risks/**/*.md",        type: risk,        project: "_vault_"}
 
 # Tag-route: new doc types → existing db_type enum values + a filterable tag.
 type_mapping:
@@ -68,10 +79,15 @@ type_mapping:
   known-issue:  {db_type: research, tag: known-issue}
   product-doc:  {db_type: research, tag: product}
   proposal:     {db_type: research, tag: proposal}
-  # TASK 031 / R-031-1 — the typed knowledge classes (opt-in via explicit `type:`
-  # frontmatter; dev-project's paths[] routing is unchanged). Same zero-DDL
-  # tag-route as the cybos layout; see ADR-003 D1/D2. `adr` above stays distinct
-  # from the more general `decision`.
+  # TASK 031 / R-031-1 — the typed knowledge classes. Same zero-DDL tag-route as
+  # the cybos layout; see ADR-003 D1/D2. `adr` above stays distinct from the more
+  # general `decision`. ⚠️ TASK 063 CORRECTION: this block used to say "dev-project's
+  # paths[] routing is unchanged" — and that sentence WAS the gap. Routing a class
+  # the read globs cannot see is half a layout: `decision`/`requirement`/`risk` now
+  # have their `paths[]` globs above, and the two halves are gated as a CONJUNCTION
+  # (tests/test_layout_typed_write_dirs.py). The other classes here (incident,
+  # hypothesis, fact, event) are still route-only — deliberately: the TASK-063 rail
+  # extracts three classes, and a glob for a class nothing writes is speculative.
   decision:     {db_type: research, tag: decision}
   requirement:  {db_type: brief,    tag: requirement}
   risk:         {db_type: research, tag: risk}

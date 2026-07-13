@@ -1237,6 +1237,121 @@ def iter_pages(vault_root: Path, config: LayoutConfig) -> list[DiscoveredPage]:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# TASK 063 (R-063-3 / G4) — the typed-write placement gate.
+#
+# ONE implementation, TWO callers (`wiki-config validate` and the extraction
+# rail's `prepare` preflight). Never two, or they drift and the "gate" becomes a
+# second opinion.
+# --------------------------------------------------------------------------- #
+
+# A slug-shaped sentinel. `glob_covers` answers a question about the DIRECTORY —
+# "can the walker see a `.md` file written here?" — so the filename must be
+# unremarkable: no `_` prefix, no `index`, nothing SYSTEM_FILES or an
+# `auto_indexes[].output` could collide with.
+TYPED_WRITE_PROBE = "probe-typed-write"
+
+
+def glob_covers(config: LayoutConfig, rel_posix: str) -> bool:
+    """True iff a real, regular `.md` file at `rel_posix` would be DISCOVERED by
+    `iter_pages` — the walker's **FULL filter chain**, not merely a `paths[]` match.
+
+    ⚠️ THE WHOLE POINT OF THIS FUNCTION IS THAT IT IS NOT "does a glob match".
+    A `paths[]` match is **one of five** conjuncts, and the four others are not
+    decoration. The concrete, reachable loss: `dirs.decision: "_raw"` on a PARA
+    vault MATCHES the generic `[0-9][0-9] - */*/**/*.md` glob, so a `paths[]`-only
+    gate reports COVERED — while `**/_raw/**` is in `ignore`, the walker skips the
+    file, and the typed page is written, never indexed, and raises ZERO lint issues.
+    A page the walker cannot see is a page the index does not have.
+
+    The chain, mirroring `iter_pages`'s F-9 filter order (`:1196-1213`):
+
+        suffix ∈ config.file_extensions
+          ∧ name ∉ SYSTEM_FILES
+          ∧ rel ∉ {auto_indexes[].output}
+          ∧ ¬ _matches_ignore(rel, config.ignore)
+          ∧ ∃ paths[] glob that full_matches rel
+
+    ★ EQUIVALENCE WITH THE REAL WALK IS **MEASURED**, NOT ASSERTED:
+    `test_glob_covers_agrees_with_the_real_walk` writes the probe into a temp vault,
+    runs `iter_pages`, and asserts `glob_covers(rel) ⟺ rel appears in the walk` —
+    in both directions. That covers every conjunct the walker has today AND every
+    one it gains later, with no edit to this docstring or that test. Restating the
+    chain in a test would only re-assert what this function already believes.
+
+    STATED BOUNDARY — the walker's directory PRUNING (`_dir_pruned`, `:1193`) has no
+    line here, and that is deliberate, not an omission. Only `<prefix>/**`-shaped
+    ignore globs prune (`_prunable_prefixes`), and every descendant FILE of such a
+    prefix also `full_match`es the glob itself — MEASURED, not argued:
+    `PurePosixPath("x/_raw/deep/a.md").full_match("**/_raw/**")` is True. So for
+    files, pruning is subsumed by `_matches_ignore` and a prune branch here would be
+    dead code — a condition that cannot change an outcome. If that ever stops being
+    true, the walk-equivalence test above goes RED, which is precisely why the test
+    measures instead of restating.
+
+    Matcher: `PurePosixPath.full_match`, NEVER `fnmatch` — `fnmatch` lets `*` cross a
+    `/`, so it answers MATCH for `decisions/2026/dec.md` against `decisions/*.md`
+    where the engine answers NO. (An earlier draft measured coverage with `fnmatch`
+    and reported a false result to the operator.) The `fnmatch.fnmatchcase` calls in
+    this module are the TASK-030 per-SEGMENT matcher of the single-pass walk, where
+    it never crosses `/` and is correct; they are pinned by count, not removed.
+    """
+    name = PurePosixPath(rel_posix).name
+    if PurePosixPath(name).suffix not in set(config.file_extensions):
+        return False
+    if name in SYSTEM_FILES:
+        return False
+    if rel_posix in {
+        str(ai["output"]) for ai in config.auto_indexes if ai.get("output")
+    }:
+        return False
+    if _matches_ignore(rel_posix, config.ignore):
+        return False
+    rel = PurePosixPath(rel_posix)
+    for entry in config.paths:
+        try:
+            if rel.full_match(entry.glob):
+                return True
+        except ValueError:
+            # a malformed operator glob — skip the entry, exactly as
+            # `derive_project_for_path` does, instead of propagating (TASK 037).
+            continue
+    return False
+
+
+def resolve_typed_write_dir(
+    config: LayoutConfig, *, dir_name: str, source_rel: str
+) -> str | None:
+    """DERIVE where a typed page must be written → the vault-relative POSIX
+    DIRECTORY, or `None` if NEITHER placement is walker-visible.
+
+    Two placements are probed, in this order:
+      1. **root-anchored** `<dir_name>/` — the cybos grammar (`decisions/**/*.md`
+         is a root-anchored glob);
+      2. **sibling** `<parent(source_rel)>/<dir_name>/` — the PARA grammar, where the
+         typed pages live beside the note they were extracted from.
+    Neither covered ⇒ `None`, and the CALLER REFUSES (Q-063-5 = A). It must never
+    "fix" the layout: `sync.yaml` mutating `layout.yaml` would let a per-folder
+    config silently rewrite the vault's read grammar for every other tool.
+
+    Placement is DERIVED, never hardcoded — that asymmetry is the point. The SAME
+    `dir_name: "decisions"` resolves to `decisions/` on cybos (root) and to
+    `06 - BD/Acme/decisions/` on a PARA vault (sibling), because those are the
+    folders each layout's own read globs can see. Hardcoding "sibling" (the v5 draft)
+    puts a cybos page where cybos cannot see it; hardcoding "root" puts a PARA page
+    outside every PARA glob. Either way the page is written and never indexed.
+    """
+    probe = f"{TYPED_WRITE_PROBE}.md"
+    if glob_covers(config, f"{dir_name}/{probe}"):
+        return dir_name
+    parent = PurePosixPath(source_rel).parent.as_posix()
+    if parent not in (".", ""):
+        sibling = f"{parent}/{dir_name}"
+        if glob_covers(config, f"{sibling}/{probe}"):
+            return sibling
+    return None
+
+
 def derive_project_for_path(path: Path, vault_root: Path) -> str:
     """Single-path project derivation — the shared helper that converges the
     ingest-side `wiki_extract_concepts._derive_source_project` onto the same
