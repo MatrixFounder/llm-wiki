@@ -86,6 +86,12 @@ Do **not** compute health from `matched` alone — that is the number proven abo
 judgeable. Do **not** read `total_gaps ≤ pages_examined`: two rules may target one class, so
 a page can gap twice and the total can exceed the population.
 
+
+> **`--class` scoping (ontology).** The envelope echoes `class_filter`. Note the asymmetry: `--class` narrows
+> only `violations[]` (it is applied AFTER the DAL call), so `edges_examined` / `property_pages_examined` /
+> `vacuous_populations` / `vacuous_kinds` **describe the WHOLE run, not the filtered class**. Do not read
+> `{total_violations: 0, edges_examined: 500}` under `--class decision` as "500 decision edges were judged".
+
 ## Ontology contract (R-19 / TASK 054)
 `wiki-health ontology` is the **always-exit-0 report** over the layout's declared
 `ontology:` block (cybos only): `closed_types`, `edges` (per-ref_type domain→range),

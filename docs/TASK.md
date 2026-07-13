@@ -37,7 +37,7 @@ examined nothing reports green.**
 | Level | Reports green | Reality |
 |---|---|---|
 | **Data** | `wiki-health` → `0 violations` / `0 gaps` | **nothing was examined** — 0 typed pages; `page_entity_refs` holds only `mentioned` (empty typed event graph) |
-| **Runtime** | `--min-trust internal` → "floored" · the always-on `trust` annotation → `internal` | **36 http-valued pages derive as `internal`** — the trust layer **fails OPEN**. Two mechanisms: **18** are a *case* variant (`Source:`) → **closed here** (R-061-3); **18** are *vault-specific keys* (`youtube:` 9, `teachable:` 9) → **remain open by decision**, tracked + test-pinned as **Q-061-4**. This task does **not** advertise a 36-page fix |
+| **Runtime** | `--min-trust internal` → "floored" · the always-on `trust` annotation → `internal` | **http-valued pages derive as `internal`** (see §7 — the original 36/18/18 census was itself wrong) — the trust layer **fails OPEN**. Two mechanisms: **13** are a *case* variant (`Source:`) → **closed here** (R-061-3); **8** are *vault-specific keys* (9 pages carry BOTH `youtube:` and `teachable:`) → **remain open by decision**, tracked + test-pinned as **Q-061-4**. This task does **not** advertise a 36-page fix |
 | **Test** | `test_evolution_new_schema_field_needs_no_code` → PASS | it exercises the case that *works*; the invariant it gates (R-058-10) is **violated** |
 
 `{"total_gaps": 0}` is indistinguishable from a real green — that ambiguity invalidates the entire
@@ -59,7 +59,7 @@ Adoption of typed knowledge on real content is **TASK 062** (prerequisite: this 
 |---|---|---|---|
 | **R-061-1** | **A denominator PER POPULATION, with the correct noun, positively defined.** There are **three** populations across the two checks — `find_coverage_gaps` iterates pages; `find_ontology_violations` iterates **both** edges (domain/range) **and** pages (property enums) in one call. Emit:<br>• **`pages_examined`** (coverage) = pages whose **authored** class (`$.type`) ∈ ⋃ the coverage rules' `class` fields (the ADR-003 typed classes). Pages with **no** `$.type`, or a non-typed class (`concept` / `moc` / `*-summary`), are **NOT examined**.<br>**⚠️ `find_ontology_violations` spans TWO populations in ONE call** — it needs **two** denominators, bound to `OntologyViolation.kind`:<br>• **`edges_examined`** = refs whose `ref_type` ∈ the layout ontology's **declared edge vocabulary** (positive definition; `verifies` is not merely undeclared but **undeclarable** — it is ∉ `_INVERSE_REF_TYPE`, so `validate_ontology` rejects it). Binds kinds **`domain` + `range`** (`for edge in ontology.edges` → `FROM page_entity_refs`).<br>• **`property_pages_examined`** = pages whose `$.type` ∈ ⋃ `ontology.properties[].class`. Binds kind **`property`** (`for prop in ontology.properties` → `FROM pages p`). **Do NOT reuse the bare noun `pages_examined`** — coverage already uses it for a *different* population (⋃ `coverage_rules[].class` ≠ ⋃ `ontology.properties[].class`).<br>• per-rule **`matched`** = rows meeting that rule's precondition | **Invariant, asserted PER RULE, against its OWN family's denominator:**<br>`∀ coverage rule r: gaps_r ≤ matched_r ≤ pages_examined`<br>`∀ edge rule e: violations_e ≤ matched_e ≤ edges_examined`<br>`∀ property rule p: violations_p ≤ matched_p ≤ property_pages_examined`<br>⚠️ **Totals MAY exceed their denominator** — the schema permits two rules on one class, so one page can gap/violate twice. **Do NOT assert `total_gaps ≤ examined`** (it fails on correct data).<br>⚠️ A single `edges_examined` for the whole ontology check would leave the vacuous green alive exactly where this task claims to kill it: `{"total_violations": 12, "edges_examined": 0}` is **incoherent** (property rules examined pages, not edges) — and would bite hardest right after TASK 062.<br>Anchored on **in-repo fixtures**: untyped fixture ⇒ denominators `0`; typed fixture ⇒ non-zero. **LIVE anchor (confirmatory):** reads **0 despite 713 `concept` pages**. Exit code stays **0 always** (ADR-006 unchanged) | `scripts/wiki_index/sqlite_repository/_health_rules.py`, `scripts/wiki_skills/wiki_health.py`, `tests/` |
 | **R-061-2** | **BOTH** of `wiki-lint`'s config-driven semantic checks report denominators — **`lifecycle-drift`** (`lint.py:185`→`find_lifecycle_drift`) **AND `ontology-violation`** (`lint.py:221`→`find_ontology_violations`). **Both gate `--strict`**, i.e. the CI rail; naming only drift (as v1–v5 did — the **7th** recurrence of this task's own fractal) would leave `wiki-lint` printing `ontology-violation: 0` with no denominator on the one surface that gates CI, while R-061-1 has *already computed* those numbers and thrown them away. Lint's payload is **per-check-keyed** (`lifecycle-drift.pages_examined` vs `ontology-violation.{edges_examined,property_pages_examined}`) so the `pages_examined` noun never collides across populations in one envelope.<br>Drift emits per-rule `matched` **AND `pages_examined`** = pages whose `$.type` ∈ ⋃ `drift_rules[].class`. **Why both:** the drift precondition is `$.type = class` **AND `EXISTS(ref_type = edge)`** (`_health_rules.py:59-65`), so `matched` counts only pages that *already carry the edge* — meaning bare `matched: 0` cannot distinguish **"no `decision` pages at all"** (today's LIVE state) from **"50 `decision` pages, none with a `superseded-by` edge"** (the state right after TASK 062). Same disease, one requirement over | **Invariant:** `∀ drift rule r: drift_r ≤ matched_r ≤ pages_examined`. **Fixture must carry BOTH typed pages AND the inverse edges** — a typed-pages-only fixture leaves `matched` at 0 and would "prove" non-vacuity while proving nothing. Advisory-by-default + `--strict` gating unchanged | `scripts/wiki_index/lint.py`, `_health_rules.py` |
-| **R-061-3** | **One shared constant** defines the external-origin provenance keys **with their case variants**, and is **rendered into both halves** (Python `_is_external` + the `_EXT` SQL literal). Docstrings **reference** the constant instead of re-enumerating it | The 18 `Source:` pages derive as `external` and are floored by `--min-trust internal`. The SQL↔Python alignment test (Q-050-3) is **parametrized FROM the constant**, so a future key cannot drift the halves apart.<br>**The residual is stated in the same breath, not buried:** after this task **18 pages carrying vault-specific provenance keys (`youtube:`/`teachable:`) still derive as `internal`** — known, tracked as **Q-061-4**.<br>**Residual is TEST-PINNED** (the task's own ethic applied to itself): a fixture page with `youtube: https://…` asserts `trust == "internal"` **today**, docstring citing Q-061-4; when Q-061-4 lands the test **flips to `external`**. An invisible residual becomes a visible, tracked one.<br>**Blast radius (state in docs):** default search output is UNCHANGED; only explicit `--min-trust internal\|verified` callers see the pages drop out | `scripts/wiki_index/policy.py:243,251`, `scripts/wiki_index/sqlite_repository/_search.py:149-159`, `scripts/wiki_index/repository.py:259`, `skills/wiki-query/SKILL.md:87`, `docs/architectures/functional/policy-and-trust.md:38`, `tests/test_trust_tier.py` |
+| **R-061-3** | **One shared constant** defines the external-origin provenance keys **with their case variants**, and is **rendered into both halves** (Python `_is_external` + the `_EXT` SQL literal). Docstrings **reference** the constant instead of re-enumerating it | The `Source:` pages derive as `external` and are floored by `--min-trust internal`. The SQL↔Python alignment test (Q-050-3) is **parametrized FROM the constant**, so a future key cannot drift the halves apart.<br>**The residual is stated in the same breath, not buried:** after this task **the pages carrying vault-specific provenance keys (`youtube:`/`teachable:`) still derive as `internal`** — known, tracked as **Q-061-4**.<br>**Residual is TEST-PINNED** (the task's own ethic applied to itself): a fixture page with `youtube: https://…` asserts `trust == "internal"` **today**, docstring citing Q-061-4; when Q-061-4 lands the test **flips to `external`**. An invisible residual becomes a visible, tracked one.<br>**Blast radius (state in docs):** default search output is UNCHANGED; only explicit `--min-trust internal\|verified` callers see the pages drop out | `scripts/wiki_index/policy.py:243,251`, `scripts/wiki_index/sqlite_repository/_search.py:149-159`, `scripts/wiki_index/repository.py:259`, `skills/wiki-query/SKILL.md:87`, `docs/architectures/functional/policy-and-trust.md:38`, `tests/test_trust_tier.py` |
 | **R-061-4** | `wiki-config show`'s `effective` is built by **overlaying** the parsed dataclass onto the merged raw dict, for **every parsed cascading block** — currently `summarize` **and `resummarize`** (both take the frozen-dataclass path at `_provenance.py:320-324`), stated generically so a future parsed block inherits the fix | A new field inside **either** block appears in `show.effective` **and** gets an HTML-report row. **Invariant (tested):** `show` never emits a `provenance` pointer with no corresponding `effective` value | `scripts/wiki_skills/wiki_config/_provenance.py:319-334`, `_report.py:110` |
 | **R-061-5** | **ADD** a gating test for the parsed-block case (do **not** retarget the existing `future_block` test — it legitimately covers the raw-passthrough `else` branch at `_provenance.py:326`). Parametrized over `summarize` **and** `resummarize`, asserting on the **rendered report**, not just `build_ui_model` | The new test **FAILS before R-061-4 and passes after** (a real gate, not a vacuous one). The existing `future_block` test still passes | `tests/test_wiki_config_provenance.py` |
 | **R-061-6** | `zones:` is surfaced as **advisory — not enforced** (parsed + linted, but never read by `iter_sync_candidates()`; only `exclude:` scopes the walk). **Decision: Q-061-3 Option A′ — GENERALIZE, don't badge.** `FieldSpec.description` is currently rendered by **`serve` only** (`_server.py:195`); `_report.py` never reads it (0 hits) and `_cmd_show` bypasses `build_ui_model` entirely. So make **one small generic change** — render `FieldSpec.description` in `show` and in `_report.py` (which already holds `ui_model`). The `zones` advisory text is then **data, not code**. Also re-word the `ZONE_GLOB_NO_MATCH` lint so it stops implying enforcement | After the one-time generic change, the `zones` advisory text appears in **all three** surfaces — **and every future field's `description` does too, with zero further code**. This **strengthens** the TASK 058 schema-driven invariant rather than eroding it (a strictly smaller and more general change than the `x-wiki-advisory` + badge path, which stays deferred). Manual line 539 corrected | `config/sync-config.schema.yaml`, `scripts/wiki_skills/wiki_config/{__init__.py,_report.py,_lint.py,_findings.py}`, `docs/manuals/obsidian-llm-wiki_manual.md:539` |
@@ -96,15 +96,15 @@ Adoption of typed knowledge on real content is **TASK 062** (prerequisite: this 
   bypasses `build_ui_model`. So: make the one-time change **generic** (render `FieldSpec.description` in
   `show` + `report`), which turns *every* field's description into rendered data forever. Option B
   (extend `FieldSpec` + badge) stays deferred until a **second** advisory field exists.
-- **Q-061-4 — vault-specific provenance keys (`youtube:` 9, `teachable:` 9 — 18 http-valued pages).**
+- **Q-061-4 — vault-specific provenance keys (9 pages carry BOTH keys; 8 fail open).**
   *Deferred by mechanism, NOT by defect.* The **mechanism** differs (a shared constant vs. a new per-vault
   `external_keys:` config surface — a new config surface does not belong in a fix task). The **defect does
   not**: a page whose provenance is an `http(s)` URL derives as `internal`. The trust contract is about
   external *origin*, not key spelling.
   **Raised stakes:** §5 withdraws the `--min-trust` floor and names the always-on per-hit `trust`
-  **annotation** "the valuable half" — and that annotation will label these 18 pages `internal`. So the
+  **annotation** "the valuable half" — and that annotation will label these 8 pages `internal`. So the
   residual is **not** "an unused filter leaks"; it is **"the surface the operator actually uses mislabels
-  18 pages."** That raises Q-061-4's follow-up priority accordingly. Pinned by the R-061-3 regression test.
+  8 pages."** That raises Q-061-4's follow-up priority accordingly. Pinned by the R-061-3 regression test.
 
 ## 5. Out of scope (deliberate, recorded)
 
@@ -121,84 +121,61 @@ Adoption of typed knowledge on real content is **TASK 062** (prerequisite: this 
 
 ## 6. Completion
 
-**SHIPPED 2026-07-13** — 11 beads (`061-00` … `061-10`), one commit each.
+**SHIPPED 2026-07-13.** 11 beads (Stub-First) + a 3-iteration `/vdd-multi` fix loop = **22 commits**.
+**2266 → 2477 pytest** (+211), `mypy --strict` clean (88 files), **zero DDL** (`user_version` 7, 0 files in
+`sql/`, **no new index** — P-5), frozen archives untouched. The LIVE vault was **never written to**.
 
-### Test counts
+### What shipped
+- **Three denominators, three populations** (`pages_examined` / `edges_examined` / `property_pages_examined`)
+  + per-rule `matched` + per-kind `matched_by_kind`, emitted on **all 6 verdict surfaces** across the 2 CLIs
+  (`wiki-health` ×3, `wiki-lint` stdout + `--report` + `--json-sidecar`).
+- **`vacuous_populations` / `vacuous_kinds`** — derived from the envelope's OWN `*_examined` keys, by the
+  same function on both CLIs, so the sibling surfaces cannot drift. **Alarm fires only when the number
+  LIES** (`matched > 0` but a kind judged none); an *openly* empty rule is disclosed with ⚠ and no alarm —
+  because a permanent red is as uninformative as the permanent green this task exists to kill.
+- **The trust fail-open is CLOSED, fail-closed**: one shared key constant rendered into BOTH halves, case
+  variants + the canonical `sources` key + **all value shapes** (scalar / list / list-of-objects /
+  top-level object) via a bounded 4-level `json_each` walk — **1 blob parse/row, cheaper than pre-061.**
+- **`zones:` marked advisory** (it scopes nothing; only `exclude:` does) via a one-time GENERIC change:
+  `FieldSpec.description` now renders in `show` + `report`, so **every future field's description** does too.
+- **Benchmarks that can actually see the code** (the old ones structurally could not) + `vacuity_ok`, which
+  fails the run regardless of `--enforce-slos` if an op didn't execute what it claims to time.
 
-| | Before (pre-061 baseline) | After |
-|---|---|---|
-| `pytest tests/` | **2266 passed, 5 skipped** | **2325 passed, 5 skipped** (**+59**) |
-| `mypy --strict scripts/` | clean, 88 files | **clean, 88 files** |
+### The disease, and the fact that this task caught it in ITSELF ~20 times
+The thesis — *a check that examined nothing reports green* — proved **fractal**. The same failure mode —
+**asserting that a mechanism covers a surface without enumerating the surfaces it actually covers** —
+recurred ~20 times **inside the artifacts written to fix it**: 3× in the spec (3 blocking task-reviews),
+in the plan, in the plan-review, in a bead's own vacuity test (which asserted "an indexed page is not
+counted" over an **EMPTY table**), in the duplication gate (a regex that could not see the new key), in the
+benchmark's vacuity probes (written *beside* the timed op, not *from* it), and in the docs.
+**Every single instance was caught by a grep or a mutation test — never by reasoning.**
 
-### The gates, each as a command that was run (not asserted)
+**Including this task's own census.** The reported fail-open was "36 pages = 18 + 18". All three numbers
+were wrong: `Source:` was 19 pages carrying the key → 18 with an http scalar → **13 that actually derived
+`internal`**; `youtube:`/`teachable:` was **9 pages carrying BOTH keys** (the "18" summed two
+key-occurrence counts as disjoint page sets) of which **8** fail open. The true closed radius is **30**
+(13 case-variant + 17 value-shape), and **the shipped docstring contained its own refutation five lines
+apart**: 707 + 13 = 720 + 17 = **737** — the live external count. The arithmetic never closed on 18, and
+nobody checked. *The count-the-wrong-noun bug, inside the task about counting the right noun.*
 
-| Gate | Result |
-|---|---|
-| **Zero DDL** | `git diff --stat 75e1425..HEAD -- sql/` → **empty**; no `ALTER TABLE` / `CREATE INDEX` added in any code file; `PRAGMA user_version` still **7**, pinned by `tests/test_schema_v4.py:31` + `test_schema_v5.py:39`. All denominators are read-side `COUNT(*)`. |
-| **Additive-only envelopes** | The pre-061 key sets were **enumerated from git** (`git show 75e1425:…`), not remembered: coverage `{action, vault, rules, total_gaps, by_class, gaps}` · ontology `{action, vault, total_violations, by_kind, by_class, violations}` (+`note` on the no-contract path) · lint `{action, vault, total_issues, by_category}`. Each is frozen as a literal and asserted a **subset** of the emitted keys (`test_tc_02_4_additive_only_*`, `test_lint_envelope_additive_and_non_gating`). |
-| **Frozen archives** | `git diff --name-only 75e1425..HEAD \| grep -E "docs/(tasks/task-050\|plans/plan-050)"` → **empty**. No `Q-050` line removed or modified in `open-questions.md` (the only Q-050 mentions in the diff are **new `+` lines** inside Q-061-2, which *cites* Q-050-3 by name). |
-| **Decision-17** | `grep -rnE "^\s*(import anthropic\|from anthropic)" scripts/` → **empty**. |
-| **No `total ≤ examined`** | Every `<= …examined` line in the suite is **per-rule** (`stat.findings[k] <= stat.matched <= <family>_examined`). The forbidden **total** form appears **nowhere**, and two tests carry an explicit comment saying why it is forbidden (`test_lint_denominators.py:129`, `test_health_denominators.py:240`). |
-| **Noun discipline** | `pages_examined` is used **only** by coverage and by drift (their own, disjoint populations, never in one envelope — P-061-D). The ontology property family uses **`property_pages_examined`**, always. |
+**Two rules earned here, worth reusing on any check/report work:**
+1. Any claim of the form *"all N surfaces" / "one X per Y" / "every rule"* → **grep and paste the census.**
+2. **A boundary that is STATED is honest; a boundary that is merely TRUE is the disease.**
 
-### LIVE confirmatory anchor — the whole thesis, made visible
+### Deferred (stated, not silent)
+- **Q-061-4** — vault-specific provenance keys (9 pages carry both `youtube:`/`teachable:`; **8 fail open**).
+  Needs a per-vault `external_keys:` config surface. **Test-pinned in its known-wrong state on BOTH halves** —
+  the test flips to `external` when it lands.
+- **Q-061-2 `lower(key)` fold** (typo-shaped keys `uRL:`) — its original rationale is now *overtaken* (the SQL
+  half is a `json_each` walk, so a fold would today be symmetric), but flipping it reverses a resolved open
+  question and un-pins a case → its own reviewed change, not smuggled into a fix loop.
+- `check_drift`'s O(pages) file re-hash sweep dominates `wiki-lint` p95 at 10k — **pre-existing** (P-10),
+  belongs in the deferred perf set, not in a gate on this task.
 
-Run **read-only** against a `sqlite3 .backup` snapshot of the live `personal` DB
-(3267 pages · authored-type census `(none) 2403 · concept 713 · lesson-summary 66 ·
-article-summary 51 · meeting-summary 30 · moc 2` · ref census **`mentioned` 8836 and nothing
-else**). All three surfaces exit **0**, as they always did:
-
-```
-wiki-health coverage → {"rules": 3, "total_gaps": 0, "pages_examined": 0, …,
-  "note": "coverage rules are configured, but NO page carries an authored $.type in those
-           classes — nothing was examined (this is not a clean bill of health)"}
-
-wiki-health ontology → {"total_violations": 0, "edges_examined": 0,
-  "property_pages_examined": 0, …,
-  "note": "an ontology contract is configured, but NO page_entity_refs row carries a declared
-           edge type AND no page carries an authored $.type in the property classes —
-           nothing was examined (this is not a clean bill of health)"}
-
-wiki-lint → denominators.personal.lifecycle-drift.pages_examined            = 0
-            denominators.personal.ontology-violation.edges_examined         = 0
-            denominators.personal.ontology-violation.property_pages_examined = 0
-```
-
-**Before this task all three printed a bare `0` and looked healthy.** They now say, in the
-same breath, that they examined **nothing** — across **24 declared rules** (3 coverage +
-3 drift + 7 edge + 11 property), every one of which matched **0 rows**.
-
-### What the plan got WRONG (found only by hitting the code)
-
-1. **The LIVE vault's rules are NOT absent — they are declared and empty.** The spec, the
-   plan, ADR-006 and both `.AGENTS.md` all say the health/ontology rules are *"cybos only"*.
-   That is true of the **built-in** layouts **only**: the live `personal` vault ships its own
-   `.wiki/layout.yaml` carrying **3 coverage + 3 drift + 18 ontology rules**. This makes the
-   anchor *stronger* than predicted (the surfaces are in the **declared-but-vacuous** state,
-   not the no-op state — exactly the case D-036-4 exists to expose), and it means the bare
-   *"cybos only"* claim was itself a small instance of this task's fractal. Corrected in
-   ADR-006 D-036-3 and both module-memory files; `models.py` already had it right.
-   *(Still un-corrected, out of this bead's scope:* `docs/ROADMAP.md` 606/806/817/1153,
-   `docs/manuals/obsidian-llm-wiki_manual.md:901`, `docs/ARCHITECTURE.md:247` — historical
-   shipped-log entries; flagged, not rewritten.)*
-2. **Bead `061-10` assumed a knowledge-health section exists in `docs/architectures/`.** It
-   does not — `grep -rln "coverage_rules\|drift_rules\|lifecycle-drift" docs/architectures/`
-   returns only `open-questions.md`. The real body is **`docs/adr/ADR-006`**, so the
-   denominator contract landed there as amendment **D-036-4** (ADR-002/ADR-008 set the
-   amendment precedent) plus a shipped entry in the living `docs/ARCHITECTURE.md`.
-3. **`policy.py` had no `.AGENTS.md` entry at all** — the module owning
-   `EXTERNAL_PROVENANCE_KEYS`, the one constant this task made load-bearing, was invisible to
-   module memory. Added, with the "edit the constant, never the SQL literal" rule stated.
-
-### Still open (deliberate)
-
-- **Q-061-4** — vault-specific provenance keys (`youtube:` 9 pages, `teachable:` 9) still
-  derive `internal` despite an `http(s)` value. Deferred by **mechanism** (it needs a
-  per-vault `external_keys:` config surface, which does not belong in a fix task), **not** by
-  defect. **Test-pinned in its known-wrong state on both halves**
-  (`test_vault_specific_provenance_key_still_internal_q0614`) — when Q-061-4 lands, the test
-  flips to `external` and the pin becomes the gate.
-- **TASK 062** — adoption of typed knowledge on real content. This task is its prerequisite:
-  it is what makes TASK 062's progress *measurable* (the denominators go from 0 to non-zero).
-- **Q-061-3 Option B** (`x-wiki-advisory` + a rendered badge) stays deferred until a **second**
-  advisory field exists; Option A′ (generalize `FieldSpec.description`) shipped instead.
+### VDD verdict
+`/vdd-multi`, 3 iterations. Severity trajectory **3 HIGH / 6 MED → 0 HIGH / 5 MED → 0 HIGH / 0 MED**.
+Final: **all three critics `bikeshedding-only` = PASS.** Both the logic and the performance critic
+**retracted their own earlier findings** rather than defend them (the perf latency estimate was over-stated
+by ~15×; SQLite has cached JSON parses since 3.42). The 5 scanner CRITICALs in touched files were all
+adjudicated **regex false positives** — including an `eval()` hit that was the pattern matching
+*"retri·**eval (**"* inside a comment.
