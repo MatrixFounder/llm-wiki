@@ -9,6 +9,7 @@ stored on the dataclass itself.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -581,6 +582,51 @@ class RuleStat:
                 "matched": self.matched,
                 "matched_by_kind": dict(self.matched_by_kind),
                 "findings": dict(self.findings)}
+
+
+# --- the ONE definition of a vacuous kind, read by EVERY announcing sink -----------
+# 061 FIX-LOOP iteration-2 (critic-logic M-1): `matched_by_kind` — the number that
+# IDENTIFIES a false green — was computed by the DAL and then read by NOBODY. The vacuity
+# announcers (`wiki-lint`'s `vacuous_checks` + report headline, `wiki-health`'s `note`)
+# derived their verdict from the CHECK-level denominators alone, so a rule that reported
+# `matched: 2` while one of its kinds judged ZERO rows sailed through as `✅ Healthy`.
+# Computing the number and not reading it is this task's own disease with extra steps.
+#
+# THE BOUNDARY, STATED (not merely true): a kind is vacuous here ONLY when the rule
+# MATCHED rows (`matched > 0`) and the kind could judge NONE of them. A rule with
+# `matched == 0` is NOT flagged — it is OPENLY empty, and is disclosed by rendering
+# `by_rule` in the report table instead. That boundary is load-bearing: cybos declares 18
+# rules, and a healthy vault legitimately exercises two or three of them, so alarming on
+# every unused rule would fire the headline on EVERY vault — a permanent red is exactly as
+# uninformative as the permanent green this task exists to kill, and it would train the
+# operator to ignore the one alarm that means something.
+#
+# TODAY exactly one rule family can be hidden-vacuous: the ontology EDGE rule, whose
+# `domain` (needs a TYPED source) and `range` (needs a RESOLVED + typed target) bind to
+# different subsets of the same matched rows. Coverage / lifecycle-drift / ontology
+# PROPERTY rules all build `matched_by_kind == {<k>: matched}` by construction, so their
+# kinds cannot lie. This helper is nonetheless generic: a future rule that splits its
+# denominator from `matched` is covered with zero edits to any announcer.
+def vacuous_rule_kinds(rules: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    """``[{class, kind, ref, finding_kind}]`` — every rule×kind that examined rows but
+    could JUDGE none of them. Reads the WIRE form (``RuleStat.to_json()``), the same shape
+    an orchestrator parses out of `by_rule`, so this function IS the reference
+    implementation of the documented invariant rather than a second opinion about it."""
+    out: list[dict[str, str]] = []
+    for rule in rules:
+        matched = rule.get("matched")
+        if not isinstance(matched, int) or isinstance(matched, bool) or matched <= 0:
+            continue
+        by_kind = rule.get("matched_by_kind")
+        if not isinstance(by_kind, dict):
+            continue
+        for kind in sorted(by_kind):
+            if by_kind[kind] == 0:
+                out.append({"class": str(rule.get("class", "")),
+                            "kind": str(rule.get("kind", "")),
+                            "ref": str(rule.get("ref", "")),
+                            "finding_kind": str(kind)})
+    return out
 
 
 @dataclass(frozen=True)

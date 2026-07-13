@@ -119,6 +119,7 @@ def test_lint_json_sidecar(populated_repo, tmp_path):
     # (and the sidecar travels alone as a CI artifact — an empty array there was the same
     # false green the markdown sink printed). The pre-061 array survives VERBATIM under
     # `issues`; `render_json_sidecar(list)` still returns the bare array for library callers.
-    assert set(data) == {"issues", "denominators", "vacuous_checks"}
+    assert set(data) == {"issues", "denominators", "vacuous_checks", "vacuous_kinds"}
     assert isinstance(data["issues"], list)
     assert data["vacuous_checks"] == []      # karpathy: no config-driven check even ran
+    assert data["vacuous_kinds"] == []       # ...so no rule could be hidden-vacuous either

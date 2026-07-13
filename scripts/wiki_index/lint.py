@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
+from scripts.wiki_index.models import vacuous_rule_kinds
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -438,73 +440,137 @@ def check_classification_policy(
     return out
 
 
-def _split(report: "LintReport | list[LintIssue]") -> tuple[
-        list[LintIssue], dict[str, dict[str, Any]] | None]:
-    """Normalize either renderer input. A bare ``list[LintIssue]`` (the pre-061
-    back-compat form) yields ``None`` — *denominators UNKNOWN* — which is deliberately
-    NOT the same as a `LintReport` carrying ``{}`` (*no config-driven check applies to
-    any of these vaults*: an honest green). Collapsing the two would re-run this task's
-    own bug one level up, in the very function written to fix it."""
-    if isinstance(report, LintReport):
-        return report.issues, report.denominators
-    return report, None
-
-
 def _denominator_rows(
     denominators: dict[str, dict[str, Any]],
 ) -> list[tuple[str, str, str, int]]:
     """``[(vault_id, check, population, examined)]`` — one row per (check, DENOMINATOR).
 
-    DERIVED, never enumerated: a check payload is ``{<population noun>: int, …,
-    "by_rule": [...]}``, so every INT-valued key IS a population count (``by_rule`` is a
-    list and drops out). A future denominator noun (TASK 062 adds rules; a new population
-    may follow) therefore renders in both sinks with **zero renderer code** — the
-    schema-driven discipline TASK 058 set for the config UI. Hard-coding the three known
-    nouns here (`pages_examined`/`edges_examined`/`property_pages_examined`) would be
-    exactly the fractal's next recurrence: a mechanism asserting it covers a surface it
-    never enumerated."""
+    DERIVED, never enumerated — but off a NAMING CONTRACT: a population noun ends in
+    ``_examined``. A future denominator (TASK 062 adds rules; a new population may follow)
+    therefore renders in every sink with **zero renderer code**, while a future
+    NON-population int in the same payload does not.
+
+    061 FIX-LOOP iteration-2 (critic-logic L-3): the first cut blessed *every* int-valued
+    key as a population, so a payload that one day carries `{"rules": 0}` (a COUNT OF
+    RULES, not of examined rows) would have fabricated a "NOT a clean bill of health"
+    alarm out of a perfectly examined vault. A false RED is not the safe direction of this
+    bug — it is the same lie with the sign flipped, and it is the one that gets the alarm
+    ignored. `wiki_health` derives its `vacuous_populations` off the identical suffix
+    contract, so the two surfaces cannot drift."""
     rows: list[tuple[str, str, str, int]] = []
     for vault_id in sorted(denominators):
         for check in sorted(denominators[vault_id]):
             payload = denominators[vault_id][check]
             for key in sorted(payload):
                 val = payload[key]
-                if isinstance(val, int) and not isinstance(val, bool):
+                if (key.endswith("_examined")
+                        and isinstance(val, int) and not isinstance(val, bool)):
                     rows.append((vault_id, check, key, val))
     return rows
 
 
-def render_markdown_report(report: "LintReport | list[LintIssue]") -> str:
+def _rule_rows(
+    denominators: dict[str, dict[str, Any]],
+) -> list[tuple[str, str, str, int, str, int, int]]:
+    """``[(vault, check, rule, matched, finding_kind, judgeable, found)]`` — one row per
+    (rule × finding KIND), the granularity at which the invariant actually holds:
+
+        found <= judgeable (`matched_by_kind[k]`) <= matched <= <family>_examined
+
+    M-1: `by_rule` is a LIST, so it dropped out of `_denominator_rows` and was rendered
+    NOWHERE — the markdown report, the one surface a human reads, never showed a single
+    per-rule number. A rule could report `matched: 2 / findings: {range: 0}` with a
+    `range` that judged ZERO rows, and the report said `✅ Healthy. No issues found.`"""
+    rows: list[tuple[str, str, str, int, str, int, int]] = []
+    for vault_id in sorted(denominators):
+        for check in sorted(denominators[vault_id]):
+            rules = denominators[vault_id][check].get("by_rule")
+            if not isinstance(rules, list):
+                continue
+            for rule in rules:
+                matched = rule.get("matched", 0)
+                by_kind = rule.get("matched_by_kind") or {}
+                findings = rule.get("findings") or {}
+                label = f"{rule.get('kind', '')}:{rule.get('ref', '')}"
+                if rule.get("class"):
+                    label = f"{label} ({rule['class']})"
+                for kind in sorted(by_kind):
+                    rows.append((vault_id, check, label, matched, kind,
+                                 by_kind[kind], findings.get(kind, 0)))
+    return rows
+
+
+def derive_vacuous_checks(
+    denominators: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Check-level vacuity: a whole POPULATION that examined nothing. `[]` = every
+    config-driven check that ran had something to look at."""
+    return [{"vault": vault_id, "check": check, "population": population}
+            for vault_id, check, population, n in _denominator_rows(denominators)
+            if n == 0]
+
+
+def derive_vacuous_kinds(
+    denominators: dict[str, dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Per-KIND vacuity: a rule that examined rows but whose finding kind could judge
+    NONE of them (`models.vacuous_rule_kinds` — the ONE definition, shared with
+    `wiki-health`, so the two sibling surfaces of one task cannot disagree again)."""
+    out: list[dict[str, str]] = []
+    for vault_id in sorted(denominators):
+        for check in sorted(denominators[vault_id]):
+            rules = denominators[vault_id][check].get("by_rule")
+            if not isinstance(rules, list):
+                continue
+            out.extend({"vault": vault_id, "check": check, **vk}
+                       for vk in vacuous_rule_kinds(rules))
+    return out
+
+
+def render_markdown_report(report: LintReport) -> str:
     """Render a lint run as a markdown report (the `--report <path.md>` sink).
 
     TASK 061 FIX-LOOP (H1) — the unconditional ``✅ Healthy. No issues found.`` was THE
     false green this task exists to kill, left alive in the one artifact a human actually
     reads: on the LIVE vault it was written by a run whose `ontology-violation` check
     examined **0 of 8836 refs**. A green is now printed ONLY when every config-driven
-    check that ran examined a NON-EMPTY population; otherwise the report says, in the same
-    breath, which population was empty. A "what was examined" table follows the issues.
+    check that ran examined a NON-EMPTY population **and** every rule that matched rows
+    could actually judge them; otherwise the report says, in the same breath, which
+    population or which rule×kind was empty. Two "what was examined" tables follow.
 
-    Accepts a bare ``list[LintIssue]`` (pre-061 signature, byte-identical output) — but a
-    list carries NO denominators, so that form CANNOT qualify its green and prints the
-    pre-061 body verbatim. The CLI always passes the `LintReport`."""
-    issues, denominators = _split(report)
-    rows = _denominator_rows(denominators) if denominators else []
-    vacuous = [r for r in rows if r[3] == 0]
+    061 FIX-LOOP iteration-2 (L-1 + L-4): the ``list[LintIssue]`` overload is GONE. It
+    could not carry a denominator, so it printed the pre-fix false green verbatim — a
+    loaded gun with no production caller, which any new sink could have picked up with
+    mypy silent and no test failing. The disease is now UNREPRESENTABLE rather than merely
+    unreached (the M6 precedent), and `denominators` being non-optional dissolves the
+    ``None``-vs-``{}`` ambiguity `_split` used to warn about: ``{}`` means *no
+    config-driven check applies to any of these vaults* — an HONEST green."""
+    issues, denominators = report.issues, report.denominators
+    rows = _denominator_rows(denominators)
+    vacuous = derive_vacuous_checks(denominators)
+    vac_kinds = derive_vacuous_kinds(denominators)
     lines = ["# Wiki Lint Report", ""]
-    if vacuous:
-        lines.append(
-            f"⚠️ **NOT a clean bill of health** — {len(vacuous)} of {len(rows)} "
-            f"config-driven check population(s) examined **nothing**:")
+    if vacuous or vac_kinds:
+        n = len(vacuous) + len(vac_kinds)
+        lines.append(f"⚠️ **NOT a clean bill of health** — {n} population(s) examined "
+                     f"**nothing**:")
         lines.append("")
-        for vault_id, check, population, _n in vacuous:
+        for v in vacuous:
             lines.append(
-                f"- ⚠ `{check}` examined **0** (`{population}`) in vault `{vault_id}` — "
-                f"a `0` finding count for this check carries NO information.")
+                f"- ⚠ `{v['check']}` examined **0** (`{v['population']}`) in vault "
+                f"`{v['vault']}` — a `0` finding count for this check carries NO "
+                f"information.")
+        for k in vac_kinds:
+            lines.append(
+                f"- ⚠ `{k['check']}` rule `{k['kind']}:{k['ref']}` in vault "
+                f"`{k['vault']}` matched rows, but its **`{k['finding_kind']}`** half "
+                f"could judge **0** of them — a `0` `{k['finding_kind']}` count for this "
+                f"rule carries NO information.")
         lines.append("")
     if not issues:
         lines.append("No issues found — but see the warning above: a check that examined "
                      "nothing cannot certify health."
-                     if vacuous else "✅ Healthy. No issues found.")
+                     if (vacuous or vac_kinds) else "✅ Healthy. No issues found.")
         lines.append("")
     else:
         by_cat: dict[str, list[LintIssue]] = {}
@@ -531,10 +597,26 @@ def render_markdown_report(report: "LintReport | list[LintIssue]") -> str:
             flag = " ⚠" if n == 0 else ""
             lines.append(f"| {vault_id} | {check} | `{population}` | {n}{flag} |")
         lines.append("")
+    rule_rows = _rule_rows(denominators)
+    if rule_rows:
+        # M-1: the PER-RULE numbers, rendered for the first time. `judgeable` is the row
+        # count this finding kind could actually adjudicate; when it is 0 the `found`
+        # column beside it is NOISE, not a green — and a rule whose `matched` is 0 is
+        # openly empty here rather than silently absent (the boundary `vacuous_rule_kinds`
+        # states: openly-empty is DISCLOSED, hidden-empty is ALARMED).
+        lines.append("## What each rule could judge")
+        lines.append("")
+        lines.append("| vault | check | rule | kind | matched | judgeable | found |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for vault_id, check, label, matched, kind, judgeable, found in rule_rows:
+            flag = " ⚠" if judgeable == 0 else ""
+            lines.append(f"| {vault_id} | {check} | `{label}` | {kind} | {matched} | "
+                         f"{judgeable}{flag} | {found} |")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_json_sidecar(report: "LintReport | list[LintIssue]") -> str:
+def render_json_sidecar(report: LintReport) -> str:
     """Render a lint run as the `--json-sidecar <path.json>` detail artifact.
 
     TASK 061 FIX-LOOP (H1) — **SHAPE CHANGE, stated not smuggled.** Given a `LintReport`
@@ -542,7 +624,9 @@ def render_json_sidecar(report: "LintReport | list[LintIssue]") -> str:
 
         {"issues": [<the pre-061 array, VERBATIM>],
          "denominators": {<vault>: {<check>: {...}}},     # same payload as stdout
-         "vacuous_checks": [{"vault", "check", "population"}]}   # derived; [] = all good
+         "vacuous_checks": [{"vault", "check", "population"}],  # derived; [] = all good
+         "vacuous_kinds":  [{"vault", "check", "class", "kind", "ref",
+                             "finding_kind"}]}            # derived; [] = all good
 
     The pre-061 sidecar was a BARE ARRAY, and a bare array is structurally incapable of
     carrying a denominator — so an empty one was indistinguishable from "the checks
@@ -552,10 +636,16 @@ def render_json_sidecar(report: "LintReport | list[LintIssue]") -> str:
     "never gate and never become issues" — it would desync the array's length from the
     envelope's `total_issues`), so the wrapper object is the only honest shape.
 
-    Passing a bare ``list[LintIssue]`` still returns the pre-061 BARE ARRAY byte-for-byte
-    (library back-compat; a list has no denominators to render)."""
+    061 FIX-LOOP iteration-2 (M-1): `vacuous_kinds` is ADDITIVE and closes the gap the H1
+    fix left — `vacuous_checks` alone reads the CHECK-level denominators, so a rule that
+    matched rows while one of its kinds judged none of them still shipped `"issues": []`
+    with `"vacuous_checks": []` beside it: a machine-readable clean bill of health over a
+    number the DAL had already proven was not judgeable. `[]` in BOTH keys is the green.
+
+    061 FIX-LOOP iteration-2 (L-1): the `list[LintIssue]` overload is GONE — see
+    `render_markdown_report`."""
     import json
-    issues, denominators = _split(report)
+    issues, denominators = report.issues, report.denominators
     payload = [
         {
             "category": i.category,
@@ -566,14 +656,9 @@ def render_json_sidecar(report: "LintReport | list[LintIssue]") -> str:
         }
         for i in issues
     ]
-    if denominators is None:
-        return json.dumps(payload, ensure_ascii=False, indent=2)
-    rows = _denominator_rows(denominators)
     return json.dumps({
         "issues": payload,
         "denominators": denominators,
-        "vacuous_checks": [
-            {"vault": vault_id, "check": check, "population": population}
-            for vault_id, check, population, n in rows if n == 0
-        ],
+        "vacuous_checks": derive_vacuous_checks(denominators),
+        "vacuous_kinds": derive_vacuous_kinds(denominators),
     }, ensure_ascii=False, indent=2)

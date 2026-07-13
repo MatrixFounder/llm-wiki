@@ -218,7 +218,11 @@ def test_tc_02_3_ontology_vacuous_note(tmp_path: Path, capsys) -> None:
     assert rc == 0
     assert env["total_violations"] == 0
     assert env["edges_examined"] == 0 and env["property_pages_examined"] == 0
-    assert "nothing was examined" in env["note"]
+    assert "examined NOTHING" in env["note"]
+    # ...and it now NAMES both empty populations rather than asserting a bare adjective.
+    assert env["vacuous_populations"] == ["edges_examined", "property_pages_examined"]
+    assert "`edges_examined` = 0" in env["note"]
+    assert "`property_pages_examined` = 0" in env["note"]
     _assert_ontology_invariant(env)
 
 
@@ -398,3 +402,72 @@ def test_low_declared_but_ruleless_ontology_blames_the_config_not_the_data(
     # the three notes stay three DISTINCT statements — "no block" ≠ "no rules" ≠ "no data"
     assert "NO page carries" not in env["note"]
     assert env["note"] != "no ontology contract configured for this layout"
+
+
+# =============================================================================
+# 061 FIX-LOOP iteration-2 — M-2: `ontology` went SILENT on PARTIAL vacuity
+# =============================================================================
+
+def test_m2_partial_vacuity_is_not_silent_the_task_062_trigger(
+        tmp_path: Path, capsys) -> None:
+    """M-2 — THE ORIGINAL BUG, ONE AUTHORED PAGE AWAY FROM RETURNING.
+
+    The note used to fire only when BOTH denominators were zero:
+
+        elif report.edges_examined == 0 and report.property_pages_examined == 0:
+
+    On the live vault both ARE zero today, so the note fired and the fix looked complete.
+    Author ONE typed `decision` page with a `status:` — literally the next planned step
+    (TASK 062) — and the state becomes `{edges_examined: 0, property_pages_examined: 1}`:
+    the `and` SHORT-CIRCUITS, no note is emitted at all, and the envelope reads
+    `total_violations: 0` while all SEVEN edge rules examined nothing. The original false
+    green, restored, on the always-exit-0 CLI whose entire purpose is reporting — while
+    `wiki-lint`, over the SAME two denominators, correctly refused to print the green.
+
+    MUTATION BAR: restore the `and` and this test fails on the missing `note`."""
+    repo, _root = build_cybos_vault(tmp_path, {
+        # ONE typed page, a valid status, and NOT ONE declared edge type anywhere.
+        "decisions/d1.md":
+            "---\ntype: decision\ntitle: D1\nstatus: accepted\n---\nbody\n",
+    }, vault_id="partial")
+    repo.close()
+    rc, env = _run(capsys, ["ontology", "--vault", "partial",
+                            "--db-path", str(tmp_path / "partial.db")])
+    assert rc == 0                                   # always-exit-0 CLI, unchanged
+    # THE STATE: partially vacuous — one population empty, the other not.
+    assert env["edges_examined"] == 0                # ...so the 7 edge rules judged NOTHING
+    assert env["property_pages_examined"] == 1       # ...while the property half DID run
+    assert env["total_violations"] == 0              # ...and the old envelope said ONLY this
+    # THE FIX: the note fires on the PARTIAL case, and NAMES the empty population.
+    assert "note" in env, "partial vacuity went SILENT — the `and` short-circuit is back"
+    assert "examined NOTHING" in env["note"]
+    assert env["vacuous_populations"] == ["edges_examined"]
+    assert "`edges_examined` = 0" in env["note"]
+    assert "no page_entity_refs row carries a declared edge type" in env["note"]
+    # ...and does NOT libel the population that DID examine rows.
+    assert "`property_pages_examined` = 0" not in env["note"]
+    _assert_ontology_invariant(env)
+
+
+def test_m2_wiki_health_and_wiki_lint_agree_on_the_same_two_denominators(
+        tmp_path: Path, capsys) -> None:
+    """The sibling-surface check. M-2's real indictment was not the `and` — it was that TWO
+    surfaces of ONE task, over the SAME two denominators, disagreed, and the WEAKER
+    semantics sat on the reporting CLI. Both now derive vacuity from the same
+    `*_examined` suffix contract and the same `models.vacuous_rule_kinds`, so they cannot
+    drift apart again without this failing."""
+    from scripts.wiki_index.lint import derive_vacuous_checks, run_all_checks_report
+
+    repo, _root = build_cybos_vault(tmp_path, {
+        "decisions/d1.md":
+            "---\ntype: decision\ntitle: D1\nstatus: accepted\n---\nbody\n",
+    }, vault_id="agree")
+    lint_report = run_all_checks_report(repo, vaults=["agree"])
+    repo.close()
+    _rc, env = _run(capsys, ["ontology", "--vault", "agree",
+                            "--db-path", str(tmp_path / "agree.db")])
+
+    lint_vacuous = {v["population"] for v in derive_vacuous_checks(lint_report.denominators)
+                    if v["check"] == "ontology-violation"}
+    assert lint_vacuous == {"edges_examined"}            # wiki-lint says: edges examined 0
+    assert set(env["vacuous_populations"]) == lint_vacuous   # ...and wiki-health now agrees

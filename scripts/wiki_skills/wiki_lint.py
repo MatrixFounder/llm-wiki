@@ -31,6 +31,8 @@ from pathlib import Path
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.lint import (
+    derive_vacuous_checks,
+    derive_vacuous_kinds,
     render_json_sidecar,
     render_markdown_report,
     run_all_checks_report,
@@ -90,6 +92,15 @@ def main(argv: list[str] | None = None) -> int:
             # fired; no DAL call) — which is NOT the same as "examined 0", and the two must
             # not be conflated.
             "denominators": report.denominators,
+            # 061 FIX-LOOP iteration-2 (M-1, additive): the stdout envelope carried the
+            # NUMBERS and announced NOTHING — it shipped `denominators` and left every
+            # orchestrator to re-derive vacuity from them correctly, which is precisely the
+            # bet this task lost twice. Both verdicts are now DERIVED HERE, by the same
+            # `lint.derive_*` functions the `--report` and `--json-sidecar` sinks call, so
+            # all THREE sinks announce one verdict instead of three re-derivations.
+            # `total_issues: 0` is a clean bill of health ONLY when BOTH are `[]`.
+            "vacuous_checks": derive_vacuous_checks(report.denominators),
+            "vacuous_kinds": derive_vacuous_kinds(report.denominators),
         }, exit_code)
     finally:
         repo.close()

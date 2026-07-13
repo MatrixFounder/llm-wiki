@@ -18,6 +18,7 @@ recurrence of this task's own fractal, and the exact thing TC-03-5 pins.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 from datetime import datetime
 from pathlib import Path
@@ -25,10 +26,13 @@ from pathlib import Path
 from scripts.wiki_index.layout_config import resolve_layout_config
 from scripts.wiki_index.lint import (
     LintIssue,
+    LintReport,
     check_lifecycle_drift,
     check_lifecycle_drift_report,
     check_ontology_violations,
     check_ontology_violations_report,
+    render_json_sidecar,
+    render_markdown_report,
     run_all_checks,
     run_all_checks_report,
 )
@@ -366,17 +370,20 @@ def test_h1_json_sidecar_carries_the_denominators(tmp_path: Path, capsys) -> Non
     _rc, env = _run_lint(capsys, ["--vault", "hvault", "--json-sidecar", str(side),
                                   "--db-path", str(tmp_path / "h.db")])
     data = json.loads(side.read_text())
-    assert set(data) == {"issues", "denominators", "vacuous_checks"}
-    # `issues` IS the pre-061 array, byte-for-byte — the back-compat (list-taking) form of
-    # the SAME renderer is the oracle.
-    from scripts.wiki_index.lint import render_json_sidecar
+    assert set(data) == {"issues", "denominators", "vacuous_checks", "vacuous_kinds"}
+    # `issues` IS the pre-061 array of LintIssue dicts — the DAL's own `run_all_checks`
+    # (still list-returning; `benchmark.py` depends on it) is the oracle for its contents.
     repo2 = SQLiteRepository(tmp_path / "h.db")
-    legacy = render_json_sidecar(run_all_checks(repo2, vaults=["hvault"]))
+    oracle = run_all_checks(repo2, vaults=["hvault"])
     repo2.close()
-    assert data["issues"] == json.loads(legacy)           # bare list in ⇒ bare array out
+    assert [i["category"] for i in data["issues"]] == [i.category for i in oracle]
     assert len(data["issues"]) == env["total_issues"] > 0
     assert data["denominators"] == env["denominators"]    # same payload as the stdout envelope
     assert data["vacuous_checks"] == []          # this vault examined a real population
+    # ...and the STDOUT envelope announces the same two verdicts (M-1: the sink that
+    # carried the numbers used to announce nothing at all).
+    assert env["vacuous_checks"] == data["vacuous_checks"]
+    assert env["vacuous_kinds"] == data["vacuous_kinds"]
 
 
 def test_h1_json_sidecar_vacuous_checks_are_machine_visible(tmp_path: Path, capsys) -> None:
@@ -398,19 +405,44 @@ def test_h1_json_sidecar_vacuous_checks_are_machine_visible(tmp_path: Path, caps
     assert all(v["vault"] == "vacuousjs" for v in data["vacuous_checks"])
 
 
-def test_h1_renderers_keep_the_pre_061_list_signature(tmp_path: Path) -> None:
-    """Back-compat: a bare `list[LintIssue]` still renders the pre-061 body byte-for-byte
-    (markdown) / the pre-061 BARE ARRAY (sidecar). A list carries no denominators, so that
-    form cannot qualify its green — and that boundary is STATED in both docstrings rather
-    than being silently true."""
+def test_l1_the_list_taking_renderer_overload_is_GONE(tmp_path: Path) -> None:
+    """L-1 (061 FIX-LOOP iteration-2) — the `list[LintIssue]` overload was a LOADED GUN.
+
+    It survived H1 as "library back-compat", with ZERO production callers — and a list is
+    structurally incapable of carrying a denominator, so that form printed the EXACT
+    pre-fix false green (`✅ Healthy. No issues found.` over a run that examined nothing).
+    Any new sink in any module could have picked it up with **mypy silent and no test
+    failing**: H1's own sink census only greps `wiki_lint.py` for `.write_text(`/`return
+    emit(`, so a sink routed through a helper is invisible to it.
+
+    Both renderers now take `LintReport` ONLY. The false green is UNREPRESENTABLE rather
+    than merely unreached — the M6 precedent, applied to the module M6 was written for.
+    A bare `{}` denominators map still renders an HONEST green: it means *no config-driven
+    check applies to any of these vaults*, which is exactly what `_split`'s docstring
+    insisted must never be collapsed with "unknown" (L-4) — and now cannot be, because the
+    "unknown" state no longer exists."""
     from scripts.wiki_index.lint import render_json_sidecar, render_markdown_report
+
     issue = LintIssue(category="orphan-link", severity="warning", vault_id="v",
                       page_slug="p", details={"target": "t"})
-    assert render_markdown_report([]) == "# Wiki Lint Report\n\n✅ Healthy. No issues found.\n"
-    assert json.loads(render_json_sidecar([])) == []            # a bare ARRAY, not an object
-    md = render_markdown_report([issue])
+    # The disease, at the type level: a bare list no longer type-checks...
+    sig = inspect.signature(render_markdown_report).parameters["report"].annotation
+    assert "list" not in str(sig) and "LintReport" in str(sig)
+    sig_s = inspect.signature(render_json_sidecar).parameters["report"].annotation
+    assert "list" not in str(sig_s) and "LintReport" in str(sig_s)
+    src = Path("scripts/wiki_index/lint.py").read_text(encoding="utf-8")
+    assert "def _split(" not in src          # the None-vs-{} normalizer has no reason to exist
+    # ...and `{}` (no config-driven check applies) is still an honest, UNqualified green.
+    honest = LintReport(issues=[], denominators={})
+    assert render_markdown_report(honest) == (
+        "# Wiki Lint Report\n\n✅ Healthy. No issues found.\n")
+    assert json.loads(render_json_sidecar(honest)) == {
+        "issues": [], "denominators": {}, "vacuous_checks": [], "vacuous_kinds": []}
+    # ...and the issue body is unchanged for the report form.
+    md = render_markdown_report(LintReport(issues=[issue], denominators={}))
     assert "**1 issue(s)** across 1 categories." in md and "## orphan-link (1)" in md
-    assert json.loads(render_json_sidecar([issue])) == [
+    assert json.loads(render_json_sidecar(
+        LintReport(issues=[issue], denominators={})))["issues"] == [
         {"category": "orphan-link", "severity": "warning", "vault_id": "v",
          "page_slug": "p", "details": {"target": "t"}}]
 
@@ -427,17 +459,28 @@ def test_h1_denominator_rows_are_derived_not_enumerated(tmp_path: Path) -> None:
         render_markdown_report,
     )
     denoms: dict = {"v": {"future-check": {
-        "brand_new_noun_examined": 0, "another_noun": 7, "by_rule": [{"matched": 1}]}}}
-    assert _denominator_rows(denoms) == [        # `by_rule` (a list) drops out; ints are rows
-        ("v", "future-check", "another_noun", 7),
+        "brand_new_noun_examined": 0, "another_noun_examined": 7,
+        # L-3 (061 FIX-LOOP iteration-2): a NON-population int in the same payload. TASK 062
+        # "adds rules" — the moment a check reports `{"rules": 0}` (a count of RULES, not of
+        # examined rows), the old "every int is a population" heuristic FABRICATED a "NOT a
+        # clean bill of health" alarm out of a fully-examined vault. A false RED is not the
+        # safe direction of this bug; it is the one that gets the alarm ignored. The
+        # population contract is now the `_examined` SUFFIX — still derived, never
+        # enumerated, but no longer credulous.
+        "rules": 0,
+        "by_rule": [{"matched": 1}]}}}
+    assert _denominator_rows(denoms) == [    # `by_rule` (list) and `rules` (not a population)
+        ("v", "future-check", "another_noun_examined", 7),   # both drop out
         ("v", "future-check", "brand_new_noun_examined", 0)]
     # ...and BOTH sinks render the never-before-seen noun with zero renderer code:
     md = render_markdown_report(LintReport(issues=[], denominators=denoms))
     assert "`brand_new_noun_examined`" in md and "NOT a clean bill of health" in md
-    assert "| v | future-check | `another_noun` | 7 |" in md
+    assert "| v | future-check | `another_noun_examined` | 7 |" in md
+    assert "`rules`" not in md                   # the non-population never became an alarm
     side = json.loads(render_json_sidecar(LintReport(issues=[], denominators=denoms)))
     assert side["vacuous_checks"] == [
         {"vault": "v", "check": "future-check", "population": "brand_new_noun_examined"}]
+    assert side["vacuous_kinds"] == []          # `matched: 1` with no `matched_by_kind`
 
 
 def test_lint_envelope_additive_and_non_gating(tmp_path: Path, capsys) -> None:
@@ -461,3 +504,104 @@ def test_lint_envelope_additive_and_non_gating(tmp_path: Path, capsys) -> None:
     assert rc_strict == 1
     assert env_strict["total_issues"] == env["total_issues"]
     assert env_strict["by_category"] == env["by_category"]
+
+
+# =============================================================================
+# 061 FIX-LOOP iteration-2 — M-1: H1 and M3 were never COMPOSED
+# =============================================================================
+
+# The rule that MATCHES rows it cannot JUDGE, with **zero lint issues** beside it. `uses`
+# from a `workflow` is in the declared domain, and the target RESOLVES (so no orphan-link
+# fires — that is the whole point: the ghost-link fixture in test_health_denominators can
+# NEVER reach the green, because a dangling link IS an issue) but the target is UNTYPED, so
+# `tgt_type` is NULL and the RANGE half can judge NOT ONE of these rows.
+#
+# Pre-fix this vault printed `✅ Healthy. No issues found.` and shipped `"vacuous_checks":
+# []`, while `by_rule` — the list that holds `matched_by_kind`, the number M3 added
+# precisely to IDENTIFY this state — was dropped by `_denominator_rows` (a LIST, not an
+# int) and rendered on NO surface at all. The number that identifies a false green was not
+# read by the mechanism that announces false greens.
+_UNJUDGEABLE_FILES = {
+    "workflows/wf-a.md":
+        "---\ntype: workflow\ntitle: WF A\nstatus: active\nuses: [[tool-x]]\n---\nb\n",
+    # an INDEXED page (so the link resolves) with NO `type:` in frontmatter and a path that
+    # implies none — the range check's target type is NULL.
+    "tools/tool-x.md": "---\ntitle: Tool X\n---\nno type field at all\n",
+}
+
+
+def _unjudgeable_report(tmp_path: Path):
+    repo, _root = build_cybos_vault(tmp_path, _UNJUDGEABLE_FILES, vault_id="unjudge")
+    report = run_all_checks_report(repo, vaults=["unjudge"])
+    repo.close()
+    return report
+
+
+def test_m1_the_anti_vacuity_guard_this_fixture_is_the_state_it_claims(
+        tmp_path: Path) -> None:
+    """THE ANTI-VACUITY GUARD — the fixture must actually BE the state, or every assertion
+    below is itself a vacuous check (this task's disease, in its own test file)."""
+    report = _unjudgeable_report(tmp_path)
+    ont = report.denominators["unjudge"]["ontology-violation"]
+    uses = next(r for r in ont["by_rule"] if r["ref"] == "uses")
+    assert uses["matched"] == 1                        # a row WAS examined by the rule...
+    assert uses["matched_by_kind"] == {"domain": 1, "range": 0}   # ...`range` judged NONE
+    assert uses["findings"] == {"domain": 0, "range": 0}          # ...and "found" nothing
+    assert ont["edges_examined"] == 1 and ont["property_pages_examined"] >= 1  # NOT vacuous
+    assert report.issues == []          # ...and NOTHING else flags this vault. Green, pre-fix.
+
+
+def test_m1_matched_by_kind_is_READ_by_the_mechanism_that_announces_false_greens(
+        tmp_path: Path) -> None:
+    """M-1 — the composition H1 and M3 never made. MUTATION BAR: revert either
+    `derive_vacuous_kinds` or its use in the renderer and this test fails, because the
+    report goes back to printing the unqualified green over `range: 0`."""
+    report = _unjudgeable_report(tmp_path)
+    md = render_markdown_report(report)
+    assert "✅ Healthy. No issues found." not in md          # THE false green, dead
+    assert "NOT a clean bill of health" in md
+    assert "`range`" in md and "could judge **0**" in md     # ...and it names WHICH half
+    side = json.loads(render_json_sidecar(report))
+    assert side["issues"] == [] and side["vacuous_checks"] == []   # both empty, pre-fix...
+    assert side["vacuous_kinds"] == [{                             # ...and THIS is the tell
+        "vault": "unjudge", "check": "ontology-violation",
+        "class": "", "kind": "edge", "ref": "uses", "finding_kind": "range"}]
+
+
+def test_m1_by_rule_is_RENDERED_in_the_markdown_report(tmp_path: Path) -> None:
+    """M-1's other half: the markdown report is the ONLY surface a human reads, and it
+    showed not a single per-rule number — `by_rule` dropped out of `_denominator_rows`
+    because it is a LIST. A rule's judgeable population is now a column."""
+    report = _unjudgeable_report(tmp_path)
+    md = render_markdown_report(report)
+    assert "## What each rule could judge" in md
+    assert "| vault | check | rule | kind | matched | judgeable | found |" in md
+    # the lying row, with its judgeable population flagged:
+    assert "| unjudge | ontology-violation | `edge:uses` | range | 1 | 0 ⚠ | 0 |" in md
+    assert "| unjudge | ontology-violation | `edge:uses` | domain | 1 | 1 | 0 |" in md
+
+
+def test_m1_openly_empty_rules_are_DISCLOSED_but_do_not_cry_wolf(tmp_path: Path) -> None:
+    """THE STATED BOUNDARY (a boundary that is stated is honest; one that is merely true is
+    the disease). A rule with `matched == 0` matched NOTHING — its `0` findings are
+    uninformative, but OPENLY so. cybos declares 18 rules and a healthy vault exercises two
+    or three, so alarming on every unused rule would fire the headline on EVERY vault: a
+    permanent RED is exactly as uninformative as the permanent green this task exists to
+    kill, and it is the one that trains the operator to ignore the alarm.
+
+    So: openly-empty (`matched == 0`) → DISCLOSED in the table, no alarm.
+        hidden-empty (`matched > 0`, kind judges 0) → ALARMED. That is `vacuous_rule_kinds`."""
+    repo, _root = build_cybos_vault(tmp_path, {
+        "agents/ag-1.md": "---\ntype: agent\ntitle: Ag\nstatus: active\nowns: [[wf-1]]\n---\nb\n",
+        "workflows/wf-1.md": "---\ntype: workflow\ntitle: WF\nstatus: active\n---\nb\n",
+    }, vault_id="cleanv")
+    report = run_all_checks_report(repo, vaults=["cleanv"])
+    repo.close()
+    ont = report.denominators["cleanv"]["ontology-violation"]
+    unused = [r for r in ont["by_rule"] if r["matched"] == 0]
+    assert len(unused) >= 10          # census: most of cybos's 18 rules are unused here...
+    md = render_markdown_report(report)
+    assert render_json_sidecar(report) and "✅ Healthy. No issues found." in md  # ...still green
+    assert "NOT a clean bill of health" not in md
+    # ...but every unused rule is VISIBLE, flagged, in the table — never silently absent.
+    assert "| cleanv | ontology-violation | `edge:implements` | domain | 0 | 0 ⚠ | 0 |" in md

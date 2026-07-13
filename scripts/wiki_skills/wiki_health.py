@@ -56,6 +56,7 @@ from typing import Any
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import resolve_layout_config
+from scripts.wiki_index.models import vacuous_rule_kinds
 from scripts.wiki_skills._common import (
     build_repo_config,
     emit,
@@ -125,6 +126,52 @@ NOTE_ONTOLOGY_VACUOUS = (
     "edge type AND no page carries an authored $.type in the property classes — nothing "
     "was examined (this is not a clean bill of health)"
 )
+# The population noun -> what an EMPTY one actually means, in the operator's terms. Keyed
+# off the envelope's own `*_examined` names, so a future population that arrives without an
+# entry here still gets NAMED in the note (via the fallback) instead of silently dropping
+# out of it — the failure mode this whole task is about.
+_POPULATION_MEANING = {
+    "edges_examined": "no page_entity_refs row carries a declared edge type",
+    "property_pages_examined": "no page carries an authored $.type in the property classes",
+}
+
+
+def _add_vacuity_keys(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Attach the two DERIVED vacuity verdicts to an ontology envelope, IN PLACE.
+
+    Called on BOTH ontology exit paths, so key-set parity between them is STRUCTURAL rather
+    than remembered — `test_tc_02_3_ontology_none_early_return_same_keys` caught the first
+    cut of this fix adding the keys to only one path, which would have made a consumer's
+    `env["vacuous_kinds"]` a KeyError on exactly the vaults with no ontology contract.
+
+    `vacuous_populations` reads the envelope's OWN `*_examined` keys — the same suffix
+    contract `lint._denominator_rows` uses — so a future population is covered here with
+    zero edits. `vacuous_kinds` is `models.vacuous_rule_kinds`, the same function `wiki-lint`
+    calls. Neither gates; `wiki-health` always exits 0."""
+    envelope["vacuous_populations"] = sorted(
+        key for key, val in envelope.items()
+        if key.endswith("_examined") and isinstance(val, int)
+        and not isinstance(val, bool) and val == 0)
+    rules = envelope.get("by_rule")
+    envelope["vacuous_kinds"] = vacuous_rule_kinds(rules if isinstance(rules, list) else [])
+    return envelope
+
+
+def _ontology_vacuous_note(
+    populations: list[str], kinds: list[dict[str, str]]
+) -> str:
+    """The PARTIAL-vacuity note (061 FIX-LOOP iteration-2, M-2): names the populations and
+    rule×kinds that examined nothing, instead of the all-or-nothing string that only ever
+    fired when EVERY denominator was zero. A `0` violation count over an empty population
+    carries no information, and the note now says exactly which `0` that is."""
+    parts = [f"`{p}` = 0 ({_POPULATION_MEANING.get(p, 'nothing was examined')})"
+             for p in populations]
+    parts += [f"rule `{k['kind']}:{k['ref']}` matched rows but its `{k['finding_kind']}` "
+              f"half could judge 0 of them" for k in kinds]
+    return ("an ontology contract is configured, but part of it examined NOTHING: "
+            + "; ".join(parts)
+            + " — a 0 violation count for these carries no information (this is not a "
+              "clean bill of health)")
 
 
 def _run_coverage(repo: Any, args: argparse.Namespace, layout: Any) -> int:
@@ -185,13 +232,13 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
         # emits the SAME key set as the report below (all zero). A consumer must never see
         # a key appear/disappear depending on the vault's config (`class_filter` included —
         # 061 fix-loop NIT; pinned by test_tc_02_3_ontology_none_early_return_same_keys).
-        return emit({
+        return emit(_add_vacuity_keys({
             "action": "ontology", "vault": args.vault, "total_violations": 0,
             "class_filter": args.page_class,
             "edges_examined": 0, "property_pages_examined": 0, "by_rule": [],
             "by_kind": {}, "by_class": {}, "violations": [],
             "note": NOTE_NO_ONTOLOGY,
-        })
+        }))
     # TASK 061 (R-061-1, C6): ONE call, TWO populations — edges (domain/range) and pages
     # (property enums) — hence TWO denominators. `find_ontology_violations` is now a thin
     # wrapper over `.violations`, so this is the same query, not a second one.
@@ -255,16 +302,34 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
             for v in violations
         ],
     }
+    # 061 FIX-LOOP iteration-2 (critic-logic M-2) — the note used to fire only when BOTH
+    # denominators were zero (`edges_examined == 0 and property_pages_examined == 0`), so
+    # PARTIAL vacuity went SILENT. That `and` was one authored page away from restoring the
+    # original bug: TASK 062 files a single typed `decision` with a `status:` and the state
+    # becomes `{edges_examined: 0, property_pages_examined: 1}` — the conjunction
+    # short-circuits, NO note is emitted, and the envelope reads `total_violations: 0` while
+    # all SEVEN edge rules examined nothing. On the always-exit-0 CLI whose entire purpose
+    # is reporting. Meanwhile `wiki-lint`, over the SAME two denominators, correctly refused
+    # to print the green — two sibling surfaces of one task disagreeing, with the weaker
+    # semantics on the reporting surface.
+    #
+    # Both verdicts are now PER-POPULATION and PER-KIND, derived off the same suffix
+    # contract (`*_examined`) and the same `vacuous_rule_kinds` helper `wiki-lint` uses, so
+    # the two CLIs cannot drift apart again. Additive keys — nothing gates, exit stays 0.
+    _add_vacuity_keys(envelope)
     if not layout.ontology.edges and not layout.ontology.properties:
         # 061 FIX-LOOP (LOW): a declared-but-RULE-LESS ontology block. Distinct from the
         # vacuous case below — and it must not be described as it, or the operator goes
         # hunting for missing typed pages when the fix is to declare a rule. Same shape as
         # coverage's `if not rules: … elif pages_examined == 0: …`.
         envelope["note"] = NOTE_NO_ONTOLOGY_RULES
-    elif report.edges_examined == 0 and report.property_pages_examined == 0:
-        # TASK 061 — the LIVE 8836-`mentioned`-ref trap: a contract IS declared, but NOTHING
-        # it binds to exists. `total_violations: 0` here means "examined nothing".
-        envelope["note"] = NOTE_ONTOLOGY_VACUOUS
+    elif envelope["vacuous_populations"] or envelope["vacuous_kinds"]:
+        # TASK 061 — the LIVE 8836-`mentioned`-ref trap: a contract IS declared, but (some
+        # of) what it binds to does not exist. A `0` violation count for an empty population
+        # means "examined nothing", and now SAYS SO — naming exactly which population or
+        # which rule×kind was empty, instead of staying silent unless every last one was.
+        envelope["note"] = _ontology_vacuous_note(
+            envelope["vacuous_populations"], envelope["vacuous_kinds"])
     return emit(envelope)
 
 
