@@ -121,4 +121,84 @@ Adoption of typed knowledge on real content is **TASK 062** (prerequisite: this 
 
 ## 6. Completion
 
-_(filled on ship)_
+**SHIPPED 2026-07-13** — 11 beads (`061-00` … `061-10`), one commit each.
+
+### Test counts
+
+| | Before (pre-061 baseline) | After |
+|---|---|---|
+| `pytest tests/` | **2266 passed, 5 skipped** | **2325 passed, 5 skipped** (**+59**) |
+| `mypy --strict scripts/` | clean, 88 files | **clean, 88 files** |
+
+### The gates, each as a command that was run (not asserted)
+
+| Gate | Result |
+|---|---|
+| **Zero DDL** | `git diff --stat 75e1425..HEAD -- sql/` → **empty**; no `ALTER TABLE` / `CREATE INDEX` added in any code file; `PRAGMA user_version` still **7**, pinned by `tests/test_schema_v4.py:31` + `test_schema_v5.py:39`. All denominators are read-side `COUNT(*)`. |
+| **Additive-only envelopes** | The pre-061 key sets were **enumerated from git** (`git show 75e1425:…`), not remembered: coverage `{action, vault, rules, total_gaps, by_class, gaps}` · ontology `{action, vault, total_violations, by_kind, by_class, violations}` (+`note` on the no-contract path) · lint `{action, vault, total_issues, by_category}`. Each is frozen as a literal and asserted a **subset** of the emitted keys (`test_tc_02_4_additive_only_*`, `test_lint_envelope_additive_and_non_gating`). |
+| **Frozen archives** | `git diff --name-only 75e1425..HEAD \| grep -E "docs/(tasks/task-050\|plans/plan-050)"` → **empty**. No `Q-050` line removed or modified in `open-questions.md` (the only Q-050 mentions in the diff are **new `+` lines** inside Q-061-2, which *cites* Q-050-3 by name). |
+| **Decision-17** | `grep -rnE "^\s*(import anthropic\|from anthropic)" scripts/` → **empty**. |
+| **No `total ≤ examined`** | Every `<= …examined` line in the suite is **per-rule** (`stat.findings[k] <= stat.matched <= <family>_examined`). The forbidden **total** form appears **nowhere**, and two tests carry an explicit comment saying why it is forbidden (`test_lint_denominators.py:129`, `test_health_denominators.py:240`). |
+| **Noun discipline** | `pages_examined` is used **only** by coverage and by drift (their own, disjoint populations, never in one envelope — P-061-D). The ontology property family uses **`property_pages_examined`**, always. |
+
+### LIVE confirmatory anchor — the whole thesis, made visible
+
+Run **read-only** against a `sqlite3 .backup` snapshot of the live `personal` DB
+(3267 pages · authored-type census `(none) 2403 · concept 713 · lesson-summary 66 ·
+article-summary 51 · meeting-summary 30 · moc 2` · ref census **`mentioned` 8836 and nothing
+else**). All three surfaces exit **0**, as they always did:
+
+```
+wiki-health coverage → {"rules": 3, "total_gaps": 0, "pages_examined": 0, …,
+  "note": "coverage rules are configured, but NO page carries an authored $.type in those
+           classes — nothing was examined (this is not a clean bill of health)"}
+
+wiki-health ontology → {"total_violations": 0, "edges_examined": 0,
+  "property_pages_examined": 0, …,
+  "note": "an ontology contract is configured, but NO page_entity_refs row carries a declared
+           edge type AND no page carries an authored $.type in the property classes —
+           nothing was examined (this is not a clean bill of health)"}
+
+wiki-lint → denominators.personal.lifecycle-drift.pages_examined            = 0
+            denominators.personal.ontology-violation.edges_examined         = 0
+            denominators.personal.ontology-violation.property_pages_examined = 0
+```
+
+**Before this task all three printed a bare `0` and looked healthy.** They now say, in the
+same breath, that they examined **nothing** — across **24 declared rules** (3 coverage +
+3 drift + 7 edge + 11 property), every one of which matched **0 rows**.
+
+### What the plan got WRONG (found only by hitting the code)
+
+1. **The LIVE vault's rules are NOT absent — they are declared and empty.** The spec, the
+   plan, ADR-006 and both `.AGENTS.md` all say the health/ontology rules are *"cybos only"*.
+   That is true of the **built-in** layouts **only**: the live `personal` vault ships its own
+   `.wiki/layout.yaml` carrying **3 coverage + 3 drift + 18 ontology rules**. This makes the
+   anchor *stronger* than predicted (the surfaces are in the **declared-but-vacuous** state,
+   not the no-op state — exactly the case D-036-4 exists to expose), and it means the bare
+   *"cybos only"* claim was itself a small instance of this task's fractal. Corrected in
+   ADR-006 D-036-3 and both module-memory files; `models.py` already had it right.
+   *(Still un-corrected, out of this bead's scope:* `docs/ROADMAP.md` 606/806/817/1153,
+   `docs/manuals/obsidian-llm-wiki_manual.md:901`, `docs/ARCHITECTURE.md:247` — historical
+   shipped-log entries; flagged, not rewritten.)*
+2. **Bead `061-10` assumed a knowledge-health section exists in `docs/architectures/`.** It
+   does not — `grep -rln "coverage_rules\|drift_rules\|lifecycle-drift" docs/architectures/`
+   returns only `open-questions.md`. The real body is **`docs/adr/ADR-006`**, so the
+   denominator contract landed there as amendment **D-036-4** (ADR-002/ADR-008 set the
+   amendment precedent) plus a shipped entry in the living `docs/ARCHITECTURE.md`.
+3. **`policy.py` had no `.AGENTS.md` entry at all** — the module owning
+   `EXTERNAL_PROVENANCE_KEYS`, the one constant this task made load-bearing, was invisible to
+   module memory. Added, with the "edit the constant, never the SQL literal" rule stated.
+
+### Still open (deliberate)
+
+- **Q-061-4** — vault-specific provenance keys (`youtube:` 9 pages, `teachable:` 9) still
+  derive `internal` despite an `http(s)` value. Deferred by **mechanism** (it needs a
+  per-vault `external_keys:` config surface, which does not belong in a fix task), **not** by
+  defect. **Test-pinned in its known-wrong state on both halves**
+  (`test_vault_specific_provenance_key_still_internal_q0614`) — when Q-061-4 lands, the test
+  flips to `external` and the pin becomes the gate.
+- **TASK 062** — adoption of typed knowledge on real content. This task is its prerequisite:
+  it is what makes TASK 062's progress *measurable* (the denominators go from 0 to non-zero).
+- **Q-061-3 Option B** (`x-wiki-advisory` + a rendered badge) stays deferred until a **second**
+  advisory field exists; Option A′ (generalize `FieldSpec.description`) shipped instead.

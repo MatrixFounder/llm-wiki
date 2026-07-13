@@ -56,7 +56,7 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ## 2. Phase 1 — structure, stubs, contract tests (green on stubs)
 
-- [ ] **[R-061-1]** `061-00` — Health-report **models + DAL report methods as stubs** +
+- [x] **[R-061-1]** `061-00` — Health-report **models + DAL report methods as stubs** +
       contract tests. New frozen dataclasses `RuleStat` / `CoverageReport` / `DriftReport` /
       `OntologyReport` in `scripts/wiki_index/models.py`; three abstract
       `find_*_report()` methods on `IndexRepository`; stub impls in `_health_rules.py` that
@@ -64,7 +64,7 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
       `rule_stats`. Contract test asserts the **shape** and that `report.findings == legacy
       list method` output. → `docs/tasks/task-061-00-health-report-models-stubs.md`
 
-- [ ] **[R-061-5]** `061-05` — the **RED gate**, landed first and proven RED:
+- [x] **[R-061-5]** `061-05` — the **RED gate**, landed first and proven RED:
       `tests/test_wiki_config_provenance.py::test_parsed_block_unknown_key_reaches_effective`,
       **ADDED** (the existing `test_evolution_new_schema_field_needs_no_code` /`future_block`
       test is **NOT retargeted** — it legitimately covers the raw-passthrough `else` branch at
@@ -77,7 +77,7 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ### 3a. Honest denominators (R-061-1, R-061-2)
 
-- [ ] **[R-061-1]** `061-01` — **three denominators, three populations**, per-rule `matched`
+- [x] **[R-061-1]** `061-01` — **three denominators, three populations**, per-rule `matched`
       in `_health_rules.py`; the legacy list methods become thin wrappers over the report
       (one code path, no drift). Coverage → `pages_examined`; ontology **edge** rules →
       `edges_examined`; ontology **property** rules → `property_pages_examined`. Untyped
@@ -85,12 +85,12 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
       invariants (domain and range asserted **separately** against `matched_e` — see §4 P-061-A).
       → `docs/tasks/task-061-01-three-denominators-dal.md`
 
-- [ ] **[R-061-1]** `061-02` — `wiki-health` **envelopes carry the denominators** (additive
+- [x] **[R-061-1]** `061-02` — `wiki-health` **envelopes carry the denominators** (additive
       keys: `pages_examined` / `edges_examined` / `property_pages_examined` / `by_rule[]`),
       plus an `examined_nothing` note so `{"total_gaps": 0}` can never again be mistaken for a
       real green. Exit code stays 0 always. → `docs/tasks/task-061-02-wiki-health-envelopes.md`
 
-- [ ] **[R-061-2]** `061-03` — `wiki-lint`: denominators for **BOTH** config-driven semantic
+- [x] **[R-061-2]** `061-03` — `wiki-lint`: denominators for **BOTH** config-driven semantic
       checks (spec **v6**) — `lifecycle-drift` (`lint.py:185`) **AND `ontology-violation`**
       (`lint.py:221`); **both gate `--strict`**, i.e. the CI rail, and `061-01` has already
       computed the ontology numbers. Drift gets per-rule `matched` **and its own
@@ -104,14 +104,14 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ### 3b. The trust fail-open (R-061-3)
 
-- [ ] **[R-061-3]** `061-04` — **one shared constant, rendered into BOTH halves** — pure
+- [x] **[R-061-3]** `061-04` — **one shared constant, rendered into BOTH halves** — pure
       refactor, ZERO behavior change: `policy.EXTERNAL_PROVENANCE_KEYS` (today's 3 keys) drives
       the Python `_is_external` loop **and** the `_EXT` SQL literal in `_search.py`; the
       Q-050-3 alignment test is re-parametrized **from the constant**; a grep-test forbids a
       second enumeration anywhere in `scripts/`.
       → `docs/tasks/task-061-04-shared-external-key-constant.md`
 
-- [ ] **[R-061-3]** `061-06` — **extend the constant to the case variants**
+- [x] **[R-061-3]** `061-06` — **extend the constant to the case variants**
       `{source, Source, SOURCE, url, Url, URL}` (`_EXT` grows 8 → 14 `LIKE` disjuncts) ⇒ the 18
       `Source:` pages derive `external` and are floored by `--min-trust internal`. **The
       residual is test-pinned in the same breath:** a `youtube: https://…` fixture asserts
@@ -120,14 +120,14 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ### 3c. wiki-config: the parsed-block fail-open (R-061-4) and the advisory `zones` (R-061-6)
 
-- [ ] **[R-061-4]** `061-07` — `show.effective` is built by **overlaying the parsed dataclass
+- [x] **[R-061-4]** `061-07` — `show.effective` is built by **overlaying the parsed dataclass
       onto the merged raw dict** for **every parsed cascading block** (`summarize` AND
       `resummarize`), via a generic dispatch table so a future parsed block inherits the fix.
       Removes the `xfail` from `061-05` ⇒ **RED → GREEN**. Adds the invariant test: *show never
       emits a `provenance` pointer with no corresponding `effective` value*.
       → `docs/tasks/task-061-07-parsed-block-overlay.md`
 
-- [ ] **[R-061-6]** `061-08` — **Q-061-3 Option A′: generalize, don't badge.** Render
+- [x] **[R-061-6]** `061-08` — **Q-061-3 Option A′: generalize, don't badge.** Render
       `FieldSpec.description` in `show` **and** `_report.py` (it renders in `serve` **only**
       today — `_report.py` has 0 `description` hits and `_cmd_show` bypasses `build_ui_model`).
       The `zones` advisory text then becomes **data, not code** — and every future field's
@@ -137,7 +137,7 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ### 3d. Docs — the `_raw/` retrieval claim (R-061-7)
 
-- [ ] **[R-061-7]** `061-09` — correct **every LIVING surface** claiming a `_raw/` capture
+- [x] **[R-061-7]** `061-09` — correct **every LIVING surface** claiming a `_raw/` capture
       appears in retrieval (all 4 built-in layouts ignore `**/_raw/**` — verified — so that limb
       cannot fire in normal operation). Name the **http(s) frontmatter key** as the operative
       signal; document `_raw/` as a **backstop** for direct upserts / custom layouts. The census
@@ -147,7 +147,7 @@ denominator to only one. Spec amended to **R-061-2 v6**; `061-03` rewritten. Exp
 
 ## 4. Phase 3 — gates
 
-- [ ] **[R-061-1..7]** `061-10` — final gates: full `pytest tests/`, `mypy --strict scripts/`,
+- [x] **[R-061-1..7]** `061-10` — final gates: full `pytest tests/`, `mypy --strict scripts/`,
       the **additive-only envelope proof** (a test asserting every pre-061 envelope key still
       exists), the **zero-DDL proof** (`PRAGMA user_version == 7`), the **frozen-archive proof**
       (`git diff --name-only` excludes `task-050-*`/`plan-050-*`/Q-050), module-memory
