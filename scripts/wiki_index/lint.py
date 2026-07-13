@@ -551,8 +551,16 @@ def render_markdown_report(report: LintReport) -> str:
     vac_kinds = derive_vacuous_kinds(denominators)
     lines = ["# Wiki Lint Report", ""]
     if vacuous or vac_kinds:
-        n = len(vacuous) + len(vac_kinds)
-        lines.append(f"⚠️ **NOT a clean bill of health** — {n} population(s) examined "
+        # Name the two kinds of emptiness SEPARATELY — they have different remedies (an
+        # empty population = the vault has no such rows to look at; an unjudgeable kind =
+        # the rows are there but the check cannot adjudicate them, e.g. dangling/untyped
+        # targets). Collapsing them under one noun is the smaller cousin of the bug above.
+        what = []
+        if vacuous:
+            what.append(f"{len(vacuous)} check population(s)")
+        if vac_kinds:
+            what.append(f"{len(vac_kinds)} rule×kind(s)")
+        lines.append(f"⚠️ **NOT a clean bill of health** — {' and '.join(what)} examined "
                      f"**nothing**:")
         lines.append("")
         for v in vacuous:
