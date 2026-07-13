@@ -290,11 +290,45 @@ def test_h1_the_sidecar_READER_contract_is_not_stale() -> None:
     # the stale claim, dead — in any spacing/emphasis (it read: "a **bare JSON array**").
     assert "bare JSON array" not in skill
     assert "ONLY in the `--json-sidecar` array" not in skill
-    # ...and the three keys an orchestrator must now parse are all DOCUMENTED, by name.
-    for key in ("issues", "denominators", "vacuous_checks"):
+    # ...and the keys an orchestrator must now parse are all DOCUMENTED, by name.
+    for key in ("issues", "denominators", "vacuous_checks", "vacuous_kinds"):
         assert f"`{key}`" in skill or f'"{key}"' in skill, key
     # the migration is stated (one key), not left for the reader to discover at runtime.
     assert 'data["issues"]' in skill
+
+
+def test_m3_the_new_KEY_has_readers_in_BOTH_llm_facing_contracts() -> None:
+    """M-3 (061 FIX-LOOP iteration-2) — THE THESIS RECURRING INSIDE THE FIX FOR THE THESIS.
+
+    The H1 loop wrote `test_h1_the_sidecar_READER_contract_is_not_stale` ABOVE, on the
+    lesson that *enumerating a shape's SINKS is not enumerating its READERS* — and then, in
+    the same loop, M3 added `matched_by_kind` to FOUR envelopes and `grep -rn
+    "matched_by_kind" skills/` returned **ZERO**. `skills/wiki-health/SKILL.md` still
+    documented the pre-M3 `by_rule` shape AND the SUPERSEDED, weaker invariant
+    `findings[k] <= matched <= <denominator>` — so an orchestrator following the shipped
+    contract computed health from `matched`, **the number M3 had just PROVEN is not
+    judgeable**, and reconstructed the false green from a correct envelope.
+
+    A key with no reader is not a fix; it is a number the machine emits into a void. This
+    test is the census that was missing: every key the vacuity CONTRACT depends on must be
+    named in the docs an LLM actually reads.
+
+    MUTATION BAR: delete `matched_by_kind` from either SKILL.md and this fails."""
+    lint_skill = Path("skills/wiki-lint/SKILL.md").read_text(encoding="utf-8")
+    health_skill = Path("skills/wiki-health/SKILL.md").read_text(encoding="utf-8")
+
+    for name, doc in (("wiki-lint", lint_skill), ("wiki-health", health_skill)):
+        assert "matched_by_kind" in doc, f"{name}: the judgeable-population key has NO READER"
+        assert "vacuous_kinds" in doc, f"{name}: the vacuity verdict has NO READER"
+        # the SUPERSEDED invariant must be GONE — it is the one that rebuilds the false green
+        assert "findings[k] ≤ matched ≤" not in doc, f"{name}: superseded invariant still shipped"
+        assert "findings[k] <= matched <=" not in doc, name
+        # ...and the honest one, which threads matched_by_kind, must be stated.
+        assert "findings[k] ≤ matched_by_kind[k] ≤ matched" in doc, name
+
+    # wiki-health's own envelope keys are documented by name (its `note`/`vacuous_*` contract
+    # is what M-2 fixed; a reader that never learns the key cannot honour it).
+    assert "vacuous_populations" in health_skill
 
 
 def test_h1_markdown_report_qualifies_a_vacuous_green(tmp_path: Path, capsys) -> None:

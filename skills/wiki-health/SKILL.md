@@ -33,8 +33,9 @@ wiki-health ontology --vault <id> [--class decision]
 Every invocation prints a one-line JSON envelope. **coverage**: `{action, vault, rules,
 total_gaps, pages_examined, by_rule, by_class, gaps:[{slug, project, class, kind,
 missing}]}`. **ontology**: `{action, vault, total_violations, edges_examined,
-property_pages_examined, by_rule, by_kind, by_class, violations:[{slug, project, class,
-kind, ref, detail, target}]}` where `kind ∈ {domain, range, property}`. Pipe to
+property_pages_examined, by_rule, by_kind, by_class, vacuous_populations, vacuous_kinds,
+violations:[{slug, project, class, kind, ref, detail, target}]}` where
+`kind ∈ {domain, range, property}`. Pipe to
 `python3 -m json.tool`. `--class` restricts to one page class (an unknown class →
 `INVALID_CLASS`, exit 2, without echoing the value); an unknown vault →
 `VAULT_NOT_FOUND`, exit 6. `--db-path` / `--vault-root` resolve the index DB (TASK 022).
@@ -50,16 +51,39 @@ examined**". So every report envelope also states the population it actually loo
   `edges_examined` = `page_entity_refs` rows whose `ref_type` is in the contract's declared
   edge vocabulary (a `mentioned` wikilink is **not** one); `property_pages_examined` = pages
   whose `$.type` is in ⋃ `properties[].class`. Deliberately *not* one shared `pages_examined`.
-- **`by_rule`** — per rule: `{class, kind, ref, matched, findings}`. `matched` = rows meeting
-  that rule's **precondition**; `findings` is a **dict per kind** (one examined edge row can
-  be *both* a `domain` and a `range` violation).
-- **`note`** — emitted when the denominators are `0` *while rules are configured*: the report
-  says out loud that it is **not a clean bill of health**. (A layout with **no** rules /
-  **no** `ontology:` block gets its own, different note.)
+- **`by_rule`** — per rule: `{class, kind, ref, matched, matched_by_kind, findings}`.
+  `matched` = rows meeting that rule's **precondition**; `findings` is a **dict per kind**
+  (one examined edge row can be *both* a `domain` and a `range` violation).
+- **`matched_by_kind`** — ⚠️ **the number you must actually read.** `matched` counts rows the
+  check **cannot judge**: an edge rule's `domain` fires only on a **typed source** page, its
+  `range` only on a **resolved + typed target**. A vault whose `uses` refs all point at
+  dangling or untyped targets reports `{matched: 500, findings: {domain: 0, range: 0}}` —
+  which *reads* as "500 examined, all clean" while `range` examined **zero**. Mirrors
+  `findings` key for key (`set(matched_by_kind) == set(findings)`).
+- **`vacuous_populations`** — the `*_examined` denominators that are `0`. `[]` = every
+  population had something in it. A **partial** zero counts: `{edges_examined: 0,
+  property_pages_examined: 1}` means all seven edge rules judged **nothing**.
+- **`vacuous_kinds`** — `[{class, kind, ref, finding_kind}]`: rules that **matched rows but
+  could judge none of them**. `[]` = no rule's count is a lie. A rule with `matched: 0` is
+  *not* listed — it is openly empty (see its `by_rule` row), not hiding.
+- **`note`** — emitted when *any* population or rule×kind examined nothing *while rules are
+  configured*, naming **which**: the report says out loud that it is **not a clean bill of
+  health**. (A layout with **no** rules / **no** `ontology:` block gets its own, different
+  note.)
 
-Invariants hold **per rule, against that rule's own family denominator** —
-`findings[k] ≤ matched ≤ <denominator>`. Do **not** read `total_gaps ≤ pages_examined`: two
-rules may target one class, so a page can gap twice and the total can exceed the population.
+**`total_violations: 0` / `total_gaps: 0` is a clean bill of health ONLY when
+`vacuous_populations == []` and `vacuous_kinds == []`.** Do not re-derive this yourself; the
+CLI has already done it.
+
+Invariants hold **per rule, per kind, against that rule's own family denominator**:
+
+```
+∀ kind k:  findings[k] ≤ matched_by_kind[k] ≤ matched ≤ <family denominator>
+```
+
+Do **not** compute health from `matched` alone — that is the number proven above not to be
+judgeable. Do **not** read `total_gaps ≤ pages_examined`: two rules may target one class, so
+a page can gap twice and the total can exceed the population.
 
 ## Ontology contract (R-19 / TASK 054)
 `wiki-health ontology` is the **always-exit-0 report** over the layout's declared

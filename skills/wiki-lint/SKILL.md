@@ -73,11 +73,14 @@ Or `/wiki-lint [...]`.
    "lifecycle-drift":    {"pages_examined": 11,
                           "by_rule": [{"class": "decision", "kind": "drift",
                                        "ref": "superseded-by", "matched": 4,
+                                       "matched_by_kind": {"drift": 4},
                                        "findings": {"drift": 2}}]},
    "ontology-violation": {"edges_examined": 6, "property_pages_examined": 17,
                           "by_rule": [{"class": "", "kind": "edge", "ref": "implements",
                                        "matched": 2,
-                                       "findings": {"domain": 0, "range": 1}}]}}}}
+                                       "matched_by_kind": {"domain": 2, "range": 1},
+                                       "findings": {"domain": 0, "range": 1}}]}}},
+ "vacuous_checks": [], "vacuous_kinds": []}
 ```
 
 ### `denominators` — a `0` is not a green until you know what was examined (TASK 061)
@@ -95,11 +98,26 @@ gate `--strict`) now report their population:
 - **`ontology-violation`** — **two** denominators, because one check spans two populations:
   `edges_examined` (refs whose `ref_type` is in the declared edge vocabulary) and
   `property_pages_examined` (pages whose `$.type` ∈ ⋃ `properties[].class`).
+- **`by_rule[].matched_by_kind`** — ⚠️ **the number you must actually read.** `matched`
+  counts rows the check **cannot judge**: an edge rule's `domain` fires only on a **typed
+  source**, its `range` only on a **resolved + typed target**. A rule whose targets are all
+  dangling or untyped reports `{matched: 500, findings: {domain: 0, range: 0}}` — which
+  *reads* as "500 examined, all clean" while `range` examined **zero**. Mirrors `findings`
+  key for key. The honest invariant, per rule and per kind:
+  `findings[k] ≤ matched_by_kind[k] ≤ matched ≤ <family denominator>`.
+- **`vacuous_checks`** — every check population that examined **0**.
+- **`vacuous_kinds`** — `[{vault, check, class, kind, ref, finding_kind}]`: rules that
+  **matched rows but could judge none of them**. A rule with `matched: 0` is *not* listed —
+  it is openly empty (visible in its `by_rule` row), not hiding.
 - **An absent check key** = "this check does not apply to this layout" (no `drift_rules` /
   no `ontology:` block ⇒ its no-op fired, no DAL call). That is **not** "examined 0".
 - The other two checks carry no denominator, and that boundary is deliberate:
   `auto-generated-drift` is a render-hash comparison (no rule population), and the
   `classification-*` checks ride a `policy:` block that is declared-but-OFF.
+
+**`total_issues: 0` is a clean bill of health ONLY when `vacuous_checks == []` and
+`vacuous_kinds == []`.** All three sinks (stdout, `--report`, `--json-sidecar`) carry both
+keys and already derive the verdict — do not re-derive it from `denominators` yourself.
 
 Denominators **never gate**: `total_issues`, `by_category` and the `--strict` exit code
 are unaffected by them.
@@ -120,7 +138,9 @@ without the stdout envelope beside it. The pre-061 array survives **verbatim** u
                                                 "line": 12}}],
  "denominators": {"<vault>": {"lifecycle-drift": {"pages_examined": 0, "by_rule": []}}},
  "vacuous_checks": [{"vault": "<id>", "check": "ontology-violation",
-                     "population": "edges_examined"}]}
+                     "population": "edges_examined"}],
+ "vacuous_kinds": [{"vault": "<id>", "check": "ontology-violation", "class": "",
+                    "kind": "edge", "ref": "uses", "finding_kind": "range"}]}
 ```
 
 - **`issues`** — the pre-061 array, unchanged. Migration is one key: `data` → `data["issues"]`.
@@ -129,13 +149,19 @@ without the stdout envelope beside it. The pre-061 array survives **verbatim** u
   every config-driven check that ran examined a real population. A **non-empty**
   `vacuous_checks` with `"issues": []` is **NOT a clean bill of health** — it is the check
   telling you it had nothing to look at. Read this key **before** trusting an empty `issues`.
+- **`vacuous_kinds`** — **derived**: rules that examined rows but could **judge none of
+  them** (see `matched_by_kind` above). `"issues": []` with a non-empty `vacuous_kinds` is
+  **not** a green either — the rule's `0` is noise, not a finding. Read it **before**
+  trusting an empty `issues`.
 
 `--report <abs.md>` writes the same issues as a human-readable markdown report — and for the
 same reason it now prints `✅ Healthy. No issues found.` **only when every config-driven
-check that ran examined a non-empty population**; otherwise it names each empty population
-and appends a *"What was examined"* table. Pick the surface by intent: stdout for the
-count/health signal (CI gate via `total_issues` + `--strict`), the sidecar/report for
-per-issue remediation.
+check that ran examined a non-empty population and every rule that matched rows could judge
+them**; otherwise it names each empty population / rule×kind and appends a *"What was
+examined"* table plus a *"What each rule could judge"* table (`matched | judgeable | found`,
+where a `judgeable` of `0` marks the count beside it as noise). Pick the surface by intent:
+stdout for the count/health signal (CI gate via `total_issues` + `--strict`), the
+sidecar/report for per-issue remediation.
 
 > Gotcha (do not assume by analogy): unlike `wiki-search` (`hits`) /
 > `wiki-query` result envelopes, wiki-lint's stdout carries NO item list — the
