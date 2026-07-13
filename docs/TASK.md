@@ -11,7 +11,10 @@
 - **Effort**: M
 - **Schema**: **zero DDL** (`user_version` 7). Typed classes + edges already exist (ADR-003/004); this task
   only *produces* them. **No `import anthropic`** (Decision-17).
-- **Revision**: **v5 — APPROVED**, after **four** BLOCKING task-reviews. v1 shipped **two factually false claims**, both of the
+- **Revision**: **v6**, after four BLOCKING task-reviews + **operator requirements** (2026-07-13):
+  the rail must be **invocable from config** (like its sibling `extract_concepts`), and the **folder names
+  must be configurable AND visible in the `wiki-config` editor**. The second requirement exposed a real
+  architectural defect in v5 — see R-063-3′. v1 shipped **two factually false claims**, both of the
   project's signature failure mode — *asserting coverage of a surface without enumerating it*:
   (a) *"anything `apply` accepts, `wiki-lint --strict` accepts"* — but `--strict` gates on **13 categories**
   (`exit_code = 1 if (strict and issues)`), not just ontology; (b) *"Karpathy/cybos/obsidian-personal each
@@ -152,11 +155,61 @@ everything outside the roster is **refused by `apply`**. This also settles Q-063
 | **R-063-11** | **No `import anthropic`**; one JSON envelope + stable exit codes; caps stated (candidate max, `SOURCE_TOO_LARGE`) | grep-gated. **Overflow REFUSES — never truncates** (silent truncation would lose decisions, which is this task's own disease) |
 | **R-063-12** | **Slugs are derived with the LAYOUT'S OWN `slug_strategy`** — never a naive kebab (the same "validate against the layout's grammar, never an assumption" invariant as G2/G4). ⚠️ cybos declares `slug_strategy: transliterate` and the source protocols are **Russian**, so two candidates whose titles transliterate to the same slug would have the **second silently overwrite the first on disk** — one decision lost, **one file, one DB row, ZERO lint issues** (invisible to the delta property AND to a naive G6 count). **In-batch slug uniqueness is a CONTRACT VIOLATION ⇒ refuse the batch**; assert `len(set(slugs)) == len(candidates)`. The existing-page collision re-check uses the same derivation | Two Russian-titled candidates colliding under `transliterate` ⇒ **refused, zero writes** — not "last one wins" |
 
+### R-063-3′ — ★ THE CONFIG SPLIT (operator requirement; v5 was architecturally WRONG here)
+
+**v5 put `write.typed_dirs` in the LAYOUT config** (`layouts/*.yaml` / `.wiki/layout.yaml`). Verified defect:
+`wiki-config`'s `set`/`unset` **and its web editor** render **only** from
+`SYNC_SCHEMA_PATH = config/sync-config.schema.yaml` (`_uimodel.py:24`, `_server.py:191`). It *validates* all
+three config systems but *edits* only `sync.yaml`. **So `typed_dirs` in the layout would never appear in the
+editor at all** — failing the operator's requirement, and silently violating TASK 058's own schema-driven
+invariant.
+
+**But a naive move to `sync.yaml` re-creates the very bug G4 prevents.** The two systems own different halves:
+
+| System | Owns | Scope |
+|---|---|---|
+| `.wiki/sync.yaml` (`sync-config.schema.yaml`) | **WHERE TO WRITE** — the folder names | per-folder, **cascading** |
+| `.wiki/layout.yaml` (`layout-config.schema.yaml`) | **WHAT THE WALKER SEES** — the `paths[]` globs | per-vault |
+
+Set `dirs.decision: "решения"` in a zone while the layout's globs don't cover it ⇒ **a glob-invisible page**
+⇒ exactly the silent loss G4 exists to prevent — *and lint is structurally incapable of reporting it.*
+
+**Resolution — the load gate becomes a CROSS-SYSTEM check, and `wiki-config validate` already validates all
+three systems, so it has a legitimate home:**
+
+> **New `extract_decisions:` block in `sync.yaml`** (cascading, sibling of `summarize:`):
+> ```yaml
+> extract_decisions:
+>   enabled: true                 # the config-driven invocation (Q-063-2)
+>   dirs:                         # ★ configurable folder names — schema-driven ⇒ they appear in
+>     decision:    decisions      #   `wiki-config` show / report / SERVE with ZERO interface code
+>     requirement: requirements   #   (the TASK-058 invariant, and the reason this belongs in sync.yaml)
+>     risk:        risks
+> ```
+> **★ CROSS-SYSTEM LOAD GATE (the G4 invariant, spanning two config systems):** every `dirs.*` value,
+> resolved against the folder it applies to, **MUST match ≥1 of the resolved layout's `paths[]` globs.**
+> Enforced in **BOTH** `wiki-config validate` (a new finding code) **and** the rail's own `prepare`
+> preflight — refuse with an actionable message, never write a page the walker cannot see.
+>
+> ⚠️ **Layout-dependent, so it must be CHECKED, never assumed:** obsidian-personal's generic
+> `[0-9][0-9] - */*/**/*.md` catches **any depth** ⇒ any folder name works (the operator's live vault).
+> **cybos's globs are root-anchored** (`decisions/**/*.md`, no catch-all) ⇒ **only the declared roots work**;
+> a custom name there is refused, not silently dropped.
+
+**Acceptance:** (a) the three `dirs.*` keys **appear in `wiki-config serve`/`report`/`show` with zero
+interface-code changes** (pin it — this IS the TASK-058 evolution invariant); (b) a `dirs.*` value not
+covered by the layout's globs is **refused** by both `wiki-config validate` and `prepare`; (c) `enabled:
+false` (or absent) ⇒ the rail is never auto-dispatched; (d) per-zone cascade works — two engagements may use
+different folder names.
+
 ### File surface (for the Planner)
 
 `scripts/wiki_skills/wiki_extract_decisions/{__init__,_validation,_pages,_db,_errors}.py` (new package,
-mirroring `wiki_extract_concepts`) · `scripts/wiki_index/layout_config.py` (+ `write.typed_dirs` + the
-glob-coverage load gate) · `config/layout-config.schema.yaml` · `scripts/wiki_index/layouts/{cybos,dev-project}.yaml`
+mirroring `wiki_extract_concepts`) · **`config/sync-config.schema.yaml`** (the new `extract_decisions:`
+block — `enabled` + `dirs`, with `x-wiki-scope: cascading`; this is what makes it appear in the editor) ·
+**`scripts/wiki_index/sync_config.py`** (parse it) · **`scripts/wiki_skills/wiki_config/_lint.py`** (the
+cross-system glob-coverage finding) · `scripts/wiki_index/layout_config.py` (the glob-coverage helper, shared
+by validate and prepare) · `scripts/wiki_index/layouts/{cybos,dev-project}.yaml`
 · `skills/decision-extraction/{SKILL.md,evals/}` · `commands/wiki-extract-decisions.md` ·
 `bin/wiki-extract-decisions` · `tests/`.
 **Do NOT touch** `karpathy.yaml` (byte-identity-anchored) or `obsidian-personal.yaml` — adding typed classes
@@ -167,8 +220,14 @@ to them is a separate decision (§7).
 - **Q-063-1 — separate CLI vs a `--kind` on `wiki-extract-concepts`?** ***Settled: separate CLI.*** Different
   populations (entities vs typed pages with edges), different validation (concepts have no ontology
   contract), different write grammar (per-class dirs vs `_concepts/`).
-- **Q-063-2 — auto-chain from `wiki-import`?** ***Settled: NO in v1.*** A separate explicit rail (the
-  `wiki-extract-concepts` posture); auto-chaining is a follow-up once extraction quality is trusted.
+- **Q-063-2 — auto-chain from `wiki-import` / `wiki-sync`?** ***REVERSED by operator requirement (v6):
+  YES, config-driven — and the precedent was already there.*** `.wiki/sync.yaml`'s `summarize:` block
+  already carries **`extract_concepts`**, which toggles exactly this kind of downstream filing step. So
+  **`extract_decisions`** is its natural sibling, not a new concept.
+  **Mechanism (Decision-17 preserved):** `wiki-sync` / `wiki-import` do **not** call an LLM — they emit a
+  **dispatch marker**, and the orchestrator runs the rail as a second step (precisely how `wiki-sync`
+  already delegates to `wiki-import`). The CLI stays deterministic plumbing.
+  The rail remains **independently invocable** by hand (the `wiki-extract-concepts` posture is kept).
 - **Q-063-3 — `person` candidates / the TASK-052 participants guard?** ***Settled: `person` ∉ the v1 roster
   `{decision, requirement, risk}`, so it is refused by `apply`.*** The participants guard in `wiki-import` is
   keyed on *pyramid grammar* and does not cover this rail — the roster is what protects it here.
