@@ -545,7 +545,7 @@ layout (`.wiki/layout.yaml`); они не пересекаются и меняю
 |---|---|---|---|
 | **`WIKI_SCHEMA.md`** (frontmatter) | **Идентичность** vault: `vault_id`, `layout`, опц. `index_db`, опц. `policy:` (ADR-009) | **Да** | Это и есть декларация vault — правится вручную, ни с чем не сливается |
 | **`.wiki/layout.yaml`** | **Грамматика layout**: ЧТО и КАК индексировать — `ignore`, `type_mapping`, `paths`, `ref_extraction`, `drift_rules`/`coverage_rules`, `ontology` (R-19: объявленный контракт типов/рёбер/свойств) | Нет (база — встроенный `layout`) | По-ключевая: **`ignore` → UNION**, **`type_mapping` → deep-MERGE**, **`paths`/`ref_extraction`/`ontology.edges`/`ontology.properties` → REPLACE** |
-| **`.wiki/sync.yaml`** | Конфиг **`wiki-sync`**: `zones`, `exclude`, `extensions`, `tag_namespace`, гейт `resummarize` | Нет | Строгая схема; глубокий `<подпапка>/.wiki/sync.yaml` deep-merge поверх корневого |
+| **`.wiki/sync.yaml`** | Конфиг **`wiki-sync`**: `zones` (**справочный** — *документирует* зоны; в рантайме его никто не читает), `exclude` (**единственный** ключ, который реально ограничивает обход), `extensions`, `tag_namespace`, гейт `resummarize` | Нет | Строгая схема; глубокий `<подпапка>/.wiki/sync.yaml` deep-merge поверх корневого |
 | **`.wiki/page-types/*.md`** | Шаблоны-скаффолды типизированных классов (для ручного авторинга) | Нет | Копируются `wiki-init`; сами не индексируются (лежат под `.wiki/`) |
 
 - **Две системы.** `WIKI_SCHEMA.md` отвечает на «ЧТО это за vault» (идентичность —

@@ -536,7 +536,7 @@ SEPARATE systems** — the vault's *identity* (`WIKI_SCHEMA.md`) and the layout 
 |---|---|---|---|
 | **`WIKI_SCHEMA.md`** (frontmatter) | The vault's **identity**: `vault_id`, `layout`, optional `index_db`, optional `policy:` (ADR-009) | **Yes** | It *is* the vault's declaration — hand-edited, never merged |
 | **`.wiki/layout.yaml`** | The **layout grammar**: WHAT and HOW to index — `ignore`, `type_mapping`, `paths`, `ref_extraction`, `drift_rules`/`coverage_rules`, `ontology` (R-19: the declared type/edge/property contract) | No (base = the built-in `layout`) | Per-key: **`ignore` → UNION**, **`type_mapping` → deep-MERGE**, **`paths`/`ref_extraction`/`ontology.edges`/`ontology.properties` → REPLACE** |
-| **`.wiki/sync.yaml`** | **`wiki-sync`** config: `zones`, `exclude`, `extensions`, `tag_namespace`, the `resummarize` gate | No | Strict schema; a deeper `<subfolder>/.wiki/sync.yaml` deep-merges over the root one |
+| **`.wiki/sync.yaml`** | **`wiki-sync`** config: `zones` (**advisory** — it *documents* the zones; nothing reads it at runtime), `exclude` (**the** walk scope — the only key that prunes), `extensions`, `tag_namespace`, the `resummarize` gate | No | Strict schema; a deeper `<subfolder>/.wiki/sync.yaml` deep-merges over the root one |
 | **`.wiki/page-types/*.md`** | Authoring scaffolds — one template per typed class | No | Copied by `wiki-init`; not indexed themselves (they live under `.wiki/`) |
 
 - **Two systems.** `WIKI_SCHEMA.md` answers "WHAT vault is this" (identity —

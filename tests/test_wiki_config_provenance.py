@@ -47,10 +47,13 @@ from scripts.wiki_skills.wiki_config._report import build_report_model, render_h
 from scripts.wiki_skills.wiki_config._report_md import render_show_report
 from scripts.wiki_skills.wiki_config._uimodel import (
     SCOPE_CASCADING,
+    FieldSpec,
     build_ui_model,
     load_sync_schema_doc,
+    resolve_description,
     top_level_keys,
 )
+from tests.test_wiki_config_serve import Client
 
 
 def _folder_yaml(d: Path, text: str) -> None:
@@ -627,3 +630,147 @@ def test_raw_only_key_origin_is_its_level_not_default(
     # the parsed sibling is unaffected
     assert prov.origins["/summarize/profile"].origin == "root"
     _assert_no_dangling_pointer(zone, vault)
+
+
+# --------------------------------------------------------------------------- #
+# TASK 061 / R-061-6 — FieldSpec.description reaches EVERY surface (Option A′)
+# --------------------------------------------------------------------------- #
+#
+# The census that motivated this (grep `\.description` across
+# `scripts/wiki_skills/wiki_config/`, then CLASSIFY each hit by its OWNING
+# dataclass — the bare word "description" is used by three unrelated ones):
+#
+#   | hit                        | owner                | is it FieldSpec? |
+#   |----------------------------|----------------------|------------------|
+#   | `_uimodel.py:93`           | FieldSpec (producer) | —                |
+#   | `_server.py:195`           | **FieldSpec**        | YES — the only   |
+#   |                            |                      | pre-061 consumer |
+#   | `_app_html.py:536-537`     | **FieldSpec** (JS)   | YES — `serve`'s  |
+#   |                            |                      | render sink      |
+#   | `_doctor.py:64,457`        | FixPlan              | no               |
+#   | `_app_html.py:788`         | FixPlan (JS)         | no               |
+#   | `_app_html.py:834`         | TemplateVar (JS)     | no               |
+#   | `_templates.py:85`         | TemplateVar          | no               |
+#
+# So pre-061 the description reached an operator through `serve` ALONE. The four
+# render sinks fed by the ONE schema are now: `serve`'s form hint, `show`'s JSON
+# envelope, `show --report`'s markdown, and the HTML `report`'s row hint.
+# `wiki-config tree` is an ENUMERATED, DELIBERATE exclusion (it answers "where is
+# this key overridden?", not "what does it mean").
+
+
+def test_description_reaches_every_surface_from_the_schema_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """TC-08-1 — the GENERIC claim, from ONE injected schema field.
+
+    A field that exists ONLY in the schema doc must have its `description`
+    rendered by every surface with ZERO interface-code changes. This is the
+    R-058-10 evolution invariant STRENGTHENED: pre-061 it held for a field's
+    type/enum/scope but NOT for its description, which only `serve` ever read.
+
+    Asserts the synthetic hint in three surfaces at once (the fourth,
+    `show --report`'s markdown, is covered by TC-08-2's shipped-schema variant):
+      (a) the `show` JSON envelope (`descriptions`)
+      (b) the rendered HTML report
+      (c) the `serve` `/api/schema` payload
+    """
+    _patch_schema_with_future_knobs(tmp_path, monkeypatch)
+    hint = "synthetic future knob (TASK 061 gate)"  # the injected description
+    vault = tmp_path / "vault"
+    (vault / "Zone").mkdir(parents=True)
+    _folder_yaml(vault, "summarize:\n  future_knob: kept\n")
+
+    # (a) `show` — the JSON envelope carries the schema's descriptions.
+    code = main(["show", "Zone", "--vault-root", str(vault)])
+    envelope = json.loads(capsys.readouterr().out.strip())
+    assert code == 0
+    assert envelope["descriptions"]["/summarize/future_knob"] == hint
+
+    # (b) the HTML report — the row hint, rendered.
+    assert hint in render_html(build_report_model(vault, []))
+
+    # (c) `serve` — the schema payload (already worked pre-061; asserted so the
+    #     "all surfaces" claim is enumerated, not believed).
+    client = Client(vault)
+    try:
+        status, body = client.request("GET", "/api/schema")
+    finally:
+        client.close()
+    assert status == 200
+    fields = {f["pointer"]: f for f in body["fields"]}
+    assert fields["/summarize/future_knob"]["description"] == hint
+
+
+def test_shipped_zones_description_says_advisory_in_show_envelope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """TC-08-2 (CLI half) — the SHIPPED schema's `zones`, not a synthetic field.
+
+    `zones:` is parsed (`sync_config.py`) and read by NOTHING else — grep
+    `\\.zones` across `scripts/`: the parse is the only hit. Every surface used
+    to present it beside the enforcing keys. Now the CLI says so out loud.
+    """
+    _folder_yaml(tmp_path, "zones: ['Lessons/**']\n")
+    code = main(["show", ".", "--vault-root", str(tmp_path)])
+    envelope = json.loads(capsys.readouterr().out.strip())
+    assert code == 0
+    assert "ADVISORY" in envelope["descriptions"]["/zones"]
+    # and the enforcing sibling is NOT mislabeled as advisory
+    assert "ADVISORY" not in envelope["descriptions"]["/exclude"]
+
+
+def test_shipped_zones_description_in_show_markdown_sidecar(tmp_path: Path) -> None:
+    """TC-08-2 (markdown half) — the FOURTH sink, found by asking "does the
+    `--report` md renderer show a key table?" (it does).
+
+    Rendered as a SECTION, not a 5th table column: `_fmt_value` clips cells at
+    60 chars, and a truncated advisory is a lossy render of an honesty fix.
+    """
+    _folder_yaml(tmp_path, "zones: ['Lessons/**']\n")
+    prov = compute_folder_provenance(tmp_path, tmp_path)
+    md = render_show_report(prov, tmp_path)
+    assert "## What these keys mean" in md
+    assert "- `/zones` — ADVISORY" in md
+
+
+def test_resolve_description_is_nearest_ancestor_not_a_bare_lookup() -> None:
+    """TC-08-3 — the resolver's unit behavior, asserted DIRECTLY.
+
+    Today `_report_md._flatten` recurses on `dict` only, so a list is a leaf and
+    the row pointer is `/zones` (which HAS a FieldSpec) — a bare
+    `model[pointer].description` would work BY COINCIDENCE. Pinning the resolver
+    here means the guard survives a `_flatten` that learns to recurse into lists,
+    and it already covers the live case: a raw-only key inside a parsed block
+    (R-061-4's overlay puts `/summarize/<unknown>` into `effective`).
+    """
+    model = {
+        "/blk": FieldSpec(pointer="/blk", kind="object", scope="cascading",
+                          description="block text"),
+        "/blk/leaf": FieldSpec(pointer="/blk/leaf", kind="string",
+                               scope="cascading", description="leaf text"),
+        "/bare": FieldSpec(pointer="/bare", kind="array", scope="root-only"),
+    }
+    # own description wins
+    assert resolve_description(model, "/blk/leaf") == "leaf text"
+    # no FieldSpec at all → NEAREST ANCESTOR, not ""
+    assert resolve_description(model, "/blk/unknown_key") == "block text"
+    assert resolve_description(model, "/blk/deep/deeper") == "block text"
+    # an ancestor with an EMPTY description keeps walking up, it does not stop
+    assert resolve_description(model, "/bare/0") == ""
+    # nothing anywhere → "" (never a KeyError)
+    assert resolve_description(model, "/nonexistent") == ""
+    assert resolve_description(model, "/nonexistent/deep") == ""
+
+
+def test_shipped_schema_zones_is_the_only_advisory_field() -> None:
+    """The advisory text is DATA (the schema), never a key name in code —
+    so this test is the only place `zones` and "ADVISORY" appear together.
+    If a SECOND advisory field ever lands, Q-061-3's deferred Option B
+    (`x-wiki-advisory` + a rendered badge) becomes the right shape.
+    """
+    model = build_ui_model()
+    advisory = [p for p, s in model.items() if "ADVISORY" in s.description]
+    assert advisory == ["/zones"]

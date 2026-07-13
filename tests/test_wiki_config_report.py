@@ -163,3 +163,66 @@ def test_report_all_folders_includes_unconfigured(tmp_path: Path) -> None:
     full_html = _render(tmp_path, all_folders=True)
     assert "Plain" not in default_html
     assert "Plain" in full_html
+
+
+# --------------------------------------------------------------------------- #
+# TASK 061 / R-061-6 — FieldSpec.description renders as a row hint
+# --------------------------------------------------------------------------- #
+
+
+def test_report_renders_shipped_zones_advisory_in_the_html(tmp_path: Path) -> None:
+    """TC-08-2 — the SHIPPED schema's `/zones` row, asserted in the RENDERED HTML.
+
+    Not a synthetic field: this is the assertion that must FAIL LOUDLY if the
+    description does not resolve. A naive `pointer in ui_model` lookup would
+    silently render `""` and this test would be the only thing that noticed —
+    which is the whole thesis of TASK 061 (a surface that examined nothing and
+    reports fine) applied to the fix for it.
+    """
+    _folder_yaml(tmp_path, "zones: ['Lessons/**']\nexclude: ['_inbox/**']\n")
+    (tmp_path / "Lessons").mkdir()
+    html = _render(tmp_path)
+    assert "<code>/zones</code>" in html
+    assert "ADVISORY" in html
+    # the hint hangs off the /zones row, not off some other key's
+    zones_cell = html.split("<code>/zones</code>", 1)[1].split("</td>", 1)[0]
+    assert "ADVISORY" in zones_cell
+    assert 'class="hint"' in zones_cell
+    # `exclude` DOES scope the walk — it must not inherit the advisory text
+    exclude_cell = html.split("<code>/exclude</code>", 1)[1].split("</td>", 1)[0]
+    assert "ADVISORY" not in exclude_cell
+    assert "pruned from the walk" in exclude_cell
+
+
+def test_report_escapes_description_html(tmp_path: Path) -> None:
+    """TC-08-5 — a description is escaped like every other interpolated string.
+
+    Descriptions are repo-owned (they come from the schema in git, not from a
+    vault), so this is defense-in-depth — but `_report.py`'s XSS discipline
+    ("every interpolated string is UNTRUSTED") does not carve out exceptions,
+    and a future schema could be vendored or operator-overridden.
+    """
+    from scripts.wiki_skills.wiki_config._report import _row_html
+
+    row = {
+        "pointer": "/zones",
+        "value": "[]",
+        "origin": "root",
+        "scope": "root-only",
+        "shadows": [],
+        "description": "<script>alert(1)</script> & <b>bold</b>",
+    }
+    html = _row_html(row, ".")
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&amp;" in html
+
+
+def test_report_row_without_a_description_renders_no_hint(tmp_path: Path) -> None:
+    """A row whose key has no schema description gets NO empty `<p class="hint">`
+    (an empty hint element is the silent-empty-string failure, wearing markup)."""
+    from scripts.wiki_skills.wiki_config._report import _row_html
+
+    row = {"pointer": "/extensions/text", "value": "[]", "origin": "default",
+           "scope": "root-only", "shadows": [], "description": ""}
+    assert 'class="hint"' not in _row_html(row, ".")

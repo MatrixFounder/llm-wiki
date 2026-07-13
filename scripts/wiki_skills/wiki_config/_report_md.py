@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ._provenance import FolderProvenance, TreeNode, resolve_origin
+from ._uimodel import build_ui_model, resolve_description
 
 
 def _fmt_value(value: Any) -> str:
@@ -55,6 +56,18 @@ def render_show_report(prov: FolderProvenance, vault_root: Path) -> str:
         lines.append(
             f"| `{pointer}` | {_fmt_value(value)} | {origin_label} | {shadows} |"
         )
+    # TASK 061 / R-061-6 — what each key MEANS, from the schema (`zones:` says
+    # ADVISORY here too). A SECTION, not a 5th table column: `_fmt_value` clips
+    # cells at 60 chars, and a truncated advisory ("ADVISORY — not enfor...") is
+    # a lossy render of an honesty fix — the same disease one layer down.
+    # Per-row (not per-schema-key) so the list is a direct lookup for the table
+    # above, nearest-ancestor resolved for pointers outside the model.
+    model = build_ui_model()
+    described = [(ptr, resolve_description(model, ptr)) for ptr, _ in rows]
+    described = [(ptr, text) for ptr, text in described if text]
+    if described:
+        lines += ["", "## What these keys mean", ""]
+        lines += [f"- `{ptr}` — {text}" for ptr, text in described]
     if prov.levels:
         lines += ["", "## Configured levels", ""]
         for lvl in prov.levels:

@@ -30,7 +30,7 @@ from scripts.wiki_index.sync_config import SyncConfigError
 from ._findings import ConfigFinding
 from ._provenance import compute_folder_provenance, resolve_origin, scan_tree
 from ._report_md import _flatten
-from ._uimodel import build_ui_model
+from ._uimodel import build_ui_model, resolve_description
 
 _MAX_NODES = 5000
 
@@ -121,6 +121,11 @@ def build_report_model(
                     "origin": origin.origin if origin else "",
                     "scope": origin.scope if origin else "",
                     "shadows": list(origin.shadows) if origin else [],
+                    # TASK 061 / R-061-6 — what the key MEANS, from the schema.
+                    # NEAREST-ANCESTOR resolved (the `resolve_origin` line above
+                    # is the precedent): a row pointer outside the model must
+                    # inherit, not silently render "".
+                    "description": resolve_description(ui_model, pointer),
                 })
         except SyncConfigError as exc:
             section.status = "invalid"
@@ -218,6 +223,8 @@ font-size:.72rem;font-weight:600;color:#fff;white-space:nowrap}
 .c-ok{color:var(--ok)}.c-invalid,.c-unreadable{color:var(--err)}
 .f-error{color:var(--err)}.f-warning{color:var(--warn)}.f-info{color:var(--muted)}
 .muted{color:var(--muted)}
+p.hint{color:var(--muted);font-size:.75rem;margin:.15rem 0 0;max-width:34rem;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 """
 
 _JS = """
@@ -269,7 +276,15 @@ def _row_html(row: dict[str, Any], section_label: str) -> str:
     if row["shadows"]:
         shadows = ('<span class="muted" title="levels this value overrides">'
                    + _esc(", ".join(str(s) for s in row["shadows"])) + "</span>")
-    return ("<tr><td><code>" + _esc(str(row["pointer"])) + "</code></td>"
+    # The schema's own description, under the key — the `serve` editor renders
+    # the SAME FieldSpec.description as a `.hint` (`_app_html.py`), so the two
+    # surfaces now say the same thing from the same source. `.get` (not `[...]`)
+    # keeps a hand-built row dict (tests, future callers) from raising.
+    # `_esc`ed like everything else here: descriptions are repo-owned today, but
+    # the XSS discipline of this module does not carve out exceptions.
+    description = str(row.get("description") or "")
+    hint = f'<p class="hint">{_esc(description)}</p>' if description else ""
+    return ("<tr><td><code>" + _esc(str(row["pointer"])) + "</code>" + hint + "</td>"
             "<td><code>" + _esc(str(row["value"])) + "</code></td>"
             f"<td>{badge}</td><td>{shadows}</td></tr>")
 

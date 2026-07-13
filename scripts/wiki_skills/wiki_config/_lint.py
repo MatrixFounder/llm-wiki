@@ -364,9 +364,25 @@ class _Linter:
                      message="summary_ext must start with '.' — the stem-relpath "
                              "mirror crashes on it at runtime")
 
+    # TASK 061 / R-061-6. The two globs read alike and behave nothing alike:
+    # `exclude` SCOPES THE WALK (`iter_sync_candidates` prunes on it), while
+    # `zones` is ADVISORY — grep `\.zones` across `scripts/`: the ONLY read is
+    # the parse itself (`sync_config.py`), so nothing consumes it at runtime and
+    # `wiki-sync scan <zone>` takes an explicit zone argument. A shared "matches
+    # nothing on disk" message implied `zones` gates something. Per-key text,
+    # keyed off the loop so a future glob key must state its own semantics.
+    # Codes/severity/tier are API and UNCHANGED (`_findings.py` holds no message
+    # templates — messages are built here, at the call site).
+    _GLOB_KEYS: tuple[tuple[str, str, str], ...] = (
+        ("zones", "ZONE_GLOB_NO_MATCH",
+         " — advisory only: zones are never read by the sync walk "
+         "(`wiki-sync scan <zone>` takes an explicit zone; only `exclude:` "
+         "scopes the walk)"),
+        ("exclude", "EXCLUDE_GLOB_NO_MATCH", ""),
+    )
+
     def _check_globs(self, rel: str, raw: dict[str, Any]) -> None:
-        for key, code in (("zones", "ZONE_GLOB_NO_MATCH"),
-                          ("exclude", "EXCLUDE_GLOB_NO_MATCH")):
+        for key, code, note in self._GLOB_KEYS:
             value = raw.get(key)
             if not isinstance(value, list):
                 continue
@@ -386,7 +402,7 @@ class _Linter:
                     continue
                 if hit is None:
                     self.add(code, "sync", rel, pointer=f"/{key}/{i}",
-                             message=f"{key}[{i}] matches nothing on disk")
+                             message=f"{key}[{i}] matches nothing on disk{note}")
 
     # ------------------------------------------------------------------ #
     # pass 3 — cross-level cascade analysis

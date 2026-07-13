@@ -170,6 +170,17 @@ def _cmd_show(args: argparse.Namespace) -> int:
         "provenance": {
             ptr: origin.to_json() for ptr, origin in provenance_map.items()
         },
+        # TASK 061 / R-061-6: what each key MEANS, straight from the schema —
+        # the whole model, keyed by pointer (block pointers included, so an
+        # operator reading `show` sees a block's own description too). Purely
+        # additive, and 100% data: no key name appears in this code, so a new
+        # schema field's description lands here with zero further edits. This is
+        # where `zones:` finally admits, on the CLI, that it is ADVISORY.
+        "descriptions": {
+            ptr: spec.description
+            for ptr, spec in build_ui_model().items()
+            if spec.description
+        },
         "levels": [lvl.to_json() for lvl in prov.levels],
         "warnings": [dict(w) for w in prov.warnings],
     }

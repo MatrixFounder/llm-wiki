@@ -43,7 +43,7 @@
           "default": [],
           "x-wiki-scope": "root-only",
           "x-wiki-format": "glob",
-          "description": "Vault-root-relative globs of sync zones (advisory; `wiki-sync scan <zone>` takes an explicit zone)."
+          "description": "ADVISORY — not enforced. Vault-root-relative globs that DOCUMENT the sync zones; nothing reads them at runtime (`wiki-sync scan <zone>` takes an explicit zone argument, and the walk is scoped by `exclude:` alone).\n"
         },
         "exclude": {
           "type": "array",

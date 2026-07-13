@@ -471,3 +471,29 @@ def test_golden_samples_no_error_findings() -> None:
         errors = [f for f in findings
                   if f.system == "sync" and f.kind.severity == "error"]
         assert errors == [], f"{vault}: {[f.to_json() for f in errors]}"
+
+
+def test_zone_glob_message_does_not_imply_enforcement(tmp_path: Path) -> None:
+    """TC-08-4 (TASK 061 / R-061-6) — `zones` and `exclude` read alike and behave
+    nothing alike, and the lint used to give them the SAME message ("matches
+    nothing on disk"), which implies `zones` gates something. It gates nothing:
+    grep `\\.zones` across `scripts/` — the parse in `sync_config.py` is the only
+    read. Only `exclude:` scopes the walk.
+
+    Code / severity / tier are API and stay UNCHANGED (the two tests above assert
+    on them); only the operator-facing message changes.
+    """
+    _folder_yaml(tmp_path, "zones: ['Ghost/**']\nexclude: ['Nope/**']\n")
+    findings, _ = lint_vault(tmp_path)
+
+    zone = _by_code(findings, "ZONE_GLOB_NO_MATCH")[0]
+    assert zone.pointer == "/zones/0"          # unchanged
+    assert zone.kind.severity == "info"        # unchanged
+    assert zone.kind.tier == "manual"          # unchanged
+    assert "advisory" in zone.message
+    assert "never read by the sync walk" in zone.message
+
+    # the ENFORCING sibling must NOT be told it is advisory
+    exclude = _by_code(findings, "EXCLUDE_GLOB_NO_MATCH")[0]
+    assert exclude.pointer == "/exclude/0"
+    assert "advisory" not in exclude.message

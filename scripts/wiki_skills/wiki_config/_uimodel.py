@@ -13,6 +13,7 @@ Read-only; no knowledge of any concrete key name lives here (or anywhere downstr
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -158,3 +159,39 @@ def top_level_keys(model: dict[str, FieldSpec], scope: str) -> tuple[str, ...]:
         for ptr, spec in model.items()
         if "/" not in ptr.lstrip("/") and spec.scope == scope
     )
+
+
+def resolve_description(model: Mapping[str, FieldSpec], pointer: str) -> str:
+    """The schema description for a rendered row's pointer — falling back to the
+    NEAREST ANCESTOR pointer's description when `pointer` carries no FieldSpec of
+    its own. Returns "" when neither it nor any ancestor declares one.
+
+    The `resolve_origin` precedent (`_provenance.py`), applied to the other half of
+    a report row. A bare `model[pointer].description` lookup would work on TODAY's
+    shipped schema — `_report_md._flatten` recurses on `dict` ONLY, so a list is a
+    leaf and `/zones` (which HAS a FieldSpec) is the row pointer, never `/zones/0`.
+    That is precisely why the bare lookup is a trap: it is correct by coincidence,
+    and its failure mode is a SILENT EMPTY STRING — the exact class of bug (a
+    surface that renders nothing and looks fine) this task exists to kill. Two
+    live pointer classes already fall outside the model:
+      * a raw-only key inside a parsed cascading block (TASK 061 / R-061-4's
+        overlay puts `/summarize/<unknown>` into `effective`);
+      * an array element, should `_flatten` ever learn to recurse into lists.
+    Both resolve to their declaring block's description instead of to "".
+
+    Callers (the FieldSpec.description render sinks — grep-enumerated, TASK 061-08):
+    `_report._row_html` (HTML report), `_report_md.render_show_report` (the `show`
+    markdown sidecar). `serve` reads `FieldSpec.description` directly off the model
+    (`_server.py` `/api/schema` → `_app_html` `.hint`), and `show`'s JSON envelope
+    emits the whole model's descriptions — neither needs a per-row fallback.
+    `wiki-config tree` is a DELIBERATE exclusion: it answers "where is this key
+    overridden?", not "what does it mean", and a description per folder x key would
+    drown the override map."""
+    probe = pointer
+    while True:
+        spec = model.get(probe)
+        if spec is not None and spec.description:
+            return spec.description
+        if "/" not in probe.lstrip("/"):
+            return ""
+        probe = probe.rsplit("/", 1)[0]
