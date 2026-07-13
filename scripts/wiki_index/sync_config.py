@@ -23,7 +23,7 @@ fills in the size-cap, the anchor-ban, and jsonschema validation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +146,29 @@ class SummarizeConfig:
 
 
 @dataclass(frozen=True)
+class ExtractDecisionsDirs:
+    """TASK 063 — WHERE the extraction rail files each typed class, relative to the
+    source note's own folder. The defaults are the **cybos** names (`decisions` /
+    `requirements` / `risks`), so a vault that sets only `enabled: true` — with no
+    `dirs:` block at all — already works on a layout whose read globs cover them."""
+
+    decision: str = "decisions"
+    requirement: str = "requirements"
+    risk: str = "risks"
+
+
+@dataclass(frozen=True)
+class ExtractDecisionsConfig:
+    """TASK 063 / RFC-004 — the per-folder typed-knowledge extraction policy.
+    `enabled` is OFF by default: a vault that never mentions the block is never
+    auto-dispatched (`SyncConfig.extract_decisions is None`), so this is inert
+    for every existing vault."""
+
+    enabled: bool = False
+    dirs: ExtractDecisionsDirs = field(default_factory=ExtractDecisionsDirs)
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     """The merged `.wiki/sync.yaml` the dispatcher consumes.
 
@@ -153,7 +176,9 @@ class SyncConfig:
     routing sets in `scripts/wiki_skills/_sync.py` (they never shrink them).
     `resummarize` (TASK 019) is the OPT-IN re-summarization policy; `None` ≡ the
     TASK 018 behavior (back-compat / byte-identity). `transcript_dedup` (TASK 023)
-    is the OPT-IN transcript-format dedup; `None` ≡ disabled."""
+    is the OPT-IN transcript-format dedup; `None` ≡ disabled. `extract_decisions`
+    (TASK 063) is the OPT-IN typed-knowledge extraction policy; `None` ≡ never
+    auto-dispatched."""
 
     zones: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
@@ -164,6 +189,7 @@ class SyncConfig:
     resummarize: ResummarizeConfig | None = None
     transcript_dedup: TranscriptDedupConfig | None = None
     summarize: SummarizeConfig | None = None
+    extract_decisions: ExtractDecisionsConfig | None = None
 
 
 class _NoAliasSafeLoader(yaml.SafeLoader):
@@ -252,6 +278,7 @@ def load_sync_config(vault_root: Path) -> SyncConfig:
         resummarize=_parse_resummarize(raw.get("resummarize")),
         transcript_dedup=_parse_transcript_dedup(raw.get("transcript_dedup")),
         summarize=_parse_summarize(raw.get("summarize")),
+        extract_decisions=_parse_extract_decisions(raw.get("extract_decisions")),
     )
 
 
@@ -288,6 +315,63 @@ def _parse_summarize(block: Any) -> SummarizeConfig | None:
         extract_concepts=bool(block.get("extract_concepts", True)),
         target_subdir=sub,
     )
+
+
+_EXTRACT_DECISIONS_DIR_FIELDS = tuple(f.name for f in fields(ExtractDecisionsDirs))
+"""The typed-class roster, read from the dataclass — never restated as a literal.
+`_parse_extract_decisions` iterates THIS, so adding a fourth class (`incident`, …)
+means one dataclass field + one schema property and no parser edit. The schema's
+`additionalProperties: false` and `test_sync_schema_and_dataclasses_can_never_drift`
+keep the two name-sets equal, so this tuple IS the schema's roster."""
+
+
+def _parse_extract_decisions(block: Any) -> ExtractDecisionsConfig | None:
+    """Build the typed `ExtractDecisionsConfig` from a schema-validated
+    `extract_decisions` block (`None` when absent ≡ never auto-dispatched).
+
+    Every `dirs.*` value is normalised (strip + drop a trailing `/`) exactly as
+    `target_subdir` is, then path-validated: a traversal/absolute/backslash value
+    raises `INVALID_SYNC_CONFIG` (exit 6) with reason `UNSAFE_SUBDIR` and the
+    offending value is NEVER echoed (CWE-209/CWE-117). Defense-in-depth — the
+    write path is `validate_inside_vault`-checked downstream too, but a malformed
+    folder name must be refused at LOAD time, not surface as a late write error.
+
+    An EMPTY value is refused as well (the schema's `minLength: 1` catches the
+    literal `""`; this catches `"  "` and `"/"`, which normalise to empty). Stating
+    the boundary rather than leaving it merely true: `dirs.decision: ""` would file
+    typed pages into the source note's OWN folder — the flat clutter this rail's
+    per-class folders exist to prevent — so it is a config error, not a shortcut.
+    """
+    if not block:
+        return None
+    raw_dirs = block.get("dirs") or {}
+    values: dict[str, str] = {}
+    for name in _EXTRACT_DECISIONS_DIR_FIELDS:
+        if name not in raw_dirs:
+            continue
+        sub = str(raw_dirs[name]).strip().rstrip("/")
+        if not sub or not _is_safe_subdir(sub):
+            raise SyncConfigError(
+                "INVALID_SYNC_CONFIG",
+                f"extract_decisions.dirs.{name} must be a non-empty safe relative "
+                f"path (no leading '/', no '..' segment, no backslash/control chars)",
+                reason="UNSAFE_SUBDIR")
+        values[name] = sub
+    return ExtractDecisionsConfig(
+        enabled=bool(block.get("enabled", False)),
+        dirs=ExtractDecisionsDirs(**values),
+    )
+
+
+def load_extract_decisions_raw(root: Path) -> dict[str, Any] | None:
+    """The RAW (un-parsed, schema-validated) ``extract_decisions`` block of
+    ``<root>/.wiki/sync.yaml``, or ``None`` if absent. TASK 063: the per-folder
+    cascade resolver deep-merges these RAW dicts deepest-wins *before* applying
+    defaults, so a zone that overrides only ``dirs.risk`` INHERITS the parent's
+    ``enabled`` and its other two dirs. Reuses ``_load_validated_raw`` (all
+    hardening at every level) — mirrors ``load_summarize_raw``."""
+    block = _load_validated_raw(root).get("extract_decisions")
+    return block if isinstance(block, dict) else None
 
 
 def load_summarize_raw(root: Path) -> dict[str, Any] | None:

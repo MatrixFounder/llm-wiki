@@ -76,6 +76,47 @@
         "summarize": {
           "$ref": "#/$defs/Summarize",
           "x-wiki-scope": "cascading"
+        },
+        "extract_decisions": {
+          "$ref": "#/$defs/ExtractDecisions",
+          "x-wiki-scope": "cascading"
+        }
+      }
+    },
+    "ExtractDecisionsDirs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "type": "string",
+          "minLength": 1,
+          "x-wiki-format": "path",
+          "description": "Folder for extracted `decision` pages, relative to the source note's own folder (default `decisions`). It must be a folder the LAYOUT'S READ GLOBS can see — `wiki-config validate` refuses a name the walker would skip, because a page the walker cannot see is a page the index does not have (G4). Cyrillic/spaces are fine; `..`, a leading `/` and backslashes are not. EMPTY IS REFUSED: `\"\"` would file typed pages into the source note's own folder — the flat clutter the per-class folders exist to prevent.\n"
+        },
+        "requirement": {
+          "type": "string",
+          "minLength": 1,
+          "x-wiki-format": "path",
+          "description": "Folder for extracted `requirement` pages (default `requirements`). Same G4 coverage gate + non-empty rule as `decision`."
+        },
+        "risk": {
+          "type": "string",
+          "minLength": 1,
+          "x-wiki-format": "path",
+          "description": "Folder for extracted `risk` pages (default `risks`). Same G4 coverage gate + non-empty rule as `decision`."
+        }
+      }
+    },
+    "ExtractDecisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Auto-dispatch the `wiki-extract-decisions` rail after a summary is filed (default false). `wiki-sync`/`wiki-import` emit a DISPATCH MARKER in their JSON envelope; the ORCHESTRATOR runs the rail — the CLIs never call an LLM (Decision-17). ⚠️ REQUIRES that rail (TASK 063): until it ships this key is INERT — the marker is emitted and nothing consumes it.\n"
+        },
+        "dirs": {
+          "$ref": "#/$defs/ExtractDecisionsDirs"
         }
       }
     },

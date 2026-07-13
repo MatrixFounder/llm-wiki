@@ -423,13 +423,16 @@ def test_evolution_new_schema_field_needs_no_code(tmp_path: Path) -> None:
 def test_ui_model_matches_shipped_schema() -> None:
     """The shipped schema's scope annotations mirror the resolver's reality."""
     model = build_ui_model()
-    assert set(top_level_keys(model, SCOPE_CASCADING)) == {"resummarize", "summarize"}
+    assert set(top_level_keys(model, SCOPE_CASCADING)) == {
+        "resummarize", "summarize", "extract_decisions",
+    }
     assert set(top_level_keys(model, "root-only")) == {
         "zones", "exclude", "tag_namespace", "extensions", "transcript_dedup",
     }
     assert model["/resummarize/detect/mirror/group_key"].fmt == "regex"
     assert model["/summarize/profile"].enum == ("auto", "meeting", "lesson", "article")
     assert model["/summarize/target_subdir"].fmt == "path"
+    assert model["/extract_decisions/dirs/decision"].fmt == "path"
 
 
 # --------------------------------------------------------------------------- #
@@ -609,7 +612,9 @@ def test_parsed_block_table_matches_the_schema_cascading_set() -> None:
     assert set(_PARSED_BLOCKS) <= cascading, "a parsed block the schema does not cascade"
     # Today every cascading block is ALSO parsed. Stated, not assumed: a future
     # RAW cascading block must be a deliberate choice that updates this line.
-    assert set(_PARSED_BLOCKS) == cascading == {"resummarize", "summarize"}
+    assert set(_PARSED_BLOCKS) == cascading == {
+        "resummarize", "summarize", "extract_decisions",
+    }
 
 
 def test_raw_only_key_origin_is_its_level_not_default(

@@ -56,6 +56,7 @@ from scripts.wiki_index.sync_config import (
     SummarizeConfig,
     SyncConfigError,
     _load_validated_raw,
+    _parse_extract_decisions,
     _parse_resummarize,
     _parse_summarize,
 )
@@ -273,9 +274,11 @@ class _ParsedBlock:
 
 # The ONE declaration of which cascading blocks are parsed. A future parsed block
 # is a line here; a future RAW block needs no line at all (it falls through to the
-# passthrough branch). Both of today's entries are `x-wiki-scope: cascading` in
+# passthrough branch). Every entry is `x-wiki-scope: cascading` in
 # config/sync-config.schema.yaml — the schema remains the source of truth for
-# WHICH keys cascade; this table only says HOW a cascading block is rendered.
+# WHICH keys cascade; this table only says HOW a cascading block is rendered
+# (and `test_parsed_block_table_matches_the_schema_cascading_set` pins the two
+# name-sets equal, so neither side can drift alone).
 _PARSED_BLOCKS: dict[str, _ParsedBlock] = {
     # absent at every level ⇒ `None` (≡ the TASK 018 no-policy behavior).
     "resummarize": _ParsedBlock(_parse_resummarize, default_when_absent=False),
@@ -283,6 +286,13 @@ _PARSED_BLOCKS: dict[str, _ParsedBlock] = {
     "summarize": _ParsedBlock(
         lambda merged: _parse_summarize(merged) or SummarizeConfig(),
         default_when_absent=True,
+    ),
+    # absent at every level ⇒ `None` (TASK 063): a vault that never mentions the
+    # block is NEVER auto-dispatched. `default_when_absent=True` here would render
+    # `enabled: false` + the three default dirs as an *effective* policy — which
+    # reads as "configured, and off" when the truth is "not configured at all".
+    "extract_decisions": _ParsedBlock(
+        _parse_extract_decisions, default_when_absent=False
     ),
 }
 
