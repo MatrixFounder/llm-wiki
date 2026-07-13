@@ -10,15 +10,25 @@ Two properties, asserted over every cascade fixture:
 
 Plus the R-058-10 evolution invariant: a synthetic field injected into the
 schema doc surfaces in the UI model with zero code changes.
+
+TASK 061 (R-061-4/5) adds the third property, over the SAME fixtures:
+
+3. **No dangling provenance pointer**: every pointer `show` reports provenance
+   for is REACHABLE in `effective`. The parsed-dataclass path used to drop any
+   schema key the frozen dataclass does not declare, while `_assign_origins`
+   (which walks the RAW block) still recorded a pointer for it — a pointer with
+   no value, invisible in every downstream surface.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from scripts.wiki_index.sync_config import (
     SummarizeConfig,
@@ -27,11 +37,14 @@ from scripts.wiki_index.sync_config import (
     _parse_summarize,
 )
 from scripts.wiki_skills._resummarize import resolve_policy, resolve_summarize
+from scripts.wiki_skills.wiki_config import main
 from scripts.wiki_skills.wiki_config._provenance import (
     SyncConfigLevelError,
     compute_folder_provenance,
     scan_tree,
 )
+from scripts.wiki_skills.wiki_config._report import build_report_model, render_html
+from scripts.wiki_skills.wiki_config._report_md import render_show_report
 from scripts.wiki_skills.wiki_config._uimodel import (
     SCOPE_CASCADING,
     build_ui_model,
@@ -401,3 +414,147 @@ def test_ui_model_matches_shipped_schema() -> None:
     assert model["/resummarize/detect/mirror/group_key"].fmt == "regex"
     assert model["/summarize/profile"].enum == ("auto", "meeting", "lesson", "article")
     assert model["/summarize/target_subdir"].fmt == "path"
+
+
+# --------------------------------------------------------------------------- #
+# TASK 061 / R-061-4 + R-061-5 — a new key inside a PARSED cascading block
+# --------------------------------------------------------------------------- #
+#
+# The R-058-10 test above (`test_evolution_new_schema_field_needs_no_code`)
+# injects a new top-level BLOCK — the case that already works, because
+# `_provenance.py`'s `else:` branch passes the merged RAW dict straight through.
+# A key added INSIDE an existing parsed block (`summarize` / `resummarize`) took
+# the frozen-dataclass path instead, which renders ONLY the dataclass's declared
+# fields — so the key vanished from `effective` while `_assign_origins` (walking
+# the RAW block) still recorded a provenance pointer for it.
+#
+# Census of the surfaces a dropped key vanishes from (grep `\.effective`, not a
+# claim) — all four are fed by the ONE `compute_folder_provenance` dict:
+#   1. `__init__.py:_cmd_show`      → the `show` JSON envelope   (asserted below)
+#   2. `_report_md.render_show_report` → the `show --report` md   (asserted below)
+#   3. `_report.build_report_model` → the HTML `report` rows      (asserted below)
+#   4. `_server.py:/api/folder`     → `serve`'s schema-driven form (same dict;
+#      `_app_html.js:fieldState` reads `byPointer(FOLDER.effective, ...)`, so the
+#      field renders with a provenance badge but a BLANK value)
+
+
+def _patch_schema_with_future_knobs(
+    schema_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Add a synthetic `future_knob` to the two PARSED cascading blocks
+    (`Summarize`, `Resummarize`) and to the NESTED `Detect`, in a copy of the
+    shipped schema — then point BOTH independent schema consumers at that copy.
+
+    Census (grep `_SCHEMA_PATH|SYNC_SCHEMA_PATH` across `scripts/`): the sync
+    schema has exactly TWO readers, each with its own module-level cache —
+    patching one and not the other yields a harness error (a strict-schema
+    rejection), not the bug under test.
+
+    | consumer                            | path constant                | cache          |
+    |-------------------------------------|------------------------------|----------------|
+    | `sync_config._load_validated_raw`   | `sync_config._SCHEMA_PATH`   | `_VALIDATOR`   |
+    | `_uimodel.build_ui_model`           | `_uimodel.SYNC_SCHEMA_PATH`  | `_MODEL_CACHE` |
+    """
+    import scripts.wiki_index.sync_config as sync_config_mod
+    import scripts.wiki_skills.wiki_config._uimodel as uimodel_mod
+
+    doc = copy.deepcopy(load_sync_schema_doc())
+    for def_name in ("Summarize", "Resummarize", "Detect"):
+        doc["$defs"][def_name]["properties"]["future_knob"] = {
+            "type": "string",
+            "description": "synthetic future knob (TASK 061 gate)",
+        }
+    schema_copy = schema_dir / "sync-config.schema.yaml"
+    schema_copy.write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    monkeypatch.setattr(sync_config_mod, "_SCHEMA_PATH", schema_copy)
+    monkeypatch.setattr(sync_config_mod, "_VALIDATOR", None)
+    monkeypatch.setattr(uimodel_mod, "SYNC_SCHEMA_PATH", schema_copy)
+    monkeypatch.setattr(uimodel_mod, "_MODEL_CACHE", None)
+
+
+def _reachable_pointers(tree: Any, prefix: str = "") -> set[str]:
+    """Every JSON pointer that HAS a value in an `effective` tree — interior
+    (dict) nodes AND leaves. A `None` block (`resummarize` unconfigured) is a
+    leaf: its own pointer is reachable, it has no descendants."""
+    out: set[str] = set()
+    if isinstance(tree, dict):
+        for key, child in tree.items():
+            pointer = f"{prefix}/{key}"
+            out.add(pointer)
+            out |= _reachable_pointers(child, pointer)
+    return out
+
+
+def _assert_no_dangling_pointer(folder: Path, root: Path) -> None:
+    """Property 3 (R-061-4): `show` never reports a provenance pointer that has
+    no corresponding value in `effective`. Asserted against the pointer set the
+    CLI actually emits, so it covers the nearest-ancestor fill in `_cmd_show`."""
+    prov = compute_folder_provenance(folder, root)
+    dangling = set(prov.origins) - _reachable_pointers(prov.effective)
+    assert not dangling, (
+        f"provenance pointers with no `effective` value: {sorted(dangling)}")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="R-061-4 not landed: the parsed-dataclass path renders only the "
+           "dataclass's declared fields, so a schema key it does not declare is "
+           "dropped from `effective` while still getting a provenance pointer",
+)
+@pytest.mark.parametrize("pointer,yaml_body", [
+    ("/summarize/future_knob", "summarize:\n  future_knob: kept\n"),
+    ("/resummarize/future_knob", "resummarize:\n  future_knob: kept\n"),
+    # NESTED: a shallow `{**raw, **parsed}` overlay would pass the two above and
+    # still fail this one — "the fix covers the block" is exactly the claim this
+    # task exists to distrust.
+    ("/resummarize/detect/future_knob",
+     "resummarize:\n  detect:\n    future_knob: kept\n"),
+])
+def test_parsed_block_unknown_key_reaches_effective(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pointer: str,
+    yaml_body: str,
+) -> None:
+    """R-061-5: a key the SCHEMA accepts inside a parsed cascading block must
+    reach `effective` — and therefore every surface derived from it — even
+    though the frozen dataclass knows nothing about it.
+
+    Parametrized over BOTH parsed blocks (`summarize` AND `resummarize`: the
+    schema declares exactly two `x-wiki-scope: cascading` keys and BOTH take the
+    dataclass path, so both carry the identical drop) plus a nested pointer.
+    """
+    _patch_schema_with_future_knobs(tmp_path, monkeypatch)
+    vault = tmp_path / "vault"
+    zone = vault / "Zone"
+    zone.mkdir(parents=True)
+    _folder_yaml(vault, yaml_body)  # defined at ROOT, read from the SUBFOLDER
+
+    # (1) the `show` envelope — the pointer must resolve to a VALUE, not just to
+    #     a provenance entry. THIS is the assertion that must be RED pre-fix.
+    code = main(["show", "Zone", "--vault-root", str(vault)])
+    envelope = json.loads(capsys.readouterr().out.strip())
+    assert code == 0
+    effective_pointers = _reachable_pointers(envelope["effective"])
+    assert pointer in effective_pointers, (
+        f"`effective` dropped {pointer}; `provenance` still points at it "
+        f"({pointer in envelope['provenance']}) — a dangling pointer")
+
+    # (2) the value survives the cascade + the parse unmangled.
+    block, _, _tail = pointer.lstrip("/").partition("/")
+    node: Any = envelope["effective"][block]
+    for part in _tail.split("/"):
+        node = node[part]
+    assert node == "kept"
+
+    # (3) the invariant, on this folder: no pointer without a value.
+    assert set(envelope["provenance"]) <= effective_pointers
+    _assert_no_dangling_pointer(zone, vault)
+
+    # (4) the RENDERED surfaces (a key missing from `effective` has no row).
+    prov = compute_folder_provenance(zone, vault)
+    assert pointer in render_show_report(prov, vault)
+    assert pointer in render_html(build_report_model(vault, []))
