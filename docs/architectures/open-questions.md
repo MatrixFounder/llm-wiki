@@ -1702,6 +1702,33 @@
     typo-shaped key (`uRL:`, `Source_URL:`) still fails open (no tool emits those). `SOURCE`/`Url`
     have **0** live pages and are cheap defense-in-depth (`_EXT` grows 8 → 14 `LIKE` disjuncts) —
     **not** a P-5 concern, and P-5 (no speculative *indexes*) must not be cited here.
+  - **AMENDED (061 VDD fix-loop / H2) — the resolution HOLDS, but two of its premises are DEAD.**
+    Recorded rather than quietly rotted, because the reasoning is the reusable part:
+    1. *"The KEY LIST is the thing to enumerate from one constant."* **Incomplete — the VALUE SHAPES
+       needed enumerating too.** Both halves required a scalar (`isinstance(val, str)` /
+       `json_extract` + prefix-`LIKE`), so a **list**-valued `sources:` was invisible to the
+       predicate. That is not a missing key; it is **the same fail-open one level down** — a
+       mechanism asserted to cover a surface nobody enumerated, which is this task's own fractal.
+       **17 live pages** (1 with `sources: [https://…, https://…]`; 16 with
+       `sources: [{id, url: https://…, file}]` — the shape our OWN
+       `generate-detailed-meeting-summary` emits and our OWN `all_cited_sources` reads) derived
+       `internal` and passed `--min-trust internal`, the filter whose entire purpose is the H-6
+       contract. Both halves *agreed* throughout: **alignment is not the security property;
+       FAIL-CLOSED is.** The constant now carries the keys **and** the shapes, and the alignment
+       test is the **cross product** of the two — so neither a new key nor a new shape can enter
+       one half alone.
+    2. *"A case-fold would need `json_each` + `lower(key)` in SQL ONLY, hence asymmetry."*
+       **Overtaken.** Seeing inside a list *requires* a `json_each` member walk, so the SQL half is
+       one now regardless — which makes `lower(je.key) IN (…)` (SQL) ↔ `k.lower() in {…}` (Python)
+       **symmetric**, and it would close the typo class as a bonus. Enumeration is retained *here*
+       only because flipping it reverses a RESOLVED question and un-pins the `uRL:` regression case:
+       a **deliberate follow-up with its own review**, never a silent widening. The `LIKE`-disjunct
+       arithmetic above is also void — the count is now a **constant 8**, flat in the key count.
+  - Also corrected: **`sources` (PLURAL) was never in the key set at all**, though it is the
+    framework's own canonical provenance key (`all_cited_sources` harvests `sources[]`; the D2a
+    detector defaults to `fields: (source, sources)`; **81 live pages** carry it). Enumerating keys
+    from one constant does not help if the constant is missing a key the rest of the system already
+    agrees on — **grep the other consumers, do not introspect.**
 
 - **Q-061-3 (RESOLVED) — `zones:` advisory marker: Option A′, GENERALIZE, don't badge.** `zones:` is
   **dead config** — parsed (`sync_config.py`), linted (`ZONE_GLOB_NO_MATCH`), shown by `wiki-config`,

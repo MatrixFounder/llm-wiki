@@ -214,15 +214,30 @@ path anchor."* Both halves were wrong, and the live vault said so:
   built-in layout excludes `**/_raw/**` from the index, so **0 of 3267 live pages** are
   external-by-path. It backstops direct upserts, nothing more.
 
-`policy.EXTERNAL_PROVENANCE_KEYS` now enumerates the **case variants**
-(`source`/`Source`/`SOURCE`/`url`/`Url`/`URL`) from ONE constant rendered into both the
-Python and the SQL half (Q-050-3 alignment, parametrized test). What **survives** in (iii),
-stated rather than assumed:
+`policy.EXTERNAL_PROVENANCE_KEYS` now enumerates the **case variants** *and the plural
+`sources`* from ONE constant rendered into both the Python and the SQL half (Q-050-3
+alignment, parametrized test) — **and the constant carries the VALUE SHAPES too**
+(scalar · list of scalars · list of `{…, url: …}` objects), because enumerating the keys
+without enumerating the shapes is the same bug one level down.
+
+**The "accepted" row below was NOT acceptable — it was a live fail-open, and it is now
+closed** (061 VDD fix-loop / H2). It read: *"List-valued `source:` (a YAML sequence, not a
+scalar) — accepted, the derivation reads scalars."* That acceptance was written without a
+census. The census: **17 live pages** carry an external URL under a list-valued `sources:`
+— 1 partnership note (`sources: [https://…, https://…]`) and 16 course summaries
+(`sources: [{id, url: https://…, file}]`, the shape our OWN
+`generate-detailed-meeting-summary` emits and our OWN `all_cited_sources` reads). All 17
+derived `internal` and passed `--min-trust internal`, the filter whose entire purpose is
+the H-6 contract. Both halves agreed with each other throughout; **alignment is not the
+security property — FAIL-CLOSED is.** Live external count: **720 → 737** of 3267.
+
+What **survives** in (iii), stated rather than assumed:
 
 | Residual | Status |
 |---|---|
-| **Vault-specific provenance keys** (`youtube:` 9 pages, `teachable:` 9) | **OPEN — Q-061-4.** Different *keys*, not case variants; still derive `internal`. Deferred by **mechanism** (needs a per-vault `external_keys:` config surface), **not** by defect. Test-pinned in its known-wrong state so it stays visible. |
-| **List-valued `source:`** (a YAML sequence, not a scalar) | accepted — the derivation reads scalars |
+| **Vault-specific provenance keys** (`youtube:`/`teachable:`) | **OPEN — Q-061-4.** Different *keys*, not case variants and not value shapes; still derive `internal`. **9 pages, not the 18 previously recorded here** — the same 9 pages carry *both* keys, and "18" was two key-occurrence counts summed as if they were disjoint page sets (1 of the 9 is external via another key, so **8** actually fail open). Disjoint from the 17 above. Deferred by **mechanism** (needs a per-vault `external_keys:` config surface), **not** by defect. Test-pinned in its known-wrong state so it stays visible. |
+| **Typo-shaped keys** (`uRL:`, `Source_URL:`) | accepted — no tool emits them. NOTE: now that the SQL half is a `json_each` member walk, a true `lower(key)` fold would be **symmetric** across the halves (Q-061-2's rationale for enumerating assumed it could not be) and would close this class. Deliberate follow-up, not a silent widening. |
+| **URL nested deeper than a list-of-objects** (`sources: [{meta: {url: …}}]`), **top-level object** (`source: {url: …}`) | accepted, **0 live pages** — the walk is bounded at 3 levels rather than an unbounded `json_tree` recursion on the hot search path. Both halves agree, and both boundaries are **test-pinned** so the limit stays visible rather than merely true. |
 | **Typo-shaped keys** (`uRL:`, `Source_URL:`) | accepted — no tool emits them; closing the *class* would need key-set inference, not an enumeration |
 
 The tier remains **advisory, never an authorization boundary** — closing a fail-open leak

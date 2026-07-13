@@ -831,8 +831,10 @@ def _build_parser() -> argparse.ArgumentParser:
                     choices=["external", "internal", "verified"],
                     help="TASK 050 (R-6): derived-trust retrieval floor — "
                          "'internal' excludes external-origin pages (in "
-                         "practice: an http(s) source/url/URL frontmatter key "
-                         "+ case variants; a _raw/ path also counts but no "
+                         "practice: an http(s) URL under a provenance key in "
+                         "frontmatter — source/sources/url + case variants — "
+                         "as a scalar, a list, or a list of {url: ...} objects; "
+                         "a _raw/ path also counts but no "
                          "built-in layout indexes _raw/, so it is a backstop "
                          "for direct upserts); 'verified' additionally "
                          "requires an inbound verifies ref. Filtered in SQL "

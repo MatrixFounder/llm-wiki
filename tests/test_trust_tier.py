@@ -58,9 +58,51 @@ VID = "trust-vault"
     ({"Source_URL": "https://x.test"}, "_sources/a.md", False, "internal"),
     ({"source": "httpx://not-web"}, "_sources/a.md", False, "internal"),
     ({"source": "_raw/local.md"}, "_sources/a.md", False, "internal"),
-    ({"source": ["https://x.test"]}, "_sources/a.md", False, "internal"),  # non-scalar
-    ({"URL": {"u": "https://x.test"}}, "_sources/a.md", False, "internal"),
     ({"source": None}, "_sources/a.md", True, "verified"),
+
+    # -------------------------------------------------------------------------
+    # 061 VDD fix-loop / H2 — the VALUE SHAPES. The pre-fix predicate required
+    # `isinstance(val, str)`, so a LIST-valued provenance key derived `internal`
+    # on BOTH halves. They agreed — and agreement is not the security property;
+    # FAIL-CLOSED is. These are the two LIVE shapes (17 pages).
+    # -------------------------------------------------------------------------
+    # shape 2 — list of scalars. The real Айва partnership note: a business
+    # document whose provenance is two external URLs. Derived `internal` pre-fix.
+    ({"sources": ["https://aiva-pro.tech", "https://t.me/tm_aiva"]},
+     "_sources/a.md", False, "external"),
+    # shape 3 — list of OBJECTS (the TASK 023 `{id, url, file}` element that
+    # `generate-detailed-meeting-summary` emits). 16 live course summaries.
+    ({"sources": [{"id": "059RZHWA5Qg", "url": "https://youtu.be/059RZHWA5Qg",
+                   "file": "059RZHWA5Qg.ru.txt"}]},
+     "_sources/a.md", False, "external"),
+    # origin still TAINTS through a list (MIN-rule, Q-050-1)
+    ({"sources": ["https://aiva-pro.tech"]}, "_sources/a.md", True, "external"),
+    # a mixed list — one http member is enough
+    ({"sources": [None, 5, True, "local.md", "https://x.test"]},
+     "_sources/a.md", False, "external"),
+    # `sources` is the PLURAL key the trust predicate had simply FORGOTTEN,
+    # though it is the framework's own canonical one (`all_cited_sources`).
+    # It works as a scalar too.
+    ({"sources": "https://x.test"}, "_sources/a.md", False, "external"),
+
+    # -- NOT external: same shapes, no http (the shape must not be the signal) --
+    ({"sources": ["notes/local.md", "other.md"]}, "_sources/a.md", False,
+     "internal"),
+    ({"sources": [{"id": "x", "file": "a.ru.txt"}]}, "_sources/a.md", False,
+     "internal"),
+    ({"sources": []}, "_sources/a.md", False, "internal"),
+
+    # -- THE STATED BOUNDARY (0 live pages each). The walk is BOUNDED at 3 levels
+    # -- rather than an unbounded `json_tree` recursion on the hot search path.
+    # -- Pinned so the limit is VISIBLE, not merely true. Both halves agree.
+    ({"source": {"url": "https://x.test"}}, "_sources/a.md", False, "internal"),
+    ({"URL": {"u": "https://x.test"}}, "_sources/a.md", False, "internal"),
+    ({"sources": [["https://x.test"]]}, "_sources/a.md", False, "internal"),
+    ({"sources": [{"meta": {"url": "https://x.test"}}]}, "_sources/a.md", False,
+     "internal"),
+    # the inner key set IS `EXTERNAL_PROVENANCE_KEYS` — `href` is not one
+    ({"sources": [{"href": "https://x.test"}]}, "_sources/a.md", False,
+     "internal"),
 ])
 def test_trust_tier_matrix(fm, path, verified, expected):
     assert trust_tier(fm, path, verified) == expected
@@ -109,6 +151,23 @@ def repo(tmp_path: Path):
     # `internal` (fail-open). See the pin test below.
     r.upsert_page(_page("tube-note", fm_extra={"youtube": "https://youtu.be/x",
                                                "status": "open"}))
+    # 061 VDD fix-loop / H2 — the two LIVE VALUE SHAPES that failed open (17
+    # pages). They join the SHARED corpus, so the 3-query-shape floor test and
+    # the SQL<->Python alignment test exercise them on every run rather than in
+    # a private fixture nobody else touches.
+    r.upsert_page(_page("aiva-note", fm_extra={          # list of scalars (1 live)
+        "sources": ["https://aiva-pro.tech", "https://t.me/tm_aiva"],
+        "status": "open"}))
+    r.upsert_page(_page("course-note", fm_extra={        # list of objects (16 live)
+        "sources": [{"id": "059RZHWA5Qg", "url": "https://youtu.be/059RZHWA5Qg",
+                     "file": "059RZHWA5Qg.ru.txt"}],
+        "status": "open"}))
+    # NEGATIVE control, same SHAPE, no http — proves the fix keys on the URL and
+    # not merely on "the value is a list" (without this, `sources: [a.md]` pages
+    # would silently become external and the corpus above would not notice).
+    r.upsert_page(_page("local-src-note", fm_extra={
+        "sources": [{"id": "x", "file": "local.ru.txt"}, "notes/local.md"],
+        "status": "open"}))
     r.upsert_page(_page("verdict", ptype="verification", body="verdict body"))
     r.replace_refs(VID, "verdict", "_vault_", [PageRef(
         vault_id=VID, page_slug="verdict", page_project="_vault_",
@@ -144,6 +203,14 @@ _CORPUS_TIERS = {
     # TASK 061-06 — the fix: a `Source:`-keyed page is now `external` on BOTH
     # halves (pre-061 it derived `internal` and sailed through the floor).
     "cap-note": "external",
+    # 061 VDD fix-loop / H2 — the two LIVE list shapes, now `external` on both
+    # halves (pre-fix BOTH derived `internal`: the halves agreed, and were both
+    # wrong — 17 live pages sailed through the `--min-trust internal` floor).
+    "aiva-note": "external",
+    "course-note": "external",
+    # ...and the same shapes WITHOUT an http URL stay `internal` — the fix keys
+    # on the URL, not on the container type.
+    "local-src-note": "internal",
     # Q-061-4 — the KNOWN RESIDUAL, asserted in its known-WRONG state so it
     # stays visible: a vault-specific provenance key still derives `internal`.
     "tube-note": "internal",
@@ -152,15 +219,20 @@ _CORPUS_TIERS = {
 # The pages carrying `status: open` — i.e. the population the metadata-scan
 # shape can see at all. `verdict` has no status, so it is not in it.
 _STATUS_OPEN = {"plain-note", "verified-note", "raw-capture", "web-note",
-                "cap-note", "tube-note"}
+                "cap-note", "tube-note", "aiva-note", "course-note",
+                "local-src-note"}
 
 
 @pytest.mark.parametrize("floor,expected", [
     ("external", {"plain-note", "verified-note", "raw-capture", "web-note",
-                  "cap-note", "tube-note"}),
-    # `cap-note` (Source:) now DROPS OUT here — the 061-06 behavior flip.
-    # `tube-note` (youtube:) does NOT — the Q-061-4 residual, still fail-open.
-    ("internal", {"plain-note", "verified-note", "tube-note"}),
+                  "cap-note", "tube-note", "aiva-note", "course-note",
+                  "local-src-note"}),
+    # `cap-note` (Source:) drops out here — the 061-06 behavior flip.
+    # `aiva-note`/`course-note` (list-valued `sources:`) drop out too — the H2
+    # flip; pre-fix they SURVIVED this floor, which is the whole finding.
+    # `local-src-note` does NOT drop (list-valued, but no http URL).
+    # `tube-note` (youtube:) does NOT drop — the Q-061-4 residual, still fail-open.
+    ("internal", {"plain-note", "verified-note", "tube-note", "local-src-note"}),
     ("verified", {"verified-note"}),
 ])
 def test_sql_floor_matches_python_on_all_shapes(repo, floor, expected):
@@ -198,20 +270,42 @@ def test_min_trust_rejects_unknown(repo):
 # alignment contract, and the alignment corpus is PARAMETRIZED FROM it
 # =============================================================================
 
+# The VALUE SHAPES declared on `policy.EXTERNAL_PROVENANCE_KEYS`, as factories
+# from a URL. The alignment corpus below is the CROSS PRODUCT of the constant and
+# THIS table — so a new key OR a new shape auto-extends the gate on both halves,
+# and neither can be added to one half alone. (061 VDD fix-loop / H2: the pre-fix
+# corpus enumerated keys but NOT shapes, which is exactly how a list-valued
+# `sources:` stayed fail-open on both halves for 17 live pages while a test named
+# "every provenance key is external on both halves" passed.)
+_VALUE_SHAPES = {
+    # shape 1 — the scalar (all that pre-H2 was covered)
+    "scalar": lambda url: url,
+    # shape 2 — a list of scalars (the LIVE Айва partnership note)
+    "list_of_scalars": lambda url: ["notes/local.md", url],
+    # shape 3 — a list of objects (the LIVE `{id, url, file}` course summaries).
+    # The INNER key is drawn from the SAME constant — never a second list.
+    "list_of_objects": lambda url, k="url": [{"id": "x", k: url, "file": "f.txt"}],
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_VALUE_SHAPES))
 @pytest.mark.parametrize("scheme", ("http", "https"))
 @pytest.mark.parametrize("key", EXTERNAL_PROVENANCE_KEYS)
-def test_every_provenance_key_is_external_on_both_halves(repo, key, scheme):
-    """TC-04-1 — for EVERY key in `policy.EXTERNAL_PROVENANCE_KEYS` x scheme,
-    the Python half derives `external` AND the SQL half's `--min-trust internal`
-    floor excludes the page.
+def test_every_provenance_key_is_external_on_both_halves(repo, key, scheme,
+                                                         shape):
+    """TC-04-1 — for EVERY (key in `policy.EXTERNAL_PROVENANCE_KEYS`) x scheme x
+    VALUE SHAPE, the Python half derives `external` AND the SQL half's
+    `--min-trust internal` floor excludes the page.
 
-    The corpus is generated FROM the constant, so adding a key automatically
-    extends the gate on both halves — that auto-growth IS the anti-drift
-    property Q-050-3 demands (061-06 grows the tuple 3 -> 6 keys and this test
-    goes 6 -> 12 cases with no edit; a key rendered into only ONE half fails
-    here immediately)."""
+    The corpus is generated FROM the constant and FROM `_VALUE_SHAPES`, so
+    adding a key or a shape automatically extends the gate on both halves — that
+    auto-growth IS the anti-drift property Q-050-3 demands (061-06 grew the tuple
+    3 -> 6 keys and took this test 6 -> 12 cases with no edit; the H2 fix grows it
+    to 9 keys x 2 schemes x 3 shapes = 54, again with no per-case edit). A key or
+    a shape rendered into only ONE half fails here immediately."""
+    value = _VALUE_SHAPES[shape](f"{scheme}://x.test/a")
     repo.upsert_page(_page(
-        "key-probe", fm_extra={key: f"{scheme}://x.test/a", "status": "open"}))
+        "key-probe", fm_extra={key: value, "status": "open"}))
     page = repo.get_page(VID, "key-probe", "_vault_")
 
     # (a) Python half.
@@ -234,37 +328,62 @@ def test_every_provenance_key_is_external_on_both_halves(repo, key, scheme):
         min_trust="internal"))
 
 
+@pytest.mark.parametrize("shape", sorted(_VALUE_SHAPES))
+@pytest.mark.parametrize("key", EXTERNAL_PROVENANCE_KEYS)
+def test_non_http_value_is_not_external_on_either_half(repo, key, shape):
+    """TC-04-1b — the NEGATIVE half of the same cross product, and it is what
+    keeps the positive half honest: the signal must be the http(s) URL, not the
+    key and not the container shape. A predicate that answered "external" for
+    `sources: [local.md]` would pass every assertion above while quietly
+    reclassifying 64 more live pages (81 carry `sources:`; only 17 carry a URL)."""
+    value = _VALUE_SHAPES[shape]("notes/local.md")
+    repo.upsert_page(_page(
+        "local-probe", fm_extra={key: value, "status": "open"}))
+    page = repo.get_page(VID, "local-probe", "_vault_")
+
+    assert trust_tier(page.frontmatter_json, page.file_path, False) == "internal"
+    # the SQL half agrees: it SURVIVES the internal floor on both query shapes
+    assert "local-probe" in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="internal"))
+    assert "local-probe" in _slugs(repo.search_pages(
+        None, vaults=[VID], where_fields=[("status", "open")],
+        min_trust="internal"))
+
+
 def test_external_origin_sql_renders_every_key():
-    """TC-04-2 — the SQL literal names every key from the constant. Guards a
+    """TC-04-2 — the SQL literal names every key from the constant, in BOTH of
+    its `IN` lists (the top-level key walk and the object-member walk). Guards a
     HALF-APPLIED edit: a key added to the Python constant but not rendered into
     SQL is precisely the Q-050-3 drift this gate exists to make impossible."""
     for key in EXTERNAL_PROVENANCE_KEYS:
-        assert f"'{key}'" in _EXTERNAL_ORIGIN_SQL, key
+        assert _EXTERNAL_ORIGIN_SQL.count(f"'{key}'") == 2, key
 
 
 def test_external_origin_sql_parses_the_blob_exactly_once():
     """M2 (perf), pinned STRUCTURALLY rather than by a timing assertion.
 
     The old form emitted one `json_extract(p.frontmatter_json, …)` per
-    (key x scheme) — 6 independent re-parses of the SAME blob per candidate row
-    at TASK 050, and 12 once 061-06 doubled the key list. SQLite does no CSE on
-    row-dependent calls, and this predicate lands on the metadata query shape,
-    which has no index for its ordering: SQLite scans the vault partition and
-    sorts it in a temp b-tree, so the LIMIT does NOT bound predicate evaluation
-    and per-row cost IS the cost.
+    (key x scheme) — 12 independent re-parses of the SAME blob per candidate row,
+    growing by 2 with every key added. SQLite does no CSE on row-dependent calls,
+    and this predicate lands on the metadata query shape, which has no index and
+    scans the partition — so the LIMIT does not bound predicate evaluation and
+    per-row cost IS the cost.
 
-    The one-`json_each` form parses the blob ONCE per row for ALL keys. These are
-    the invariant:
+    The one-`json_each` form parses the blob ONCE per row for ALL keys and ALL
+    shapes. These three assertions are the invariant:
       * exactly ONE walk of `p.frontmatter_json`;
-      * ZERO `json_extract` (a reintroduced one is a re-parse per key);
-      * a CONSTANT LIKE count, INDEPENDENT of the key count — which is what makes
-        growing the constant cheap, and is why the case variants are affordable
-        defense-in-depth. Under the old form, every added key cost two more full
-        blob re-parses PER ROW: the 061-06 key growth silently doubled it."""
+      * ZERO `json_extract` (a reintroduced one is a re-parse);
+      * a CONSTANT 8 LIKEs (2 path + 2 per walk level), INDEPENDENT of the key
+        count — which is what makes growing the constant cheap, and is why
+        `SOURCE`/`Url`/`Sources` are affordable defense-in-depth."""
     assert _EXTERNAL_ORIGIN_SQL.count("json_each(p.frontmatter_json)") == 1
     assert _EXTERNAL_ORIGIN_SQL.count("json_extract") == 0
-    assert _EXTERNAL_ORIGIN_SQL.count("LIKE") == 4
-    assert "json_tree" not in _EXTERNAL_ORIGIN_SQL   # no unbounded recursion
+    assert _EXTERNAL_ORIGIN_SQL.count("LIKE") == 8
+    # ...and the nested walks are over the MEMBER's text, never the page blob
+    # again (that would re-parse it): one per container level, no `json_tree`.
+    assert _EXTERNAL_ORIGIN_SQL.count("json_each(je.value)") == 1
+    assert _EXTERNAL_ORIGIN_SQL.count("json_each(jm.value)") == 1
+    assert "json_tree" not in _EXTERNAL_ORIGIN_SQL
 
 
 # =============================================================================
@@ -274,24 +393,48 @@ def test_external_origin_sql_parses_the_blob_exactly_once():
 
 def test_case_variant_keys_are_covered():
     """TC-06-1 — `Source:`/`SOURCE:`/`Url:` are in the constant, so both halves
-    render them (the SQL count is asserted by TC-04-2, the 12 key x scheme
-    alignment cases by TC-04-1 — which grew 6 -> 12 with NO edit: that is the
-    061-04 anti-drift property doing its job)."""
+    render them (the SQL render is asserted by TC-04-2, the key x scheme x shape
+    alignment cases by TC-04-1 — which grew 6 -> 12 -> 54 with NO per-case edit:
+    that is the 061-04 anti-drift property doing its job).
+
+    061 VDD fix-loop / H2 adds `sources` (PLURAL) + its case variants. It is not
+    a nice-to-have: it is the framework's OWN canonical provenance key — the DAL
+    method `all_cited_sources` harvests `sources[]`, and wiki-sync's D2a detector
+    defaults to `fields: (source, sources)`. The trust predicate had simply
+    forgotten it, and 81 live pages carry it."""
     assert set(EXTERNAL_PROVENANCE_KEYS) == {
-        "source", "Source", "SOURCE", "url", "Url", "URL"}
-    # Enumeration, not case-folding, is forced by Q-050-3: SQLite json_extract
-    # matches its path key CASE-SENSITIVELY, so a true fold would need
-    # json_each + lower(key) in SQL ONLY — the asymmetry Q-050-3 forbids.
-    assert len(EXTERNAL_PROVENANCE_KEYS) == 6
+        "source", "Source", "SOURCE",
+        "sources", "Sources", "SOURCES",
+        "url", "Url", "URL"}
+    assert len(EXTERNAL_PROVENANCE_KEYS) == 9
+    # Enumeration (not case-folding) is a Q-061-2 decision, held here. NOTE: its
+    # stated rationale — "a fold needs json_each + lower(key) in SQL only, so it
+    # would de-align the halves" — is OVERTAKEN: the SQL half is a json_each walk
+    # now (it had to be, to see inside a list), so a fold would today be
+    # SYMMETRIC. Flipping it is a deliberate follow-up (it reverses a RESOLVED
+    # open question and un-pins the `uRL:` case below), never a silent widening.
+    assert all(k.lower() in {"source", "sources", "url"}
+               for k in EXTERNAL_PROVENANCE_KEYS)
 
 
 def test_vault_specific_provenance_key_still_internal_q0614(repo):
     """TC-06-3 — Q-061-4 (KNOWN RESIDUAL, tracked): a page whose provenance is
-    an http(s) URL under a VAULT-SPECIFIC key (`youtube:` 9 live pages,
-    `teachable:` 9) still derives `internal`. The trust contract is about
-    external ORIGIN, not key spelling, so this IS a defect — it is deferred by
-    MECHANISM (it needs a per-vault `external_keys:` config surface, which does
-    not belong in a fix task), NOT by defect.
+    an http(s) URL under a VAULT-SPECIFIC key still derives `internal`. The trust
+    contract is about external ORIGIN, not key spelling, so this IS a defect — it
+    is deferred by MECHANISM (it needs a per-vault `external_keys:` config
+    surface, which does not belong in a fix task), NOT by defect.
+
+    CENSUS CORRECTED (061 VDD fix-loop): the live population is **9 PAGES**, not
+    the 18 claimed by the TASK 061 spec, `policy.py` and `security.md`. Every one
+    of the 9 carries `youtube:` AND `teachable:` — "18" was two KEY-occurrence
+    counts (9 + 9) summed as if they were disjoint PAGE sets. That is the exact
+    count-the-wrong-noun bug TASK 061 exists to kill, recurring inside TASK 061's
+    own residual accounting. Of the 9, one already derives `external` via another
+    key, so **8 pages actually fail open**.
+
+    DISJOINT from the H2 fix (checked on the live DB, not assumed: none of the 9
+    carries a `sources:` array), so the shape-completion neither closes nor
+    shrinks this set.
 
     This asserts the known-WRONG state on BOTH halves, so the two stay pinned
     together even while wrong, and an invisible residual is instead a visible,
@@ -332,6 +475,52 @@ def test_blast_radius_default_output_unchanged(repo):
         '"trust corpus"', vaults=[VID], min_trust="internal"))
     assert "cap-note" not in _slugs(repo.search_pages(
         '"trust corpus"', vaults=[VID], min_trust="verified"))
+
+
+def test_live_list_shapes_flip_e2e_through_wiki_query(tmp_path):
+    """H2 (e2e) — the two LIVE shapes through the REAL CLI, authored as REAL
+    YAML frontmatter (not a hand-built dict), so the whole chain is exercised:
+    the frontmatter parser -> `frontmatter_json` -> the SQL floor -> the
+    always-on `trust` annotation.
+
+    These are transcriptions of the actual live pages: the Айва partnership note
+    (`sources:` = two external URLs) and a course summary (`sources:` = the TASK
+    023 `{id, url, file}` objects). Both derived `internal` pre-fix and passed
+    `--min-trust internal` — the filter whose ENTIRE purpose is the H-6 contract
+    ("never ground on un-reviewed captured web text")."""
+    vault, db = _seed_vault(tmp_path)
+    (vault / "_sources/aiva.md").write_text(
+        "---\ntype: summary\ntitle: Aiva\ndate: 2026-07-08\ntags: [t]\n"
+        "sources:\n  - https://aiva-pro.tech\n  - https://t.me/tm_aiva\n"
+        "---\n\nHermes trust corpus partnership.\n")
+    (vault / "_sources/course.md").write_text(
+        "---\ntype: summary\ntitle: Course\ndate: 2026-07-08\ntags: [t]\n"
+        "sources:\n  - id: 059RZHWA5Qg\n"
+        "    url: https://youtu.be/059RZHWA5Qg\n"
+        "    file: 059RZHWA5Qg.ru.txt\n"
+        "---\n\nHermes trust corpus lesson.\n")
+    # NEGATIVE control in the same vault, same shape, no URL — it must NOT flip.
+    (vault / "_sources/local-cited.md").write_text(
+        "---\ntype: summary\ntitle: Local\ndate: 2026-07-08\ntags: [t]\n"
+        "sources:\n  - _raw/local-transcript.txt\n"
+        "---\n\nHermes trust corpus local.\n")
+    repo = SQLiteRepository(db)
+    reindex_full(repo, VID)
+    repo.close()
+
+    code, env = _run(vault, db, ["prepare", "hermes trust corpus"])
+    assert code == 0
+    tiers = {h["slug"]: h["trust"] for h in env["hits"]}
+    assert tiers["aiva"] == "external"           # was `internal` pre-fix
+    assert tiers["course"] == "external"         # was `internal` pre-fix
+    assert tiers["local-cited"] == "internal"    # same shape, no URL: unchanged
+    assert tiers["plain-note"] == "internal"     # unchanged
+
+    code, env = _run(vault, db, ["prepare", "hermes trust corpus",
+                                 "--min-trust", "internal"])
+    assert code == 0
+    # the two capture-backed pages are now FLOORED; the locally-cited one stays.
+    assert {h["slug"] for h in env["hits"]} == {"plain-note", "local-cited"}
 
 
 def test_case_variant_flip_e2e_through_wiki_query(tmp_path):
