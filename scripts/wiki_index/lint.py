@@ -27,10 +27,12 @@ class LintIssue:
 class LintReport:
     """TASK 061 / R-061-2 — the issues PLUS what **each config-driven check** examined.
 
-    `wiki-lint` runs FOUR `check_*` functions; **two** are config-driven with a rule
-    POPULATION, and both gate `--strict` (the CI rail) — so both report a denominator.
-    The boundary is STATED, not merely true (a `0` from a check that examined nothing is
-    the bug this task exists to kill, and an unenumerated surface is how it recurs):
+    CHECK census — `wiki-lint` runs FOUR `check_*` functions
+    (``grep -n "^def check_" scripts/wiki_index/lint.py`` → 4); **two** are config-driven
+    with a rule POPULATION, and both gate `--strict` (the CI rail) — so both report a
+    denominator. The boundary is STATED, not merely true (a `0` from a check that examined
+    nothing is the bug this task exists to kill, and an unenumerated surface is how it
+    recurs):
 
       - ``lifecycle-drift``    ✅ — config-driven (`drift_rules`), rule population, `--strict`
       - ``ontology-violation`` ✅ — config-driven (`ontology:`), rule population, `--strict`
@@ -38,6 +40,21 @@ class LintReport:
         hence no denominator to state
       - ``classification-*``     ❌ — R-16 policy, gated on a `policy:` block that TASK 061
         §5 deliberately leaves declared-but-OFF
+
+    **SINK census (061 FIX-LOOP, vdd-multi H1) — the census the first cut FORGOT.** We
+    enumerated the four CHECKS above and never the OUTPUT SINKS, so the denominators
+    reached exactly one of the three (``grep -n "emit(\\|write_text(" scripts/wiki_skills/
+    wiki_lint.py`` → 3 sinks). ``wiki-lint --report out.md`` on the LIVE vault therefore
+    still wrote a literal ``✅ Healthy. No issues found.`` from a run in which
+    `ontology-violation` examined **0 of 8836 refs** — the task's own false green,
+    unqualified, in the HUMAN-FACING artifact, while the JSON envelope beside it told the
+    truth. All three sinks now take the REPORT:
+
+      - **stdout JSON envelope** (`wiki_lint.emit`)         ✅ ``denominators`` (bead 061-03)
+      - **`--report <path.md>`** (`render_markdown_report`)  ✅ a qualified verdict line +
+        a "what was examined" table (H1)
+      - **`--json-sidecar <path.json>`** (`render_json_sidecar`) ✅ ``denominators`` +
+        a derived ``vacuous_checks`` list (H1)
 
     ``denominators`` is keyed ``{vault_id: {check_category: payload}}`` — **per-CHECK**, so
     the ``pages_examined`` noun (drift's population = ⋃ ``drift_rules[].class``) can never
@@ -421,31 +438,125 @@ def check_classification_policy(
     return out
 
 
-def render_markdown_report(issues: list[LintIssue]) -> str:
-    """Render lint issues as a markdown report."""
+def _split(report: "LintReport | list[LintIssue]") -> tuple[
+        list[LintIssue], dict[str, dict[str, Any]] | None]:
+    """Normalize either renderer input. A bare ``list[LintIssue]`` (the pre-061
+    back-compat form) yields ``None`` — *denominators UNKNOWN* — which is deliberately
+    NOT the same as a `LintReport` carrying ``{}`` (*no config-driven check applies to
+    any of these vaults*: an honest green). Collapsing the two would re-run this task's
+    own bug one level up, in the very function written to fix it."""
+    if isinstance(report, LintReport):
+        return report.issues, report.denominators
+    return report, None
+
+
+def _denominator_rows(
+    denominators: dict[str, dict[str, Any]],
+) -> list[tuple[str, str, str, int]]:
+    """``[(vault_id, check, population, examined)]`` — one row per (check, DENOMINATOR).
+
+    DERIVED, never enumerated: a check payload is ``{<population noun>: int, …,
+    "by_rule": [...]}``, so every INT-valued key IS a population count (``by_rule`` is a
+    list and drops out). A future denominator noun (TASK 062 adds rules; a new population
+    may follow) therefore renders in both sinks with **zero renderer code** — the
+    schema-driven discipline TASK 058 set for the config UI. Hard-coding the three known
+    nouns here (`pages_examined`/`edges_examined`/`property_pages_examined`) would be
+    exactly the fractal's next recurrence: a mechanism asserting it covers a surface it
+    never enumerated."""
+    rows: list[tuple[str, str, str, int]] = []
+    for vault_id in sorted(denominators):
+        for check in sorted(denominators[vault_id]):
+            payload = denominators[vault_id][check]
+            for key in sorted(payload):
+                val = payload[key]
+                if isinstance(val, int) and not isinstance(val, bool):
+                    rows.append((vault_id, check, key, val))
+    return rows
+
+
+def render_markdown_report(report: "LintReport | list[LintIssue]") -> str:
+    """Render a lint run as a markdown report (the `--report <path.md>` sink).
+
+    TASK 061 FIX-LOOP (H1) — the unconditional ``✅ Healthy. No issues found.`` was THE
+    false green this task exists to kill, left alive in the one artifact a human actually
+    reads: on the LIVE vault it was written by a run whose `ontology-violation` check
+    examined **0 of 8836 refs**. A green is now printed ONLY when every config-driven
+    check that ran examined a NON-EMPTY population; otherwise the report says, in the same
+    breath, which population was empty. A "what was examined" table follows the issues.
+
+    Accepts a bare ``list[LintIssue]`` (pre-061 signature, byte-identical output) — but a
+    list carries NO denominators, so that form CANNOT qualify its green and prints the
+    pre-061 body verbatim. The CLI always passes the `LintReport`."""
+    issues, denominators = _split(report)
+    rows = _denominator_rows(denominators) if denominators else []
+    vacuous = [r for r in rows if r[3] == 0]
     lines = ["# Wiki Lint Report", ""]
+    if vacuous:
+        lines.append(
+            f"⚠️ **NOT a clean bill of health** — {len(vacuous)} of {len(rows)} "
+            f"config-driven check population(s) examined **nothing**:")
+        lines.append("")
+        for vault_id, check, population, _n in vacuous:
+            lines.append(
+                f"- ⚠ `{check}` examined **0** (`{population}`) in vault `{vault_id}` — "
+                f"a `0` finding count for this check carries NO information.")
+        lines.append("")
     if not issues:
-        lines.append("✅ Healthy. No issues found.")
-        return "\n".join(lines) + "\n"
-    by_cat: dict[str, list[LintIssue]] = {}
-    for i in issues:
-        by_cat.setdefault(i.category, []).append(i)
-    lines.append(f"**{len(issues)} issue(s)** across {len(by_cat)} categories.")
-    lines.append("")
-    for cat in sorted(by_cat):
-        cat_issues = by_cat[cat]
-        lines.append(f"## {cat} ({len(cat_issues)})")
-        for i in cat_issues:
-            page = f"`{i.page_slug}`" if i.page_slug else ""
-            lines.append(f"- [{i.severity}] vault={i.vault_id} {page} {i.details}")
+        lines.append("No issues found — but see the warning above: a check that examined "
+                     "nothing cannot certify health."
+                     if vacuous else "✅ Healthy. No issues found.")
+        lines.append("")
+    else:
+        by_cat: dict[str, list[LintIssue]] = {}
+        for i in issues:
+            by_cat.setdefault(i.category, []).append(i)
+        lines.append(f"**{len(issues)} issue(s)** across {len(by_cat)} categories.")
+        lines.append("")
+        for cat in sorted(by_cat):
+            cat_issues = by_cat[cat]
+            lines.append(f"## {cat} ({len(cat_issues)})")
+            for i in cat_issues:
+                page = f"`{i.page_slug}`" if i.page_slug else ""
+                lines.append(f"- [{i.severity}] vault={i.vault_id} {page} {i.details}")
+            lines.append("")
+    if rows:
+        # The denominator table — the positive half of the same honesty: what a check
+        # DID examine is as load-bearing as what it found. Absent entirely when no
+        # config-driven check applies to any vault (karpathy et al: nothing to state).
+        lines.append("## What was examined")
+        lines.append("")
+        lines.append("| vault | check | population | examined |")
+        lines.append("|---|---|---|---|")
+        for vault_id, check, population, n in rows:
+            flag = " ⚠" if n == 0 else ""
+            lines.append(f"| {vault_id} | {check} | `{population}` | {n}{flag} |")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_json_sidecar(issues: list[LintIssue]) -> str:
-    """Render lint issues as JSON array."""
+def render_json_sidecar(report: "LintReport | list[LintIssue]") -> str:
+    """Render a lint run as the `--json-sidecar <path.json>` detail artifact.
+
+    TASK 061 FIX-LOOP (H1) — **SHAPE CHANGE, stated not smuggled.** Given a `LintReport`
+    (what the CLI now passes) this emits an OBJECT:
+
+        {"issues": [<the pre-061 array, VERBATIM>],
+         "denominators": {<vault>: {<check>: {...}}},     # same payload as stdout
+         "vacuous_checks": [{"vault", "check", "population"}]}   # derived; [] = all good
+
+    The pre-061 sidecar was a BARE ARRAY, and a bare array is structurally incapable of
+    carrying a denominator — so an empty one was indistinguishable from "the checks
+    examined nothing", the same false green as the markdown sink, in a file that travels
+    ALONE (a CI artifact, read without the stdout envelope beside it). Emitting the
+    vacuity as a synthetic *issue* instead is forbidden by the spec (TASK 061: denominators
+    "never gate and never become issues" — it would desync the array's length from the
+    envelope's `total_issues`), so the wrapper object is the only honest shape.
+
+    Passing a bare ``list[LintIssue]`` still returns the pre-061 BARE ARRAY byte-for-byte
+    (library back-compat; a list has no denominators to render)."""
     import json
-    return json.dumps([
+    issues, denominators = _split(report)
+    payload = [
         {
             "category": i.category,
             "severity": i.severity,
@@ -454,4 +565,15 @@ def render_json_sidecar(issues: list[LintIssue]) -> str:
             "details": i.details,
         }
         for i in issues
-    ], ensure_ascii=False, indent=2)
+    ]
+    if denominators is None:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    rows = _denominator_rows(denominators)
+    return json.dumps({
+        "issues": payload,
+        "denominators": denominators,
+        "vacuous_checks": [
+            {"vault": vault_id, "check": check, "population": population}
+            for vault_id, check, population, n in rows if n == 0
+        ],
+    }, ensure_ascii=False, indent=2)

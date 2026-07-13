@@ -106,23 +106,40 @@ are unaffected by them.
 
 There is no `issues` key and no file paths in stdout — only counts. To **act on
 individual issues** (which file orphaned, which page drifted, which target is
-dangling) you MUST request the detail sidecar with `--json-sidecar <abs.json>`:
-its content is a **bare JSON array** (NOT wrapped in any object) of issue
-objects, each:
+dangling) you MUST request the detail sidecar with `--json-sidecar <abs.json>`.
+
+**⚠️ SHAPE CHANGE (TASK 061 fix-loop).** The sidecar was a **bare array** through TASK 060;
+it is now an **OBJECT**. A bare array is *structurally incapable* of carrying a denominator,
+so an empty one (`[]`) was indistinguishable from "the checks examined nothing" — the same
+false green the markdown report printed, in a file that travels **alone** as a CI artifact,
+without the stdout envelope beside it. The pre-061 array survives **verbatim** under `issues`:
 
 ```json
-[{"category": "orphan-link", "severity": "warning", "vault_id": "<id>",
-  "page_slug": "<slug>", "details": {"target": "<slug>", "project": "<proj>",
-  "line": 12}}]
+{"issues": [{"category": "orphan-link", "severity": "warning", "vault_id": "<id>",
+             "page_slug": "<slug>", "details": {"target": "<slug>", "project": "<proj>",
+                                                "line": 12}}],
+ "denominators": {"<vault>": {"lifecycle-drift": {"pages_examined": 0, "by_rule": []}}},
+ "vacuous_checks": [{"vault": "<id>", "check": "ontology-violation",
+                     "population": "edges_examined"}]}
 ```
 
-`--report <abs.md>` writes the same issues as a human-readable markdown report.
-Pick the surface by intent: stdout for the count/health signal (CI gate via
-`total_issues` + `--strict`), the sidecar/report for per-issue remediation.
+- **`issues`** — the pre-061 array, unchanged. Migration is one key: `data` → `data["issues"]`.
+- **`denominators`** — the same payload as the stdout envelope (above).
+- **`vacuous_checks`** — **derived**: every check population that examined **0**. `[]` means
+  every config-driven check that ran examined a real population. A **non-empty**
+  `vacuous_checks` with `"issues": []` is **NOT a clean bill of health** — it is the check
+  telling you it had nothing to look at. Read this key **before** trusting an empty `issues`.
+
+`--report <abs.md>` writes the same issues as a human-readable markdown report — and for the
+same reason it now prints `✅ Healthy. No issues found.` **only when every config-driven
+check that ran examined a non-empty population**; otherwise it names each empty population
+and appends a *"What was examined"* table. Pick the surface by intent: stdout for the
+count/health signal (CI gate via `total_issues` + `--strict`), the sidecar/report for
+per-issue remediation.
 
 > Gotcha (do not assume by analogy): unlike `wiki-search` (`hits`) /
 > `wiki-query` result envelopes, wiki-lint's stdout carries NO item list — the
-> per-issue data lives ONLY in the `--json-sidecar` array.
+> per-issue data lives ONLY in the `--json-sidecar` object's `issues` key.
 
 ## Related
 

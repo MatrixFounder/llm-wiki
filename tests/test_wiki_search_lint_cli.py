@@ -99,6 +99,10 @@ def test_lint_markdown_report(populated_repo, tmp_path):
         "--db-path", str(populated_repo.db_path),
     ])
     text = report.read_text()
+    # A karpathy vault declares NEITHER `drift_rules` NOR an `ontology:` block, so no
+    # config-driven check RAN — there is no vacuous population to disclose and the green
+    # is EARNED. (TASK 061 fix-loop / H1: the green now has to be earned; the qualified
+    # form is pinned in tests/test_lint_denominators.py.)
     assert "Healthy" in text  # clean vault
 
 
@@ -110,4 +114,11 @@ def test_lint_json_sidecar(populated_repo, tmp_path):
         "--db-path", str(populated_repo.db_path),
     ])
     data = json.loads(sidecar.read_text())
-    assert isinstance(data, list)
+    # TASK 061 fix-loop (H1) — DELIBERATE SHAPE CHANGE, stated not smuggled: the sidecar is
+    # an OBJECT, because a bare ARRAY is structurally incapable of carrying the denominators
+    # (and the sidecar travels alone as a CI artifact — an empty array there was the same
+    # false green the markdown sink printed). The pre-061 array survives VERBATIM under
+    # `issues`; `render_json_sidecar(list)` still returns the bare array for library callers.
+    assert set(data) == {"issues", "denominators", "vacuous_checks"}
+    assert isinstance(data["issues"], list)
+    assert data["vacuous_checks"] == []      # karpathy: no config-driven check even ran

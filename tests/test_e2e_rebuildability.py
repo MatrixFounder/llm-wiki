@@ -36,7 +36,11 @@ def _lint(db_path: Path, vault_id: str, sidecar_path: Path) -> list[dict]:
         ["--vault", vault_id, "--db-path", str(db_path),
          "--json-sidecar", str(sidecar_path)],
     )
-    return json.loads(sidecar_path.read_text())
+    # TASK 061 fix-loop (H1): the sidecar is an OBJECT now — a bare array is structurally
+    # incapable of carrying a denominator, and an empty one was the same false green the
+    # markdown sink printed. The pre-061 array survives VERBATIM under `issues`, which is
+    # the only key this Class-A→B rebuildability gate cares about.
+    return list(json.loads(sidecar_path.read_text())["issues"])
 
 
 def _reindex_full(db_path: Path, vault_id: str) -> dict:

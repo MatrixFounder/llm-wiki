@@ -89,7 +89,8 @@ def test_frontmatter_scan_collision(tmp_path: Path) -> None:
     import json as _json
     sidecar = tmp_path / "fm.json"
     _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
-    kinds = {e["details"]["kind"] for e in _json.loads(sidecar.read_text())
+    # TASK 061 fix-loop (H1): sidecar is an OBJECT; the pre-061 array lives under `issues`.
+    kinds = {e["details"]["kind"] for e in _json.loads(sidecar.read_text())["issues"]
              if e["category"] == "alias-collision"}
     assert "frontmatter" in kinds
 
@@ -103,7 +104,8 @@ def test_json_sidecar_parity(tmp_path: Path) -> None:
     repo.close()
     sidecar = tmp_path / "lint.json"
     _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
-    data = json.loads(sidecar.read_text())
+    # TASK 061 fix-loop (H1): sidecar is an OBJECT; the pre-061 array lives under `issues`.
+    data = json.loads(sidecar.read_text())["issues"]
     cats = {entry["category"] for entry in data}
     assert "alias-collision" in cats
     alias_entries = [e for e in data if e["category"] == "alias-collision"]
@@ -141,7 +143,8 @@ def test_frontmatter_collision_only_counts_entity_pages(tmp_path: Path) -> None:
     repo.close()
     sidecar = tmp_path / "s.json"
     _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
-    fm = [e for e in _json.loads(sidecar.read_text())
+    # TASK 061 fix-loop (H1): sidecar is an OBJECT; the pre-061 array lives under `issues`.
+    fm = [e for e in _json.loads(sidecar.read_text())["issues"]
           if e["category"] == "alias-collision" and e["details"]["kind"] == "frontmatter"]
     assert fm == [], f"a source-page alias must not trigger a frontmatter collision: {fm}"
 
@@ -153,6 +156,6 @@ def test_frontmatter_collision_only_counts_entity_pages(tmp_path: Path) -> None:
     reindex_full(repo, VAULT_ID)
     repo.close()
     _run(["--vault", VAULT_ID, "--json-sidecar", str(sidecar), "--db-path", str(db)])
-    fm = [e for e in _json.loads(sidecar.read_text())
+    fm = [e for e in _json.loads(sidecar.read_text())["issues"]
           if e["category"] == "alias-collision" and e["details"]["kind"] == "frontmatter"]
     assert any(e["details"]["alias"] == "Shared" for e in fm), "two entity pages → collision"

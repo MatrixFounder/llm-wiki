@@ -8,6 +8,18 @@ against an EMPTY population (on the LIVE vault, `ontology-violation` examined 0 
 refs — every one was a `mentioned` wikilink, not a declared edge). Denominators never
 gate and never become issues: `total_issues`, `by_category` and the exit-code policy are
 unchanged. See `lint.LintReport` for why the payload is per-CHECK-keyed.
+
+**OUTPUT-SINK census (061 FIX-LOOP / H1)** — `grep -n "emit(\\|write_text(" ` this file →
+**THREE** sinks; the first cut fed the denominators to exactly ONE of them:
+
+  1. stdout JSON envelope      (`emit`)                    — `denominators`
+  2. `--report <path.md>`      (`render_markdown_report`)  — a QUALIFIED verdict line + a
+     "what was examined" table (it used to print a bare `✅ Healthy. No issues found.`
+     from a run in which the ontology check examined 0 of 8836 refs)
+  3. `--json-sidecar <p.json>` (`render_json_sidecar`)     — `denominators` +
+     `vacuous_checks`; now an OBJECT whose `issues` key holds the pre-061 array VERBATIM
+     (a bare array is structurally incapable of carrying a denominator, and the sidecar
+     travels ALONE as a CI artifact, without the stdout envelope beside it).
 """
 
 from __future__ import annotations
@@ -53,10 +65,14 @@ def main(argv: list[str] | None = None) -> int:
         report = run_all_checks_report(repo, vaults=vaults_list, strict=args.strict,
                                        mtime_skip=args.mtime_skip)
         issues = report.issues
+        # 061 FIX-LOOP (H1): the REPORT, not the bare issue list, reaches BOTH file sinks —
+        # they used to take `issues` only, so `--report` wrote an unqualified
+        # `✅ Healthy. No issues found.` from a run whose ontology check examined 0 of 8836
+        # refs. Three sinks, three honest ones (see `LintReport`'s SINK census).
         if args.report:
-            Path(args.report).write_text(render_markdown_report(issues))
+            Path(args.report).write_text(render_markdown_report(report))
         if args.json_sidecar:
-            Path(args.json_sidecar).write_text(render_json_sidecar(issues))
+            Path(args.json_sidecar).write_text(render_json_sidecar(report))
         counts: dict[str, int] = {}
         for i in issues:
             counts[i.category] = counts.get(i.category, 0) + 1

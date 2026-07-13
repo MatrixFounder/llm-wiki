@@ -32,12 +32,20 @@ a non-zero exit and are not reports. Emitting `pages_examined: 0` there would as
 "examined nothing" where in fact nothing was ATTEMPTED — a fresh instance of the very
 confusion this task exists to kill. Boundary STATED, not merely true.
 
-`--class` semantics (behaviour UNCHANGED; stated because it scopes the denominators):
-`coverage` filters the RULES *before* the DAL call ⇒ its denominators describe the
-FILTERED run. `ontology` filters the VIOLATIONS *after* the call ⇒ its denominators
-describe the WHOLE run (what the DAL actually examined), while `violations[]` is the
-filtered view. Both are honest, and the per-rule invariant holds in both — `by_rule` is
-always the DAL's own accounting.
+`--class` semantics (stated because it scopes the denominators): `coverage` filters the
+RULES *before* the DAL call ⇒ its denominators describe the FILTERED run. `ontology`
+filters the VIOLATIONS *after* the call ⇒ its denominators describe the WHOLE run (what
+the DAL actually examined), while `violations[]` is the filtered view — the ontology
+envelope's additive `class_filter` key makes that mixed scoping machine-visible (061
+fix-loop). Both are honest, and the per-rule invariant holds in both — `by_rule` is always
+the DAL's own accounting.
+
+The two `--class` VALIDITY rosters are deliberately different (061 fix-loop / M5):
+`coverage` validates against its RULES' classes (correct by construction — it can report
+no other class), `ontology` against the layout's CLOSED type roster (`type_mapping` keys —
+the roster its own load-gate already uses). A `domain` violation's class is BY DEFINITION
+outside the edge's declared `from`, so validating ontology against the declared classes
+rejected exactly the classes the envelope had just reported in `by_class`.
 """
 
 from __future__ import annotations
@@ -100,6 +108,17 @@ NOTE_NO_ONTOLOGY = "no ontology contract configured for this layout"
 NOTE_COVERAGE_VACUOUS = (
     "coverage rules are configured, but NO page carries an authored $.type in those "
     "classes — nothing was examined (this is not a clean bill of health)"
+)
+# 061 FIX-LOOP (vdd-multi critic-logic LOW): an `ontology: {closed_types: true}` block with
+# NO `edges` and NO `properties` is SCHEMA-VALID (both default to `[]` —
+# `config/layout-config.schema.yaml` §Ontology), and it used to fall through to
+# NOTE_ONTOLOGY_VACUOUS, which blames the VAULT'S DATA ("no page carries…") when the truth
+# is "you declared no rules". Coverage already distinguishes the two precisely
+# (NOTE_NO_COVERAGE_RULES vs NOTE_COVERAGE_VACUOUS); ontology now mirrors it. Misdirecting
+# the operator about WHY a check found nothing is the same disease as not telling him at all.
+NOTE_NO_ONTOLOGY_RULES = (
+    "an ontology block is configured, but it declares NO edges and NO properties — there "
+    "are no rules to examine (this is not a clean bill of health)"
 )
 NOTE_ONTOLOGY_VACUOUS = (
     "an ontology contract is configured, but NO page_entity_refs row carries a declared "
@@ -164,9 +183,11 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
     if layout.ontology is None:
         # TASK 061: this early return is one of the module's THREE report exit paths — it
         # emits the SAME key set as the report below (all zero). A consumer must never see
-        # a key appear/disappear depending on the vault's config.
+        # a key appear/disappear depending on the vault's config (`class_filter` included —
+        # 061 fix-loop NIT; pinned by test_tc_02_3_ontology_none_early_return_same_keys).
         return emit({
             "action": "ontology", "vault": args.vault, "total_violations": 0,
+            "class_filter": args.page_class,
             "edges_examined": 0, "property_pages_examined": 0, "by_rule": [],
             "by_kind": {}, "by_class": {}, "violations": [],
             "note": NOTE_NO_ONTOLOGY,
@@ -177,10 +198,25 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
     report = repo.find_ontology_violations_report(args.vault, layout.ontology)
     violations = report.violations
     if args.page_class is not None:
-        # the offending page classes that CAN appear = edge `from`/`to` ∪ property classes.
-        classes = sorted(
-            {c for e in layout.ontology.edges for c in (*e.frm, *e.to)}
-            | {p.page_class for p in layout.ontology.properties})
+        # 061 FIX-LOOP (vdd-multi critic-logic MED / M5) — THE GATE REJECTED THE CLASSES
+        # MOST LIKELY TO OFFEND. It used to build the valid set from the DECLARED classes
+        # (⋃(edge.frm ∪ edge.to) ∪ {p.page_class}) — but a `domain` violation's `page_class`
+        # is BY DEFINITION a class NOT in that edge's `from`. TASK 061's own fixture proves
+        # it: `fact-badcauses` (`type: fact`, `causes: [[wf-target]]`) is a domain violation
+        # with `page_class="fact"`, and `fact` appears in no from/to/property list in
+        # cybos.yaml — so the CLI reported `by_class: {"fact": 1}` and then answered
+        # `--class fact` with INVALID_CLASS + exit 2, rejecting a class it had named ONE
+        # LINE EARLIER IN THE SAME ENVELOPE.
+        #
+        # The right roster is the layout's CLOSED type roster — `type_mapping`'s keys — which
+        # is ALREADY the ontology's own load-gate roster (`layout_config._validate_ontology`:
+        # every from/to/class must be a `type_mapping` key; "no second roster,
+        # derive-don't-author"). It is a strict SUPERSET of the declared classes, so no class
+        # that was accepted before is rejected now.
+        #
+        # `coverage`'s gate stays as-is and is correct BY CONSTRUCTION: it filters the RULES
+        # before the DAL call, so the only classes it can ever report are its rules' classes.
+        classes = sorted(layout.type_mapping)
         if args.page_class not in classes:
             # No echo of the offending value beyond the valid set (CWE-209 posture). An
             # ERROR envelope — no denominators (module-docstring emit-census).
@@ -195,6 +231,13 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
         "action": "ontology",
         "vault": args.vault,
         "total_violations": len(violations),
+        # 061 FIX-LOOP (NIT): the `--class` scoping is MIXED on this subcommand and now says
+        # so machine-visibly — `total_violations`/`by_kind`/`by_class`/`violations` describe
+        # the FILTERED view, while `edges_examined`/`property_pages_examined`/`by_rule`
+        # describe the WHOLE DAL run (ontology filters violations AFTER the call). `null`
+        # ⇒ unfiltered ⇒ the two scopes coincide. Coverage needs no such key: it filters the
+        # RULES before the call, so its whole envelope is one scope.
+        "class_filter": args.page_class,
         # TASK 061 — TWO denominators, because the check spans TWO populations. `by_rule`
         # binds each rule's `matched` + per-kind findings to its OWN family denominator
         # (edge rules → `edges_examined`; property rules → `property_pages_examined`).
@@ -212,7 +255,13 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
             for v in violations
         ],
     }
-    if report.edges_examined == 0 and report.property_pages_examined == 0:
+    if not layout.ontology.edges and not layout.ontology.properties:
+        # 061 FIX-LOOP (LOW): a declared-but-RULE-LESS ontology block. Distinct from the
+        # vacuous case below — and it must not be described as it, or the operator goes
+        # hunting for missing typed pages when the fix is to declare a rule. Same shape as
+        # coverage's `if not rules: … elif pages_examined == 0: …`.
+        envelope["note"] = NOTE_NO_ONTOLOGY_RULES
+    elif report.edges_examined == 0 and report.property_pages_examined == 0:
         # TASK 061 — the LIVE 8836-`mentioned`-ref trap: a contract IS declared, but NOTHING
         # it binds to exists. `total_violations: 0` here means "examined nothing".
         envelope["note"] = NOTE_ONTOLOGY_VACUOUS

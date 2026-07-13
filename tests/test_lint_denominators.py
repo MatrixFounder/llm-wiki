@@ -250,6 +250,196 @@ def test_tc_03_7_benchmark_still_imports() -> None:
 
 # --- the CLI envelope: additive, non-gating ---------------------------------
 
+def test_h1_sink_census_is_complete(tmp_path: Path) -> None:
+    """THE CENSUS THE FIRST CUT FORGOT — grepped, not believed. `wiki-lint` has THREE
+    output sinks; TASK 061 fed the denominators to exactly one of them, so `--report`
+    kept writing `✅ Healthy. No issues found.` from a run that examined nothing.
+
+    This pins the census itself: if a FOURTH sink is ever added to `wiki_lint.main`, this
+    test fails and forces the author to decide whether it, too, must carry the
+    denominators — rather than letting the next false green ship silently."""
+    src = Path("scripts/wiki_skills/wiki_lint.py").read_text(encoding="utf-8")
+    sinks = [ln.strip() for ln in src.splitlines()
+             if ".write_text(" in ln or ln.strip().startswith("return emit(")]
+    assert len(sinks) == 3, sinks       # stdout envelope · --report · --json-sidecar
+    # ...and all three are fed the REPORT (or its `.denominators`), never the bare list.
+    assert "render_markdown_report(report)" in src
+    assert "render_json_sidecar(report)" in src
+    assert '"denominators": report.denominators' in src
+
+
+def test_h1_the_sidecar_READER_contract_is_not_stale() -> None:
+    """THE CENSUS THE H1 FIX ITSELF FORGOT — the fractal, one turn deeper.
+
+    H1 censused the three output SINKS and changed the sidecar's SHAPE (array → object),
+    but never censused the sidecar's **READERS**. `grep -rn "json_sidecar"` found five:
+    two test modules, and — the one that matters — `skills/wiki-lint/SKILL.md`, which told
+    every orchestrator the sidecar is "a **bare JSON array** (NOT wrapped in any object)".
+    An agent following that doc would `json.loads(...)` and iterate a dict's KEYS. The code
+    was honest and the CONTRACT was a lie: exactly this task's disease (a mechanism
+    asserting it covers a surface it never enumerated), relocated from the numbers to the
+    docs. Enumerating a shape's sinks is not enumerating its readers.
+
+    Pins the LLM-facing contract against re-drift, since it is the surface no test would
+    otherwise touch and no type-checker can see."""
+    skill = Path("skills/wiki-lint/SKILL.md").read_text(encoding="utf-8")
+    # the stale claim, dead — in any spacing/emphasis (it read: "a **bare JSON array**").
+    assert "bare JSON array" not in skill
+    assert "ONLY in the `--json-sidecar` array" not in skill
+    # ...and the three keys an orchestrator must now parse are all DOCUMENTED, by name.
+    for key in ("issues", "denominators", "vacuous_checks"):
+        assert f"`{key}`" in skill or f'"{key}"' in skill, key
+    # the migration is stated (one key), not left for the reader to discover at runtime.
+    assert 'data["issues"]' in skill
+
+
+def test_h1_markdown_report_qualifies_a_vacuous_green(tmp_path: Path, capsys) -> None:
+    """H1 — the literal false green, in the HUMAN-FACING artifact. On the LIVE vault
+    `wiki-lint --report out.md` wrote `# Wiki Lint Report` + `✅ Healthy. No issues found.`
+    from a run whose `ontology-violation` check examined **0 of 8836 refs**. The markdown
+    sink took `issues` only, so it could not have known better."""
+    files = {f"facts/_concepts/c{i}.md":
+             f"---\ntype: concept\ntitle: C{i}\n---\nSee [[c{(i + 1) % 5}]].\n"
+             for i in range(5)}
+    repo, _root = build_cybos_vault(tmp_path, files, vault_id="vacuousmd")
+    # ANTI-VACUITY GUARD (an earlier bead shipped a vacuity test that was itself vacuous,
+    # asserting over an EMPTY table): the pages ARE indexed, and lint finds ZERO issues —
+    # so the pre-fix report really would have said "Healthy".
+    assert repo._connect().execute(
+        "SELECT COUNT(*) FROM pages WHERE vault_id='vacuousmd'").fetchone()[0] == 5
+    assert run_all_checks(repo, vaults=["vacuousmd"]) == []
+    repo.close()
+
+    out = tmp_path / "report.md"
+    rc, _env = _run_lint(capsys, ["--vault", "vacuousmd", "--report", str(out),
+                                  "--db-path", str(tmp_path / "vacuousmd.db")])
+    text = out.read_text()
+    assert rc == 0                                   # advisory, as ever — no gating change
+    assert "✅ Healthy" not in text                   # THE false green, killed at the source
+    assert "NOT a clean bill of health" in text
+    # every zero-denominator population is NAMED (3 of them: drift pages, ontology edges,
+    # ontology property pages) — not a vague "some checks were inert".
+    for population in ("pages_examined", "edges_examined", "property_pages_examined"):
+        assert f"`{population}`" in text
+    assert "ontology-violation" in text and "lifecycle-drift" in text
+    assert "## What was examined" in text            # the positive half of the same honesty
+
+
+def test_h1_markdown_healthy_only_when_something_was_examined(tmp_path: Path, capsys) -> None:
+    """The green must survive where it is EARNED — otherwise the fix is just a new
+    dishonesty (crying wolf on a real clean bill of health). A cybos vault with typed
+    pages, a real declared edge, in-enum statuses and no lint issues: every denominator is
+    NON-zero, so `✅ Healthy` is printed — and the table states what backs it."""
+    repo, _root = build_cybos_vault(tmp_path, {
+        "decisions/d-new.md":
+            "---\ntype: decision\ntitle: D New\nstatus: accepted\n---\nbody\n",
+        "decisions/d-old.md":
+            "---\ntype: decision\ntitle: D Old\nstatus: superseded\n"
+            "superseded_by: [[d-new]]\n---\nbody\n",
+    }, vault_id="cleanv")
+    assert run_all_checks(repo, vaults=["cleanv"]) == []      # a genuinely clean vault
+    repo.close()
+
+    out = tmp_path / "clean.md"
+    _rc, env = _run_lint(capsys, ["--vault", "cleanv", "--report", str(out),
+                                  "--db-path", str(tmp_path / "cleanv.db")])
+    denoms = env["denominators"]["cleanv"]
+    # the guard: this vault really did examine things (else the assertion below is vacuous)
+    assert denoms["lifecycle-drift"]["pages_examined"] == 2
+    assert denoms["ontology-violation"]["edges_examined"] == 1      # the derived `supersedes`
+    assert denoms["ontology-violation"]["property_pages_examined"] == 2
+    text = out.read_text()
+    assert "✅ Healthy. No issues found." in text
+    assert "NOT a clean bill of health" not in text
+    assert "| cleanv | ontology-violation | `edges_examined` | 1 |" in text
+
+
+def test_h1_json_sidecar_carries_the_denominators(tmp_path: Path, capsys) -> None:
+    """The sidecar travels ALONE (a CI artifact, read without the stdout envelope beside
+    it), so a bare `[]` there is the same false green. SHAPE CHANGE, stated: the sidecar is
+    now an OBJECT whose `issues` key holds the pre-061 array VERBATIM — a bare array is
+    structurally incapable of carrying a denominator, and emitting the vacuity as a
+    synthetic ISSUE is forbidden by the spec (denominators "never become issues")."""
+    repo, _root = build_health_vault(tmp_path)
+    repo.close()
+    side = tmp_path / "issues.json"
+    _rc, env = _run_lint(capsys, ["--vault", "hvault", "--json-sidecar", str(side),
+                                  "--db-path", str(tmp_path / "h.db")])
+    data = json.loads(side.read_text())
+    assert set(data) == {"issues", "denominators", "vacuous_checks"}
+    # `issues` IS the pre-061 array, byte-for-byte — the back-compat (list-taking) form of
+    # the SAME renderer is the oracle.
+    from scripts.wiki_index.lint import render_json_sidecar
+    repo2 = SQLiteRepository(tmp_path / "h.db")
+    legacy = render_json_sidecar(run_all_checks(repo2, vaults=["hvault"]))
+    repo2.close()
+    assert data["issues"] == json.loads(legacy)           # bare list in ⇒ bare array out
+    assert len(data["issues"]) == env["total_issues"] > 0
+    assert data["denominators"] == env["denominators"]    # same payload as the stdout envelope
+    assert data["vacuous_checks"] == []          # this vault examined a real population
+
+
+def test_h1_json_sidecar_vacuous_checks_are_machine_visible(tmp_path: Path, capsys) -> None:
+    repo, _root = build_cybos_vault(tmp_path, {
+        "facts/_concepts/c.md": "---\ntype: concept\ntitle: C\n---\nb\n",
+    }, vault_id="vacuousjs")
+    assert run_all_checks(repo, vaults=["vacuousjs"]) == []    # zero issues → `[]` pre-fix
+    repo.close()
+    side = tmp_path / "s.json"
+    _run_lint(capsys, ["--vault", "vacuousjs", "--json-sidecar", str(side),
+                       "--db-path", str(tmp_path / "vacuousjs.db")])
+    data = json.loads(side.read_text())
+    assert data["issues"] == []                  # ...and `[]` is ALL the pre-061 file said
+    assert {(v["check"], v["population"]) for v in data["vacuous_checks"]} == {
+        ("lifecycle-drift", "pages_examined"),
+        ("ontology-violation", "edges_examined"),
+        ("ontology-violation", "property_pages_examined"),
+    }
+    assert all(v["vault"] == "vacuousjs" for v in data["vacuous_checks"])
+
+
+def test_h1_renderers_keep_the_pre_061_list_signature(tmp_path: Path) -> None:
+    """Back-compat: a bare `list[LintIssue]` still renders the pre-061 body byte-for-byte
+    (markdown) / the pre-061 BARE ARRAY (sidecar). A list carries no denominators, so that
+    form cannot qualify its green — and that boundary is STATED in both docstrings rather
+    than being silently true."""
+    from scripts.wiki_index.lint import render_json_sidecar, render_markdown_report
+    issue = LintIssue(category="orphan-link", severity="warning", vault_id="v",
+                      page_slug="p", details={"target": "t"})
+    assert render_markdown_report([]) == "# Wiki Lint Report\n\n✅ Healthy. No issues found.\n"
+    assert json.loads(render_json_sidecar([])) == []            # a bare ARRAY, not an object
+    md = render_markdown_report([issue])
+    assert "**1 issue(s)** across 1 categories." in md and "## orphan-link (1)" in md
+    assert json.loads(render_json_sidecar([issue])) == [
+        {"category": "orphan-link", "severity": "warning", "vault_id": "v",
+         "page_slug": "p", "details": {"target": "t"}}]
+
+
+def test_h1_denominator_rows_are_derived_not_enumerated(tmp_path: Path) -> None:
+    """The renderer must NOT hard-code the three known denominator nouns: TASK 062 adds
+    rules and may add a population, and a renderer that enumerates its nouns is this task's
+    fractal, one surface over. `_denominator_rows` derives them (every int-valued key in a
+    check payload IS a population), so a NEW noun renders with zero renderer code."""
+    from scripts.wiki_index.lint import (
+        LintReport,
+        _denominator_rows,
+        render_json_sidecar,
+        render_markdown_report,
+    )
+    denoms: dict = {"v": {"future-check": {
+        "brand_new_noun_examined": 0, "another_noun": 7, "by_rule": [{"matched": 1}]}}}
+    assert _denominator_rows(denoms) == [        # `by_rule` (a list) drops out; ints are rows
+        ("v", "future-check", "another_noun", 7),
+        ("v", "future-check", "brand_new_noun_examined", 0)]
+    # ...and BOTH sinks render the never-before-seen noun with zero renderer code:
+    md = render_markdown_report(LintReport(issues=[], denominators=denoms))
+    assert "`brand_new_noun_examined`" in md and "NOT a clean bill of health" in md
+    assert "| v | future-check | `another_noun` | 7 |" in md
+    side = json.loads(render_json_sidecar(LintReport(issues=[], denominators=denoms)))
+    assert side["vacuous_checks"] == [
+        {"vault": "v", "check": "future-check", "population": "brand_new_noun_examined"}]
+
+
 def test_lint_envelope_additive_and_non_gating(tmp_path: Path, capsys) -> None:
     repo, _root = build_health_vault(tmp_path)
     repo.close()

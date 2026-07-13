@@ -289,3 +289,112 @@ def test_tc_02_5_class_filter_invariant_and_invalid_class(tmp_path: Path, capsys
                                 "--db-path", db])
         assert rc == 2 and err["error"] == "INVALID_CLASS"
         assert "pages_examined" not in err and "edges_examined" not in err
+
+
+# =============================================================================
+# 061 FIX-LOOP (vdd-multi) — M5 (the --class gate) + the two LOWs
+# =============================================================================
+
+_M5_FILES = {
+    # The SAME fixture that proves the bug: `fact` ∉ `causes.from` in cybos.yaml, so this
+    # page IS a `domain` violation — and its `page_class` is, BY DEFINITION, a class the
+    # declared from/to/property lists do not contain.
+    "facts/fact-badcauses.md":
+        "---\ntype: fact\ntitle: Fact BadCauses\nsource: \"x\"\ncauses: [[wf-target]]\n---\nb\n",
+    "workflows/wf-target.md":
+        "---\ntype: workflow\ntitle: WF Target\nstatus: active\n---\nb\n",
+}
+
+
+def test_m5_class_filter_accepts_the_class_the_envelope_just_reported(
+        tmp_path: Path, capsys) -> None:
+    """M5 — the gate REJECTED THE CLASSES MOST LIKELY TO OFFEND. The valid set was built
+    from the DECLARED classes (⋃ edge.from ∪ edge.to ∪ property classes), but a `domain`
+    violation's class is by definition NOT in that edge's `from`. So the CLI printed
+    `by_class: {"fact": 1}` and then answered `--class fact` with INVALID_CLASS + exit 2 —
+    rejecting a class it had named ONE LINE EARLIER, IN THE SAME ENVELOPE."""
+    repo, _root = build_cybos_vault(tmp_path, _M5_FILES, vault_id="m5v")
+    repo.close()
+    db = str(tmp_path / "m5v.db")
+
+    rc, env = _run(capsys, ["ontology", "--vault", "m5v", "--db-path", db])
+    assert rc == 0
+    # ONE ref row, TWO violations (P-061-A: `fact` ∉ causes.from → domain; `workflow` ∉
+    # causes.to → range) — both carry `page_class: fact`, the class the old gate rejected.
+    assert env["by_class"] == {"fact": 2}            # the CLI names `fact` itself...
+    assert env["by_kind"] == {"domain": 1, "range": 1}
+    assert env["class_filter"] is None
+    # ...and `fact` really is undeclarable-by-the-old-roster: it appears in NO from/to/
+    # property list of cybos.yaml (grepped via the config, not believed).
+    cfg = resolve_layout_config(_root)
+    assert cfg.ontology is not None
+    declared = ({c for e in cfg.ontology.edges for c in (*e.frm, *e.to)}
+                | {p.page_class for p in cfg.ontology.properties})
+    assert "fact" not in declared                   # the OLD roster would have rejected it
+    assert "fact" in cfg.type_mapping               # the NEW roster (the load-gate's own)
+
+    rc, filtered = _run(capsys, ["ontology", "--vault", "m5v", "--class", "fact",
+                                 "--db-path", db])
+    assert rc == 0                                   # NOT exit 2 any more
+    assert filtered["class_filter"] == "fact"
+    assert filtered["total_violations"] == 2
+    assert {v["slug"] for v in filtered["violations"]} == {"fact-badcauses"}
+    # the denominators still describe the WHOLE DAL run (the filter is post-hoc) — which is
+    # exactly why `class_filter` is in the envelope (fix-loop NIT).
+    assert filtered["edges_examined"] == env["edges_examined"] > 0
+    _assert_ontology_invariant(filtered)
+
+
+def test_m5_a_real_typo_is_still_rejected(tmp_path: Path, capsys) -> None:
+    """The gate is WIDENED to the layout's CLOSED type roster, not removed: a class that is
+    not a `type_mapping` key at all is still INVALID_CLASS + exit 2, still with no echo of
+    the offending value (CWE-209)."""
+    repo, _root = build_cybos_vault(tmp_path, _M5_FILES, vault_id="m5typo")
+    repo.close()
+    rc, err = _run(capsys, ["ontology", "--vault", "m5typo", "--class", "bogus' OR 1=1--",
+                            "--db-path", str(tmp_path / "m5typo.db")])
+    assert rc == 2 and err["error"] == "INVALID_CLASS"
+    assert "bogus" not in json.dumps(err)
+    # the advertised roster IS the type_mapping roster — a strict SUPERSET of the old one,
+    # so nothing that validated before is rejected now.
+    cfg = resolve_layout_config(_root)
+    assert cfg.ontology is not None
+    declared = ({c for e in cfg.ontology.edges for c in (*e.frm, *e.to)}
+                | {p.page_class for p in cfg.ontology.properties})
+    assert set(err["valid"]) == set(cfg.type_mapping) > declared
+
+
+def test_low_declared_but_ruleless_ontology_blames_the_config_not_the_data(
+        tmp_path: Path, capsys) -> None:
+    """LOW — an `ontology: {closed_types: true}` block with NO edges and NO properties is
+    SCHEMA-VALID (both default to `[]`). It used to emit NOTE_ONTOLOGY_VACUOUS, which
+    blames the VAULT'S DATA ("no page carries an authored $.type…") when the truth is "you
+    declared no rules" — sending the operator to author typed pages that would still be
+    examined by nothing. Coverage distinguishes the two precisely; ontology now mirrors it.
+
+    Built END-TO-END through a real `.wiki/layout.yaml` override (edges/properties REPLACE
+    as whole lists), not by hand-patching a dataclass — the schema-validity claim is the
+    whole point of the finding, so the test must exercise the schema."""
+    repo, root = build_cybos_vault(tmp_path, {
+        "decisions/d1.md": "---\ntype: decision\ntitle: D1\nstatus: accepted\n---\nb\n",
+    }, vault_id="ruleless")
+    (root / ".wiki").mkdir(parents=True, exist_ok=True)
+    (root / ".wiki" / "layout.yaml").write_text(
+        "ontology:\n  closed_types: true\n  edges: []\n  properties: []\n",
+        encoding="utf-8")
+    repo.close()
+
+    cfg = resolve_layout_config(root)
+    assert cfg.ontology is not None                       # the block IS declared...
+    assert cfg.ontology.edges == () and cfg.ontology.properties == ()   # ...and rule-less
+
+    rc, env = _run(capsys, ["ontology", "--vault", "ruleless",
+                            "--db-path", str(tmp_path / "ruleless.db")])
+    assert rc == 0
+    assert env["total_violations"] == 0 and env["by_rule"] == []
+    assert env["note"] == (
+        "an ontology block is configured, but it declares NO edges and NO properties — "
+        "there are no rules to examine (this is not a clean bill of health)")
+    # the three notes stay three DISTINCT statements — "no block" ≠ "no rules" ≠ "no data"
+    assert "NO page carries" not in env["note"]
+    assert env["note"] != "no ontology contract configured for this layout"
