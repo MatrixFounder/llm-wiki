@@ -31,7 +31,8 @@ wiki-health ontology --vault <id> [--class decision]
 ```
 
 Every invocation prints a one-line JSON envelope. **coverage**: `{action, vault, rules,
-total_gaps, pages_examined, by_rule, by_class, gaps:[{slug, project, class, kind,
+total_gaps, pages_examined, by_rule, by_class, vacuous_populations, vacuous_kinds,
+gaps:[{slug, project, class, kind,
 missing}]}`. **ontology**: `{action, vault, total_violations, edges_examined,
 property_pages_examined, by_rule, by_kind, by_class, vacuous_populations, vacuous_kinds,
 violations:[{slug, project, class, kind, ref, detail, target}]}` where

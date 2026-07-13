@@ -471,3 +471,51 @@ def test_m2_wiki_health_and_wiki_lint_agree_on_the_same_two_denominators(
                     if v["check"] == "ontology-violation"}
     assert lint_vacuous == {"edges_examined"}            # wiki-lint says: edges examined 0
     assert set(env["vacuous_populations"]) == lint_vacuous   # ...and wiki-health now agrees
+
+
+def test_m3_BOTH_subcommands_carry_the_vacuity_KEYS_the_contract_promises(
+        tmp_path: Path, capsys) -> None:
+    """THE SURFACE CENSUS FOR THIS FIX'S OWN NEW KEYS — the step M-3 says the last loop
+    skipped, applied here to the keys THIS loop added.
+
+    M-2 put `vacuous_populations` / `vacuous_kinds` on the ONTOLOGY envelope, and the
+    LLM-facing contract then told orchestrators that **`total_gaps: 0`** — a *coverage* key
+    — is a clean bill of health only when both lists are empty. Coverage emitted NEITHER. A
+    reader doing `env.get("vacuous_kinds", [])` gets `[]` and reads the green anyway: a
+    contract promising a surface the code does not cover, authored inside the fix for
+    exactly that disease. Caught by grepping this fix's own surfaces, not by reasoning.
+
+    Every report exit path of BOTH subcommands must carry both keys — the `note` is derived
+    from them, and a key that appears only on some vaults is a KeyError waiting for the
+    orchestrator that trusted the doc."""
+    db = _db(tmp_path)                       # a typed vault: rules ran on a real population
+    untyped = _untyped_db(tmp_path)          # rules configured, population EMPTY
+    root = tmp_path / "kvault"               # karpathy: no rules / no ontology block at all
+    root.mkdir()
+    repo = SQLiteRepository(tmp_path / "kvault.db")
+    repo.apply_schema()
+    repo.register_vault(Vault(vault_id="kvault", name="kvault", root_path=root,
+                              schema_version="2.0", registered_at=datetime(2026, 6, 16)))
+    repo.close()
+    kdb = str(tmp_path / "kvault.db")
+
+    for sub, vault, db_path in (
+            ("coverage", "hvault", db), ("ontology", "hvault", db),
+            ("coverage", "vacuous", untyped), ("ontology", "vacuous", untyped),
+            ("coverage", "kvault", kdb), ("ontology", "kvault", kdb)):
+        _rc, env = _run(capsys, [sub, "--vault", vault, "--db-path", db_path])
+        assert "vacuous_populations" in env, f"{sub}/{vault}: the contract's key is MISSING"
+        assert "vacuous_kinds" in env, f"{sub}/{vault}: the contract's key is MISSING"
+        assert isinstance(env["vacuous_populations"], list)
+        assert isinstance(env["vacuous_kinds"], list)
+        # ...and the contract's own rule is CHECKABLE from the envelope alone.
+        total = env.get("total_gaps", env.get("total_violations"))
+        if total == 0 and not env["vacuous_populations"] and not env["vacuous_kinds"]:
+            assert "note" not in env         # an unqualified green ⇒ nothing was vacuous
+
+    # the typed vault examined real populations on BOTH subcommands ⇒ genuinely green
+    _rc, cov = _run(capsys, ["coverage", "--vault", "hvault", "--db-path", db])
+    assert cov["vacuous_populations"] == [] and cov["vacuous_kinds"] == []
+    # ...while the untyped one is vacuous on BOTH, and says so on BOTH.
+    _rc, cov_v = _run(capsys, ["coverage", "--vault", "vacuous", "--db-path", untyped])
+    assert cov_v["vacuous_populations"] == ["pages_examined"] and "note" in cov_v

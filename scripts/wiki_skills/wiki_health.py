@@ -209,6 +209,20 @@ def _run_coverage(repo: Any, args: argparse.Namespace, layout: Any) -> int:
             for g in gaps
         ],
     }
+    # 061 FIX-LOOP iteration-2 — THE SAME MISS, CAUGHT IN THIS FIX'S OWN GREP. M-2 added the
+    # two vacuity keys to the ONTOLOGY envelope and the LLM-facing contract then told an
+    # orchestrator that `total_gaps: 0` (a COVERAGE key) is a green only when
+    # `vacuous_populations == [] and vacuous_kinds == []` — keys COVERAGE DID NOT EMIT. A
+    # reader doing `env.get("vacuous_kinds", [])` gets `[]` and reads the green anyway: a
+    # contract promising a surface the code does not cover, which is this task's disease
+    # verbatim, authored INSIDE the fix for it. Both subcommands now carry both keys.
+    #
+    # Coverage cannot be hidden-vacuous today (its `matched_by_kind` is `{"gaps": matched}`
+    # by construction, so a kind's judgeable population equals `matched` and cannot lie) —
+    # but the key is emitted anyway, DERIVED not asserted, so a consumer reads ONE contract
+    # across both subcommands and a future coverage rule that splits its denominator is
+    # covered with zero edits here.
+    _add_vacuity_keys(envelope)
     if not rules:
         # vdd-multi critic-logic LOW: a layout with NO coverage rules (a non-cybos
         # vault, or a cybos vault whose root_path moved → resolve defaults to karpathy)
