@@ -915,9 +915,10 @@ def _assert_def_matches_dataclass(
         assert _ref_target(child) == child_def
         child_props = _def_props(defs, child_def)
         for grandchild in child_props.values():
-            assert _ref_target(grandchild) is None, (
-                f"$defs/{child_def} nests an object, but the declared flattening "
-                f"expands exactly ONE scalar level into `{cls.__name__}`")
+            assert _ref_target(grandchild) is None and "properties" not in grandchild, (
+                f"$defs/{child_def} nests an object (by `$ref` OR inline — L-2), but the "
+                f"declared flattening expands exactly ONE scalar level into "
+                f"`{cls.__name__}`")
         visited.add(child_def)
         expected |= {f"{prefix}{p}" for p in child_props}
 
@@ -932,6 +933,29 @@ def _assert_def_matches_dataclass(
         f"{sorted(actual - expected)}")
 
     for prop, child in props.items():
+        # L-2 (061 FIX-LOOP iteration-2) — THE M6 OVER-PROMISE, ONE INLINE OBJECT AWAY.
+        # This gate follows object nodes ONLY via `$ref` (`_ref_target`), but
+        # `_uimodel._walk` recurses into INLINE `properties:` too — it calls `_resolve_ref`
+        # and then reads `node["properties"]` whichever way the node got there. So a future
+        # top-level key declared inline:
+        #
+        #     foo: {type: object, properties: {bar: {type: string}}}
+        #
+        # reads as a SCALAR here (no `$ref` ⇒ `is_object` False) and PASSES the gate against
+        # any scalar dataclass field named `foo` — while `_walk` mints a FieldSpec for
+        # `/foo/bar`, `wiki-config show` displays it with an origin and an `effective` value,
+        # and NO parser consumes it. That is verbatim the M6 finding, resurrected through the
+        # one door M6's own gate does not watch. Verified, not assumed:
+        # `build_ui_model({"$defs": {"SyncConfig": {"properties": {"foo": <inline>}}}})`
+        # returns pointers `['/foo', '/foo/bar']`.
+        #
+        # So: an object reaches the UI model ONLY through a `$ref`, and a `$ref` is what this
+        # gate follows. The two walks now traverse the SAME edges by construction.
+        assert "properties" not in child, (
+            f"$defs/{def_name}.{prop} declares an INLINE object. `_uimodel._walk` recurses "
+            f"into it and mints a FieldSpec per leaf, but this gate only follows `$ref` — "
+            f"so its keys would be schema-only (shown as `effective`, discarded by the "
+            f"parser) with NO test failing. Extract it to `$defs/<X>` and `$ref` it.")
         if (def_name, prop) in _FLATTENED:
             continue
         target = _ref_target(child)
@@ -993,3 +1017,42 @@ def test_sync_schema_and_dataclasses_can_never_drift() -> None:
         assert _nested_dataclass(hints[block]) is not None, (
             f"parsed block `{block}` has no dataclass — the overlay would have "
             f"nothing to overlay, and every key in it would be schema-only")
+
+
+def test_l2_the_gate_CATCHES_an_inline_object_the_ref_walk_would_miss() -> None:
+    """L-2 (061 FIX-LOOP iteration-2) — the gate that gates nothing is this task's disease.
+
+    `test_sync_schema_and_dataclasses_can_never_drift` proves the SHIPPED schema is clean.
+    It cannot prove the GATE would catch the drift — and M6's gate followed object nodes
+    ONLY via `$ref`, while `_uimodel._walk` recurses into INLINE `properties:` as well. An
+    inline object therefore reads as a "scalar" to the gate and PASSES against any scalar
+    dataclass field of the same name, while the UI model mints a FieldSpec per leaf that no
+    parser consumes: the M6 over-promise, resurrected through the door M6 did not watch.
+
+    This fabricates that exact drift in a PATCHED schema copy and asserts the gate REFUSES
+    it. Mutation bar: drop the `"properties" not in child` assertion and this test fails."""
+    doc = copy.deepcopy(load_sync_schema_doc())
+    defs = doc["$defs"]
+    # THE SHAPE THE OLD GATE IS BLIND TO — chosen by mutation, not by eye. `tag_namespace`
+    # is a real SyncConfig field annotated `str` (a SCALAR). Redeclare its schema node as an
+    # INLINE object and every pre-L-2 check still AGREES:
+    #   * the name sets match (the prop is still called `tag_namespace`);
+    #   * `_ref_target` → None  ⇒ `is_object` False  ⇒ "schema says scalar";
+    #   * `_nested_dataclass(str)` → None ⇒ "dataclass says scalar";
+    #   * False == False ⇒ PASS.
+    # Fabricating this on `summarize` instead would NOT prove the hole — that prop's field
+    # IS a dataclass, so the object/scalar mismatch catches it by a different route and the
+    # test would pass for the wrong reason. (Established by running the mutation: with the
+    # inline-object assertion removed, the `summarize` form still raised — the `tag_namespace`
+    # form does not.)
+    defs["SyncConfig"]["properties"]["tag_namespace"] = {
+        "type": "object", "properties": {"prefix": {"type": "string"}}}
+
+    # The UI walk happily descends the inline node — the FieldSpec no parser will ever
+    # consume is REAL, not hypothetical. `wiki-config show` would display
+    # `/tag_namespace/prefix` with an origin and an `effective` value that `_parse_*`
+    # discards: verbatim the M6 over-promise.
+    assert "/tag_namespace/prefix" in build_ui_model(doc)
+
+    with pytest.raises(AssertionError, match="INLINE object"):
+        _assert_def_matches_dataclass(defs, "SyncConfig", SyncConfig, set())
