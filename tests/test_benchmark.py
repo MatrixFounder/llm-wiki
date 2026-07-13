@@ -20,6 +20,16 @@ codes:
     executed SQL via a trace callback), not merely passed as an argument;
   - `test_unit_08` pins the fail-CLOSED wiring: a vacuous run returns False even with
     `enforce_slos=False`.
+
+TASK 061 ITERATION-2 (perf MED-1 + LOW) — the bench's own CLAIMS, kept honest:
+
+  - `test_unit_10` pins the two structural tests the `SLOS` comment names as the ACTUAL
+    M1/M2 regression detectors (the buckets are 4-6× absolute-latency guards; the
+    regressions are 1.07× and ~1.75× — the comment used to claim otherwise). Delete
+    either detector "as redundant with the perf gate" and this turns red;
+  - `test_unit_11` pins that the fat-provenance fixture makes the O(members) walk run to
+    the END — an external member at index 0 would short-circuit `EXISTS` and the fat op
+    would time a 1-member walk under a 10 000-member name.
 """
 
 from __future__ import annotations
@@ -33,11 +43,14 @@ from pathlib import Path
 import pytest
 
 from scripts.benchmark import (
+    _BENCH_FAT_MEMBERS,
+    _BENCH_FAT_PAGES,
     _TYPED_CORE,
     _VACUITY_COUNTERS,
     generate_synthetic_vault,
     generate_typed_vault,
     measure,
+    plant_fat_provenance,
     run_multivault_scaling,
     run_suite,
 )
@@ -261,6 +274,109 @@ def test_unit_09_every_denominator_query_is_timed_by_some_op():
         assert op in SLOS, f"{method} is timed by {op}, which has no SLO bucket"
 
 
+def test_unit_10_the_named_regression_detectors_exist():
+    """THE BENCH'S CLAIM ABOUT ITS OWN LIMITS, KEPT HONEST (TASK 061 iteration-2, MED-1).
+
+    The `SLOS` comment used to claim the buckets "CATCH" the M1/M2 regressions. The
+    arithmetic against the numbers printed five lines above it says otherwise: reverting
+    M2 costs ~7% MEASURED (SQLite ≥3.42 caches the per-connection JSON parse, so 12
+    `json_extract` calls on the same blob in the same row are 1 parse + 11 path walks —
+    the iteration-1 estimate was wrong by ~15×) and reverting M1 costs ~1.75-1.9× in
+    STATEMENT COUNT, both far inside a 4-6× bucket. Nobody was hurt — but the next
+    engineer reads that comment, believes the bench guards these paths, and deletes a
+    structural test as "redundant with the perf gate". Then BOTH are gone.
+
+    So the comment now names the two tests that ARE the detectors, and this test makes
+    those names load-bearing: rename or delete either and the reference dangles LOUDLY
+    instead of decaying into a lie. (A prose cross-reference nobody checks is exactly
+    the failure mode this task keeps re-finding — a claim of coverage that enumerates
+    nothing.)
+    """
+    import re
+
+    src = (Path(__file__).parent.parent / "scripts" / "benchmark.py").read_text(
+        encoding="utf-8")
+    referenced = set(re.findall(r"(tests/[\w/]+\.py)::(\w+)", src))
+    assert referenced, (
+        "scripts/benchmark.py no longer NAMES the structural tests that actually catch "
+        "the M1/M2 regressions — the SLO buckets do not (4-6× headroom vs a 1.07× / "
+        "1.75× regression). Re-state the boundary; do not silently drop it.")
+
+    # The two the SLO comment's boundary statement depends on. Pinned by NAME so that
+    # deleting the sentence is as red as deleting the test.
+    must_name = {
+        ("tests/test_health_denominators.py", "test_m1_statement_census_no_n_plus_one"),
+        ("tests/test_trust_tier.py",
+         "test_external_origin_sql_parses_the_blob_exactly_once"),
+    }
+    assert must_name <= referenced, must_name - referenced
+
+    # …and every reference RESOLVES: the file exists and defines that test.
+    root = Path(__file__).parent.parent
+    for rel, name in sorted(referenced):
+        path = root / rel
+        assert path.is_file(), f"benchmark.py names a test file that does not exist: {rel}"
+        body = path.read_text(encoding="utf-8")
+        assert f"def {name}(" in body, (
+            f"{rel}::{name} is named by scripts/benchmark.py as a REGRESSION DETECTOR "
+            "the SLO buckets cannot replace, and it no longer exists. If it was "
+            "deleted as redundant with the perf gate: it was not. Restore it, or "
+            "restate what now guards that path.")
+
+
+def test_unit_11_the_fat_provenance_walk_does_not_short_circuit(tmp_path):
+    """The `wiki-search-metadata-trust-fat` op must time a FULL O(members) walk.
+
+    H2 made the predicate walk INSIDE a list-valued provenance key — O(members) on such
+    a row, where the pre-H2 form was O(1) *because it never looked inside* (the bug).
+    Nothing benched it: the only list shape in the fixture had ONE member.
+
+    `EXISTS` short-circuits on the FIRST external member, so a fixture with an
+    http-looking member at index 0 would make a 10 000-member array cost exactly what a
+    1-member one costs and the op would measure NOTHING. The proof that it does not is
+    the row SURVIVING the `internal` floor: that can only happen after all members are
+    walked and none is external.
+
+    Anti-vacuity guard (the fixture must BE the state it claims): the members are
+    counted OFF THE INDEXED ROW, not off the generator.
+    """
+    import json as _json
+
+    root = tmp_path / "karpathy"
+    generate_synthetic_vault(root, "k-fat", 20)
+    repo = _index(tmp_path, root, "k-fat")
+
+    def _trust(min_trust: str | None = "internal", limit: int = 20):
+        return repo.search_pages(
+            None, vaults=["k-fat"], where_fields=[("status", "active")],
+            min_trust=min_trust, limit=limit)
+
+    stats = plant_fat_provenance(repo, root, "k-fat", _trust)
+
+    # Every fat page survived the floor ⇒ every member was walked, none was external.
+    assert stats["trust_fat_pages"] == _BENCH_FAT_PAGES
+    assert stats["trust_fat_members"] == _BENCH_FAT_MEMBERS
+    assert stats["trust_fat_rows_internal"] == _BENCH_FAT_PAGES, (
+        "a fat page did not survive the `internal` floor — the fixture contains an "
+        "EXTERNAL member, so `EXISTS` short-circuits and the fat op is timing a "
+        "1-member walk wearing a 10 000-member name")
+
+    # The row really carries the array it claims to (fixture == state).
+    row = repo._connect().execute(
+        "SELECT frontmatter_json FROM pages WHERE vault_id = ? AND slug = ?",
+        ("k-fat", "fat-provenance-00")).fetchone()
+    assert row is not None, "the fat page was not indexed at all"
+    members = _json.loads(row[0])["sources"]
+    assert len(members) == _BENCH_FAT_MEMBERS
+    assert not any(
+        str(m.get("url", "") if isinstance(m, dict) else m).startswith("http")
+        for m in members)
+    # BOTH member arms are exercised — text scalars AND objects (`jm` and `jn`).
+    assert any(isinstance(m, dict) for m in members)
+    assert any(isinstance(m, str) for m in members)
+    repo.close()
+
+
 def test_unit_08_vacuous_run_fails_even_without_slo_enforcement(monkeypatch, capsys):
     """Fail-CLOSED wiring: a bench that examined nothing is BROKEN, not slow.
 
@@ -290,7 +406,8 @@ def test_e2e_01_suite_runs_to_completion_100(capsys):
     payload = json.loads(out)
     assert payload["n_pages"] == 100
     ops = {r["op"] for r in payload["results"]}
-    assert {"wiki-search", "wiki-search-metadata-trust", "wiki-index-upsert",
+    assert {"wiki-search", "wiki-search-metadata-trust",
+            "wiki-search-metadata-trust-fat", "wiki-index-upsert",
             "wiki-index-render", "wiki-lint", "wiki-lint-rules",
             "wiki-health-coverage", "wiki-reindex-full",
             "wiki-reindex-delta"} <= ops

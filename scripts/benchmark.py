@@ -31,7 +31,9 @@ ops) says otherwise:
     + `find_ontology_violations_report`.
   - **`wiki-health-coverage`** — `find_coverage_gaps_report`, the THIRD denominator
     query: it rides `wiki-health coverage` (never benched), and M1's N+1 collapse
-    rewrote it too. `tests/test_benchmark.py::test_unit_09` makes that census a GATE.
+    rewrote it too.
+    `tests/test_benchmark.py::test_unit_09_every_denominator_query_is_timed_by_some_op`
+    makes that census a GATE.
   - **`wiki-search-metadata-trust`** — the metadata FULL-SCAN shape with the trust
     predicate compiled in: `search_pages(None, where_fields=[("status","active")],
     min_trust="internal")`.
@@ -73,26 +75,75 @@ from scripts.wiki_index.sqlite_repository import SQLiteRepository
 # SLO table from TASK.md §5.1 (milliseconds).
 #
 # The six original buckets are TASK-002 §5.1 contract numbers — do not retune them.
-# The two TASK-061 buckets (`wiki-search-metadata-trust`, `wiki-lint-rules`) are NOT
-# in that contract: they were set from the OBSERVED p95 at HEAD (3-invocation protocol,
-# `docs/runbooks/perf-slo-gate.md`), with ~4-6× headroom at n=10k, deliberately TIGHTER
-# (relative to observation) than the historical table. A bucket with 50× headroom cannot
-# fail, and an SLO that cannot fail is this task's own bug wearing a stopwatch.
+# The TASK-061 buckets (`wiki-search-metadata-trust`, `wiki-search-metadata-trust-fat`,
+# `wiki-lint-rules`, `wiki-health-coverage`) are NOT in that contract: they were set
+# from the OBSERVED p95 at HEAD (3-invocation protocol, `docs/runbooks/perf-slo-gate.md`)
+# with ~4-6× headroom at n=10k.
 #
 #            OBSERVED p95 @HEAD (2026-07-13, M1+M2+H2 landed)   BUCKET   headroom
-#   trust        0.37ms /  1.7ms /  14.0ms  (100/1k/10k)      5/15/60      13×/9×/4.3×
-#   lint-rules     26ms /   80ms /   640ms  (100/1k/10k)   150/400/2500   5.8×/5×/3.9×
-#   health-cov    0.35ms /  1.8ms /  17.4ms (100/1k/10k)     5/15/80      14×/8×/4.6×
+#   trust        0.39ms /  2.1ms /  15.7ms  (100/1k/10k)      5/15/60      13×/7×/3.8×
+#   trust-fat    17.0ms /  19.2ms /  32.6ms (100/1k/10k)     80/90/150    4.7×/4.7×/4.6×
+#   lint-rules     28ms /   80ms /   780ms  (100/1k/10k)   150/400/2500   5.4×/5×/3.2×
+#   health-cov    0.39ms /  1.8ms /  18.3ms (100/1k/10k)     5/15/80      13×/8×/4.4×
 #
-# Sized to CATCH the regressions they exist for: reverting `_EXTERNAL_ORIGIN_SQL` to
-# the pre-M2 shape (12 frontmatter_json re-parses per row instead of one json_each
-# pass) blows the trust bucket; reinstating the per-rule COUNT N+1 that M1 collapsed
-# (one extra `pages` scan per declared rule) blows the lint-rules AND health-coverage
-# buckets — M1's own comment records that coverage went "3 → 7 statements, a >2×
-# regression of the whole command", and NOTHING timed it until now.
+# `trust-fat` is `trust` re-run over the SAME query after `plant_fat_provenance` adds 4
+# pages carrying a 10 000-member `sources:` array — the O(members) walk the H2 fix
+# introduced (the pre-H2 predicate was O(1) on such a row *because it never looked
+# inside*, which was the bug). It is nearly FLAT in n (17 → 19 → 33 ms) because its cost
+# is dominated by the fixture's 40 000 member-rows, not by the page count: that IS the
+# characterisation. The delta against `trust` at the same n is the price of a fat page
+# on the hot search path.
+#
+# WHAT THESE BUCKETS ARE — and, more usefully, WHAT THEY ARE NOT (TASK 061 iteration-2,
+# perf MED-1). An earlier draft of this comment claimed, in the imperative voice of a
+# gate, that the buckets "CATCH the regressions they exist for: reverting
+# `_EXTERNAL_ORIGIN_SQL` … blows the trust bucket; reinstating the per-rule COUNT N+1
+# that M1 collapsed … blows the lint-rules AND health-coverage buckets". Do the
+# arithmetic against the numbers printed above and that claim REFUTES ITSELF:
+#
+#   * reverting M2 costs **~7% MEASURED** (12.00 → 11.21 ms at n=10k). The pre-M2 form's
+#     12 `json_extract` calls land on the SAME blob in the SAME row, and SQLite has had a
+#     per-connection JSON parse cache since 3.42 — so they are 1 parse + 11 cheap path
+#     walks, not 12 parses. (The perf critic's iteration-1 estimate — "~180 ms vs ~90 ms
+#     against a 100 ms SLO" — was wrong by ~15×, and it RETRACTED it. The 100 ms SLO was
+#     never at risk. M2 is still worth keeping: for the H2 fail-open fix, and for
+#     FLATNESS IN KEY COUNT. Not for the latency.) A 3.8× bucket cannot see 1.07×.
+#   * reverting M1 costs ~1.75-1.9× in STATEMENT COUNT (coverage 4 → 7, lint rules
+#     25 → 38) — inside a 3.2×/4.4× bucket. And `run_all_checks_report` also runs
+#     orphan-links and `check_drift`, the O(pages) file re-HASH sweep: at 10k pages that
+#     ~780 ms is dominated by disk I/O and hashing, so ~25 SQL statements are a rounding
+#     error inside it (P-10). You could TRIPLE the rule queries and p95 would barely
+#     twitch.
+#
+# So — stated, rather than left merely true: these are **absolute-latency guards** with
+# 4-6× headroom. They catch an ORDER-OF-MAGNITUDE blowup: a scan becoming a nested loop,
+# an index vanishing, a per-row Python round-trip appearing inside a DAL method, a
+# recursive `json_tree` descent replacing the fixed-depth member walk. They do **NOT**
+# catch M1 or M2. They are deliberately NOT tightened to 1.3× either: SLO enforcement is
+# off by default and the numbers are machine-specific, so a bucket sized to the noise
+# floor is a flaky bucket, not a gate.
+#
+# THE ACTUAL M1/M2 REGRESSION DETECTORS ARE STRUCTURAL TESTS — both mutation-verified.
+# Named here so nobody deletes one as "redundant with the perf gate": it is not
+# redundant, it is the ONLY thing watching that path.
+#
+#   tests/test_health_denominators.py::test_m1_statement_census_no_n_plus_one
+#       — counts the statements each report issues via `sqlite3.set_trace_callback`
+#         (exact 4 / 5 / 20). Reinstating the per-rule COUNT is instantly red.
+#   tests/test_trust_tier.py::test_external_origin_sql_parses_the_blob_exactly_once
+#       — `json_each(p.frontmatter_json)` appears EXACTLY once, `json_extract` ZERO
+#         times, no `json_tree`, and the LIKE count is CONSTANT in the key count.
+#         Reverting to the per-key `json_extract` form is instantly red.
+#
+# `tests/test_benchmark.py::test_unit_10_the_named_regression_detectors_exist` keeps
+# those two references honest: rename or delete either test and the bench turns red
+# rather than quietly ceasing to name a detector that no longer exists.
+#
+# Those are the regression detectors. This is the stopwatch. Different jobs.
 SLOS = {
     "wiki-search": {100: 30, 1000: 50, 10000: 100},
     "wiki-search-metadata-trust": {100: 5, 1000: 15, 10000: 60},
+    "wiki-search-metadata-trust-fat": {100: 80, 1000: 90, 10000: 150},
     "wiki-index-upsert": {100: 50, 1000: 100, 10000: 100},
     "wiki-index-render": {100: 200, 1000: 1000, 10000: 5000},
     "wiki-lint": {100: 500, 1000: 2000, 10000: 30000},
@@ -129,6 +180,56 @@ _BENCH_PROVENANCE = (
     "sources:\n  - url: https://example.com/p-{i}\n",      # H2 list-of-objects shape
     "",                                                    # internal (no provenance)
 )
+
+# ---------------------------------------------------------------------------
+# TASK 061 iteration-2 (perf LOW) — the FAT provenance array
+# ---------------------------------------------------------------------------
+# The H2 fix made the predicate walk INSIDE a list-valued provenance key, so its per-row
+# cost is O(members) on a row carrying one. The pre-H2 form was O(1) on such a row —
+# because it never looked inside, which WAS the bug. Nothing bounded or benched that
+# walk: `_BENCH_PROVENANCE`'s list shape has ONE member, and the live vault's 81/3267
+# provenance-bearing pages all carry small arrays. "Small today" is a fact about the
+# corpus, not a property of the query — so the hot search path is now also measured with
+# a page that is NOT small.
+#
+# `_BENCH_FAT_PAGES` pages, each carrying `_BENCH_FAT_MEMBERS` members, are planted into
+# the karpathy vault AFTER every other op on it has been timed (so the six TASK-002
+# buckets keep their historical numbers byte-for-byte), and the trust query is re-timed
+# as `wiki-search-metadata-trust-fat`. The delta between the two ops IS the
+# characterisation of the walk.
+#
+# NONE of the members is external, deliberately: `EXISTS` short-circuits on the FIRST
+# external member, so an http-looking member at index 0 would make a 10 000-member array
+# cost exactly what a 1-member one costs, and the op would measure NOTHING (this task's
+# disease, in a fixture). All-internal ⇒ the walk runs to the end ⇒ the row is KEPT ⇒
+# `trust_fat_rows_internal` counts it. That counter is in `_VACUITY_COUNTERS`: make the
+# members external and the bench turns red instead of quietly timing a short-circuit.
+# Members alternate text scalar / object so BOTH member arms (`jm` text, `jn` object)
+# are walked, not just the cheap one.
+_BENCH_FAT_PAGES = 4
+_BENCH_FAT_MEMBERS = 10_000
+
+
+def _fat_provenance_page(i: int) -> str:
+    """One page with a `sources:` array of `_BENCH_FAT_MEMBERS` NON-external members."""
+    members = "".join(
+        (f"  - ref-{i}-{j:05d}\n" if j % 2 == 0
+         else f"  - url: ref-{i}-{j:05d}\n")
+        for j in range(_BENCH_FAT_MEMBERS)
+    )
+    return (
+        "---\n"
+        "type: summary\n"
+        f"title: Fat Provenance {i}\n"
+        f"date: '2026-05-{(i % 28) + 1:02d}'\n"
+        "tags: [bench, synth, fat]\n"
+        # `active` ⇒ it survives the metadata filter and REACHES the trust predicate.
+        "status: active\n"
+        f"sources:\n{members}"
+        "---\n"
+        f"# Fat Provenance {i}\n\nSynthetic page with a {_BENCH_FAT_MEMBERS}-member "
+        "provenance array.\n"
+    )
 
 
 def generate_synthetic_vault(
@@ -390,6 +491,11 @@ _VACUITY_COUNTERS: tuple[str, ...] = (
     # degenerate vault.
     "trust_rows_floored",
     "trust_rows_internal",
+    # The FAT-array walk ran to the END (TASK 061 iteration-2 / perf LOW): a fat page
+    # survives the floor only if all `_BENCH_FAT_MEMBERS` members were walked and none
+    # was external. 0 here = `wiki-search-metadata-trust-fat` is timing a short-circuit
+    # — a number about a walk that did not happen.
+    "trust_fat_rows_internal",
 )
 
 
@@ -468,15 +574,61 @@ def _measure_trust_vacuity(
     }
 
 
+def plant_fat_provenance(
+    repo: SQLiteRepository, vault_root: Path, vault_id: str,
+    trust_search: Callable[..., list[Any]],
+) -> dict[str, Any]:
+    """Plant the fat-provenance pages and PROVE the walk ran to the END (perf LOW).
+
+    Called AFTER every karpathy op is timed and after `_measure_trust_vacuity`, so the
+    six TASK-002 buckets and the trust-floor counters are computed over the historical
+    population; the pages then exist for the `wiki-search-metadata-trust-fat` op only.
+
+    The proof is the `internal` row-count DELTA across the planting, measured through
+    the timed op's OWN closure: a fat page survives the `--min-trust internal` floor
+    **iff** the predicate walked all `_BENCH_FAT_MEMBERS` members without finding an
+    external one. A short-circuiting fixture (any http-looking member) would leave the
+    delta at 0 ⇒ `trust_fat_rows_internal: 0` ⇒ `vacuity_ok: false` — a fat op secretly
+    timing a 1-member walk fails loudly instead of reporting a fast green.
+    """
+    from scripts.wiki_index.normalization import normalize_frontmatter
+    from scripts.wiki_index.reindex import _build_page
+    from scripts.wiki_source.base import SourceItem
+    from scripts.wiki_source.manual import ManualSourceAdapter
+
+    big = 1_000_000
+    before = len(trust_search(limit=big))
+
+    adapter = ManualSourceAdapter()
+    for i in range(_BENCH_FAT_PAGES):
+        path = vault_root / SOURCES_SUBDIR / f"fat-provenance-{i:02d}.md"
+        path.write_text(_fat_provenance_page(i), encoding="utf-8")
+        item = SourceItem(kind="manual", source_path=path,
+                          vault_root=vault_root, vault_id=vault_id)
+        out = adapter.fetch(item)
+        updated_fm, db_type = normalize_frontmatter(out.frontmatter)
+        repo.upsert_page(_build_page(
+            out, vault_id, db_type, path, vault_root, updated_fm))
+
+    after = len(trust_search(limit=big))
+    return {
+        "trust_fat_pages": _BENCH_FAT_PAGES,
+        "trust_fat_members": _BENCH_FAT_MEMBERS,
+        "trust_fat_rows_internal": after - before,
+    }
+
+
 def run_suite(n_pages: int, output_json_path: Path | None = None,
               enforce_slos: bool = False, seed: int = 42) -> bool:
-    """Build the synthetic vaults, run the nine operations, return the verdict.
+    """Build the synthetic vaults, run the ten operations, return the verdict.
 
     Two vaults, two DBs (TASK 061 fix-loop / H3):
 
-      - a **karpathy** vault (`generate_synthetic_vault`) — the six original ops plus
-        the new `wiki-search-metadata-trust` (the metadata full-scan shape with the
-        derived-trust predicate compiled in);
+      - a **karpathy** vault (`generate_synthetic_vault`) — the six original ops, plus
+        `wiki-search-metadata-trust` (the metadata full-scan shape with the
+        derived-trust predicate compiled in) and `wiki-search-metadata-trust-fat` (the
+        same query, re-timed after `plant_fat_provenance` adds the O(members) list shape
+        the H2 fix introduced and nothing measured);
       - a **cybos** vault (`generate_typed_vault`) in its OWN DB — `wiki-lint-rules`
         and `wiki-health-coverage`, the only shape in which the 24 declared
         drift/coverage/ontology rules can execute at all. A separate DB keeps the six
@@ -593,6 +745,17 @@ def run_suite(n_pages: int, output_json_path: Path | None = None,
         results.append(delta)
 
         vacuity: dict[str, Any] = _measure_trust_vacuity(_trust_search)
+
+        # wiki-search-metadata-trust-fat (TASK 061 iteration-2 / perf LOW) — the SAME
+        # closure, re-timed over a population that now also holds `_BENCH_FAT_PAGES`
+        # pages carrying a `_BENCH_FAT_MEMBERS`-member provenance array. H2 made the
+        # predicate walk INSIDE a list value, so its per-row cost is O(members) on such
+        # a row; the only list shape benched until now had ONE member. Planted HERE,
+        # after every other karpathy op is timed, so those ops' numbers are untouched.
+        vacuity.update(
+            plant_fat_provenance(repo, vault_root, vault_id, _trust_search))
+        results.append(
+            measure("wiki-search-metadata-trust-fat", _trust_search, runs=5))
         repo.close()
 
         # ---- wiki-lint-rules: the SAME `run_all_checks` code, over a vault whose
