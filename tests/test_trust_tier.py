@@ -45,6 +45,17 @@ VID = "trust-vault"
     ({"source": "HTTP://x.test/a"}, "_sources/a.md", False, "external"),
     ({"URL": "http://x.test"}, "_sources/a.md", False, "external"),
     ({"url": "https://x.test"}, "_sources/a.md", False, "external"),
+    # TASK 061-06 — the CASE VARIANTS. `Source:` is the observed leak (18 live
+    # pages); `SOURCE`/`Url` have 0 live pages (defense-in-depth).
+    ({"Source": "https://x.test/a"}, "_sources/a.md", False, "external"),
+    ({"SOURCE": "https://x.test/a"}, "_sources/a.md", False, "external"),
+    ({"Url": "https://x.test"}, "_sources/a.md", False, "external"),
+    # MIN-rule still holds for the newly-caught keys: origin taints (Q-050-1).
+    ({"Source": "https://x.test/a"}, "_sources/a.md", True, "external"),
+    # HONEST LIMIT (stated, not merely true): this closes the observed leak, not
+    # the CLASS. A typo-shaped key still fails OPEN — no tool emits these.
+    ({"uRL": "https://x.test"}, "_sources/a.md", False, "internal"),
+    ({"Source_URL": "https://x.test"}, "_sources/a.md", False, "internal"),
     ({"source": "httpx://not-web"}, "_sources/a.md", False, "internal"),
     ({"source": "_raw/local.md"}, "_sources/a.md", False, "internal"),
     ({"source": ["https://x.test"]}, "_sources/a.md", False, "internal"),  # non-scalar
@@ -88,6 +99,16 @@ def repo(tmp_path: Path):
                         fm_extra={"status": "open"}))
     r.upsert_page(_page("web-note", fm_extra={"source": "https://x.test/a",
                                               "status": "open"}))
+    # TASK 061-06: the CASE VARIANT that failed open (18 live pages carried
+    # `Source:` and derived `internal`). Joins the shared corpus rather than
+    # forking a parallel one, so it is exercised by the 3-shape floor test.
+    r.upsert_page(_page("cap-note", fm_extra={"Source": "https://x.test/b",
+                                              "status": "open"}))
+    # TASK 061-06 / Q-061-4: the KNOWN RESIDUAL, in the same corpus so it is
+    # continuously exercised — a vault-specific provenance key still derives
+    # `internal` (fail-open). See the pin test below.
+    r.upsert_page(_page("tube-note", fm_extra={"youtube": "https://youtu.be/x",
+                                               "status": "open"}))
     r.upsert_page(_page("verdict", ptype="verification", body="verdict body"))
     r.replace_refs(VID, "verdict", "_vault_", [PageRef(
         vault_id=VID, page_slug="verdict", page_project="_vault_",
@@ -120,12 +141,26 @@ def test_find_verified_slugs_pairs(repo):
 _CORPUS_TIERS = {
     "plain-note": "internal", "verified-note": "verified",
     "raw-capture": "external", "web-note": "external",
+    # TASK 061-06 — the fix: a `Source:`-keyed page is now `external` on BOTH
+    # halves (pre-061 it derived `internal` and sailed through the floor).
+    "cap-note": "external",
+    # Q-061-4 — the KNOWN RESIDUAL, asserted in its known-WRONG state so it
+    # stays visible: a vault-specific provenance key still derives `internal`.
+    "tube-note": "internal",
 }
+
+# The pages carrying `status: open` — i.e. the population the metadata-scan
+# shape can see at all. `verdict` has no status, so it is not in it.
+_STATUS_OPEN = {"plain-note", "verified-note", "raw-capture", "web-note",
+                "cap-note", "tube-note"}
 
 
 @pytest.mark.parametrize("floor,expected", [
-    ("external", {"plain-note", "verified-note", "raw-capture", "web-note"}),
-    ("internal", {"plain-note", "verified-note"}),
+    ("external", {"plain-note", "verified-note", "raw-capture", "web-note",
+                  "cap-note", "tube-note"}),
+    # `cap-note` (Source:) now DROPS OUT here — the 061-06 behavior flip.
+    # `tube-note` (youtube:) does NOT — the Q-061-4 residual, still fail-open.
+    ("internal", {"plain-note", "verified-note", "tube-note"}),
     ("verified", {"verified-note"}),
 ])
 def test_sql_floor_matches_python_on_all_shapes(repo, floor, expected):
@@ -142,8 +177,7 @@ def test_sql_floor_matches_python_on_all_shapes(repo, floor, expected):
     scan = repo.search_pages(None, vaults=[VID],
                              where_fields=[("status", "open")],
                              min_trust=floor)
-    assert _slugs(scan) == expected & {"plain-note", "verified-note",
-                                       "raw-capture", "web-note"}
+    assert _slugs(scan) == expected & _STATUS_OPEN
     # FTS-narrowed tags shape ≡ forced scan (verdict page joins the tag
     # corpus as an `internal`-tier extra — equality of the two paths is the
     # contract here)
@@ -209,6 +243,96 @@ def test_external_origin_sql_renders_every_key():
         2 + 2 * len(EXTERNAL_PROVENANCE_KEYS))
     for key in EXTERNAL_PROVENANCE_KEYS:
         assert f"'$.{key}'" in _EXTERNAL_ORIGIN_SQL
+
+
+# =============================================================================
+# 061-06 (R-061-3, behavior half) — case variants close the observed leak;
+# the vault-specific-key residual is PINNED, not hidden
+# =============================================================================
+
+def test_case_variant_keys_are_covered():
+    """TC-06-1 — `Source:`/`SOURCE:`/`Url:` are in the constant, so both halves
+    render them (the SQL count is asserted by TC-04-2, the 12 key x scheme
+    alignment cases by TC-04-1 — which grew 6 -> 12 with NO edit: that is the
+    061-04 anti-drift property doing its job)."""
+    assert set(EXTERNAL_PROVENANCE_KEYS) == {
+        "source", "Source", "SOURCE", "url", "Url", "URL"}
+    # Enumeration, not case-folding, is forced by Q-050-3: SQLite json_extract
+    # matches its path key CASE-SENSITIVELY, so a true fold would need
+    # json_each + lower(key) in SQL ONLY — the asymmetry Q-050-3 forbids.
+    assert len(EXTERNAL_PROVENANCE_KEYS) == 6
+
+
+def test_vault_specific_provenance_key_still_internal_q0614(repo):
+    """TC-06-3 — Q-061-4 (KNOWN RESIDUAL, tracked): a page whose provenance is
+    an http(s) URL under a VAULT-SPECIFIC key (`youtube:` 9 live pages,
+    `teachable:` 9) still derives `internal`. The trust contract is about
+    external ORIGIN, not key spelling, so this IS a defect — it is deferred by
+    MECHANISM (it needs a per-vault `external_keys:` config surface, which does
+    not belong in a fix task), NOT by defect.
+
+    This asserts the known-WRONG state on BOTH halves, so the two stay pinned
+    together even while wrong, and an invisible residual is instead a visible,
+    tracked one.
+
+    WHEN Q-061-4 LANDS: FLIP these assertions to `external` / excluded — do not
+    delete this test."""
+    # Python half — still internal (fail-open).
+    assert trust_tier({"youtube": "https://youtu.be/x"},
+                      "_sources/a.md", False) == "internal"
+    assert trust_tier({"teachable": "https://x.teachable.com/c"},
+                      "_sources/a.md", False) == "internal"
+    # SQL half AGREES (still fail-open): `tube-note` SURVIVES the internal
+    # floor on the FTS and metadata-scan shapes.
+    assert "tube-note" in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="internal"))
+    assert "tube-note" in _slugs(repo.search_pages(
+        None, vaults=[VID], where_fields=[("status", "open")],
+        min_trust="internal"))
+
+
+def test_blast_radius_default_output_unchanged(repo):
+    """TC-06-4 — the blast radius, asserted in BOTH directions. The 061-06 flip
+    changes NOTHING for a default caller: with no `--min-trust`, the
+    `Source:`-keyed page still ranks and returns. ONLY an explicit
+    `--min-trust internal|verified` caller sees it drop out."""
+    # Direction 1 — no floor: `cap-note` is returned (default output UNCHANGED).
+    assert "cap-note" in _slugs(
+        repo.search_pages('"trust corpus"', vaults=[VID]))
+    assert "cap-note" in _slugs(repo.search_pages(
+        None, vaults=[VID], where_fields=[("status", "open")]))
+    # ...and the `external` floor imposes no clause, so it is returned there too.
+    assert "cap-note" in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="external"))
+    # Direction 2 — explicit floor: it drops out (this is the ONLY visible
+    # change; pre-061 it wrongly survived).
+    assert "cap-note" not in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="internal"))
+    assert "cap-note" not in _slugs(repo.search_pages(
+        '"trust corpus"', vaults=[VID], min_trust="verified"))
+
+
+def test_case_variant_flip_e2e_through_wiki_query(tmp_path):
+    """TC-06-1 (e2e) — the flip through the REAL CLI, not just the DAL: a
+    `Source:`-keyed page is annotated `external` (the `wiki_query.py:479`
+    display half) and is filtered by `--min-trust internal` (the SQL half).
+    Both halves share `_is_external`, so the one constant fixes both."""
+    vault, db = _seed_vault(tmp_path)
+    (vault / "_sources/cap-capture.md").write_text(
+        "---\ntype: summary\ntitle: C\ndate: 2026-07-08\ntags: [t]\n"
+        'Source: "https://x.test/cap2"\n---\n\nHermes trust corpus capitalized.\n')
+    repo = SQLiteRepository(db)
+    reindex_full(repo, VID)
+    repo.close()
+    code, env = _run(vault, db, ["prepare", "hermes trust corpus"])
+    assert code == 0
+    tiers = {h["slug"]: h["trust"] for h in env["hits"]}
+    assert tiers["cap-capture"] == "external"      # was `internal` pre-061
+    assert tiers["plain-note"] == "internal"       # unchanged
+    code, env = _run(vault, db, ["prepare", "hermes trust corpus",
+                                 "--min-trust", "internal"])
+    assert code == 0
+    assert {h["slug"] for h in env["hits"]} == {"plain-note"}
 
 
 def test_floor_is_pre_limit(tmp_path):

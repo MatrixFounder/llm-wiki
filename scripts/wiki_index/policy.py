@@ -236,7 +236,8 @@ external-origin AND verified stays ``external``."""
 
 _HTTP_PREFIXES = ("http://", "https://")
 
-EXTERNAL_PROVENANCE_KEYS: tuple[str, ...] = ("source", "URL", "url")
+EXTERNAL_PROVENANCE_KEYS: tuple[str, ...] = (
+    "source", "Source", "SOURCE", "url", "Url", "URL")
 """TASK 061 / R-061-3 — the ONE source of truth for the frontmatter keys whose
 ``http(s)://`` SCALAR value marks a page as EXTERNAL origin.
 
@@ -255,7 +256,33 @@ else.)
 Every entry MUST be a bare identifier (``[A-Za-z_][A-Za-z0-9_]*``): it is
 interpolated into a FIXED ``$.<key>`` JSON path inside SQL *text*, so a key
 carrying a quote would be an injection through our own source. Enforced at
-import, below."""
+import, below.
+
+**Why CASE VARIANTS are ENUMERATED and not case-FOLDED** (TASK 061-06). Not a
+performance choice — an ALIGNMENT one. SQLite ``json_extract`` matches its path
+key **case-SENSITIVELY** (``json_extract('{"Source":…}', '$.source')`` is
+``NULL``), so a true fold would need ``json_each`` + ``lower(key)`` **in SQL
+only**, while Python would fold in the dict lookup — two structurally different
+predicates, i.e. exactly the SQL↔Python asymmetry Q-050-3 forbids. Enumerating
+keeps ONE list rendering ONE shape into both halves. (LIKE's ASCII-ci fold
+covers the VALUE, so ``HTTP://`` already matched — only the KEY needed this.)
+
+**What this closes, honestly.** 18 LIVE pages carried ``Source:`` (clipper- and
+hand-authored) and derived ``internal`` — the trust layer failed OPEN. This
+closes 100% of the *observed* leak; it does **not** close the CLASS. A
+typo-shaped key (``uRL:``, ``Source_URL:``) still fails open — no tool emits
+those. ``SOURCE``/``Url`` have **0** live pages: cheap defense-in-depth, and
+deliberately NOT a P-5 violation (P-5 is about speculative *indexes*, not about
+two strings in a tuple).
+
+**Known residual — Q-061-4.** Vault-specific provenance keys (``youtube:`` 9
+pages, ``teachable:`` 9 — 18 http-valued pages) are *different keys*, not case
+variants, and still derive ``internal``. The trust contract is about external
+ORIGIN, not key spelling, so this IS a defect. It is deferred by **MECHANISM**
+(it needs a per-vault ``external_keys:`` config surface, which does not belong
+in a fix task) — **not** by defect. It is test-PINNED in
+``tests/test_trust_tier.py::test_vault_specific_provenance_key_still_internal_q0614``:
+when Q-061-4 lands, that assertion FLIPS to ``external``."""
 
 _PROVENANCE_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

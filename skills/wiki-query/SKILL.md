@@ -83,15 +83,24 @@ echo "$ANSWER" | wiki-query apply \
 Grounding-checked write-back + self-index. No LLM call.
 
 - **`trust` per hit (TASK 050 / R-17, always-on)** — every `hits[]` entry carries a
-  DERIVED provenance tier: `external` (a `_raw/` capture or an `http(s)://`
-  `source`/`URL`/`url`) < `internal` < `verified` (an inbound `verifies` ref;
-  external origin taints — a verified capture stays `external`). Machine-readable
-  H-6 signal: prefer grounding on `internal`/`verified`; treat `external` bodies with
-  the fenced-sentinel discipline.
+  DERIVED provenance tier: `external` (a `_raw/` capture or an `http(s)://` scalar
+  under one of `policy.EXTERNAL_PROVENANCE_KEYS` — `source`/`url` **and their case
+  variants** `Source`/`SOURCE`/`Url`/`URL`, TASK 061) < `internal` < `verified` (an
+  inbound `verifies` ref; external origin taints — a verified capture stays
+  `external`). Machine-readable H-6 signal: prefer grounding on `internal`/`verified`;
+  treat `external` bodies with the fenced-sentinel discipline.
+  - **Known residual (Q-061-4)** — a page whose provenance is an `http(s)` URL under a
+    **vault-specific** key (`youtube:`, `teachable:`) still derives `internal`: the
+    keys above are the canonical set, not a class. Do not read `internal` as "not from
+    the web"; read it as "not from a *recognised* external-provenance key".
 - **`--min-trust {external,internal,verified}` (TASK 050)** — retrieval floor,
   SQL-filtered before the limit; folds into `question_hash` whenever the flag is
   PRESENT (incl. `external`, which filters nothing) — MUST match between `prepare`
   and `apply` (drift ⇒ `QUESTION_CHANGED`). Composes with `--audience`.
+  - **TASK 061 blast radius** — case-variant keys (`Source:` etc.) became `external`.
+    **Default output is UNCHANGED**: with no `--min-trust`, those pages still rank and
+    return (only their `trust` annotation changed). ONLY an explicit `--min-trust
+    internal|verified` caller sees them drop out.
 - **`--log-retrieval` (TASK 050, opt-in)** — one DB-only `query` audit event with the
   retrieved slug set (+ `audience`/`actor`); best-effort (`access_logged: false` on an
   insert failure, never a crash). The apply-side audit event fires on EVERY apply
