@@ -93,8 +93,17 @@ _CHILD_GROUP_KEY = (
 )
 
 
-def _assert_equivalence(folder: Path, root: Path) -> None:
-    """Property 1: engine merged+parsed == real resolver."""
+def _assert_cascade_invariants(folder: Path, root: Path) -> None:
+    """The properties EVERY cascade fixture must hold. Asserted from the ONE
+    helper every fixture already calls, so a new fixture inherits them instead of
+    having to remember them (TC-07-1).
+
+    Property 1 — equivalence: engine merged+parsed == the real resolver. The
+    R-061-4 overlay reshapes `effective` (a DISPLAY surface) only; `merged_raw`,
+    the surface this equivalence is computed from, is untouched.
+
+    Property 3 — no dangling provenance pointer (R-061-4).
+    """
     prov = compute_folder_provenance(folder, root)
     merged_res = prov.merged_raw.get("resummarize")
     engine_res = _parse_resummarize(merged_res) if merged_res is not None else None
@@ -102,6 +111,7 @@ def _assert_equivalence(folder: Path, root: Path) -> None:
     merged_sum = prov.merged_raw.get("summarize")
     engine_sum = _parse_summarize(merged_sum or {}) or SummarizeConfig()
     assert engine_sum == resolve_summarize(folder / "f.md", vault_root=root)
+    _assert_no_dangling_pointer(folder, root)
 
 
 def _lookup(block: dict[str, Any], pointer_tail: list[str]) -> Any:
@@ -140,7 +150,7 @@ def test_root_only_config(tmp_path: Path) -> None:
     _folder_yaml(tmp_path, _ROOT_FULL)
     sub = tmp_path / "Lessons"
     sub.mkdir()
-    _assert_equivalence(sub, tmp_path)
+    _assert_cascade_invariants(sub, tmp_path)
     prov = compute_folder_provenance(sub, tmp_path)
     assert prov.origins["/resummarize/mode"].origin == "root"
     assert prov.origins["/summarize/profile"].origin == "root"
@@ -154,7 +164,7 @@ def test_partial_child_override_inherits_parent(tmp_path: Path) -> None:
     _folder_yaml(tmp_path, _ROOT_FULL)
     lessons = tmp_path / "Lessons"
     _folder_yaml(lessons, _CHILD_GROUP_KEY)
-    _assert_equivalence(lessons, tmp_path)
+    _assert_cascade_invariants(lessons, tmp_path)
     _assert_origin_consistency(lessons, tmp_path)
     prov = compute_folder_provenance(lessons, tmp_path)
     # overridden leaf → child; shadow records the displaced root
@@ -176,7 +186,7 @@ def test_list_replace_not_extend(tmp_path: Path) -> None:
         "    provenance_ref:\n"
         "      fields: [origin]\n"
     ))
-    _assert_equivalence(zone, tmp_path)
+    _assert_cascade_invariants(zone, tmp_path)
     prov = compute_folder_provenance(zone, tmp_path)
     assert prov.effective["resummarize"]["detect"]["provenance_ref"]["fields"] == ["origin"]
     fields = prov.origins["/resummarize/detect/provenance_ref/fields"]
@@ -195,7 +205,7 @@ def test_key_block_introduced_at_deep_level(tmp_path: Path) -> None:
         "        summary_regex: '^(?P<n>\\d+)'\n"
         "        template: '${n}'\n"
     ))
-    _assert_equivalence(deep, tmp_path)
+    _assert_cascade_invariants(deep, tmp_path)
     _assert_origin_consistency(deep, tmp_path)
     prov = compute_folder_provenance(deep, tmp_path)
     # a whole subtree introduced at one level claims every descendant pointer
@@ -209,7 +219,7 @@ def test_three_level_shadow_chain(tmp_path: Path) -> None:
     _folder_yaml(mid, "resummarize:\n  mode: always\n")
     leaf = mid / "Leaf"
     _folder_yaml(leaf, "resummarize:\n  mode: never\n")
-    _assert_equivalence(leaf, tmp_path)
+    _assert_cascade_invariants(leaf, tmp_path)
     prov = compute_folder_provenance(leaf, tmp_path)
     mode = prov.origins["/resummarize/mode"]
     assert mode.origin == "Mid/Leaf"
@@ -223,7 +233,7 @@ def test_cyrillic_and_space_folder_names(tmp_path: Path) -> None:
     _folder_yaml(tmp_path, _ROOT_FULL)
     bd = tmp_path / "06 - Business Development" / "Встречи"
     _folder_yaml(bd, "summarize:\n  profile: meeting\n  extract_concepts: false\n")
-    _assert_equivalence(bd, tmp_path)
+    _assert_cascade_invariants(bd, tmp_path)
     _assert_origin_consistency(bd, tmp_path)
     prov = compute_folder_provenance(bd, tmp_path)
     label = "06 - Business Development/Встречи"
@@ -235,7 +245,7 @@ def test_cyrillic_and_space_folder_names(tmp_path: Path) -> None:
 def test_unconfigured_vault_all_defaults(tmp_path: Path) -> None:
     sub = tmp_path / "Anything"
     sub.mkdir()
-    _assert_equivalence(sub, tmp_path)
+    _assert_cascade_invariants(sub, tmp_path)
     prov = compute_folder_provenance(sub, tmp_path)
     assert prov.effective["resummarize"] is None
     assert prov.origins["/resummarize"].origin == "default"
@@ -250,7 +260,7 @@ def test_root_only_key_in_subfolder_is_ignored_and_warned(tmp_path: Path) -> Non
     _folder_yaml(tmp_path, "exclude:\n  - '_inbox/**'\n")
     sub = tmp_path / "Zone"
     _folder_yaml(sub, "exclude:\n  - 'Zone-local/**'\nsummarize:\n  profile: lesson\n")
-    _assert_equivalence(sub, tmp_path)
+    _assert_cascade_invariants(sub, tmp_path)
     prov = compute_folder_provenance(sub, tmp_path)
     # the subfolder exclude must NOT leak into the effective view
     assert prov.effective["exclude"] == ["_inbox/**"]
@@ -497,12 +507,6 @@ def _assert_no_dangling_pointer(folder: Path, root: Path) -> None:
         f"provenance pointers with no `effective` value: {sorted(dangling)}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R-061-4 not landed: the parsed-dataclass path renders only the "
-           "dataclass's declared fields, so a schema key it does not declare is "
-           "dropped from `effective` while still getting a provenance pointer",
-)
 @pytest.mark.parametrize("pointer,yaml_body", [
     ("/summarize/future_knob", "summarize:\n  future_knob: kept\n"),
     ("/resummarize/future_knob", "resummarize:\n  future_knob: kept\n"),
@@ -558,3 +562,68 @@ def test_parsed_block_unknown_key_reaches_effective(
     prov = compute_folder_provenance(zone, vault)
     assert pointer in render_show_report(prov, vault)
     assert pointer in render_html(build_report_model(vault, []))
+
+
+def test_overlay_does_not_become_a_raw_passthrough(tmp_path: Path) -> None:
+    """TC-07-2 — the PARSED value still WINS for every field the dataclass
+    declares. The overlay preserves raw-only keys; it must not regress into
+    handing back the raw dict (which would lose normalisation + injected
+    defaults, and silently break the resolver-equivalence contract)."""
+    # `target_subdir` is normalised by `_parse_summarize` (strip + drop trailing
+    # `/`); the RAW value is "  x/  ". The parsed value must be the one shown.
+    _folder_yaml(tmp_path, 'summarize:\n  target_subdir: "  x/  "\n')
+    zone = tmp_path / "Zone"
+    zone.mkdir()
+    _assert_cascade_invariants(zone, tmp_path)
+    prov = compute_folder_provenance(zone, tmp_path)
+    assert prov.effective["summarize"]["target_subdir"] == "x"
+    # ...while the RAW merged block (the equivalence surface) keeps the raw text.
+    assert prov.merged_raw["summarize"]["target_subdir"] == "  x/  "
+    # parser-injected defaults still appear for fields no level defines.
+    assert prov.effective["summarize"]["profile"] == "auto"
+    assert prov.effective["summarize"]["extract_concepts"] is True
+
+    # `resummarize.mode`'s default (`if-missing`) still appears when the block is
+    # configured but `mode` is not — the defaults jsonschema does NOT inject.
+    _folder_yaml(tmp_path, "resummarize:\n  detect:\n    source_state: true\n")
+    prov2 = compute_folder_provenance(zone, tmp_path)
+    assert prov2.effective["resummarize"]["mode"] == "if-missing"
+    assert prov2.origins["/resummarize/mode"].origin == "default"
+
+
+def test_parsed_block_table_matches_the_schema_cascading_set() -> None:
+    """The `_PARSED_BLOCKS` table may only name blocks the SCHEMA actually
+    declares `x-wiki-scope: cascading`. A rename on one side and not the other
+    would silently drop the block to the raw-passthrough branch, losing its
+    parser's normalisation + injected defaults — the same fail-silent class
+    R-061-4 fixes, so it gets a gate rather than a comment."""
+    from scripts.wiki_skills.wiki_config._provenance import _PARSED_BLOCKS
+
+    cascading = set(top_level_keys(build_ui_model(), SCOPE_CASCADING))
+    assert set(_PARSED_BLOCKS) <= cascading, "a parsed block the schema does not cascade"
+    # Today every cascading block is ALSO parsed. Stated, not assumed: a future
+    # RAW cascading block must be a deliberate choice that updates this line.
+    assert set(_PARSED_BLOCKS) == cascading == {"resummarize", "summarize"}
+
+
+def test_raw_only_key_origin_is_its_level_not_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TC-07-3 — a key carried through the overlay keeps the origin
+    `_assign_origins` gave it (the LEVEL that defined it). `_tag_defaults` only
+    tags pointers with NO origin, so it must not relabel it `default`."""
+    _patch_schema_with_future_knobs(tmp_path, monkeypatch)
+    vault = tmp_path / "vault"
+    zone = vault / "Zone"
+    zone.mkdir(parents=True)
+    _folder_yaml(vault, "summarize:\n  profile: article\n  future_knob: from-root\n")
+    _folder_yaml(zone, "summarize:\n  future_knob: from-zone\n")
+
+    prov = compute_folder_provenance(zone, vault)
+    knob = prov.origins["/summarize/future_knob"]
+    assert prov.effective["summarize"]["future_knob"] == "from-zone"
+    assert knob.origin == "Zone"          # the level, NOT "default"
+    assert knob.shadows == ("root",)      # the cascade still shadows correctly
+    # the parsed sibling is unaffected
+    assert prov.origins["/summarize/profile"].origin == "root"
+    _assert_no_dangling_pointer(zone, vault)

@@ -10,6 +10,13 @@ the labels cannot diverge from the merge semantics. Which top-level keys cascade
 vs are root-only is read from the SCHEMA's `x-wiki-scope` annotations via
 `_uimodel` — no key name is hardcoded here (evolution invariant, R-058-10).
 
+The parsed blocks' effective view is the parser's output OVERLAID on the merged
+raw dict (`_PARSED_BLOCKS` + `_overlay_parsed`, R-061-4): the parser wins for the
+fields it declares (defaults, normalisation), and any schema key it does not
+declare is preserved rather than dropped — so `effective` covers exactly the
+pointer set `origins` does, and `show` can never emit a provenance pointer with
+no value.
+
 The real resolver (`scripts/wiki_skills/_resummarize.py`) is NOT modified or
 called at runtime; an equivalence test (tests/test_wiki_config_provenance.py)
 release-gates that `parse(merged_here) == resolve_policy()/resolve_summarize()`.
@@ -23,7 +30,7 @@ import dataclasses
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from scripts.wiki_index.config_loader import deep_merge
 from scripts.wiki_index.sync_config import (
@@ -213,13 +220,89 @@ def _tag_defaults(
     origins: dict[str, Origin], effective: Any, pointer: str, scope: str
 ) -> None:
     """Every leaf pointer present in the EFFECTIVE tree but claimed by no level
-    is a built-in default (the parsers inject those, jsonschema does not)."""
+    is a built-in default (the parsers inject those, jsonschema does not).
+
+    Unchanged by R-061-4 (verified by reading, not assumed): it only tags a
+    pointer that has NO origin, and a raw-only key carried through the overlay
+    already has one from `_assign_origins` — so it keeps its LEVEL, and is never
+    relabelled `default`."""
     if isinstance(effective, dict):
         for key, child in effective.items():
             _tag_defaults(origins, child, f"{pointer}/{key}", scope)
         return
     if pointer not in origins:
         origins[pointer] = Origin("default", scope=scope)
+
+
+# --------------------------------------------------------------------------- #
+# Parsed cascading blocks (R-061-4)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _ParsedBlock:
+    """A cascading block whose effective view comes from a REAL parser (defaults
+    injected, values normalised) instead of the raw merged dict.
+
+    `default_when_absent` carries the block's absent-at-every-level semantics as
+    a DECLARATION rather than an `if block_name == ...` buried in the fold — the
+    whole point of the table is that no block name is hardcoded in logic."""
+
+    parse: Callable[[dict[str, Any]], Any]
+    default_when_absent: bool
+
+
+# The ONE declaration of which cascading blocks are parsed. A future parsed block
+# is a line here; a future RAW block needs no line at all (it falls through to the
+# passthrough branch). Both of today's entries are `x-wiki-scope: cascading` in
+# config/sync-config.schema.yaml — the schema remains the source of truth for
+# WHICH keys cascade; this table only says HOW a cascading block is rendered.
+_PARSED_BLOCKS: dict[str, _ParsedBlock] = {
+    # absent at every level ⇒ `None` (≡ the TASK 018 no-policy behavior).
+    "resummarize": _ParsedBlock(_parse_resummarize, default_when_absent=False),
+    # absent at every level ⇒ the TASK 046 P2 defaults — NEVER `None`.
+    "summarize": _ParsedBlock(
+        lambda merged: _parse_summarize(merged) or SummarizeConfig(),
+        default_when_absent=True,
+    ),
+}
+
+
+def _overlay_parsed(raw: Any, parsed: Any) -> Any:
+    """R-061-4: the PARSED value wins for every key the dataclass DECLARES
+    (defaults injected, values normalised); every raw key the dataclass does NOT
+    declare is PRESERVED.
+
+    Recurses on dict/dict — mirroring `deep_merge`'s branch condition, which is
+    the same discipline `_assign_origins` follows — so `effective` and `origins`
+    cover the SAME pointer set. That equality is the tested invariant: `show`
+    must never emit a provenance pointer with no effective value.
+
+    Before this, `effective` was `_to_jsonable(dataclass)`, which renders ONLY
+    the declared fields: a schema key the frozen dataclass does not know about
+    (the case TASK 058 §5(c) promises cascades with zero code) was dropped from
+    `effective` while `_assign_origins` — walking the RAW block — still recorded
+    a pointer for it. A pointer with no value, invisible in all four surfaces
+    derived from this dict (show envelope / md sidecar / HTML report / serve form).
+
+    Key ORDER is the parsed dataclass's field order, with raw-only keys appended,
+    so a config with no unknown keys renders exactly as it did before.
+
+    The `else raw` fallback holds the invariant even if a future parser returns
+    `None` where the raw carries a subtree. It is inert for today's two parsers:
+    every Optional field they can produce (`Mirror.key`, `Mirror.group_key`,
+    `MirrorKey.raw_regex`/`summary_regex`/`template`) is `None` only when the raw
+    key is ABSENT — so `raw` is `None` there too, and the result is unchanged."""
+    if isinstance(raw, dict) and isinstance(parsed, dict):
+        out: dict[str, Any] = {
+            key: _overlay_parsed(raw.get(key), value)
+            for key, value in parsed.items()
+        }
+        for key, value in raw.items():
+            if key not in parsed:
+                out[key] = value
+        return out
+    return parsed if parsed is not None else raw
 
 
 def _rel_label(d: Path, vault_root: Path) -> str:
@@ -315,15 +398,22 @@ def compute_folder_provenance(
                 merged = deep_merge(merged, block)
         prov.merged_raw[block_name] = merged if found else None
 
-        # Parse with the REAL parsers, in the resolvers' exact call shape.
+        # Parse with the REAL parsers, in the resolvers' exact call shape, then
+        # OVERLAY the result onto the merged RAW dict (R-061-4) so a schema key
+        # the frozen dataclass does not declare survives into `effective` instead
+        # of being silently dropped. `merged_raw` (the resolver-equivalence
+        # surface) is untouched: the overlay only shapes the DISPLAY view.
+        parsed_block = _PARSED_BLOCKS.get(block_name)
         effective_block: Any
-        if block_name == "resummarize":
-            typed = _parse_resummarize(merged) if found else None
-            effective_block = _to_jsonable(typed) if typed is not None else None
-        elif block_name == "summarize":
-            effective_block = _to_jsonable(_parse_summarize(merged) or SummarizeConfig())
-        else:  # a future cascading block: expose the merged RAW dict as-is
+        if parsed_block is None:
+            # a future cascading block with no parser: the merged RAW dict IS the
+            # effective view (nothing to overlay onto).
             effective_block = merged if found else None
+        elif found or parsed_block.default_when_absent:
+            effective_block = _overlay_parsed(
+                merged, _to_jsonable(parsed_block.parse(merged)))
+        else:
+            effective_block = None
         prov.effective[block_name] = effective_block
         if effective_block is None:
             prov.origins[f"/{block_name}"] = Origin(
