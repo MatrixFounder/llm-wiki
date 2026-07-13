@@ -1296,27 +1296,44 @@ def glob_covers(config: LayoutConfig, rel_posix: str) -> bool:
     this module are the TASK-030 per-SEGMENT matcher of the single-pass walk, where
     it never crosses `/` and is correct; they are pinned by count, not removed.
     """
+    return cover_refusal(config, rel_posix) is None
+
+
+def cover_refusal(config: LayoutConfig, rel_posix: str) -> str | None:
+    """`None` iff the walker would discover `rel_posix`; else the name of the FIRST
+    conjunct that refuses it — `extension` | `system-file` | `autoindex-output` |
+    `ignored` | `unmatched`.
+
+    THE CHAIN LIVES HERE, AND ONLY HERE. `glob_covers` is `cover_refusal(...) is None`,
+    and `wiki-config validate` renders the reason. A caller that re-derived "was it the
+    ignore rule or was it no glob?" by matching globs itself would be a SECOND
+    implementation of the chain — which is how the gate and the rail come to disagree,
+    and a gate that disagrees with the code it gates is a second opinion.
+
+    The distinction is not cosmetic: `ignored` and `unmatched` demand DIFFERENT operator
+    actions, and `ignored` is the one that looks correct from the outside (a glob DOES
+    match — the operator would never guess why the page vanished)."""
     name = PurePosixPath(rel_posix).name
     if PurePosixPath(name).suffix not in set(config.file_extensions):
-        return False
+        return "extension"
     if name in SYSTEM_FILES:
-        return False
+        return "system-file"
     if rel_posix in {
         str(ai["output"]) for ai in config.auto_indexes if ai.get("output")
     }:
-        return False
+        return "autoindex-output"
     if _matches_ignore(rel_posix, config.ignore):
-        return False
+        return "ignored"
     rel = PurePosixPath(rel_posix)
     for entry in config.paths:
         try:
             if rel.full_match(entry.glob):
-                return True
+                return None
         except ValueError:
             # a malformed operator glob — skip the entry, exactly as
             # `derive_project_for_path` does, instead of propagating (TASK 037).
             continue
-    return False
+    return "unmatched"
 
 
 def resolve_typed_write_dir(
@@ -1341,15 +1358,41 @@ def resolve_typed_write_dir(
     puts a cybos page where cybos cannot see it; hardcoding "root" puts a PARA page
     outside every PARA glob. Either way the page is written and never indexed.
     """
-    probe = f"{TYPED_WRITE_PROBE}.md"
-    if glob_covers(config, f"{dir_name}/{probe}"):
-        return dir_name
+    for candidate in _typed_write_candidates(dir_name, source_rel):
+        if glob_covers(config, f"{candidate}/{TYPED_WRITE_PROBE}.md"):
+            return candidate
+    return None
+
+
+def _typed_write_candidates(dir_name: str, source_rel: str) -> list[str]:
+    """The placements probed, in order: root-anchored (the cybos grammar), then
+    sibling-of-the-source (the PARA grammar). ONE list, so `resolve_typed_write_dir`
+    and `typed_write_refusal` can never probe different sets — which would let the
+    gate refuse a placement the rail then happily writes to, or vice versa."""
+    out = [dir_name]
     parent = PurePosixPath(source_rel).parent.as_posix()
     if parent not in (".", ""):
-        sibling = f"{parent}/{dir_name}"
-        if glob_covers(config, f"{sibling}/{probe}"):
-            return sibling
-    return None
+        out.append(f"{parent}/{dir_name}")
+    return out
+
+
+def typed_write_refusal(
+    config: LayoutConfig, *, dir_name: str, source_rel: str
+) -> str | None:
+    """`None` iff SOME placement is walker-visible; else WHY the operator's folder name
+    cannot be used — the refusal reason of the probed placements, with `ignored`
+    winning over `unmatched` when they differ.
+
+    `ignored` wins deliberately. It is the surprising one: a `paths[]` glob DOES match,
+    so every naive check reports "covered", and the page still vanishes. Reporting
+    `unmatched` there would send the operator to widen a glob that already matches."""
+    reasons = [
+        cover_refusal(config, f"{c}/{TYPED_WRITE_PROBE}.md")
+        for c in _typed_write_candidates(dir_name, source_rel)
+    ]
+    if any(r is None for r in reasons):
+        return None
+    return "ignored" if "ignored" in reasons else (reasons[0] or "unmatched")
 
 
 def derive_project_for_path(path: Path, vault_root: Path) -> str:

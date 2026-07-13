@@ -73,6 +73,13 @@ _KINDS: tuple[FindingKind, ...] = (
     FindingKind("MIRROR_KEYS_NOTHING", SEV_INFO, TIER_MANUAL),
     FindingKind("UNSAFE_TARGET_SUBDIR", SEV_ERROR, TIER_MANUAL),
     FindingKind("SHADOWED_CONFIG", SEV_WARNING, TIER_MANUAL),
+    # TASK 063 (R-063-3′(b)) — the CROSS-SYSTEM G4 gate: an `extract_decisions.dirs.*`
+    # folder in sync.yaml that the resolved LAYOUT's walker cannot see. TIER_MANUAL,
+    # never auto-fixable: the remedy is a human decision (rename the folder, or widen
+    # the layout's read grammar), and `sync.yaml` must never mutate `layout.yaml` —
+    # a per-folder config silently rewriting the vault's read grammar would change
+    # what every OTHER tool sees (Q-063-5 = A).
+    FindingKind("TYPED_DIR_NOT_COVERED_BY_LAYOUT", SEV_ERROR, TIER_MANUAL),
     # --- sibling config systems --------------------------------------------- #
     FindingKind("LAYOUT_CONFIG_INVALID", SEV_ERROR, TIER_MANUAL),
     FindingKind("IDENTITY_CONFIG_INVALID", SEV_ERROR, TIER_MANUAL),

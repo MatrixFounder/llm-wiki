@@ -187,9 +187,24 @@ def test_glob_covers_uses_full_match_never_fnmatch() -> None:
         f"the fnmatch caller census changed: {callers}. Only the TASK-030 "
         f"per-segment matcher may call it (there `*` never crosses a `/`).")
 
-    names = glob_covers.__code__.co_names
-    assert "fnmatch" not in names, "glob_covers CALLS fnmatch — `*` would cross `/`"
-    assert "full_match" in names, "glob_covers does not use PurePosixPath.full_match"
+    # The G4 helper FAMILY — none of them may call fnmatch. Named as a family rather
+    # than as `glob_covers` alone, because this assertion ALREADY caught a refactor:
+    # when the chain moved into `cover_refusal`, a `glob_covers`-only gate went RED
+    # for the wrong reason (glob_covers stopped calling `full_match` because it now
+    # DELEGATES). A gate pinned to a function NAME breaks when the code is reorganised;
+    # a gate pinned to the FAMILY follows the chain wherever it lives.
+    family = [glob_covers, lc.cover_refusal, resolve_typed_write_dir,
+              lc.typed_write_refusal, lc._typed_write_candidates]
+    for fn in family:
+        assert "fnmatch" not in fn.__code__.co_names, (
+            f"{fn.__name__} CALLS fnmatch — `*` would cross a `/` and it would report "
+            f"MATCH for decisions/2026/dec.md against decisions/*.md")
+
+    # ...and SOMEONE in the family must actually do the matching, with `full_match`.
+    # Without this half, deleting the matcher entirely would pass the loop above.
+    assert any("full_match" in fn.__code__.co_names for fn in family), (
+        "no G4 helper matches globs at all — the gate would answer False for "
+        "everything, refusing every layout while looking perfectly green")
 
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +325,39 @@ def test_stock_obsidian_personal_is_refused_but_para_typed_is_not(tmp_path: Path
     # never the problem.
     for cfg in (stock, para):
         assert glob_covers(cfg, f"06 - BD/Acme/decisions/{TYPED_WRITE_PROBE}.md")
+
+
+def test_identity_schema_enum_IS_the_registry() -> None:
+    """★ A PRODUCTION DEFECT, found while building a cybos fixture — and it is the
+    project's signature lens in its purest form: the layout POPULATION was declared in
+    TWO places, and only one of them was maintained.
+
+      `layout_config.layout_choices()`      → 6 layouts (registry, drives `--layout`)
+      `config/wiki-config.schema.yaml`      → 5 layouts (identity schema `Layout` enum)
+
+    `cybos` was in the first and not the second. So a vault declaring `layout: cybos`
+    in `WIKI_SCHEMA.md` — the documented way, and verbatim what `scripts/benchmark.py`
+    writes — FAILED `config_loader.load_config`, and `wiki-config validate` reported a
+    spurious `IDENTITY_CONFIG_INVALID` on every cybos vault. It went unnoticed because
+    `resolve_layout_config` reads via `load_root_config`, which does NOT validate the
+    enum: the vault WALKED correctly while its config was formally invalid. A defect
+    that only the validator can see, in the validator nobody ran on this layout.
+
+    The fix is not "add cybos" — that is the instance. The fix is THIS TEST: the enum
+    is now pinned EQUAL to the registry, so the two cannot drift again, and a seventh
+    layout cannot be added to one without the other.
+    """
+    import yaml
+
+    from scripts.wiki_index.config_loader import _SCHEMA_PATH as IDENTITY_SCHEMA
+
+    doc = yaml.safe_load(IDENTITY_SCHEMA.read_text(encoding="utf-8"))
+    enum = set(doc["$defs"]["Layout"]["enum"])
+    assert enum == set(layout_choices()), (
+        f"the identity schema's `layout` enum and the layout REGISTRY have drifted: "
+        f"registry-only={sorted(set(layout_choices()) - enum)}, "
+        f"schema-only={sorted(enum - set(layout_choices()))}. A vault declaring a "
+        f"registry-only layout walks correctly but fails `load_config`.")
 
 
 def test_karpathy_is_refused_for_the_TYPE_MAPPING_conjunct_not_the_glob_one(

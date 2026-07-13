@@ -40,7 +40,13 @@ from scripts.wiki_index.config_loader import (
     load_config,
     load_project_override,
 )
-from scripts.wiki_index.layout_config import LayoutConfigError, resolve_layout_config
+from scripts.wiki_index.layout_config import (
+    LayoutConfig,
+    LayoutConfigError,
+    resolve_layout_config,
+    typed_write_refusal,
+)
+from scripts.wiki_index.sync_config import _EXTRACT_DECISIONS_DIR_FIELDS
 from scripts.wiki_index.sync_config import (
     WIKI_SYNC_CONFIG_MAX_BYTES,
     SyncConfigError,
@@ -160,6 +166,11 @@ class _Linter:
         self.hashes: dict[str, str | None] = {}
         self.texts: dict[str, str] = {}
         self._templates_registry: dict[str, Any] | None = None
+        # TASK 063 — the resolved layout, memoized. The flag distinguishes "not resolved
+        # yet" from the legitimate result `None` ("the layout is broken"); keying on
+        # `None` alone would re-resolve (and re-fail) once per sync.yaml.
+        self._layout_resolved = False
+        self._layout_cache: LayoutConfig | None = None
 
     def add(self, code: str, system: str, file: str, pointer: str = "",
             message: str = "", **data: Any) -> None:
@@ -312,6 +323,7 @@ class _Linter:
                      keys=[safe_key(str(k)) for k in non_cascading])
         self._check_regex_fields(rel, raw)
         self._check_mirror_ext(rel, raw)
+        self._check_typed_dirs(label, rel, raw)
         for pointer, items in _iter_lists(raw, ""):
             scalars = [i for i in items if not isinstance(i, (dict, list))]
             if len(scalars) != len(set(map(str, scalars))):
@@ -319,6 +331,107 @@ class _Linter:
                          message="duplicate list entry (first occurrence wins)")
         if is_root:
             self._check_globs(rel, raw)
+
+    # TASK 063 — the typed classes the rail extracts. Read off the DATACLASS, never
+    # restated: `_EXTRACT_DECISIONS_DIR_FIELDS` is the same tuple `_parse_extract_decisions`
+    # iterates and the same name-set the schema's `additionalProperties: false` enforces,
+    # so a fourth class cannot appear in one place and be missed here.
+    def _check_typed_dirs(self, label: str, rel: str, raw: dict[str, Any]) -> None:
+        """★ THE CROSS-SYSTEM G4 GATE (R-063-3′(b)) — the only PREVENTIVE defence.
+
+        An `extract_decisions.dirs.*` folder the resolved LAYOUT's walker cannot see is
+        a page-loss bug that NOTHING downstream can report: the page is written, but
+        `discover_pages` never walks it, so `find_pages_missing_in_index` never sees it,
+        so `wiki-lint` raises ZERO issues. **Lint is structurally incapable of catching
+        it.** The delta property passes perfectly while a decision is silently lost. So
+        the gate has to fire HERE — at config-edit time, where the operator can still act.
+
+        `wiki-config` is the one place with a legitimate view of BOTH config systems
+        (it validates all three, edits only `sync.yaml`), which is why the cross-system
+        finding lives here. The rail's `prepare` preflight (063-05) is the other caller
+        of the SAME `resolve_typed_write_dir` — one gate, two callers, never two
+        implementations.
+
+        ⚠️ "the walker cannot see it" is NOT "no `paths[]` glob matches" — that is 1 of
+        5 conjuncts. `dirs.decision: "_raw"` on a PARA vault MATCHES the generic glob and
+        is still killed by `ignore: **/_raw/**`. `glob_covers` (063-02) is the full chain.
+
+        THREE distinguishable refusals, because the operator's ACTION differs in each:
+          * the layout maps no typed classes at all  → the layout is the problem;
+          * a glob matches but `ignore` kills it     → the NAME is the problem, and the
+                                                       operator would otherwise never
+                                                       guess why (a glob DOES match);
+          * nothing matches                          → rename, or widen the read grammar.
+        A single generic message would leave the middle case unactionable — and it is the
+        one that looks correct.
+
+        Value-free (CWE-209/117): the folder name is operator-typed ⇒ `safe_key`. The
+        layout name and the suggested glob shape are schema/config constants ⇒ safe.
+        """
+        block = raw.get("extract_decisions")
+        if not isinstance(block, dict):
+            return                     # absence is silent — back-compat byte-identity
+        dirs = block.get("dirs")
+        if not isinstance(dirs, dict):
+            return
+        config = self._layout()
+        if config is None:
+            return                     # already reported as LAYOUT_CONFIG_INVALID
+
+        maps_any = bool(
+            set(_EXTRACT_DECISIONS_DIR_FIELDS) & set(config.type_mapping))
+        # the folder this sync.yaml governs — sibling placement is resolved relative to
+        # a note living HERE, which is what the rail will actually do.
+        source_rel = "note.md" if label == "." else f"{label}/note.md"
+
+        for cls in _EXTRACT_DECISIONS_DIR_FIELDS:
+            value = dirs.get(cls)
+            if not isinstance(value, str) or not value:
+                continue
+            pointer = f"/extract_decisions/dirs/{cls}"
+            name = safe_key(value)
+            if not maps_any:
+                self.add(
+                    "TYPED_DIR_NOT_COVERED_BY_LAYOUT", "sync", rel, pointer=pointer,
+                    message=f"layout '{config.layout}' maps NO typed classes "
+                            f"(decision/requirement/risk), so the extraction rail cannot "
+                            f"run here at all — the folder name is moot. Add them to "
+                            f"`type_mapping` in .wiki/layout.yaml, or use a layout that "
+                            f"has them (cybos, dev-project).",
+                    layout=config.layout, dir_name=name, reason="no-typed-classes")
+                continue
+            # ONE call into the ONE implementation of the chain (063-02). This code
+            # RENDERS the refusal; it never re-derives it.
+            reason = typed_write_refusal(
+                config, dir_name=value, source_rel=source_rel)
+            if reason is None:
+                continue
+            if reason == "ignored":
+                message = (
+                    f"'{name}' matches a `paths[]` glob of layout '{config.layout}' but "
+                    f"is EXCLUDED by `ignore` — the walker will never index pages written "
+                    f"there, and they raise NO lint issue. Choose a name outside `ignore`.")
+            else:
+                message = (
+                    f"'{name}' is not visible to the walker of layout '{config.layout}' "
+                    f"(no matching `paths[]` glob). Use the default folder, or add "
+                    f"`<name>/**/*.md` to `paths[]` in .wiki/layout.yaml.")
+            self.add("TYPED_DIR_NOT_COVERED_BY_LAYOUT", "sync", rel, pointer=pointer,
+                     message=message, layout=config.layout, dir_name=name, reason=reason)
+
+    def _layout(self) -> LayoutConfig | None:
+        """The resolved layout, ONCE per lint run (a resolve + schema validation per
+        sync.yaml would be quadratic on a vault with many per-folder configs).
+        `None` = the layout itself is broken; already reported as
+        LAYOUT_CONFIG_INVALID by the sibling-systems pass, so this check stays quiet
+        rather than piling a second, derived complaint on the same root cause."""
+        if not self._layout_resolved:
+            self._layout_resolved = True
+            try:
+                self._layout_cache = resolve_layout_config(self.vault_root)
+            except LayoutConfigError:
+                self._layout_cache = None
+        return self._layout_cache
 
     def _check_regex_fields(self, rel: str, raw: dict[str, Any]) -> None:
         """Regex health for every field the SCHEMA marks x-wiki-format: regex."""

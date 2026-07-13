@@ -497,3 +497,163 @@ def test_zone_glob_message_does_not_imply_enforcement(tmp_path: Path) -> None:
     exclude = _by_code(findings, "EXCLUDE_GLOB_NO_MATCH")[0]
     assert exclude.pointer == "/exclude/0"
     assert "advisory" not in exclude.message
+
+
+# --------------------------------------------------------------------------- #
+# TASK 063-03 — TYPED_DIR_NOT_COVERED_BY_LAYOUT: the CROSS-SYSTEM G4 gate
+# --------------------------------------------------------------------------- #
+#
+# Why this finding exists at all, stated once: an uncovered `dirs.*` writes a
+# GLOB-INVISIBLE page. `discover_pages` never walks it ⇒ `find_pages_missing_in_index`
+# never reports it ⇒ `wiki-lint` raises ZERO issues. Lint is STRUCTURALLY INCAPABLE of
+# seeing this loss — the delta property passes perfectly while a decision is gone. This
+# gate is the only PREVENTIVE defence, and it must fire at config-edit time, where the
+# operator can still act.
+#
+# ⚠️ Fixtures are PLAN §1's ROSTER. No test here invents its own layout fixture: the
+# plan got "which layouts are supported" factually wrong twice, both times by measuring
+# ONE of G4's two conjuncts.
+
+
+def _vault_with_layout(root: Path, layout: str, override: dict[str, Any] | None = None) -> Path:
+    (root / "WIKI_SCHEMA.md").write_text(
+        f"---\nvault_id: test-vault\nlanguage: en\nlayout: {layout}\n"
+        + ("layout_config: .wiki/layout.yaml\n" if override else "")
+        + "---\n",
+        encoding="utf-8")
+    if override:
+        import yaml
+        (root / ".wiki").mkdir(parents=True, exist_ok=True)
+        (root / ".wiki" / "layout.yaml").write_text(
+            yaml.safe_dump(override, allow_unicode=True), encoding="utf-8")
+    return root
+
+
+# `para-typed` = obsidian-personal + a `.wiki/layout.yaml` unioning in the typed
+# classes. It IS the operator's live vault (PARA, Cyrillic, sibling placement).
+_PARA_TYPED = {
+    "type_mapping": {
+        "decision": {"db_type": "research", "tag": "decision"},
+        "requirement": {"db_type": "brief", "tag": "requirement"},
+        "risk": {"db_type": "research", "tag": "risk"},
+    },
+}
+
+
+def test_typed_dir_not_covered_is_a_finding(tmp_path: Path) -> None:
+    """cybos + a Cyrillic folder name ⇒ refused. cybos is STRICT BY DESIGN (its globs
+    are root-anchored literals), not broken — and REFUSE, never auto-generate: a
+    `sync.yaml` that mutated `layout.yaml` to "fix" this would silently rewrite the
+    vault's read grammar for every OTHER tool (Q-063-5 = A).
+
+    MUT: delete `_check_typed_dirs` ⇒ RED.
+    """
+    _vault_with_layout(tmp_path, "cybos")
+    _folder_yaml(tmp_path, "extract_decisions:\n  dirs:\n    decision: 'решения'\n")
+    findings, _ = lint_vault(tmp_path)
+
+    hits = _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT")
+    assert len(hits) == 1
+    assert hits[0].pointer == "/extract_decisions/dirs/decision"
+    assert hits[0].kind.severity == "error"
+    assert hits[0].kind.tier == "manual"      # never an auto-fix: it is a human choice
+    assert hits[0].system == "sync"           # the pointer lives in sync.yaml
+    assert hits[0].data["reason"] == "unmatched"
+
+
+def test_covered_dir_is_clean(tmp_path: Path) -> None:
+    """The default cybos names ⇒ ZERO findings of ANY kind. Not "no errors" — a
+    spurious warning is a false alarm too, and a gate that cries wolf gets muted."""
+    _vault_with_layout(tmp_path, "cybos")
+    _folder_yaml(
+        tmp_path,
+        "extract_decisions:\n  enabled: true\n  dirs:\n"
+        "    decision: decisions\n    requirement: requirements\n    risk: risks\n")
+    findings, _ = lint_vault(tmp_path)
+    assert findings == []
+
+
+def test_cyrillic_dir_is_clean_on_para_typed(tmp_path: Path) -> None:
+    """The SAME Cyrillic name that cybos refuses is CLEAN on the operator's live PARA
+    vault, whose generic `[0-9][0-9] - */*/**/*.md` glob makes folder names free.
+
+    Both layouts are correct. The gate's job is to make the difference VISIBLE at
+    config time instead of losing pages at write time.
+    """
+    _vault_with_layout(tmp_path, "obsidian-personal", _PARA_TYPED)
+    zone = tmp_path / "06 - BD" / "Acme"
+    zone.mkdir(parents=True)
+    _folder_yaml(zone, "extract_decisions:\n  enabled: true\n  dirs:\n    decision: 'решения'\n")
+    findings, _ = lint_vault(tmp_path)
+    assert _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT") == []
+
+
+def test_raw_dir_name_is_refused_even_though_a_glob_matches(tmp_path: Path) -> None:
+    """★ THE C-3 CASE AT THE VALIDATE SURFACE — the whole reason `glob_covers` is the
+    full filter chain rather than a `paths[]` match.
+
+    `_raw` MATCHES the PARA glob. A `paths[]`-only gate reports COVERED. But
+    `ignore: **/_raw/**` makes the walker skip it, so every decision written there is
+    written, never indexed, and raises NO lint issue.
+
+    The message must say WHY — "a glob matches but `ignore` excludes it" — because the
+    operator, seeing that a glob plainly matches, would otherwise go widen a glob that
+    already matches and never find the real cause.
+
+    MUT: back `glob_covers` with a bare `paths[]` match ⇒ 0 findings ⇒ RED.
+    """
+    _vault_with_layout(tmp_path, "obsidian-personal", _PARA_TYPED)
+    zone = tmp_path / "06 - BD" / "Acme"
+    zone.mkdir(parents=True)
+    _folder_yaml(zone, "extract_decisions:\n  dirs:\n    decision: '_raw'\n")
+    findings, _ = lint_vault(tmp_path)
+
+    hits = _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT")
+    assert len(hits) == 1
+    assert hits[0].data["reason"] == "ignored"
+    assert "ignore" in hits[0].message
+    assert "no lint issue" in hits[0].message.lower()
+
+
+@pytest.mark.parametrize("layout", ["karpathy", "obsidian-personal"])
+def test_zero_typed_class_layout_refuses(tmp_path: Path, layout: str) -> None:
+    """BOTH zero-typed-class layouts, not one (plan-review C-2b: v1 used STOCK
+    obsidian-personal as the *supported* Cyrillic fixture while also declaring
+    zero-class layouts refused — two mutually exclusive tests in one bead).
+
+    They fail G4's FIRST conjunct (`type_mapping` maps no typed class), so the folder
+    name is moot and the message says so — the operator learns it here rather than at
+    the first `prepare`."""
+    _vault_with_layout(tmp_path, layout)
+    _folder_yaml(tmp_path, "extract_decisions:\n  dirs:\n    decision: decisions\n")
+    findings, _ = lint_vault(tmp_path)
+
+    hits = _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT")
+    assert len(hits) == 1
+    assert hits[0].data["reason"] == "no-typed-classes"
+    assert "maps NO typed classes" in hits[0].message
+
+
+def test_message_never_echoes_an_unsafe_value(tmp_path: Path) -> None:
+    """CWE-209/117: the folder name is operator-typed input ⇒ `safe_key`. A value that
+    could break out of the report (control chars, a YAML delimiter) must not survive
+    into the message."""
+    _vault_with_layout(tmp_path, "cybos")
+    _folder_yaml(
+        tmp_path,
+        'extract_decisions:\n  dirs:\n    decision: "evil\\u0007\\nnext"\n')
+    findings, _ = lint_vault(tmp_path)
+    hits = _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT")
+    assert len(hits) == 1
+    assert "\n" not in hits[0].message and "\x07" not in hits[0].message
+    assert "\n" not in hits[0].data["dir_name"]
+
+
+def test_absent_block_is_silent(tmp_path: Path) -> None:
+    """BACK-COMPAT: a vault with no `extract_decisions` block gets byte-identical
+    findings to pre-change. Absence is silent — the finding fires on a key the operator
+    typed, never on a default they never chose."""
+    _vault_with_layout(tmp_path, "cybos")
+    _folder_yaml(tmp_path, "summarize:\n  profile: meeting\n")
+    findings, _ = lint_vault(tmp_path)
+    assert _by_code(findings, "TYPED_DIR_NOT_COVERED_BY_LAYOUT") == []

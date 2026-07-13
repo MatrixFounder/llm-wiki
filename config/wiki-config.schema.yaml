@@ -43,12 +43,22 @@ $defs:
   # ----------------------------------------------------------------------------
   Layout:
     type: string
+    # ⚠️ THIS ENUM IS THE LAYOUT REGISTRY, RESTATED — and it had DRIFTED. `cybos` was
+    # missing, so a vault declaring `layout: cybos` in WIKI_SCHEMA.md — the documented
+    # way, and exactly what scripts/benchmark.py writes — FAILED `load_config`, and
+    # `wiki-config validate` reported a spurious IDENTITY_CONFIG_INVALID on it. (Found
+    # while building a cybos fixture in TASK 063; the population was declared in two
+    # places and only one of them was maintained.)
+    # It is now pinned equal to `layout_config.layout_choices()` by
+    # tests/test_layout_typed_write_dirs.py::test_identity_schema_enum_IS_the_registry,
+    # so a seventh layout cannot be added to the registry alone.
     enum:
       - flat
       - per-project
       - karpathy
       - dev-project
       - obsidian-personal
+      - cybos
     description: >
       Names the vault's layout GRAMMAR (TASK 012 / R-X1). The engine resolves
       this to a built-in layouts/<name>.yaml via scripts/wiki_index/layout_config.py.
@@ -57,8 +67,9 @@ $defs:
       (_sources/_concepts/_entities/_queries/_verifications + Lessons/<Course>/).
       'dev-project' — a software project's docs/ (TASK/PLAN/ADR/reviews/issues).
       'obsidian-personal' — a personal Obsidian vault (numbered folders, system
-      dirs, MOC pattern, multilingual, deep hierarchy). Set on wiki-init; cannot
-      change without reindex.
+      dirs, MOC pattern, multilingual, deep hierarchy). 'cybos' — the typed-knowledge
+      grammar (decisions/ requirements/ risks/ + the ontology contract). Set on
+      wiki-init; cannot change without reindex.
 
   # ----------------------------------------------------------------------------
   # Paths — vault-internal directory conventions.
