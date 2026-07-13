@@ -141,3 +141,33 @@ business content entered this repository.
 RFC-004 `wiki-extract-decisions` — automating what this pilot did by hand — is now **evidence-backed**:
 the two engagement protocols already contained "Ключевые решения" / НФТ / risk-register sections that
 mapped onto `decision` / `requirement` / `risk` almost mechanically. The extraction is automatable.
+
+### Post-ship: operator feedback (2026-07-13) — folded in, and it named the real gap
+
+The operator reviewed the 20 pages and raised four points. Three were fair criticisms of *this* task;
+the fourth is the finding that decides what comes next.
+
+1. **Clutter — VALID, fixed.** The pages were written FLAT, next to the protocol. The framework's own
+   typed layout (`cybos`) uses **one folder per class** (`decisions/ requirements/ risks/`) — I did not
+   follow the project's own convention. Restructured to
+   `<engagement>/{decisions,requirements,risks}/`. Verified safe: the PARA path rule
+   `[0-9][0-9] - */*/**/*.md → ${area}/${sub}` collapses ANY depth into one project, and Obsidian
+   resolves wikilinks by filename regardless of folder. Post-move: ontology 0 violations,
+   `edges_examined` 8, `implements`/`implemented-by` 8+8 intact, coverage 3 gaps, **zero new
+   orphan-links**, `project` unchanged.
+
+2. **"What is the process? I run `wiki-import` on a transcript — then what?" — THE HONEST ANSWER IS:
+   THERE IS NO PROCESS.** `wiki-import --kind` accepts only
+   `{meeting, lesson, article, paper, thread, summary}` — **no typed class**. It emits a
+   `meeting-summary` and the conveyor STOPS. `wiki-extract-decisions` does not exist. **The 20 pages
+   were authored BY HAND, by the agent.** That is the pilot's real finding, and it is why the next task
+   is the rail (RFC-004), not more content.
+
+3. **"What do I do with them now?"** The value loop is real (`wiki-health coverage` = the open-commitment
+   agenda before the next meeting; `wiki-lint --strict` catches lifecycle drift; `wiki-graph` gives
+   decision lineage; `--as-of` gives point-in-time) — **but it only materialises if the pages are
+   MAINTAINED.** A one-shot dump that goes stale is worse than nothing: it lies with a confident face.
+   Maintenance is only cheap **with** the rail. **Conclusion: do NOT scale the pilot to other zones until
+   RFC-004 exists.**
+
+4. Ontology question answered (read-time contract, not a write gate; ADR-002 §D8 keeps markdown canonical).
