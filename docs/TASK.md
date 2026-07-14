@@ -1,76 +1,42 @@
-# TASK 064 — `concept-extraction`: definitions that COMPLEMENT the source, without garbage
+# TASK 065 — R-23 Phase A: the concept `definition` becomes inspectable · DF-064-3
 
 ## 0. Meta Information
 
-- **Task ID**: 064
-- **Slug**: concept-extraction-anti-garbage
-- **Origin**: Operator request — *"Создай high graded скилы для skills/concept-extraction. Цель —
-  получить определения к ключевым концепциям, которые дополняют исходную страницу без мусорных
-  данных"*, plus a follow-up requirement: **"убедись, что скилл будет работать эффективно со слабыми
-  моделями"**.
-- **Type**: Feature (the missing mechanisms) + Skill/Eval hardening
-- **Effort**: M
-- **Schema**: **zero DDL** (`user_version` 7). No new columns, no new indexes.
-- **Depends on**: TASK 003 (v3.1 rail), TASK 047 (mentions ledger), TASK 063 (the sibling rail whose
-  anti-fabrication mechanisms this task PORTS).
+- **Task ID**: 065
+- **Slug**: definition-projection-and-slug-sentinel
+- **Origin**: the two TASK-064 follow-ups the operator chose to pair — the quick isolated fix
+  (**DF-064-3**) and the one that unlocks a capability (**DF-064-1** → ROADMAP **R-23**).
+- **Type**: Bugfix (DF-064-3) + Enabler (R-23 Phase A)
+- **Effort**: S
+- **Schema**: **zero DDL** (`user_version` 7). `entities.definition` already exists — this closes a
+  **projection** gap, not a schema gap.
 
 ---
 
-## 1. The problem, stated mechanically
+## 1. The problem
 
-**`wiki-extract-concepts` is the only extraction rail in the repo where fabrication is the cheapest
-path to a green run.** This is not an interpretation; it is three lines of code:
+### 1.1 DF-064-1 — the column nothing ever wrote
 
-| # | mechanism | consequence |
-|---|---|---|
-| 1 | `_validation.py:67` — `_CANDIDATE_COUNT_MIN = 1`, checked with **no empty short-circuit** anywhere on the apply path | an honest `[]` on a source with no concepts is **exit 4**. The model's only green route is to **invent one**. |
-| 2 | `skills/concept-extraction/SKILL.md` — *"Identify **3-10** key concepts"*, frozen behind a "DO NOT REWORD" banner | a **quota with a floor of three**, stacked on top of (1). |
-| 3 | nothing anywhere checks whether a concept is **worth a page**, or whether its definition **says anything** | `definition: ""` and `definition == source_quote` are both **ACCEPTED** today. |
+`entities.definition` has been in the schema since v2 and was **never written**. It stayed NULL
+forever, so **no SQL query, no `wiki-lint` rule and no `wiki-health` check could inspect the one
+field a concept page exists to carry** — while `wiki-search` retrieved it from FTS and `wiki-query`
+**cited it as knowledge**. The `entity_cards` VIEW already selects `definition AS tldr`: it was
+serving NULL to every consumer.
 
-The sibling rail **diagnosed this file by name and refused to clone it**
-(`wiki_extract_decisions/__init__.py:138-143`):
+The definition is also **write-once** (the first source to mention a concept owns it forever) and
+**un-improvable**. TASK 064 shipped every gate that can run at *write* time and then had to write
+into the SKILL's honesty ledger, in those words, that *"is this definition TRUE?"* has **no
+mechanism and cannot have one**. That admission is a direct consequence of this defect:
+**detection is impossible while the column is dead.**
 
-> `CANDIDATE_COUNT_MIN = 0` — *"The precedent (`wiki_extract_concepts._validation._CANDIDATE_COUNT_MIN`)
-> is 1; cloning it here would make 'no decisions in this note' an exit-4 failure and **hand the model a
-> reason to fabricate one**."*
+### 1.2 DF-064-3 — one function answering two questions
 
-It routed around the defect and **never came back to fix it.** That is this project's signature
-failure mode — the unenumerated surface — recurring inside the machinery written to prevent it.
-
-### 1.1 The damage is measured, not hypothesised (operator's live vault, 720 concept pages)
-
-| class | real pages the current contract minted |
-|---|---|
-| UI chrome | `тултип`, `hex-код-цвета`, `индикатор-прогресса`, `текстовый-виджет` — all from **one** Dune tutorial |
-| Language / tool primitives | `coalesce`, `left-join`, `row_number`, `group-by`, `having` — knowledge *of SQL*, not of the domain |
-| Schema identifiers | `block_number`, `prices-usd`, `erc20_ethereum-evt_transfer` |
-| **People** | `уоррен-баффет`, `гарри-марковиц`, `хейли`, `hassan-и-de-filippi` (12+) — the operator's standing rule already forbids these |
-| **Permanent graph splits** | `виталик-бутерин`/`vitalik-buterin` · `сатоши-накамото`/`сатоси-накамото` · `бессрочный-фьючерс`/`бессрочные-фьючерсы` · `eth`/`ethereum-eth` · two CPPI pages created **the same day** |
-
-`wiki-lint --strict` is **green** over all of it. Its only duplicate check is *exact-slug,
-**cross**-vault, severity `info`* — it catches **0 of the 5** splits. And `coalesce.md` has since
-accreted **six** inbound mentions: the TASK-047 derived ledger makes junk look well-connected and
-important, and `wiki-query` will cite it as knowledge. **Garbage here compounds.**
-
-### 1.2 Three holes that make the existing guarantees hollow
-
-- **The verbatim-quote receipt is forgeable.** `_validation.py:316` is a bare substring test with **no
-  minimum length**: `"source_quote": "и"` grounds against any Russian body.
-- **The refusal message teaches the bypass.** `_validation.py:322` ends with *"(set
-  `WIKI_EXTRACT_NO_QUOTE_CHECK=1` to skip)"* — a fabrication tutorial delivered to the model at the
-  exact moment it is stuck. The env var is read with bare truthiness, so `=0` and `=false` **also**
-  disable the check.
-- **`source_span` is fiction.** Shape-validated three times, verified against the body **zero** times.
-  `L9999-L9999` on a 3-line body is accepted at **exit 0** and written into
-  `page_entity_refs.line_start/line_end` as provenance.
-
-### 1.3 Why the weak-model requirement makes this urgent, not cosmetic
-
-A small model obeys a quota **more** literally than a large one. On a thin source, a strong model
-argues with the instruction and emits two concepts; a weak model dutifully pads to three. **Prose in a
-SKILL cannot fix a mechanism that pays for invention.** Per `skills/wiki-import/evals/README.md:41-45`
-— *"a strong model's priors can mask weak skill text"* — the skill must therefore be **measured on a
-weak model**, not asserted to work on one.
+`derive_concept_slug` returns `None` for two unrelated reasons: *"this layout declares no name→slug
+rule"* (`identity`) and *"the derivation is degenerate"*. `wiki-import`'s `derive_candidates` read
+the first as the second and skipped the candidate as `invalid-slug` — so a caller passing
+`layout.slug_strategy` straight through would file **zero concepts on every karpathy vault, at exit
+0**, reporting `invalid-slug` for perfectly valid names. It never fired only because the *caller*
+happened to substitute `preserve-unicode` first — i.e. a fix the **next** caller would not inherit.
 
 ---
 
@@ -78,48 +44,44 @@ weak model**, not asserted to work on one.
 
 | ID | Requirement | Verified by |
 |---|---|---|
-| **R-064-1** | An empty extraction is a **SUCCESS** — `[]` ⇒ `action: no_candidates`, exit 0, and it mutates nothing but `source_state` (the existing sources' mention ledgers survive). | `tests/test_extract_concepts_gates.py` (end-to-end through `main()`) · eval fixture **02** |
-| **R-064-2** | The definition must **complement** the source: never empty, never a copy of the quote, never markdown. | `FIELD_TOO_SHORT` · `DEFINITION_IS_QUOTE` · `DEFINITION_NOT_PROSE` · fixture **06** |
-| **R-064-3** | The verbatim-quote receipt is **load-bearing**: min length enforced, no env-var escape hatch, and **no refusal reason may name a bypass**. | `FIELD_QUOTE_NOT_IN_BODY` · fixture **07** · a test asserting no env var appears in any reason string |
-| **R-064-4** | A **person** is never a concept on this rail. | `ENTITY_TYPE_NOT_ALLOWED` · fixture **04** |
-| **R-064-5** | A near-duplicate of an existing concept is **refused with its nearest slugs**, so the repair turns a `create` into a `mention`. | `NEAR_DUPLICATE_SLUG` · fixture **05** · a test that **re-measures** the cutoff on the real live pairs |
-| **R-064-6** | Two candidates may never become one file. | `IN_BATCH_SLUG_COLLISION` · fixture **09** |
-| **R-064-7** | The rail **never overwrites** an existing concept page (today: data loss reported as success). The TASK-053/R3 ghost-row self-heal survives. | `CONCEPT_PAGE_EXISTS` + classification change · regression test |
-| **R-064-8** | The slug is **derived by the layout**, not chosen by the model; `prepare` **emits `slug_strategy`**. | `SLUG_NOT_DERIVED_FROM_NAME` · fixture **08** (tri-layout) |
-| **R-064-9** | `source_span` is **verified against the body**, and the line-origin convention is **stated** (L1 = the file's first line). | `SOURCE_SPAN_OUT_OF_RANGE` / `_QUOTE_MISMATCH` · fixture **10** |
-| **R-064-10** | The rail refuses to write concept pages a layout **cannot see**. | `LAYOUT_CANNOT_INDEX_CONCEPTS` (port of the TASK-063 G4 preflight) |
-| **R-064-11** | Every refusal is **zero-file, exit 4**, and the batch is atomic. | a test asserting no `_concepts/*.md` and no DB open on every refusal path |
-| **R-064-12** | The SKILL is a **deterministic procedure a weak model can execute**, and it is **honest** about the three rules no mechanism backs. | eval fixtures **01/02/03/11** (census-graded) + **a measured Haiku 4.5 run** |
-| **R-064-13** | Every rule the SKILL teaches has a fixture; every fixture has a `why` naming the failure mode it guards. | `tests/test_concept_extraction_evals.py` (globbed population, `why` length asserted) |
+| **R-065-1** | ★ The definition **round-trips byte-identically**: `apply` writes it, `wiki-reindex --full` rebuilds it from the markdown **alone**, and the two agree. | `tests/test_definition_projection.py::test_the_definition_ROUND_TRIPS_byte_identically` — **mutation-tested both directions** |
+| **R-065-2** | Class A is the source of truth: the definition is read from the page **body** (raw markdown), not re-derived from the candidate, so a **hand-edited** definition is the one that lands. | the parser's parametrised cases (no H1 · no AUTO block · multi-paragraph) |
+| **R-065-3** | A full rebuild **alone** populates the column — the existing corpus becomes inspectable with no re-extraction, only re-indexing. | `test_a_full_rebuild_ALONE_populates_the_definition` |
+| **R-065-4** | The derived mentions ledger (Class B) never leaks into the definition. | `test_the_AUTO_block_is_NOT_swallowed_into_the_definition` |
+| **R-065-5** | The gate and the producer ask **different questions**, and neither can be mistaken for the other. | `layout_derives_slugs` / `mint_concept_slug`; `identity` now mints valid slugs |
 
-### The honesty ledger (R-064-12) — rules with **no** mechanism behind them
+### ★ The acceptance criterion is the ROUND-TRIP, not the column
 
-These three cannot be enforced by any validator, and the SKILL must say so **in those words**:
+`write_concept_page` puts the **sanitized** definition into the body (markdown-actives escaped:
+`*args` → `\*args`). The rebuilder reads **that** back. A writer storing the **raw** candidate would
+round-trip to a *different value* — **and every existing test would still pass**, because each side
+is internally consistent. The first `wiki-reindex --full` would then silently **change** the column,
+and ADR-002 §D8 (*Class B is a 100%-rebuildable cache of Class A*) would be **false**.
 
-| claim | backed by |
-|---|---|
-| "Only durable domain concepts earn a page." | **NOTHING.** The SKILL is the only gate. (`тултип` passes every mechanical check.) |
-| "The definition must be true, not merely well-formed." | **NOTHING.** A confident tautology is lint-green, FTS-indexed, and cited. |
-| "You did not drop the concept that mattered." | **NOTHING.** No mechanism counts what was left behind. |
+That is why the gate's fixture definition deliberately begins with a markdown-active character, and
+why "the column is populated" was never allowed to be the exit criterion.
 
 ---
 
 ## 3. Scope
 
-**In scope**: `scripts/wiki_skills/wiki_extract_concepts/` (the gates + the `prepare` envelope);
-`skills/concept-extraction/SKILL.md` (the REASON contract); `skills/concept-extraction/evals/` (the
-graded set); `tests/` (the gate suite + the eval runner).
+**In**: `wiki_skills/_common.py` (the shared parser) · `wiki_index/repository.py` +
+`sqlite_repository/_entities.py` (DAL) · `wiki_extract_concepts/_db.py` (write) ·
+`wiki_index/reindex.py` (read-back) · `wiki_extract_concepts/_gates.py` +
+`wiki_import_article/_authoring.py` (DF-064-3) · `tests/test_definition_projection.py`.
 
-**Out of scope, tracked**: the `wiki-lint` near-duplicate rule that would surface the **existing** 720-page
-corpus (the gate above only protects the future — `wiki-merge` still has no work queue); the
-`wiki-import` article-grammar person leak; back-filling `entities.definition` so a definition is
-inspectable at all.
+**Out, and deliberately so — R-23 Phase B (`wiki-health definitions`)**. Detection is now
+*possible*; it is not yet *right*. A first sweep flagged the stub (`тултип`) but **missed the
+tautology** («Синергия — это когда есть синергия…») because a naive stop-list lacks
+`работает`/`вместе`. That is the same class of decision that produced the 0.88 near-duplicate cutoff
+— **a threshold calibrated on the examples that motivated it is not calibrated.** Phase B must
+measure a false-positive population before it ships a verdict, and bundling that decision with a
+projection change would make a regression un-attributable.
 
 ---
 
 ## 4. Non-goals
 
-- No DDL. No new columns, no new indexes (P-5).
-- No `import anthropic` (Decision-17). This is a **contract**, not a call.
-- No change to the karpathy byte-identity anchor: `identity` imposes **no** slug derivation, and
-  R-064-8 must not pretend otherwise.
+- No DDL. No new columns.
+- No behaviour change to what the extractor *writes to disk* — only to what the index *records
+  about it*.

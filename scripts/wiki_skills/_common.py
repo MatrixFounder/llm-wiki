@@ -119,6 +119,46 @@ def format_concept_mentions_body(source_slugs: list[str]) -> str:
     return "\n".join(lines).rstrip()
 
 
+# --- R-23 Phase A: the definition, read back OUT of the page --------------------------
+
+
+def definition_from_concept_body(body: str) -> str | None:
+    """The definition a concept page **carries** — parsed back out of its Class-A body.
+
+    ★ THE PAGE IS THE SOURCE OF TRUTH, NOT THE CANDIDATE THAT MADE IT. `entities.definition`
+    is a Class-B **cache** of this (ADR-002 §D8): `wiki-reindex --full` must be able to
+    reproduce it from the markdown alone, or the DB has stopped being rebuildable. So the
+    definition is read from where it actually lives — the body — and never re-derived from a
+    candidate the operator may since have edited away.
+
+    The shape `write_concept_page` emits is::
+
+        # <name>
+        <blank>
+        <definition>
+        <blank>
+        <!-- BEGIN-AUTO:mentions --> … <!-- END-AUTO:mentions -->
+
+    so the definition is *everything between the H1 and the AUTO block*. Both anchors are
+    optional on purpose — a human may have retitled, un-headed, or hand-authored the page, and
+    a parser that demanded the generated shape would silently return `None` (a NULLed
+    definition, invisibly) on exactly the pages an operator cared enough to edit.
+
+    Returns `None` only when there is genuinely no prose — never as a way of saying
+    "unexpected shape".
+    """
+    text = body
+    marker = f"<!-- BEGIN-AUTO:{AUTO_MENTIONS_NAME} -->"
+    cut = text.find(marker)
+    if cut != -1:
+        text = text[:cut]
+    lines = text.lstrip().split("\n")
+    if lines and lines[0].lstrip().startswith("# "):
+        lines = lines[1:]
+    stripped = "\n".join(lines).strip()
+    return stripped or None
+
+
 def atomic_write_text(target: Path, text: str) -> None:
     """Atomically write ``text`` to ``target`` (tempfile in the same dir +
     fsync + ``os.replace``). ``os.replace`` is ``rename(2)`` on POSIX — it does

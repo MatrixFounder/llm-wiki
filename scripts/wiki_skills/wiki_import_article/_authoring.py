@@ -20,7 +20,7 @@ from scripts.wiki_index.layout_config import LayoutConfig, _apply_slug_strategy
 from scripts.wiki_skills.wiki_extract_concepts._errors import ExtractionParseError
 from scripts.wiki_skills.wiki_extract_concepts._gates import (
     check_slugs_derived_from_names,
-    derive_concept_slug,
+    mint_concept_slug,
 )
 from scripts.wiki_skills.wiki_extract_concepts._validation import (
     _NAME_ALLOWLIST,
@@ -510,10 +510,20 @@ def derive_candidates(
         if str(e.get("type", "")).strip().lower() == "person":
             skipped.append({"name": name, "reason": "participant-not-concept"})
             continue
-        # Mint through the RAIL's own derivation (`_gates.derive_concept_slug`), which
-        # normalises `_`→`-` and rejects a degenerate result — so the slug this function
-        # produces is one the rail's charset gate and G8 both accept, by construction.
-        slug = derive_concept_slug(name, slug_strategy)
+        # ★ DF-064-3 — `mint_concept_slug`, NOT `derive_concept_slug`. This is the PRODUCER;
+        # it needs a slug it can FILE under, not the answer to "what would the layout's gate
+        # check against?". The two questions are different, and `derive_concept_slug` answers
+        # the second: it returns `None` on `identity` to mean *"this layout declares no
+        # name→slug rule"* — and reading that as `invalid-slug` (as this line used to) files
+        # ZERO concepts on every karpathy vault, at exit 0, reporting `invalid-slug` for
+        # perfectly good names. It never fired only because the caller happened to substitute
+        # `preserve-unicode` first — a fix the next caller would not inherit.
+        #
+        # `mint_concept_slug` mints on every layout and still pushes the result through the
+        # rail's own normalisation (`_`→`-`, degenerate → None), so what it produces is a slug
+        # the charset gate and G8 both accept, by construction. `None` now means exactly one
+        # thing: the derivation really is degenerate.
+        slug = mint_concept_slug(name, slug_strategy)
         if slug is None:
             skipped.append({"name": name, "reason": "invalid-slug"})
             continue

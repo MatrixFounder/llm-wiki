@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-14T18:06:41.097583 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-07-14T20:27:49.704446 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -9,7 +9,7 @@
 
 - **DF-046-2** [[df-046-2-wiki-sync-can-upsert-a-nested-raw-capture|wiki-sync can \`upsert\` a nested \`_raw/\` capture (Class-B drift if the 4d marker is skipped)]] — status `open`, opened 2026-06-30
 - **DF-7** [[df-7-resummarize-gate-trusts-source-state-without-disk-check|\`wiki-sync\`'s resummarize gate (\`source_state\`/\`provenance_ref\`/\`mirror\`) never checks that the output it claims exists is still on disk]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
-- **DF-064-1** [[df-064-1-entities-definition-never-populated|\`entities.definition\` is never populated — so a concept's definition is invisible to every automated check, while \`wiki-query\` cites it as knowledge]] — severity `SEV-2`, status `open`, opened 2026-07-14
+- **DF-064-1** [[df-064-1-entities-definition-never-populated|\`entities.definition\` is never populated — so a concept's definition is invisible to every automated check, while \`wiki-query\` cites it as knowledge]] — severity `SEV-2`, status `fixed`, opened 2026-07-14
 
 ## correctness
 
@@ -17,7 +17,7 @@
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 - **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
-- **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `open`, opened 2026-07-14
+- **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `fixed`, opened 2026-07-14
 
 ## dogfood
 

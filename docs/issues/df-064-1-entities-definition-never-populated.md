@@ -1,7 +1,7 @@
 ---
 id: DF-064-1
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-07-14
 category: class-b-integrity
 severity: SEV-2
@@ -39,14 +39,32 @@ slug: df-064-1-entities-definition-never-populated
   The body — the payload — is projected into FTS but not into a structured column. A concept page's
   most load-bearing field never crosses the A→B boundary as data.
 
-- **Fix sketch** (zero-DDL — the column already exists):
-  1. `upsert_extracted_entity` writes `definition` from the candidate.
-  2. `reindex._entity_from_concept_page` reads the body's first paragraph back (the page shape is
-     fixed and byte-stable), so `wiki-reindex --full` reproduces it — the Class-B rebuildability
-     gate (ADR-002 §D8) must stay green.
-  3. Then, and only then, a `wiki-health` check becomes possible: *tautology* (definition's content
-     words ⊆ its own name), *stub* (under N words), *deixis* («те 20%, о которых договорились»).
-     `tests/test_concept_extraction_evals.py::_is_tautology` is a working prototype of the first —
-     it currently lives in the eval runner because the DB cannot answer the question.
+- **FIXED (TASK 065 — ROADMAP R-23 Phase A)**, zero-DDL. The column was never a schema gap; it was
+  a **projection** gap, and it is now closed on both sides:
 
-- **Blocks**: ROADMAP **R-23** (concept-definition health).
+  1. **Write** — `upsert_extracted_entity` stores the definition, and the DAL (`upsert_entity`)
+     carries it.
+  2. **Read back** — `reindex_full` parses it out of the page **body** (`out.body_text`, the RAW
+     markdown — *not* `page.body_excerpt`, which is the FTS-normalised text). **Class A is the
+     source of truth**, so a definition an operator has hand-edited is the one that lands.
+  3. **One parser, shared** — `_common.definition_from_concept_body`, so the writer and the
+     rebuilder cannot drift into two readings of the same page.
+
+- **★ THE TRAP, AND WHY THE ACCEPTANCE CRITERION IS THE ROUND-TRIP, NOT THE COLUMN.**
+  `write_concept_page` puts the **sanitized** definition into the body (markdown-actives are
+  escaped: `*args` → `\*args`). The rebuilder reads *that* back. A writer storing the **raw**
+  candidate would round-trip to a **different value** — and every existing test would still pass,
+  because each side is internally consistent. The first `wiki-reindex --full` would then silently
+  **change** the column, and ADR-002 §D8 (Class B is a 100%-rebuildable cache of Class A) would be
+  false. So the gate is `tests/test_definition_projection.py::
+  test_the_definition_ROUND_TRIPS_byte_identically`, whose fixture definition deliberately begins
+  with a markdown-active character. **Mutation-tested both ways** (writer stores raw → RED;
+  rebuilder stops reading → RED).
+
+- **Still open — Phase B (`wiki-health definitions`).** Detection is now *possible*; it is not yet
+  *shipped*, and the reason is deliberate. A first sweep over a 4-page corpus already flagged the
+  stub (`тултип` — 1 content word) but **missed the tautology** («Синергия — это когда есть
+  синергия и всё работает вместе») because a naive stop-list does not contain `работает`/`вместе`.
+  That is precisely the class of decision that produced the 0.88 near-duplicate cutoff — a
+  threshold calibrated on the examples that motivated it. **Phase B must measure a false-positive
+  population before it ships a verdict.** Tracked in ROADMAP **R-23**.

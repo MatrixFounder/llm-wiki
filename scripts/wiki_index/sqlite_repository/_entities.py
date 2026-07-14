@@ -37,6 +37,7 @@ class _EntitiesMixin(SQLiteRepositoryBase):
         first_seen: str,
         last_updated: str,
         file_path: str,
+        definition: str | None = None,
     ) -> None:
         """INSERT or UPDATE entity row; SQL-level downgrade guard.
 
@@ -44,6 +45,23 @@ class _EntitiesMixin(SQLiteRepositoryBase):
         MIN(excluded.is_candidate, entities.is_candidate)`` — once an
         entity is confirmed (``is_candidate=0``), incoming ``=1`` does
         NOT overwrite. R-37(b) — see ABC docstring for full rationale.
+
+        ★ R-23 / DF-064-1 — ``definition`` was a schema column
+        (``sql/wiki-index-v2.sql`` §2) that NOTHING EVER WROTE. It stayed NULL
+        forever, so no SQL query, no ``wiki-lint`` rule and no ``wiki-health``
+        check could inspect the one field a concept page exists to carry —
+        while ``wiki-search`` retrieved it from FTS and ``wiki-query`` cited it
+        as knowledge. (The ``entity_cards`` VIEW already selects
+        ``definition AS tldr``: it was serving NULL to every consumer.)
+
+        It is written HERE, and read back from the page body at reindex, so the
+        Class-A → Class-B projection round-trips (ADR-002 §D8). **Callers must
+        pass the definition EXACTLY as it appears in the page body** — i.e. the
+        sanitized text, not the raw candidate — or ``wiki-reindex --full`` will
+        not reproduce it and the DB stops being rebuildable.
+
+        ``None`` leaves the column NULL (the `_entities/` external-page path and
+        any hand-authored page with no prose).
         """
         conn = self._connect()
         with conn:  # autocommit; rollback on exception
@@ -51,18 +69,21 @@ class _EntitiesMixin(SQLiteRepositoryBase):
                 """
                 INSERT INTO entities
                     (vault_id, slug, name, type, is_candidate,
-                     canonicalized_by, first_seen, last_updated, file_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     canonicalized_by, first_seen, last_updated, file_path,
+                     definition)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vault_id, slug) DO UPDATE SET
                     name = excluded.name,
                     type = excluded.type,
                     is_candidate = MIN(excluded.is_candidate, entities.is_candidate),
                     canonicalized_by = excluded.canonicalized_by,
                     last_updated = excluded.last_updated,
-                    file_path = excluded.file_path
+                    file_path = excluded.file_path,
+                    definition = excluded.definition
                 """,
                 (vault_id, slug, name, type, is_candidate,
-                 canonicalized_by, first_seen, last_updated, file_path),
+                 canonicalized_by, first_seen, last_updated, file_path,
+                 definition),
             )
 
     # =========================================================================

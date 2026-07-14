@@ -223,9 +223,59 @@ def derive_concept_slug(name: str, slug_strategy: str) -> str | None:
     exactly the live `виталик-бутерин` / `vitalik-buterin` pair. On karpathy, links to
     concepts are written AS the slug, so the failure mode does not arise.
     """
-    if slug_strategy == "identity":
+    if not layout_derives_slugs(slug_strategy):
         return None
     return _normalise_derived_slug(_apply_slug_strategy(name, slug_strategy))
+
+
+# ★ DF-064-3 — THE SENTINEL WAS ANSWERING TWO DIFFERENT QUESTIONS, AND A CALLER CONFLATED THEM.
+#
+# `derive_concept_slug` returns `None` for TWO unrelated reasons: *"this layout declares no
+# name→slug function"* (identity) and *"the derivation is degenerate"*. `wiki-import`'s
+# `derive_candidates` read the first as the second and SKIPPED the candidate as `invalid-slug`
+# — so a caller passing `layout.slug_strategy` straight through would file **zero concepts on
+# every karpathy vault, at exit 0**, reporting `invalid-slug` for perfectly valid names.
+#
+# It never fired only because `wiki_import_article._mint_strategy` happens to substitute
+# `preserve-unicode` for `identity` at the call site. That is a fix living in the caller —
+# i.e. a fix the NEXT caller does not inherit.
+#
+# So the two questions are now two functions, and neither can be mistaken for the other:
+#
+#   layout_derives_slugs()  — "is there a rule to CHECK a slug against?"  → the GATE asks this
+#   mint_concept_slug()     — "give me a slug I can USE"                  → the PRODUCER asks this
+#
+# A gate that mints, or a producer that skips because there is no rule, is now a type error in
+# spirit even where Python will not catch it.
+
+
+def layout_derives_slugs(slug_strategy: str) -> bool:
+    """Does this layout define a NAME → SLUG function at all?
+
+    `False` for `identity` alone: `_apply_slug_strategy` maps a file **stem** to a slug, and
+    under `identity` that is the identity function — the stem IS the slug. There is no rule to
+    check a candidate's slug against, and `check_slugs_derived_from_names` must skip.
+
+    **`False` does NOT mean "this name has no valid slug".** It means "the layout has no
+    opinion about it" — the producer still mints one (see :func:`mint_concept_slug`).
+    """
+    return slug_strategy != "identity"
+
+
+def mint_concept_slug(name: str, slug_strategy: str) -> str | None:
+    """A slug a concept page can actually be FILED under — for the PRODUCER, never the gate.
+
+    Unlike :func:`derive_concept_slug`, this never returns `None` merely because the layout
+    declares no derivation. On `identity` it mints in the `preserve-unicode` keyspace, which is
+    what `wiki_import_article._mint_strategy` already reasons its way to: `identity` preserves
+    source-FILENAME case and is therefore not mint-valid, while `preserve-unicode` round-trips
+    the already-lowercase `<slug>.md` stems wiki-import writes (karpathy byte-identity).
+
+    `None` here means one thing only: **the derivation is degenerate** (empty, or still not a
+    valid slug after normalisation) — a genuine `invalid-slug`.
+    """
+    strategy = slug_strategy if layout_derives_slugs(slug_strategy) else "preserve-unicode"
+    return _normalise_derived_slug(_apply_slug_strategy(name, strategy))
 
 
 def check_slugs_derived_from_names(

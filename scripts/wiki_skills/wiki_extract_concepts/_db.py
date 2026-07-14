@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ._errors import ExtractionParseError
-from ._validation import _parse_source_span
+from ._validation import _parse_source_span, _sanitize_definition
 
 # source_kind partition key for `source_state` idempotency rows (used only by
 # check_idempotency / update_idempotency_state, both below).
@@ -207,6 +207,17 @@ def upsert_extracted_entity(
         # recorded path matches the on-disk file and `wiki-lint` doesn't flag it
         # missing-on-disk.
         file_path=f"{concepts_rel}/{candidate['slug']}.md",
+        # ★ R-23 / DF-064-1 — THE SANITIZED definition, NOT the raw candidate.
+        #
+        # `write_concept_page` puts `_sanitize_definition(candidate["definition"])` into the
+        # page body. The body is Class A — canonical — and `wiki-reindex --full` reads the
+        # definition back OUT of it. So the row must hold exactly those bytes, or the very
+        # first `--full` rebuild would CHANGE the column and ADR-002 §D8 (Class B is a
+        # 100%-rebuildable cache of Class A) would be broken by this write.
+        #
+        # Same pure function, same input, on both sides ⇒ identical string by construction.
+        # `test_the_definition_ROUND_TRIPS_byte_identically` is the gate that keeps it so.
+        definition=_sanitize_definition(str(candidate["definition"])),
     )
     return "updated" if existing else "created"
 

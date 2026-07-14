@@ -901,7 +901,32 @@ the write side.
 
 ### R-23. Make a concept's `definition` INSPECTABLE — the enabler for definition health
 
-**Status: OPEN.** Tracks **[[df-064-1-entities-definition-never-populated|DF-064-1]]** (SEV-2).
+**Status: Phase A ✅ SHIPPED (TASK 065, 2026-07-14) · Phase B OPEN.**
+Tracks **[[df-064-1-entities-definition-never-populated|DF-064-1]]** (SEV-2, now `fixed`).
+
+**Phase A — the projection (SHIPPED).** Zero-DDL: the column was never a schema gap, it was a
+*projection* gap. `upsert_extracted_entity` + the DAL now WRITE the definition; `reindex_full`
+READS it back out of the page **body** (the raw markdown — Class A is the source of truth, so a
+hand-edited definition is the one that lands); one shared parser
+(`_common.definition_from_concept_body`) keeps the writer and the rebuilder from drifting into two
+readings of the same page.
+
+★ **The acceptance criterion was the ROUND-TRIP, not the column.** `write_concept_page` puts the
+*sanitized* definition in the body (`*args` → `\*args`); the rebuilder reads *that* back. A writer
+storing the *raw* candidate would round-trip to a different value — **and every existing test would
+still have passed**, because each side is internally consistent. The first `wiki-reindex --full`
+would then silently CHANGE the column and §D8 would be false. Gated by
+`test_the_definition_ROUND_TRIPS_byte_identically` (fixture definition begins with a markdown-active
+char on purpose), mutation-tested both directions.
+
+**Phase B — `wiki-health definitions` (OPEN), and the delay is deliberate.** Detection is now
+*possible*. It is not yet *right*: a first sweep flagged the stub (`тултип`) but **missed the
+tautology** («Синергия — это когда есть синергия…») because a naive stop-list lacks
+`работает`/`вместе`. That is exactly the class of decision that produced the 0.88 near-duplicate
+cutoff — **a threshold calibrated on the examples that motivated it is not calibrated.** Phase B
+must MEASURE a false-positive population before it ships a verdict. A working prototype of the
+tautology check already exists as `tests/test_concept_extraction_evals.py::_is_tautology` — it lives
+in the *eval runner* only because, until Phase A, the DB could not answer the question.
 
 **The gap.** `entities.definition TEXT` exists in the schema and is **never written**. The
 definition lives only in the concept page's **body**, so **no SQL query, no `wiki-lint` rule and

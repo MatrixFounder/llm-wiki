@@ -1,7 +1,7 @@
 ---
 id: DF-064-3
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-07-14
 category: correctness
 severity: SEV-3
@@ -45,9 +45,22 @@ slug: df-064-3-derive-candidates-misreads-the-identity-sentinel
   and, in the caller's reading, `None` = *invalid*) collapsed into a boolean at the call site. The
   sentinel's meaning is documented in `derive_concept_slug`'s docstring but not enforced by its type.
 
-- **Fix sketch**: make the sentinel unmisreadable rather than trusting the next reader.
-  - Return an explicit sum type (`Derived(slug)` / `NoDerivation` / `Invalid`), **or**
-  - split the function: `layout_derives_slugs(strategy) -> bool` + `derive_concept_slug(...) -> str`,
-    so a caller cannot conflate "no rule" with "rule violated".
-  - Add a `derive_candidates(..., slug_strategy='identity')` regression test asserting the candidates
-    are **kept** — the gap exists precisely because no test ever passed `identity` to it.
+- **FIXED (TASK 065)** — the sentinel was made unmisreadable rather than the next reader trusted.
+  The one function answering two questions became two functions answering one each, in
+  `wiki_extract_concepts/_gates.py`:
+
+  | function | the question it answers | who asks |
+  |---|---|---|
+  | `layout_derives_slugs(strategy)` | *"is there a rule to CHECK a slug against?"* | the **gate** (G8) |
+  | `mint_concept_slug(name, strategy)` | *"give me a slug I can USE"* | the **producer** (`derive_candidates`) |
+
+  `mint_concept_slug` mints on **every** layout (on `identity` it mints in the `preserve-unicode`
+  keyspace — the same reasoning `_mint_strategy` already carried, now moved *inside* the function
+  so the next caller inherits it), and still pushes the result through the rail's own
+  normalisation, so what it produces is a slug the charset gate and G8 both accept **by
+  construction**. Its `None` now means exactly one thing: the derivation really is degenerate.
+
+  Verified on the issue's own reproduction: under `identity`, `derive_concept_slug` returns `None`
+  for every name (*correct* — nothing to check) while `mint_concept_slug` yields
+  `sharpe-ratio` / `diversification` / `виталик-бутерин`. The regression the issue describes is
+  gone, and a future caller passing `layout.slug_strategy` straight through is now safe.

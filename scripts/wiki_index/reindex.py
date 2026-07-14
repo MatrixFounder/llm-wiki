@@ -39,6 +39,10 @@ from scripts.wiki_index.security import (
     PathTraversalError,
     assert_no_symlink_escape,
 )
+# R-23: the ONE parser both sides of the definition round-trip use. Kept in the neutral
+# `_common` leaf (which `wiki_index.rendering` already imports) so the writer and the
+# rebuilder cannot drift apart into two readings of the same page.
+from scripts.wiki_skills._common import definition_from_concept_body
 from scripts.wiki_source.base import SourceItem
 from scripts.wiki_source.manual import ManualSourceAdapter
 from scripts.wiki_source.parsing import extract_refs, first_h1
@@ -935,8 +939,8 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                                 "INSERT OR IGNORE INTO entities (vault_id, slug, "
                                 "type, name, project, is_candidate, first_seen, "
                                 "last_updated, file_path, mentions_count, "
-                                "metadata_json) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                                "metadata_json, definition) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                                 entity_args,
                             )
                             entities_count += 1
@@ -1023,6 +1027,25 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                     # L-8 (TASK 006): concept pages emit `name:`, not `title:` —
                     # fall back title→name→slug so the entity's display name
                     # survives reindex (was: slug).
+                    # ★ R-23 / DF-064-1 — the DEFINITION, read back out of the BODY.
+                    #
+                    # `entities.definition` was a schema column NOTHING ever wrote: it stayed
+                    # NULL forever, so no SQL query, no `wiki-lint` rule and no `wiki-health`
+                    # check could ever inspect the one field a concept page exists to carry —
+                    # while `wiki-search` retrieved it from FTS and `wiki-query` cited it as
+                    # knowledge. (`entity_cards` already selects `definition AS tldr`; it was
+                    # serving NULL to every consumer.)
+                    #
+                    # It is read from `out.body_text` — the RAW markdown — and NOT from
+                    # `page.body_excerpt`, which is the FTS-normalised body (mermaid + SECTION
+                    # anchors stripped). Class A is the source of truth, so the bytes that must
+                    # land here are the bytes on disk, whatever an operator has since edited
+                    # them into.
+                    #
+                    # This is the READ half of the §D8 round-trip whose WRITE half is
+                    # `upsert_extracted_entity`. If the two ever disagree, the first
+                    # `wiki-reindex --full` silently CHANGES the column — which is precisely
+                    # what "Class B is a 100%-rebuildable cache" forbids.
                     entity_args = (
                         vault_id, out.page_slug, e_type,
                         (updated_fm.get("title") or updated_fm.get("name")
@@ -1030,6 +1053,7 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                         out.project, _coerce_is_candidate(updated_fm),
                         ts_iso, ts_iso,
                         str(path.relative_to(vault_root)), "{}",
+                        definition_from_concept_body(out.body_text),
                     )
                     # R-5.3: mirror Class A `aliases:` frontmatter →
                     # entity_aliases (Class B). The flat Obsidian list carries

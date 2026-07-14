@@ -577,8 +577,14 @@ class IndexRepository(abc.ABC):
         first_seen: str,
         last_updated: str,
         file_path: str,
+        definition: str | None = None,
     ) -> None:
         """Insert or update an entity row.
+
+        ★ R-23 / DF-064-1: ``definition`` is the concept page's body prose — a
+        Class-B **cache** of Class-A markdown. Pass it EXACTLY as the page body
+        carries it (sanitized), so ``wiki-reindex --full``, which reads it back
+        out of that body, reproduces the row byte-identically (ADR-002 §D8).
 
         TASK 003 v2 / I-7.7a (R-37). Atomic ``INSERT … ON CONFLICT
         (vault_id, slug) DO UPDATE``. **SQL-level downgrade guard**:
