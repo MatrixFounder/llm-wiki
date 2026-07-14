@@ -1,0 +1,25 @@
+{
+  "why": "★ THE DEFINITION IS THE PAGE, AND UNTIL TASK 064 NOTHING LOOKED AT IT. `_validate_candidates_schema` checked `definition` for `isinstance(str)` and `len <= 2000` and NOTHING ELSE: `definition: \"\"` was ACCEPTED and `definition == source_quote` was ACCEPTED — and the filed page is literally `# <name>` + the definition + the mentions ledger, so an echoed quote ships a page whose entire body is its own citation. This fixture's source does what real notes do: it carries a GOOD, quotable sentence ABOUT a concept («…мы дважды списали деньги у 12 клиентов… — обработчик не был идемпотентным») that is situational, not a definition — it is true of March 2026 and of nothing else. The correct extraction keeps that sentence as the RECEIPT (source_quote) and writes a definition that names the genus and the differentia, i.e. one that survives with the source page deleted. Two mechanisms back this: DEFINITION_IS_QUOTE (`_validation.py`, `_norm`-compared, so a casefold/whitespace-shuffled copy is caught too) and FIELD_TOO_SHORT (definition floor = 40 chars). The counterexample carries ALL THREE failure shapes the definition can take — candidate #0 echoes the quote byte-for-byte (DEFINITION_IS_QUOTE), candidate #1 offers «Это сверка платежей.» (20 chars → FIELD_TOO_SHORT), candidate #2 writes a definition studded with a `[[wikilink]]` and a backticked `Idempotency-Key` (DEFINITION_NOT_PROSE — the single most common real-model failure, and the one the rail REFUSES rather than MANGLES: `sanitize_markdown_text` would otherwise escape it into visible backslash litter on a permanent page). ★ THE BATCH IS ATOMIC AND INDEX-ORDERED, so only #0's code ever surfaces from a whole-batch apply, and #1/#2 would be pure decoration — «demonstrated but ungradeable» — if the fixture stopped there. It does not: `refused_with_by_item` DECLARES the code each candidate raises ALONE, so a runner grades all three (feed candidate i by itself, assert its code) and none of them rots. Without that declaration the second and third rules live in prose only, and a prose rule is a rule that rots. Note the intra-candidate order too: WITHIN one candidate the `_FIELD_MINS` floors run BEFORE the is-quote check, which runs before the prose check — so the codes are a function of the code's order, not the fixture's, and the per-item census pins them. ★ WHY THIS COMPOUNDS AND CANNOT BE REPAIRED LATER: the FIRST source to mention a concept OWNS its definition FOREVER (a later, richer source files a `mention`, whose definition is DISCARDED — never written to disk, never to the DB), and `entities.definition` is never populated, so no lint rule, no health check and no SQL query can ever SEE a bad definition. But `wiki-search` retrieves it and `wiki-query` CITES it as knowledge. There is no backstop: the page written here is the page that ships. ★ AND THE HALF NO CODE CAN GRADE: nothing in the rail can refuse a WORTHLESS concept (тултип, COALESCE, transaction_id all pass every mechanical gate) or a definition that is a confident, well-formed TAUTOLOGY or simply FALSE — G1 checks that the definition is not the quote and is long enough, never that it is TRUE. Those live in `forbidden` and are graded by CENSUS only. Two near-mechanisms exist and are LAYOUT-DEPENDENT, so neither can be relied on: INVALID_SLUG_CHARSET catches `transaction_id` only under `preserve-unicode` (whose slugify KEEPS the `_`) — under `transliterate` the slug becomes `transaction-id` and the gate is SILENT; ENTITY_TYPE_NOT_ALLOWED catches «Марина Ковалёва» only if the model self-declares `entity_type: person` — filed as `external` she sails through. The `forbidden` census is the only thing that always fires.",
+  "expect": {"concept": 2},
+  "expect_mentions": 0,
+  "forbidden": [
+    "тултип",
+    "Тултип",
+    "coalesce",
+    "COALESCE",
+    "transaction_id",
+    "transaction-id",
+    "Марина Ковалёва",
+    "Игорь Дёмин",
+    "ретраи",
+    "NULL-суммы"
+  ],
+  "empty_is_success": false,
+  "counterexample": {
+    "refused_with": "DEFINITION_IS_QUOTE",
+    "refused_with_by_item": ["DEFINITION_IS_QUOTE", "FIELD_TOO_SHORT", "DEFINITION_NOT_PROSE"],
+    "graded_by_census_only": false,
+    "accepted_on": [],
+    "on_layouts": ["karpathy", "cybos", "obsidian-personal"]
+  }
+}

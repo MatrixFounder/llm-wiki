@@ -183,12 +183,20 @@ Top-level value is a **JSON array** (no metadata wrapper — hallucination-prone
     "definition": "1-3 sentences.",    // ≤2000 chars; markdown-escaped on body write
     "source_quote": "verbatim quote",  // ≤500 chars; substring-of-source-body check
     "source_span": "L12-L18",          // ^L\d+-L\d+$ — ASCII-only digits
-    "entity_type": "concept"           // one of {concept, person, company, product, group, event, work, external}
+    "entity_type": "concept"           // one of {concept, company, product, group, event, work, external}
+                                       // ★ TASK 064 / G4: `person` is REFUSED here
+                                       // (ENTITY_TYPE_NOT_ALLOWED) — an attendee belongs
+                                       // in `participants:` frontmatter, a cited author in
+                                       // the note body, never as a `_concepts/` page.
   }
 ]
 ```
 
-**Strict mode**: items with keys outside the required set → `UNKNOWN_FIELD` (exit 4). **Count bound**: `1 ≤ N ≤ 25` candidates; out-of-bounds → `CANDIDATE_COUNT_OUT_OF_BOUNDS` (exit 4). **No content echo**: every error envelope emits `{error, field?, reason}` only — NEVER the offending field content (CWE-117 / CWE-209). The substring-of-body check is bypassable per-invocation via the `WIKI_EXTRACT_NO_QUOTE_CHECK=1` env var.
+**Strict mode**: items with keys outside the required set → `UNKNOWN_FIELD` (exit 4). **No content echo**: every error envelope emits `{error, field?, reason, violations?}` only — NEVER source-body content (CWE-117 / CWE-209). `violations[]` (TASK 064) carries MODEL-AUTHORED / vault-derived values only (the candidate's own slug, the layout-derived slug, the `nearest` known slugs) because the repair loop depends on handing them back.
+
+**★ Count bound (TASK 064 / G0): `0 ≤ N ≤ 25`. AN EMPTY EXTRACTION IS A SUCCESS** — `[]` ⇒ `action: no_candidates`, exit 0, nothing written and the source's existing mentions ledger untouched. The floor used to be **1**, which made an honest "this source has no concepts" an exit-4 failure and left the model exactly one green path: **invent one**. That was the pump behind every garbage class found in the live vault. Do not "restore parity" with the old 1 — the 0 IS the safety property.
+
+**★ There is NO quote-check bypass.** The `WIKI_EXTRACT_NO_QUOTE_CHECK` env var is **DELETED, not deprecated** (TASK 064 / G3): it was a bare truthiness read (so `=0` and `=false` also disabled the check), and — worse — the refusal message *printed the bypass into the envelope the model reads at the exact moment it is stuck*. An escape hatch on an anti-fabrication check IS the fabrication path. **No env var may appear in any refusal reason on this rail**, and a test sweeps every refusal to keep it that way.
 
 ### Functions
 
@@ -259,16 +267,29 @@ Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_stat
 | 2 | `INVALID_CANDIDATES_PATH` | `--candidates-file PATH` fails `validate_inside_vault`, is missing, or resolves to a non-regular file (symlink / FIFO / device / socket) |
 | 4 | `EXTRACTION_PARSE_ERROR` | Candidates JSON malformed (invalid JSON, missing required key, invalid kebab slug, invalid Lstart-Lend, invalid entity_type) |
 | 4 | `CANDIDATES_TOO_LARGE` | Candidates JSON exceeds `_MAX_CANDIDATES_BYTES = 1 MiB` |
-| 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [1, 25]` |
+| 4 | `CANDIDATE_COUNT_OUT_OF_BOUNDS` | `len(candidates) ∉ [0, 25]` — **`[]` is VALID** (TASK 064 / G0: `action: no_candidates`, exit **0**) |
 | 4 | `FIELD_TOO_LONG` | Per-field cap exceeded: `name>200`, `definition>2000`, `source_quote>500` |
-| 4 | `UNKNOWN_FIELD` | Candidate item has keys outside the required set (strict mode) |
-| 4 | `FIELD_QUOTE_NOT_IN_BODY` | Optional substring check: `source_quote` not found in source body (bypassable via `WIKI_EXTRACT_NO_QUOTE_CHECK=1`) |
+| 4 | `FIELD_TOO_SHORT` | **(TASK 064 / G1-G2)** Per-field floor (after `.strip()`): `name<2`, `definition<40`, `source_quote<40`. `definition: ""` and a one-token "quote" both used to be ACCEPTED |
+| 4 | `DEFINITION_IS_QUOTE` | **(G1)** `definition` restates `source_quote` — the quote is already the receipt; the definition must say what the reader LEARNS |
+| 4 | `DEFINITION_NOT_PROSE` | **(G1)** `definition` carries a newline / `[[wikilink]]` / backtick / leading markdown marker. It is written into the page body verbatim, where the sanitizer ESCAPES it into visible backslash litter — **refusing beats mangling** |
+| 4 | `ENTITY_TYPE_NOT_ALLOWED` | **(G4)** `entity_type: person` — an attendee belongs in `participants:`, a cited author in the note body. (An *unknown* type stays `EXTRACTION_PARSE_ERROR`) |
+| 4 | `NEAR_DUPLICATE_SLUG` | **(G5)** the candidate near-duplicates an existing concept (plural / transliteration / word-order variant; `difflib` ratio ≥ `NEAR_DUP_CUTOFF = 0.88` over a transliterated key). The envelope hands back `nearest[]` so the model re-emits the EXACT known slug → reclassified a **`mention`** → the refusal IMPROVES the graph |
+| 4 | `IN_BATCH_SLUG_COLLISION` | **(G6)** two candidates derive one slug; the second would silently OVERWRITE the first, with **zero lint issues because the count is right** |
+| 4 | `CONCEPT_PAGE_EXISTS` | **(G7)** the target page exists on disk with different content — this rail does not overwrite a page it did not just create (a page on disk is always classified a `mention`; this is the belt) |
+| 4 | `SLUG_NOT_DERIVED_FROM_NAME` | **(G8)** the slug is the LAYOUT's to derive (`slug_strategy`), never the model's to choose — an ASCII slug in a `preserve-unicode` vault files a page no `[[wikilink]]` can ever resolve. The violation carries `derived_slug` |
+| 4 | `INVALID_SLUG_CHARSET` | **(G8)** `_` in a candidate slug — no layout slug-strategy emits one; `block_number` / `row_number` are schema columns and code symbols, not concepts |
+| 4 | `SOURCE_SPAN_OUT_OF_RANGE` | **(G9)** `source_span` falls outside the body. **L1 = the file's FIRST line** (the opening `---` of the frontmatter), because `source_body` is the whole file as read — the same string the quote check grounds against |
+| 4 | `SOURCE_SPAN_QUOTE_MISMATCH` | **(G9)** the quote does not occur within the lines the span points at. The span was shape-validated three times and verified against the body ZERO times — `L9999-L9999` used to exit 0, straight into `page_entity_refs.line_start/line_end` as if it were provenance |
+| 4 | `LAYOUT_CANNOT_INDEX_CONCEPTS` | **(G10)** the layout maps no `concept` type, or its read globs never reach the `_concepts/` dir we would write to → **invisible pages**: written, never indexed, and *structurally unreportable* by `wiki-lint` |
+| 4 | `FIELD_QUOTE_NOT_IN_BODY` | `source_quote` is not verbatim in the source body. **Mandatory and un-bypassable** — the `WIKI_EXTRACT_NO_QUOTE_CHECK` escape is DELETED (G3) |
 | 4 | `INVALID_SOURCE_SPAN` | `source_span` fails `^L\d+-L\d+$` at the sanitisation pre-flight |
 | 5 | `PARTIAL_INDEX_FAILURE` | `--ingest` succeeded but indexer reported `failed[]` non-empty; `source_state` NOT updated → next run retries |
 | 5 | `IDEMPOTENCY_UPDATE_FAILED` | Pages / entities / refs committed but `update_idempotency_state` raised `sqlite3.OperationalError` (DB locked, disk full); next run safely re-extracts |
 | 6 | `MANIFEST_INVALID` | `_manifest_consumer.validate_manifest` raised `WikiIngestError` (path-traversal / vault_id mismatch / missing field) |
 
-**Universal envelope invariant** (CWE-117 / CWE-209): every error envelope emits `{error, field?, reason}` only, with NO `content`, `value`, `raw`, or `received` keys. A parametrised regression test enforces this across every sub-envelope.
+**Universal envelope invariant** (CWE-117 / CWE-209): every error envelope emits `{error, field?, reason, violations?}` only, with NO `content`, `value`, `raw`, or `received` keys, and **never a byte of source-body content**. `violations[]` carries model-authored / vault-derived values only (slugs, the derived slug, `nearest`, in-batch indices). A parametrised canary matrix enforces this across every sub-envelope — and since TASK 064 it walks the payload **recursively**, so a leak nested inside `violations[]` cannot slip past a top-level check.
+
+**Zero-file invariant** (TASK 064): every exit-2 / exit-4 refusal is a guaranteed **zero-file, DB-never-opened no-op** — `_apply_validate` (schema, G1-G4, G6, G8-charset, G9, G10) runs *before* `make_repo`. The two gates that need vault state (G5 near-duplicate, G7 presence-classification) run in `_apply_write` **before the write loop**, so they are still zero-file. Both halves are pinned by tests that landmine `make_repo` / `write_concept_page`.
 
 ### Operational invariants
 

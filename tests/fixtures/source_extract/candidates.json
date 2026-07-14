@@ -4,23 +4,23 @@
     "name": "Hermes API",
     "definition": "A tool for accessing real-time market data.",
     "source_quote": "The agent uses the Hermes API to fetch L1 order books",
-    "source_span": "L7-L7",
+    "source_span": "L14-L14",
     "entity_type": "product"
   },
   {
     "slug": "backtesting",
     "name": "Backtesting",
     "definition": "A methodology for evaluating trading strategies on historical data.",
-    "source_quote": "then runs backtesting",
-    "source_span": "L8-L8",
+    "source_quote": "to fetch L1 order books, then runs backtesting",
+    "source_span": "L14-L14",
     "entity_type": "concept"
   },
   {
     "slug": "reinforcement-learning",
     "name": "Reinforcement Learning",
     "definition": "A paradigm where agents learn from reward signals.",
-    "source_quote": "refining its strategy via reinforcement",
-    "source_span": "L9-L10",
+    "source_quote": "refining its strategy via reinforcement\nlearning.",
+    "source_span": "L15-L16",
     "entity_type": "concept"
   }
 ]

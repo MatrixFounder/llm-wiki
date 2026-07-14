@@ -1,8 +1,11 @@
 """TASK 052 — wiki-import: meeting participants → `participants:` frontmatter,
 never a `_concepts/` person page.
 
-R1 derive_candidates drops `person` for pyramid grammar (kept for article) ·
-R2 assemble_note stamps `participants:` for pyramid only (H-6 sanitized) ·
+R1 derive_candidates drops `person` — **for EVERY grammar** since TASK 064 / F1 (it was
+   pyramid-only, and the article path leaked `уоррен-баффет` / `гарри-марковиц` into the
+   operator's live vault; once `wiki-extract-concepts` started REFUSING `person`, that leak
+   also turned batch-fatal, since `wiki-import` shells out to it) ·
+R2 assemble_note stamps `participants:` for pyramid only (H-6 sanitized) — unchanged ·
 R4 the drop is a quiet, non-lossy skip (no CONCEPTS_DROPPED warning) ·
 R5 integration: a --kind meeting apply files 0 person concept pages + participants frontmatter.
 
@@ -27,13 +30,18 @@ _BODY = (
     "ArchiMate это нотация архитектуры.\n"
     "Архитектурный комитет согласует изменения.\n"
 )
+# TASK 064 / F1: every definition clears the concept rail's WORD floor (≥4). `wiki-import`
+# has no concept writer — `_file_concepts` shells out to `wiki-extract-concepts apply` — so
+# the rail's floors judge these candidates for real, and the old `"d"` placeholders are now
+# legitimate `definition-too-short` drops that emptied the batch before the grammar guard
+# these tests exist to pin ever got a say.
 _ENTS = [
-    {"name": "Сергей", "definition": "d", "quote": "Сергей смотрит демо и даёт обратную связь.", "type": "person"},
-    {"name": "MasterData", "definition": "d", "quote": "MasterData ведёт консалтинговую практику.", "type": "company"},
-    {"name": "Метамодель", "definition": "d", "quote": "Метамодель описывает предметную область.", "type": "concept"},
-    {"name": "Айва", "definition": "d", "quote": "Айва это инструмент мета-моделирования.", "type": "product"},
-    {"name": "ArchiMate", "definition": "d", "quote": "ArchiMate это нотация архитектуры.", "type": "external"},
-    {"name": "Архитектурный комитет", "definition": "d", "quote": "Архитектурный комитет согласует изменения.", "type": "group"},
+    {"name": "Сергей", "definition": "архитектор со стороны заказчика.", "quote": "Сергей смотрит демо и даёт обратную связь.", "type": "person"},
+    {"name": "MasterData", "definition": "консалтинговая компания по управлению данными.", "quote": "MasterData ведёт консалтинговую практику.", "type": "company"},
+    {"name": "Метамодель", "definition": "формальное описание предметной области.", "quote": "Метамодель описывает предметную область.", "type": "concept"},
+    {"name": "Айва", "definition": "инструмент мета-моделирования и архитектуры.", "quote": "Айва это инструмент мета-моделирования.", "type": "product"},
+    {"name": "ArchiMate", "definition": "нотация описания корпоративной архитектуры.", "quote": "ArchiMate это нотация архитектуры.", "type": "external"},
+    {"name": "Архитектурный комитет", "definition": "коллегиальный орган согласования изменений.", "quote": "Архитектурный комитет согласует изменения.", "type": "group"},
 ]
 
 
@@ -52,20 +60,37 @@ def test_derive_candidates_pyramid_drops_person_keeps_rest():
     assert {"name": "Сергей", "reason": "participant-not-concept"} in skipped
 
 
-def test_derive_candidates_article_keeps_person():
+def test_derive_candidates_article_ALSO_drops_person():
+    """★ TASK 064 / F1 — THE CONTRACT CHANGED, AND THIS TEST USED TO PIN THE BUG.
+
+    It asserted `"сергей" in cands` for the ARTICLE grammar — i.e. it pinned the leak that
+    put the live person pages `уоррен-баффет` and `гарри-марковиц` into the operator's
+    vault. TASK 052 dropped `person` only under `grammar == "pyramid"`; the operator's
+    standing rule has no grammar clause in it (an attendee belongs in `participants:`, a
+    cited author in the note body, neither in `_concepts/`).
+
+    It also became FATAL rather than merely wrong: `wiki-extract-concepts` now refuses
+    `person` outright (G4 / ENTITY_TYPE_NOT_ALLOWED), and `wiki-import` shells out to it —
+    so one `person` entity on the article path killed the WHOLE concept batch at exit 6,
+    destroying every legitimate concept beside it. Dropped on EVERY grammar now.
+    """
     cands, skipped = A.derive_candidates(
         _ENTS, _BODY, slug_strategy="preserve-unicode",
         note_slug="демо", existing_page_slugs=[], grammar="article")
-    assert "сергей" in {c["slug"] for c in cands}
-    assert not any(s["reason"] == "participant-not-concept" for s in skipped)
+    assert "сергей" not in {c["slug"] for c in cands}
+    assert {"name": "Сергей", "reason": "participant-not-concept"} in skipped
+    # …and nothing else is collateral damage: company/product/concept/external/group stay.
+    assert {"masterdata", "метамодель", "айва", "archimate",
+            "архитектурный-комитет"} <= {c["slug"] for c in cands}
 
 
-def test_derive_candidates_default_grammar_keeps_person():
-    # no grammar kwarg → defaults to article (back-compat; existing callers/tests unchanged)
-    cands, _ = A.derive_candidates(
+def test_derive_candidates_default_grammar_drops_person():
+    # no grammar kwarg → defaults to article → the person is dropped there too (F1).
+    cands, skipped = A.derive_candidates(
         _ENTS, _BODY, slug_strategy="preserve-unicode",
         note_slug="демо", existing_page_slugs=[])
-    assert "сергей" in {c["slug"] for c in cands}
+    assert "сергей" not in {c["slug"] for c in cands}
+    assert {"name": "Сергей", "reason": "participant-not-concept"} in skipped
 
 
 # --- R2: assemble_note participants frontmatter (pyramid only) --------------
@@ -133,13 +158,18 @@ def _mtg_note(tmp_path, **over):
     note = {
         "title": "Демо платформы Айва", "tldr": "кратко о демо",
         "summary_bullets": ["тезис"],
+        # "Айва это инструмент." is 3 `\w+` words — under the rail's ≥4-word `source_quote`
+        # floor (F8), so it would drop as `no-verbatim-quote` and this fixture would stop
+        # testing the person guard it exists for. The body sentence and the entity's quote
+        # are widened together so the quote stays a VERBATIM substring of the body.
         "body": ("## TL;DR\n\nСергей смотрит демо и даёт обратную связь.\n"
-                 "MasterData ведёт консалтинговую практику. Айва это инструмент.\n"),
+                 "MasterData ведёт консалтинговую практику. Айва это инструмент мета-моделирования.\n"),
         "participants": ["Сергей — MasterData", "Алексей Бондарев — Айва"],
         "entities": [
-            {"name": "Сергей", "definition": "d", "quote": "Сергей смотрит демо и даёт обратную связь.", "type": "person"},
-            {"name": "MasterData", "definition": "d", "quote": "MasterData ведёт консалтинговую практику.", "type": "company"},
-            {"name": "Айва", "definition": "d", "quote": "Айва это инструмент.", "type": "product"},
+            # definitions clear the concept rail's ≥4-word floor (F1) — see `_ENTS` above.
+            {"name": "Сергей", "definition": "архитектор со стороны заказчика.", "quote": "Сергей смотрит демо и даёт обратную связь.", "type": "person"},
+            {"name": "MasterData", "definition": "консалтинговая компания по управлению данными.", "quote": "MasterData ведёт консалтинговую практику.", "type": "company"},
+            {"name": "Айва", "definition": "инструмент мета-моделирования и архитектуры.", "quote": "Айва это инструмент мета-моделирования.", "type": "product"},
         ],
     }
     note.update(over)
@@ -177,14 +207,29 @@ def test_apply_meeting_person_not_filed_participants_stamped(vault, tmp_path, ca
     assert "[[сергей" not in text
 
 
-def test_apply_article_keeps_person_no_participants(vault, tmp_path, capsys, _stub_subprocs):
+def test_apply_article_ALSO_drops_person_still_no_participants(vault, tmp_path, capsys, _stub_subprocs):
+    """★ TASK 064 / F1 — the article path drops the person too.
+
+    This asserted `"сергей" in cand_slugs` — it PINNED the leak that put the live person
+    pages `уоррен-баффет` / `гарри-марковиц` into the operator's vault.
+
+    The `participants:` frontmatter block stays PYRAMID-ONLY (TASK 052 / R2 — that half is
+    unchanged), so on an article the person lands in NEITHER `_concepts/` nor
+    `participants:`: it is dropped and reported. That is right for a cited author — they
+    belong in the note body's prose, which the REASON step authors.
+    """
     rc = _run(vault, _mtg_note(tmp_path), kind="article")
     out = json.loads(capsys.readouterr().out)
     assert rc == 0, out
     cand_slugs = {c["slug"] for c in _stub_subprocs["concepts"][0][2]}
-    assert "сергей" in cand_slugs                      # article grammar → person IS a concept
+    assert "сергей" not in cand_slugs                   # F1: a person is not a concept, EVER
+    assert {"masterdata", "айва"} <= cand_slugs         # the real concepts still file
+    assert {"name": "Сергей", "reason": "participant-not-concept"} in out["skipped"]
+    # intentional drop → never a lossy CONCEPTS_DROPPED warning
+    assert all(w.get("reason") != "participant-not-concept" for w in out["warnings"])
     text = (vault / out["note"]).read_text(encoding="utf-8")
     assert "participants:" not in text                  # article grammar → no participants block
+    assert "[[сергей" not in text                       # …and no dangling footer wikilink
 
 
 # --- R4: malformed `participants` is rejected / tolerated, never iterated per-CHAR ----

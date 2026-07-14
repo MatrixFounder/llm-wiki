@@ -32,7 +32,15 @@ def _note(tmp_path, **over):
         "title_ru": "DeFi гайд", "tldr": "кратко",
         "summary_bullets": ["AMM это маркет-мейкер."], "ru_body": "AMM это маркет-мейкер. полный текст.",
         "entities": [
-            {"name": "AMM", "definition": "автоматический маркет-мейкер",
+            # TASK 064 / F1: AMM is the one entity meant to SURVIVE, so its definition must
+            # clear the concept rail's WORD floor (≥4). `wiki-import` shells out to
+            # `wiki-extract-concepts apply`, so the rail's floors judge these candidates for
+            # real — the old 3-word "автоматический маркет-мейкер" is now a legitimate
+            # `definition-too-short` drop, which silently emptied the batch.
+            # DeFi / "DeFi гайд" are never validated: they are dropped EARLIER by the
+            # collision guard (collides-existing-page / self-collision), which is the
+            # behaviour these tests actually pin.
+            {"name": "AMM", "definition": "автоматический маркет-мейкер на смарт-контракте",
              "quote": "AMM это маркет-мейкер.", "type": "concept"},
             {"name": "DeFi", "definition": "финансы", "quote": "x", "type": "concept"},
             {"name": "DeFi гайд", "definition": "сам гайд", "quote": "y", "type": "concept"},
@@ -236,7 +244,10 @@ def test_footer_omits_unresolvable_entities(vault, tmp_path, capsys, _stub_subpr
 def test_overflow_entities_reported_not_silently_dropped(vault, tmp_path, capsys, _stub_subprocs):
     # P3-8: entities past the candidate cap are reported in skipped[] (reason max-candidates),
     # never silently dropped (which would leave dangling footer links).
-    ents = [{"name": f"Концепт{i}", "definition": "d",
+    # TASK 064 / F1: a real (≥4-word) definition — the cap is what this test pins, and a
+    # 1-word placeholder now drops every candidate at the rail's floor instead, which would
+    # make the assertion below pass/fail for a reason that has nothing to do with the cap.
+    ents = [{"name": f"Концепт{i}", "definition": f"Концепт{i} — это важная предметная абстракция.",
              "quote": f"Концепт{i} это нечто важное и описанное.", "type": "concept"}
             for i in range(30)]
     body = " ".join(e["quote"] for e in ents)

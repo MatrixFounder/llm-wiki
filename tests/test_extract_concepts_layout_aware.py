@@ -60,10 +60,17 @@ def _run(*args: str, stdin: bytes | None = None) -> subprocess.CompletedProcess[
     )
 
 
-def _candidate(slug: str, name: str, quote: str) -> dict:
+def _candidate(slug: str, name: str, quote: str, span: str = "L3-L3") -> dict:
+    """TASK 064: the definition + the quotes here were all under the new G1/G2 floors
+    (`definition` ≥40, `source_quote` ≥40 — a token is not a receipt), and `span` was
+    hardcoded `L3-L3` for bodies whose quote is nowhere near line 3. G9 now VERIFIES the
+    span against the body (L1 = the file's FIRST line, frontmatter included), so the
+    span is a real parameter instead of a decoration."""
     return {
-        "slug": slug, "name": name, "definition": f"{name} — определение.",
-        "source_quote": quote, "source_span": "L3-L3", "entity_type": "concept",
+        "slug": slug, "name": name,
+        "definition": f"{name} — определение понятия, которое вводится в этом "
+                      f"источнике.",
+        "source_quote": quote, "source_span": span, "entity_type": "concept",
     }
 
 
@@ -168,7 +175,8 @@ def test_para_round_trip_creates_indexed_concept_and_resolves_wikilink(
     note.parent.mkdir(parents=True, exist_ok=True)
     # body line 3 holds the quote; wikilink target slugifies to сущность-икс.
     note.write_text(
-        "# Заметка\n\nСущность Икс это пример. См. [[Сущность Икс]].\n",
+        "# Заметка\n\nСущность Икс это пример объекта в квантовой модели "
+        "вычислений. См. [[Сущность Икс]].\n",
         encoding="utf-8")
 
     repo = _make_repo(db, "personal", root)
@@ -189,7 +197,9 @@ def test_para_round_trip_creates_indexed_concept_and_resolves_wikilink(
     assert prep.returncode == 0, prep.stderr.decode()
     source_hash = json.loads(prep.stdout)["source_hash"]
 
-    cand = _candidate("сущность-икс", "Сущность Икс", "Сущность Икс это пример.")
+    cand = _candidate("сущность-икс", "Сущность Икс",
+                      "Сущность Икс это пример объекта в квантовой модели "
+                      "вычислений.")
     app = _run("apply", "--vault", "personal", "--vault-root", str(root),
                "--source-page", note_rel, "--source-hash", source_hash,
                "--db-path", str(db), "--candidates-stdin",
@@ -245,7 +255,8 @@ def test_karpathy_concepts_rel_byte_identical(tmp_path: Path) -> None:
     src = root / "_sources/lesson-x.md"
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("---\ntype: summary\ntitle: Lesson X\n---\n"
-                   "Backtesting is a method. See [[Backtesting]].\n",
+                   "Backtesting is a method for evaluating a strategy on "
+                   "historical data. See [[Backtesting]].\n",
                    encoding="utf-8")
     repo = _make_repo(db, "kvault", root)
     reindex_full(repo, "kvault")
@@ -256,7 +267,9 @@ def test_karpathy_concepts_rel_byte_identical(tmp_path: Path) -> None:
     assert prep.returncode == 0, prep.stderr.decode()
     source_hash = json.loads(prep.stdout)["source_hash"]
 
-    cand = _candidate("backtesting", "Backtesting", "Backtesting is a method.")
+    cand = _candidate("backtesting", "Backtesting",
+                      "Backtesting is a method for evaluating a strategy on "
+                      "historical data.", span="L5-L5")
     app = _run("apply", "--vault", "kvault", "--vault-root", str(root),
                "--source-page", "lesson-x", "--source-hash", source_hash,
                "--db-path", str(db), "--candidates-stdin",
@@ -278,7 +291,8 @@ def test_karpathy_course_tier_concepts_rel(tmp_path: Path) -> None:
     src = root / "Lessons/Trading/_sources/lesson-y.md"
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("---\ntype: summary\ntitle: Lesson Y\n---\n"
-                   "Hedging is a method. See [[Hedging]].\n", encoding="utf-8")
+                   "Hedging is a method for reducing exposure to an adverse "
+                   "price move. See [[Hedging]].\n", encoding="utf-8")
     repo = _make_repo(db, "kvault", root)
     reindex_full(repo, "kvault")
     repo.close()
@@ -287,7 +301,9 @@ def test_karpathy_course_tier_concepts_rel(tmp_path: Path) -> None:
                 "--source-page", "lesson-y", "--db-path", str(db))
     assert prep.returncode == 0, prep.stderr.decode()
     source_hash = json.loads(prep.stdout)["source_hash"]
-    cand = _candidate("hedging", "Hedging", "Hedging is a method.")
+    cand = _candidate("hedging", "Hedging",
+                      "Hedging is a method for reducing exposure to an adverse "
+                      "price move.", span="L5-L5")
     app = _run("apply", "--vault", "kvault", "--vault-root", str(root),
                "--source-page", "lesson-y", "--source-hash", source_hash,
                "--db-path", str(db), "--candidates-stdin",

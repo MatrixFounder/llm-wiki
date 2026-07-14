@@ -1,0 +1,24 @@
+{
+  "why": "★ THE QUOTE IS THE ANTI-FABRICATION MECHANISM — and until TASK 064 it was FORGEABLE, twice over. HOLE 1: the check honoured `WIKI_EXTRACT_NO_QUOTE_CHECK` through a bare truthiness test on `os.environ.get(...)`, so `=0` and `=false` ALSO disabled it — and the refusal message then TAUGHT the bypass, ending with `(set WIKI_EXTRACT_NO_QUOTE_CHECK=1 to skip)`: a fabrication tutorial delivered to the model at the exact moment it was stuck and looking for a way through. HOLE 2: there was NO minimum length, so `source_quote: \"и\"` grounded against any Russian body — the prompt's `10-50 words verbatim` was enforced by NOTHING, and the receipt was pure ceremony. TASK 064 deletes the env var (there is no escape hatch, and no refusal on this rail may name one) and makes the receipt load-bearing (min 40 chars). Both counterexample candidates are MECHANISM-BACKED: #1 paraphrases its quote (word order swapped, `который` → `что` — semantically identical, byte-different) and dies on FIELD_QUOTE_NOT_IN_BODY; #2 is a concept the source explicitly DENIES («шлюз её не даёт и не обещает»), propped up by the one-letter receipt `и`, and dies on FIELD_TOO_SHORT. The batch is atomic and validated in index order, so the only code a whole-batch apply ever surfaces is #1's — which would leave #2's FIELD_TOO_SHORT demonstrated but UNGRADEABLE, a rule living in this prose and nowhere a runner can reach. `refused_with_by_item` closes that: it DECLARES, index-aligned, the code each candidate raises ALONE, so the runner feeds candidate #2 by itself and asserts FIELD_TOO_SHORT. The second hole is now graded, not narrated. THE UNENFORCEABLE HALF, graded by census only: the note is deliberately full of the junk classes the old contract mined — `спиннер` and `тултип` (UI chrome), `coalesce` (a SQL primitive that appears in a real diagnostic query), and the participants `Алексей Воронов` / `Марина Гельфанд` (a person filed as `entity_type: concept` is NOT refused — only `entity_type: person` is; the census is the only gate). `retry_count` looks mechanism-backed and is only HALF backed — VERIFIED, not assumed: INVALID_SLUG_CHARSET fires on a `_` in the slug, and `preserve-unicode` derives `retry_count` (`_` is a `\\w` char, so it survives) → refused. But `transliterate` derives `retry-count` — it LAUNDERS the underscore into a hyphen — so on cybos the schema column passes the charset gate AND G8, and ships. The `_` tell the code documents as its schema-column detector is defeated by the very slug strategy the typed-knowledge grammar uses; on cybos the census is again the only gate. This fixture is LAYOUT-INDEPENDENT: quote grounding is compared NFC-normalised against the whole file and has nothing to do with slug_strategy, so it must refuse identically on karpathy, cybos and obsidian-personal.",
+  "expect": {
+    "concept": 2
+  },
+  "expect_mentions": 0,
+  "forbidden": [
+    "спиннер",
+    "тултип",
+    "coalesce",
+    "retry_count",
+    "Алексей Воронов",
+    "Марина Гельфанд",
+    "Гарантия ровно один раз"
+  ],
+  "empty_is_success": false,
+  "counterexample": {
+    "refused_with": "FIELD_QUOTE_NOT_IN_BODY",
+    "refused_with_by_item": ["FIELD_QUOTE_NOT_IN_BODY", "FIELD_TOO_SHORT"],
+    "graded_by_census_only": false,
+    "on_layouts": ["karpathy", "cybos", "obsidian-personal"],
+    "accepted_on": []
+  }
+}

@@ -31,6 +31,7 @@ from pathlib import Path
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
 from scripts.wiki_index.lint import (
+    NEAR_DUPLICATE_CATEGORY,
     derive_vacuous_checks,
     derive_vacuous_kinds,
     render_json_sidecar,
@@ -38,6 +39,16 @@ from scripts.wiki_index.lint import (
     run_all_checks_report,
 )
 from scripts.wiki_skills._common import build_repo_config, emit, resolve_vault_root_for_cli
+
+# ★ TASK 064 / F10 — categories that REPORT but never GATE.
+#
+# `near-duplicate-concept` is a triage queue for `wiki-merge`, not a CI failure. The metric
+# behind it (`_gates.NEAR_DUP_CUTOFF`) is anti-correlated with meaning — it scores
+# `централизация`/`децентрализация` at 0.941 and `serialization`/`deserialization` at
+# 0.929 — so gating `--strict` on it would break every CI rail over pairs of concepts that
+# are OPPOSITES. The same measurement demoted the extractor's own gate to an advisory; the
+# lint category inherits the demotion rather than re-litigating it.
+_NON_GATING_CATEGORIES = frozenset({NEAR_DUPLICATE_CATEGORY})
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -81,7 +92,11 @@ def main(argv: list[str] | None = None) -> int:
         # R-5.6(d): --strict raises a non-zero advisory exit when issues exist;
         # default mode reports only (exit 0). No prior test relied on a strict
         # exit, so this establishes the gating policy.
-        exit_code = 1 if (args.strict and issues) else 0
+        # TASK 064 / F10: `_NON_GATING_CATEGORIES` still appear in `by_category` and in
+        # every sink — they are just not a reason to FAIL. Reporting and gating are
+        # different jobs, and conflating them is how an advisory becomes a bypass.
+        gating = [i for i in issues if i.category not in _NON_GATING_CATEGORIES]
+        exit_code = 1 if (args.strict and gating) else 0
         return emit({
             "action": "linted",
             "vault": args.vault,

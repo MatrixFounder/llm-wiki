@@ -361,18 +361,39 @@ def test_prepare_batch_not_json(
 # ---------------------------------------------------------------------------
 
 # Body + candidate pairing mirrors test_wiki_extract_concepts._APPLY_DEMO_*
-# (source_quote is a substring of the body; L3-L3 span validates).
+# (source_quote is a verbatim substring of the body, on line 4).
 _BATCH_BODY = ("---\ntype: summary\n---\n"
                "The Sharpe Ratio measures excess return.\n")
 
+# ★ TASK 064 — THREE fixture bugs, and the third one is the gate catching a REAL defect
+# in the fixture rather than the fixture catching a bug in the gate:
+#
+#   1. `definition: "A test concept."` (15 chars) is below G1's floor of 40.
+#   2. `source_span: "L3-L3"` was WRONG — line 3 of `_BATCH_BODY` is the closing `---`;
+#      the quote is on line 4. Nobody noticed for two tasks, because nothing checked.
+#   3. ★ the slugs were `concept-a` and `concept-b` — which are **0.889 similar**, over
+#      G5's 0.88 near-duplicate cutoff. On the BATCH path (where the known-slug set grows
+#      in place across entries, exactly so a later entry dedups against an earlier one's
+#      new concept) entry B would be refused as a near-duplicate of entry A. That is the
+#      gate WORKING: two slugs one character apart are precisely the plural/variant split
+#      it exists to stop. The fixture, not the gate, was wrong — `concept-a` was never a
+#      concept. Distinct concepts now.
+_CONCEPT_FIXTURES = {
+    "a": ("sharpe-ratio", "Sharpe Ratio"),
+    "b": ("drawdown", "Drawdown"),
+    "x": ("volatility", "Volatility"),
+}
+
 
 def _cand(suffix: str) -> dict[str, Any]:
+    slug, name = _CONCEPT_FIXTURES[suffix]
     return {
-        "slug": f"concept-{suffix}",
-        "name": f"Concept {suffix}",
-        "definition": "A test concept.",
+        "slug": slug,
+        "name": name,
+        "definition": f"{name} is a risk statistic used to compare strategies "
+                      f"on a common footing.",
         "source_quote": "The Sharpe Ratio measures excess return.",
-        "source_span": "L3-L3",
+        "source_span": "L4-L4",
         "entity_type": "concept",
     }
 

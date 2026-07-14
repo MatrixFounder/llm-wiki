@@ -618,12 +618,21 @@ def test_classify_candidates_defensive_copy() -> None:
 
 
 def _valid_candidate(**overrides: Any) -> dict[str, Any]:
-    """Helper: build a canonical candidate with optional field overrides."""
+    """Helper: build a canonical candidate with optional field overrides.
+
+    TASK 064: the old base was `definition: "A risk-adjusted return measure."` (31
+    chars) and `source_quote: "this exact quote"` (16) — BOTH now below the G1/G2
+    floors (definition≥40, source_quote≥40). That the canonical "valid" fixture was
+    itself refusable garbage is the point of the gate: the floors were the only thing
+    standing between the rail and a `definition: ""`. Widened to a real definition and
+    a real verbatim-sentence-shaped quote."""
     base = {
         "slug": "sharpe-ratio",
         "name": "Sharpe Ratio",
-        "definition": "A risk-adjusted return measure.",
-        "source_quote": "this exact quote",
+        "definition": "A risk-adjusted return measure: excess return per unit of "
+                      "volatility.",
+        "source_quote": "The Sharpe Ratio measures excess return per unit of "
+                        "volatility.",
         "source_span": "L1-L1",
         "entity_type": "concept",
     }
@@ -645,11 +654,20 @@ def test_validator_unknown_field_raises_H9() -> None:
     assert "leak-me-please" not in str(ei.value)
 
 
-def test_validator_count_bound_empty_raises_H2() -> None:
-    """H-2: count < 1 → CANDIDATE_COUNT_OUT_OF_BOUNDS."""
-    with pytest.raises(wec.ExtractionParseError) as ei:
-        wec._validate_candidates_schema([])
-    assert ei.value.error == "CANDIDATE_COUNT_OUT_OF_BOUNDS"
+def test_validator_count_bound_empty_is_now_VALID_G0() -> None:
+    """★ TASK 064 / G0 — REVERSED ON PURPOSE. This test used to assert that `[]` raises
+    CANDIDATE_COUNT_OUT_OF_BOUNDS (the old `_CANDIDATE_COUNT_MIN = 1`).
+
+    That floor of 1 was the PUMP behind every garbage class in the operator's live
+    vault: on a source with no extractable concepts, the model's only exit-0 path was to
+    INVENT one, and it obligingly minted `тултип` and `hex-код-цвета` from a Dune
+    tutorial. `wiki-extract-decisions` refused to clone this exact constant and said so
+    in its docstring; the concepts rail has now caught up.
+
+    An empty extraction is a SUCCESS. Only the UPPER bound still fires (see the N=26
+    test below), which is where the real DoS/quality concern always was."""
+    wec._validate_candidates_schema([])  # must NOT raise
+    assert wec._CANDIDATE_COUNT_MIN == 0
 
 
 def test_validator_count_bound_oversize_raises_H2() -> None:
@@ -690,12 +708,16 @@ def test_validator_field_too_long_source_quote_raises_H6() -> None:
     assert ei.value.field == "source_quote"
 
 
-def test_validator_quote_in_body_optional_M5() -> None:
-    """M-5: optional quote-in-body check (when source_body is provided AND
-    WIKI_EXTRACT_NO_QUOTE_CHECK is NOT set). Match → pass; mismatch → raise."""
-    item = _valid_candidate(source_quote="this exact quote")
-    body_match = "preamble ... this exact quote ... epilogue"
-    body_miss = "completely different content"
+def test_validator_quote_in_body_M5() -> None:
+    """M-5 (+ TASK 064 / G2): the quote-in-body check. Match → pass; mismatch → raise.
+
+    The quote is now ≥40 chars (G2's floor) — the old fixture's 16-char quote made the
+    "receipt" forgeable: a bare `in` test with no minimum meant `source_quote: "и"`
+    grounded against any Russian body."""
+    quote = "The Sharpe Ratio measures excess return per unit of volatility."
+    item = _valid_candidate(source_quote=quote, source_span="L1-L1")
+    body_match = f"preamble ... {quote} ... epilogue"
+    body_miss = "completely different content, at similar length, no quote in it."
     # Match → no raise.
     wec._validate_candidates_schema([item], source_body=body_match)
     # Mismatch → FIELD_QUOTE_NOT_IN_BODY.
@@ -705,15 +727,21 @@ def test_validator_quote_in_body_optional_M5() -> None:
     assert ei.value.field == "source_quote"
 
 
-def test_validator_quote_in_body_bypass_env_var_M5(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """M-5: WIKI_EXTRACT_NO_QUOTE_CHECK=1 bypasses the quote-in-body check
-    even when source_body is provided."""
-    monkeypatch.setenv("WIKI_EXTRACT_NO_QUOTE_CHECK", "1")
-    item = _valid_candidate(source_quote="not present in body at all")
-    # Would otherwise raise FIELD_QUOTE_NOT_IN_BODY; the env var bypasses.
-    wec._validate_candidates_schema([item], source_body="just preamble")
+# ★ test_validator_quote_in_body_bypass_env_var_M5 — **DELETED** (TASK 064 / G3), not
+# fixed, not skipped. It asserted that `WIKI_EXTRACT_NO_QUOTE_CHECK=1` DISABLES the
+# verbatim-quote check — i.e. it was a regression test PROTECTING the fabrication path.
+#
+# The env read is gone from `_validation.py`, and so is the far worse thing it enabled:
+# the old refusal message printed *"(set WIKI_EXTRACT_NO_QUOTE_CHECK=1 to skip)"* into
+# the envelope the MODEL reads, at the exact moment it is stuck and looking for a way
+# through. A fabrication tutorial in the failure path.
+#
+#   "an escape hatch on an anti-fabrication check IS the fabrication path, and it gets
+#    reached exactly when someone is in a hurry."  — wiki_extract_decisions/_validation
+#
+# The replacement is `test_no_quote_check_env_escape_is_not_honoured` in
+# tests/test_extract_concepts_gates.py, which asserts the OPPOSITE: the env var set to
+# every truthy AND falsy spelling changes nothing.
 
 
 # ============================================================================
@@ -721,10 +749,14 @@ def test_validator_quote_in_body_bypass_env_var_M5(
 # ============================================================================
 
 
+# TASK 064: `definition` widened from "A measure of risk-adjusted return." (34 chars)
+# to clear the G1 floor (≥40). The old string is kept as a strict PREFIX so every
+# body-content assertion below still reads naturally.
 _DEMO_CANDIDATE = {
     "slug": "sharpe-ratio",
     "name": "Sharpe Ratio",
-    "definition": "A measure of risk-adjusted return.",
+    "definition": "A measure of risk-adjusted return. It divides excess return "
+                  "by the volatility that produced it.",
     "source_quote": "The Sharpe ratio measures excess return per unit of volatility.",
     "source_span": "L12-L14",
     "entity_type": "concept",
@@ -846,29 +878,38 @@ def test_write_concept_page_content_hash_skip_unchanged_C1(
     assert path2.read_bytes() == bytes_after_first
 
 
-def test_write_concept_page_content_hash_diff_triggers_rewrite_C1(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """C-1: same target, different `definition` → atomic rewrite +
-    `(target, "updated")` + `logger.warning` emitted."""
+def test_write_concept_page_content_diff_REFUSES_G7(tmp_path: Path) -> None:
+    """★ TASK 064 / G7 — RETARGETED. This test used to assert that a same-slug write
+    with DIFFERENT content performs an "atomic rewrite", returns `"updated"`, logs a
+    warning, and exits 0.
+
+    That is DATA LOSS REPORTED AS SUCCESS. The reachable path is mundane — a concept
+    page on disk whose `entities` row is absent (hand-authored page, rebuilt DB, stale
+    index) classified `create`, and this function then OVERWROTE the human's page with
+    the model's definition. A `logger.warning` is not consent.
+
+    It now REFUSES (`CONCEPT_PAGE_EXISTS`), and the caller never reaches it anyway
+    because a page on disk is now always a `mention` (see the classifier). This is the
+    belt; the classifier is the braces. The original file must survive BYTE-FOR-BYTE."""
     path, _action = wec.write_concept_page(
         tmp_path, _DEMO_CANDIDATE, "src", date(2026, 5, 27),
         vault_id="test-vault",
     )
+    original_bytes = path.read_bytes()
     mutated = {**_DEMO_CANDIDATE,
-               "definition": "Updated definition — different content."}
-    caplog.set_level("WARNING", logger="scripts.wiki_skills.wiki_extract_concepts")
-    path2, action2 = wec.write_concept_page(
-        tmp_path, mutated, "src", date(2026, 5, 27),
-        vault_id="test-vault",
-    )
-    assert path2 == path
-    assert action2 == "updated"
-    assert "Updated definition" in path2.read_text(encoding="utf-8")
-    assert any("rewriting" in rec.message for rec in caplog.records), (
-        "logger.warning must fire on content rewrite (C-1 observability)"
-    )
+               "definition": "Updated definition, different content, same slug — "
+                             "this must never land on top of the existing page."}
+    with pytest.raises(wec.ExtractionParseError) as ei:
+        wec.write_concept_page(
+            tmp_path, mutated, "src", date(2026, 5, 27), vault_id="test-vault",
+        )
+    assert ei.value.error == "CONCEPT_PAGE_EXISTS"
+    assert ei.value.field == "slug"
+    # ★ The whole point: the operator's page is untouched.
+    assert path.read_bytes() == original_bytes
+    assert "Updated definition" not in path.read_text(encoding="utf-8")
+    # CWE-209: the refusal names the slug (model-authored), never the absolute path.
+    assert str(tmp_path) not in (ei.value.reason or "")
 
 
 def test_write_concept_page_creates_new_returns_created(tmp_path: Path) -> None:
@@ -1596,12 +1637,24 @@ def _make_apply_args(
     )
 
 
+# ★ TASK 064 — two fixes, and the SECOND one is the interesting one.
+#
+# (1) `definition` was 29 chars → below G1's floor of 40.
+# (2) `source_span` was **"L3-L3", AND IT WAS ALWAYS WRONG.** The seeded body is
+#     `---\ntype: summary\n---\nThe Sharpe Ratio measures excess return.\n`, so line 3
+#     is the CLOSING `---` of the frontmatter and the quote is on line 4. Nothing ever
+#     noticed, because `source_span` was shape-validated three times and verified
+#     against the body ZERO times — then written straight into
+#     `page_entity_refs.line_start/line_end` as if it were provenance. G9 checks it, and
+#     the first thing it caught was this fixture. That the canonical fixture was wrong
+#     for a year IS the proof that the field was fiction.
 _APPLY_DEMO_CANDIDATE = {
     "slug": "sharpe-ratio",
     "name": "Sharpe Ratio",
-    "definition": "Risk-adjusted return measure.",
+    "definition": "A risk-adjusted return measure: excess return divided by the "
+                  "volatility that produced it.",
     "source_quote": "The Sharpe Ratio measures excess return.",
-    "source_span": "L3-L3",
+    "source_span": "L4-L4",
     "entity_type": "concept",
 }
 
@@ -1745,7 +1798,11 @@ def test_apply_cyrillic_concept_present_nfd_still_mentions(
     import json as _json
     import unicodedata
     from scripts.wiki_index.sqlite_repository import SQLiteRepository
-    body = "---\ntype: summary\n---\nНейросеть обучается на данных примеров.\n"
+    # TASK 064: body + quote lengthened past G2's 40-char floor (the old quote was 39
+    # chars — the floor is what stops a token from masquerading as a receipt), and the
+    # span corrected to L4 (the quote is on line 4; line 3 is the closing `---`).
+    body = ("---\ntype: summary\n---\n"
+            "Нейросеть обучается на данных примеров и обобщает их.\n")
     vault_root, db_path, source_hash = _seed_apply_vault(
         repo_factory, tmp_path, source_body=body)
     nfc = unicodedata.normalize("NFC", "нейросеть")
@@ -1762,9 +1819,10 @@ def test_apply_cyrillic_concept_present_nfd_still_mentions(
 
     candidate = {
         "slug": nfc, "name": "Нейросеть",
-        "definition": "Модель машинного обучения.",
-        "source_quote": "Нейросеть обучается на данных примеров.",
-        "source_span": "L3-L3", "entity_type": "concept",
+        "definition": "Модель машинного обучения, которая настраивает веса по "
+                      "размеченным примерам.",
+        "source_quote": "Нейросеть обучается на данных примеров и обобщает их.",
+        "source_span": "L4-L4", "entity_type": "concept",
     }
     payload = _json.dumps([candidate], ensure_ascii=False).encode("utf-8")
     monkeypatch.setattr(
@@ -2385,11 +2443,19 @@ def _trigger_quote_not_in_body(
     repo_factory: Callable[[], IndexRepository], tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> tuple[int, dict[str, Any]]:
-    """FIELD_QUOTE_NOT_IN_BODY: source_quote contains canary, not in body."""
+    """FIELD_QUOTE_NOT_IN_BODY: source_quote contains canary, not in body.
+
+    TASK 064 / F8: the quote must clear the `source_quote` WORD floor (≥4) or it trips
+    FIELD_TOO_SHORT *first* and this canary silently stops testing the code it names.
+    `SECRET_LEAK_CANARY_xyzzy_777` is ONE `\\w+` token (underscores are word chars), so the
+    old 3-word `"hallucinated phrase {canary}"` fell under the floor. Padded to a real
+    phrase that is still nowhere in the body — the canary's actual subject.
+    """
     import json as _json
     vault_root, db_path, source_hash = _seed_apply_vault(repo_factory, tmp_path)
     cand = {**_APPLY_DEMO_CANDIDATE,
-            "source_quote": f"hallucinated phrase {_CANARY}"}
+            "source_quote": ("a wholly hallucinated phrase that appears nowhere in "
+                             f"the source body {_CANARY}")}
     monkeypatch.setattr("sys.stdin",
                         _stdin_with_payload(_json.dumps([cand]).encode("utf-8")))
     args = _make_apply_args(
@@ -2621,12 +2687,16 @@ def test_apply_writes_course_tier_concept_pages_to_sibling_concepts_dir(
     src_db = list(tmp_path.glob("wiki-*.db"))[0]
     _sh.copy(src_db, db_path)
 
+    # TASK 064: definition lengthened past G1's floor; span corrected L3→L4 (line 3 is
+    # the closing `---`, the quote is on line 4 — G9 now verifies this instead of
+    # trusting it).
     candidates = [{
         "slug": "sharpe-ratio",
         "name": "Sharpe Ratio",
-        "definition": "A measure of risk-adjusted return.",
+        "definition": "A measure of risk-adjusted return, normalising profit by the "
+                      "volatility taken on to earn it.",
         "source_quote": "Sharpe ratio measures excess return per unit of volatility.",
-        "source_span": "L3-L3",
+        "source_span": "L4-L4",
         "entity_type": "concept",
     }]
     monkeypatch.setattr(

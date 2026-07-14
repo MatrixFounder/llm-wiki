@@ -205,6 +205,8 @@ def run_all_checks_report(
         # here (`LintReport` states this boundary).
         issues.extend(
             check_classification_policy(repo, vid, v.root_path, strict=strict))
+        # TASK 064 / F10 (R-29's blind spot): WITHIN-vault near-duplicate concepts.
+        issues.extend(check_near_duplicate_concepts(repo, vid))
 
     # Cross-vault duplicates (R-29)
     for slug, vault_ids in repo.find_cross_vault_concept_duplicates():
@@ -218,6 +220,88 @@ def run_all_checks_report(
                              "(relocate the page + wiki-reindex --delta; see WIKI_SCHEMA.md)"},
         ))
     return LintReport(issues=issues, denominators=denominators)
+
+
+# TASK 064 / F10 — the near-duplicate lint category. ADVISORY, and it is in
+# `wiki_lint._NON_GATING_CATEGORIES` so it NEVER gates `--strict`.
+NEAR_DUPLICATE_CATEGORY = "near-duplicate-concept"
+
+
+def check_near_duplicate_concepts(
+    repo: "IndexRepository", vault_id: str,
+) -> list[LintIssue]:
+    """★ F10 (TASK 064) — THE EXISTING CORPUS WAS INVISIBLE.
+
+    The very pairs the extractor's near-duplicate cutoff was calibrated ON are all sitting
+    on disk in the operator's 720-page vault RIGHT NOW — `виталик-бутерин`/`vitalik-buterin`,
+    `сатоши-накамото`/`сатоси-накамото`, `бессрочный-фьючерс`/`бессрочные-фьючерсы` — and
+    `wiki-lint --strict` is **GREEN over every one of them**. Its only duplicate check is
+    `cross-vault-duplicate`: EXACT slug, ACROSS vaults, severity `info`. It catches 0 of 5.
+    So the gate could stop tomorrow's split while today's stayed unenumerable, and
+    `wiki-merge` — the correct repair — had no work queue to draw from.
+
+    This is that work queue. Same normalised key as the extractor (NFC + transliterate to
+    ASCII), so the two agree by construction on what "looks like a duplicate" means.
+
+    ★ ADVISORY, DELIBERATELY. Severity `warning`, and `wiki-lint` excludes the category
+    from the `--strict` exit gate. The same measurements that DEMOTED the extractor's gate
+    to a warning (`централизация`/`децентрализация` = 0.941; `serialization`/
+    `deserialization` = 0.929 — the metric is anti-correlated with meaning) apply verbatim
+    here: a scalar cutoff cannot tell an antonym from a plural, so this must report and
+    never block. It is a list for a HUMAN to triage with `wiki-merge`, not a CI gate.
+    """
+    import difflib
+
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+
+    if not isinstance(repo, SQLiteRepository):
+        return []
+    # Same leaf the extractor's gate uses — one definition of the key, one definition of
+    # the cutoff. Two modules disagreeing about what a near-duplicate is would be the same
+    # producer/consumer split that F1 is about.
+    from scripts.wiki_skills.wiki_extract_concepts._gates import (
+        NEAR_DUP_CUTOFF,
+        _dup_key,
+    )
+
+    conn = repo._connect()
+    rows = conn.execute(
+        "SELECT slug FROM pages WHERE vault_id = ? AND type = 'concept' ORDER BY slug",
+        (vault_id,),
+    ).fetchall()
+    slugs = [str(r[0]) for r in rows]
+    keys = [_dup_key(s) for s in slugs]  # one slugify() per page, NOT per pair
+
+    out: list[LintIssue] = []
+    for i in range(len(slugs)):
+        for j in range(i + 1, len(slugs)):
+            ka, kb = keys[i], keys[j]
+            total = len(ka) + len(kb)
+            # `real_quick_ratio`'s length bound, inlined — a strict UPPER bound on the
+            # ratio, so it can only discard pairs that could never have crossed the cutoff.
+            # Without it this is O(n²) SequenceMatcher over the whole concept corpus.
+            if not total or 2.0 * min(len(ka), len(kb)) / total < NEAR_DUP_CUTOFF:
+                continue
+            ratio = difflib.SequenceMatcher(None, ka, kb).ratio()
+            if ratio < NEAR_DUP_CUTOFF:
+                continue
+            out.append(LintIssue(
+                category=NEAR_DUPLICATE_CATEGORY,
+                severity="warning",
+                vault_id=vault_id,
+                page_slug=slugs[i],
+                details={
+                    "duplicate_of": slugs[j],
+                    "similarity": round(ratio, 3),
+                    "hint": (f"{slugs[i]!r} and {slugs[j]!r} look like the same concept "
+                             f"under two slugs. If they ARE, fold one into the other with "
+                             f"`wiki-merge` (it re-points refs and registers a redirect "
+                             f"alias). If they are NOT (an inverse, a negation, a "
+                             f"different version — string similarity cannot tell), ignore "
+                             f"this: it is advisory and never gates --strict."),
+                },
+            ))
+    return out
 
 
 def check_auto_generated_unchanged(

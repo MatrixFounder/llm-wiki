@@ -1,0 +1,25 @@
+{
+  "why": "★ PEOPLE ARE NEVER CONCEPTS — the operator's standing rule, and until TASK 064 this rail had NO enforcement of it. The only person-guard in the codebase lives in the import path (`scripts/wiki_skills/wiki_import_article/_authoring.py:385`) and is gated on `grammar == \"pyramid\"`, so the ARTICLE grammar never dropped anybody: that is how `уоррен-баффет`, `гарри-марковиц`, `хейли` and `hassan-и-de-filippi` reached the live vault as `_concepts/` pages. The standalone `wiki-extract-concepts` rail had no guard whatsoever. Worse, the protection actively points at the hole: `templates/sync-profiles/meeting-zone.yaml` sets `extract_concepts: false` so that 'meeting attendees do not become `_concepts/` person pages', then in the same comment RECOMMENDS `/wiki-extract-concepts` to densify the zone later — recommending the exact path that defeats the protection it exists to provide. This input is that zone's shape: a `participants:` block of four attendees whose names recur through the body, plus two cited authorities (Марковиц, Баффет) — five person-shaped temptations against exactly ONE genuine concept, so an empty answer is not the escape and a person-free answer must be earned. HALF OF THIS IS MECHANISM AND HALF IS NOT, and the fixture grades both. MECHANISM: `ENTITY_TYPE_NOT_ALLOWED` (`_validation.py:479`) refuses a candidate that DECLARES `entity_type: person` — exit 4, zero files — which is what `counterexample.json` triggers. NO MECHANISM: there is no name-based person detection anywhere on the rail, so the same Марковиц re-emitted as `external`, `group` or `work` is ACCEPTED and the page is written. The refusal's own reason string ('Drop the candidate; do not re-file it under another type') is an admission that the code knows it cannot stop that laundering — it can only ask. That half is caught ONLY by the `forbidden` census below, which therefore lists every person's name alongside the slug each of the three layouts would derive. `волатильность` and `диверсификация` are forbidden on the same census for a different unenforceable reason: the source USES them and never EXPLAINS them, which is a STEP-1 refusal with no validator behind it at all.",
+  "expect": {"concept": 1},
+  "expect_mentions": 0,
+  "forbidden": [
+    "Марина Ковалёва", "марина-ковалёва", "marina-kovaleva",
+    "Дмитрий Соловьёв", "дмитрий-соловьёв", "dmitrii-solovev",
+    "Артём Гущин", "артём-гущин", "artem-gushchin",
+    "Ольга Бек", "ольга-бек", "olga-bek",
+    "Гарри Марковиц", "гарри-марковиц", "garri-markovits",
+    "Марковиц", "марковиц", "markovits",
+    "Уоррен Баффет", "уоррен-баффет", "uorren-baffet",
+    "Баффет", "баффет", "baffet",
+    "Волатильность", "волатильность", "volatilnost",
+    "Диверсификация", "диверсификация", "diversifikatsiia"
+  ],
+  "empty_is_success": false,
+  "counterexample": {
+    "refused_with": "ENTITY_TYPE_NOT_ALLOWED",
+    "refused_with_by_item": [null, "ENTITY_TYPE_NOT_ALLOWED", "ENTITY_TYPE_NOT_ALLOWED"],
+    "graded_by_census_only": false,
+    "accepted_on": [],
+    "on_layouts": ["karpathy", "cybos", "obsidian-personal"]
+  }
+}

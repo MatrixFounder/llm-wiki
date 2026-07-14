@@ -39,7 +39,13 @@ def _pyramid_note(tmp_path, **over):
         "body": ("## TL;DR\n\nкраткое содержание вебинара про агентов.\n\n"
                  "## Детальное содержание\n\n### 1. Циклы\n\nагент работает в цикле и это важно.\n"),
         "entities": [
-            {"name": "AMM", "definition": "маркет-мейкер",
+            # TASK 064 / F1: the definition must clear the concept rail's WORD floor (≥4) —
+            # `wiki-import` has no concept writer of its own, it shells out to
+            # `wiki-extract-concepts apply`, so a 2-word placeholder is now a REAL refusal
+            # (dropped into `skipped[]`), not a harmless fixture shortcut. The old
+            # `"маркет-мейкер"` (2 words) made every candidate vanish and took the entity
+            # footer with it.
+            {"name": "AMM", "definition": "автоматический маркет-мейкер на смарт-контракте",
              "quote": "агент работает в цикле и это важно.", "type": "concept"},
         ],
     }

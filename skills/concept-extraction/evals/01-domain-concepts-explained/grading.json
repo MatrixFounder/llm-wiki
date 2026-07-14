@@ -1,0 +1,18 @@
+{
+  "why": "★ THE HAPPY PATH, AND THE FIXTURE THAT PROVES THE CODE IS BLIND. The source genuinely EXPLAINS three durable, lookup-able, recurring concepts (исходящий ящик · идемпотентность · обратное давление) while NAMING a dozen things it never explains — Grafana, дашборд, order_id, Kafka, 429, спринт, Пётр. A quota-driven weak model pads with the naming, not the explaining: that is exactly how `тултип`, `hex-код-цвета`, `coalesce` and `block_number` got into the operator's live vault. Two halves, and they are graded differently. (a) The MECHANISM half: `expected.json` must survive the real validators — every source_quote is verbatim off disk (≥40 chars), every source_span really contains its quote counting the frontmatter `---` as L1, every definition is ≥40 chars of plain prose that is not a copy of its quote. Nothing here is `entity_type: person`, so ENTITY_TYPE_NOT_ALLOWED never fires — Пётр is a passing mention and the model simply must not reach for him. (b) The CENSUS half, where NO MECHANISM EXISTS AT ALL: nothing in `apply` can tell that `дашборд` is worthless or that a definition is a confident tautology. `дашборд`, `grafana` and `order_id` pass EVERY schema gate — a well-formed name, a 40-char definition, a verbatim quote off L14/L26 — so the `forbidden` list is the ONLY thing that catches them, and it catches them by counting, not by refusing. The counterexample carries BOTH sins of a quota-driven run, and it is graded on the one the census can actually SEE. Sin 1 (items #0-#2): it reuses `expected.json`'s three CORRECT names, quotes and spans and rots ONLY the definitions into tautologies («Исходящий ящик — это когда есть исходящий ящик»). Sin 2 (items #3-#4): it PADS with `Дашборд` and `Grafana` — two things the source NAMES on L14 and never explains. The rail ACCEPTS all five — exit 0, five pages written, zero lint issues — because a definition is never read by any validator (`entities.definition` is never even populated) and a worthless-but-well-formed candidate passes every gate. So `refused_with` is OMITTED on purpose: claiming a refusal code here would be the fixture pretending a mechanism exists. ★ THE CENSUS IS THE WHOLE GRADER, so it must BITE: `дашборд`/`dashbord`/`grafana` are in `forbidden` (both surface forms, because the slug is layout-dependent), and the count itself fails — `expect` is 3, the counterexample emits 5. The TAUTOLOGY half stays deliberately UNGRADED and is stated here as an honest gap: `forbidden` keys on names and slugs, so it is structurally incapable of seeing that a *definition* is circular. Catching that needs a tautology test the runner does not have (a definition whose content words are a subset of its own name plus stop-words, morphology-aware enough for Russian — the counterexample repeats each name in its EXACT surface form). Until such a test exists, SKILL.md STEP 2 is the ONLY thing standing between this source and three well-formed, permanently-cited, information-free pages.",
+  "expect": {"concept": 3},
+  "expect_mentions": 0,
+  "forbidden": [
+    "дашборд", "dashbord",
+    "grafana",
+    "order_id", "order-id",
+    "kafka",
+    "пётр", "petr",
+    "спринт", "sprint"
+  ],
+  "empty_is_success": false,
+  "counterexample": {
+    "graded_by_census_only": true,
+    "accepted_on": ["karpathy", "cybos", "obsidian-personal"]
+  }
+}

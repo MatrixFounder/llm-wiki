@@ -1,0 +1,28 @@
+{
+  "why": "★ THE COMPOUNDING FIXTURE — a near-duplicate SHOULD become a MENTION, not a second page. This is the #1 VERIFIED live garbage class: FIVE permanent graph splits in the operator's vault (виталик-бутерин/vitalik-buterin, сатоши-накамото/сатоси-накамото, бессрочный-фьючерс/бессрочные-фьючерсы, eth/ethereum-eth, and two CPPI pages minted the SAME DAY). The old prompt's dedup rule was EXACT string match against a known_concepts list that is now 720 entries — the model SAW the existing entry and minted a plural anyway, because an exact-match instruction is structurally incapable of catching a plural. ★★ AND THE MECHANISM BUILT TO FIX IT HAS BEEN **DEMOTED FROM A REFUSAL TO AN ADVISORY** — which is why this fixture is now graded_by_census_only rather than refused_with. TASK 064's first cut REFUSED any create scoring >= 0.88 (difflib over the transliterated slug) and told the model to re-file it as a MENTION of the near-match. Re-measured on a realistic population the bands COMPLETELY OVERLAP and NO scalar cutoff exists, at any value: type-i-error/type-ii-error 0.960 · supervised-learning/unsupervised-learning 0.950 · централизация/децентрализация 0.941 · precision/recision 0.941 · serialization/deserialization 0.929 · micro-service/macro-service 0.923 · шифрование/дешифрование 0.917 · ликвидность/неликвидность 0.909 · uniswap-v2/uniswap-v3 0.900 · llama-3-1/llama-3-2 0.889 (python-2/python-3 sits at 0.875, one nudge below) — every one of them a DIFFERENT concept, every one of them refused. THE METRIC IS ANTI-CORRELATED WITH MEANING: it scores type-i-error/type-ii-error (0.960) as a HARDER duplicate than the real live pair бессрочный-фьючерс/бессрочные-фьючерсы (0.927) it was built for, because a 2-char negating prefix (de-/не-) on any base >= 8 chars crosses 0.88 — so it systematically rates ANTONYMS as duplicates. And the refusal was BATCH-FATAL (three good new concepts lost to one false positive, zero pages) and CORRUPTING: the reason string TOLD the model the candidate 'will be filed as a MENTION of the page that is already there, which is what you want' — so a compliant model files decentralized-exchange as a mention of centralized-exchange, writing a FALSIFIED provenance receipt into page_entity_refs at exit 0. An anti-duplicate gate that MANUFACTURES FALSE KNOWLEDGE is worse than no gate. It now WARNS and never refuses, and never instructs a merge. WHAT THE MECHANISM STILL DOES (asserted here via `warns_with`): it SEES the duplicate — the advisory fires with code NEAR_DUPLICATE_SLUG and hands back `бессрочный-фьючерс` in `nearest`, measured 0.9189 under preserve-unicode (0.9268 under transliterate). That assertion exists so that 'we demoted it' stays distinguishable from 'we deleted it'. WHAT DECIDES NOW: STEP 3 of the SKILL — reuse the EXACT known slug from `known_concepts` — a JUDGEMENT, made by the only component that can tell децентрализация from централизация. THE SEED IS THE reuse_slug: the runner seeds _concepts/бессрочный-фьючерс.md, so a model that obeys STEP 3 files a MENTION (expect_mentions: 1). ★ AND THE FACT NOBODY HAS EVER BEEN TOLD: for a mention the candidate's NAME and DEFINITION are DISCARDED — never written to disk, never to the DB; only source_quote and source_span land (as page_entity_refs provenance). They must still be well-formed to clear the schema gate, and then they are thrown away — so effort spent polishing a mention's definition is effort burned. CENSUS-ONLY, and `forbidden` is now the ONLY gate on ALL of it: the comparator was always blind to SYNONYMS (перпы scores 0.1739 against бессрочный-фьючерс, бессрочный-своп 0.7273, фандинг-ставка 0.3429 against ставка-финансирования, ставка-фондирования 0.85 — a genuine near-miss JUST under the cutoff), and since the demotion it no longer blocks the plural either. `тултип`, `coalesce` and the person `Кирилл` (re-filed under a non-person entity_type, which ENTITY_TYPE_NOT_ALLOWED does not see) are in `forbidden` for the same reason: the code accepts them. The EXISTING splits — the ones already on disk, which the gate could never have touched — are finally enumerable via wiki-lint's new `near-duplicate-concept` category (TASK 064 / F10), whose repair is `wiki-merge`; it is advisory and never gates --strict, for the same measured reason.",
+  "expect": {"concept": 2},
+  "expect_mentions": 1,
+  "forbidden": [
+    "бессрочные-фьючерсы",
+    "перпы",
+    "перп",
+    "бессрочный-своп",
+    "фандинг",
+    "фандинг-ставка",
+    "ставка-фондирования",
+    "квартальный-фьючерс",
+    "тултип",
+    "coalesce",
+    "кирилл",
+    "аня"
+  ],
+  "empty_is_success": false,
+  "layouts": ["obsidian-personal"],
+  "counterexample": {
+    "refused_with": null,
+    "warns_with": "NEAR_DUPLICATE_SLUG",
+    "graded_by_census_only": true,
+    "on_layouts": ["obsidian-personal"],
+    "accepted_on": []
+  }
+}

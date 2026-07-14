@@ -119,23 +119,33 @@ def test_apply_requires_a_candidates_source(tmp_path: Path) -> None:
 def test_candidate_count_min_is_ZERO_not_one() -> None:
     """★ THE ANTI-FABRICATION MECHANISM (R-063-7), pinned as a CONSTANT.
 
-    The precedent — `wiki_extract_concepts._validation._CANDIDATE_COUNT_MIN` — is
-    **1**. Cloning it would make "this note contains no decisions" an exit-4
-    FAILURE, and the model's cheapest path to a green run would then be to INVENT
-    one. An empty candidate set must be SUCCESS.
+    A floor of 1 makes "this note contains no decisions" an exit-4 FAILURE, and the
+    model's cheapest path to a green run is then to INVENT one. An empty candidate set
+    must be SUCCESS. MUT: set it to 1 ⇒ RED.
 
-    This test exists because the pull toward "parity with the precedent" is real:
-    a later reader sees 0 next to the precedent's 1 and reads it as an oversight.
-    It is the safety property. MUT: set it to 1 ⇒ RED.
+    ★ UPDATED IN TASK 064 — AND THE UPDATE IS THE HAPPY ENDING OF THIS TEST.
+
+    This assertion used to read `assert "_CANDIDATE_COUNT_MIN = 1" in other`: it PINNED
+    the precedent (`wiki_extract_concepts`) at 1 and told the reader that the asymmetry
+    was deliberate, so that nobody "restored parity" by breaking THIS rail.
+
+    TASK 064 fixed the precedent instead. That floor of 1 turned out to be the pump
+    behind the concept rail's live garbage (a Dune tutorial minting `тултип` and
+    `hex-код-цвета`, SQL builtins becoming "concepts") — on a thin source, invention was
+    the only green path. Both rails now agree that an empty extraction is a success, so
+    the pin flips from "they differ, on purpose" to "they AGREE, and neither may
+    regress." The direction of the guard is unchanged: **no rail may adopt a positive
+    floor**, whichever one reads it first.
     """
     assert wed.CANDIDATE_COUNT_MIN == 0
     other = (
         Path(wed.__file__).resolve().parents[1]
         / "wiki_extract_concepts" / "_validation.py"
     ).read_text(encoding="utf-8")
-    assert "_CANDIDATE_COUNT_MIN = 1" in other, (
-        "the precedent changed — re-read WHY this skill deliberately differs "
-        "before syncing it")
+    assert "_CANDIDATE_COUNT_MIN = 0" in other, (
+        "the concepts rail re-introduced a positive candidate floor — that is the "
+        "fabrication pump TASK 064 removed. An empty extraction is a SUCCESS on BOTH "
+        "rails; read the reason above before changing either constant.")
 
 
 def test_no_anthropic_import_in_package() -> None:

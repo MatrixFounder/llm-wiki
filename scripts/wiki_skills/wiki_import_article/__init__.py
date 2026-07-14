@@ -59,6 +59,7 @@ from ._authoring import (
     _MAX_CANDIDATES,
     assemble_note,
     derive_candidates,
+    finalize_candidates,
     name_is_filable,
     sanitize_name,
 )
@@ -132,6 +133,26 @@ _LOSSY_DROP_HINTS = {
     "max-candidates": f"the per-note concept cap ({_MAX_CANDIDATES}) was reached, so the tail "
                       "was dropped — re-running with the same entities drops the same tail; "
                       "trim the entity list or split the import to file them.",
+    # TASK 064 / F1 — the RAIL's own refusals, arriving as per-candidate SKIPS instead of a
+    # batch kill (see `_authoring._SKIP_REASON_BY_CODE`). All RECOVERABLE: the orchestrator
+    # fixes the entity and re-runs. `participant-not-concept` is deliberately absent — it is
+    # INTENTIONAL (the operator's standing rule), reported in `skipped[]`, never warned.
+    "definition-too-short": "the entity `definition` was empty or a fragment. A concept page "
+                            "whose body says nothing is the garbage this rail exists to "
+                            "prevent — write what the concept IS (terse is fine; empty is "
+                            "not) and re-run apply to file it.",
+    "definition-is-quote": "the entity `definition` merely restates its `quote`. The quote is "
+                           "already stored as provenance; the definition is what the reader "
+                           "LEARNS. Write it in your own words and re-run apply.",
+    "definition-not-prose": "the entity `definition` carries markdown (a newline, a "
+                            "`[[wikilink]]`, a backtick, or a leading list/heading marker) — "
+                            "it is written into the page body verbatim, where those become "
+                            "visible backslash litter. Send one plain sentence and re-run.",
+    "field-too-long": "the entity `definition` (>2000 chars) or `quote` (>500) exceeds the "
+                      "concept-page cap. Trim it and re-run apply to file it.",
+    "rejected-by-concept-rail": "`wiki-extract-concepts` refused this candidate (see `code`). "
+                                "The note IS filed and every other concept WAS written — only "
+                                "this entity was dropped. Fix it and re-run apply.",
 }
 _LOSSY_SKIP_REASONS = frozenset(_LOSSY_DROP_HINTS)
 
@@ -945,15 +966,37 @@ def apply(args: argparse.Namespace) -> int:
     # that resolve to a page — those filed now (candidates) plus those whose slug collides
     # with an EXISTING page (the link still resolves). Drop the rest (no-verbatim-quote / dup /
     # self-collision / over-cap) so the footer never carries a dangling `[[wikilink]]`. Rebuild
-    # + re-derive only when the set actually shrank (clean notes stay byte-identical).
+    # only when the set actually shrank (clean notes stay byte-identical).
     # `candidates`/`skipped` from the derive above are AUTHORITATIVE — only the displayed
     # footer is rebuilt (NOT re-derived): re-deriving against the shrunk note_text would be
     # circular (an entity whose only support was the footer wikilink line would then drop).
-    resolvable = {c["name"] for c in candidates} | {
-        s["name"] for s in skipped if s.get("reason") == "collides-existing-page"}
-    footer_names = [n for n in san_names if n in resolvable]
-    if footer_names != san_names:
+    #
+    # ★★ F1 (TASK 064) — AND THEN THE CANDIDATES ARE **FINALISED AGAINST THE BYTES THAT
+    # REACH DISK**. `wiki-import` has no concept writer: `_file_concepts` SHELLS OUT to
+    # `wiki-extract-concepts apply`, whose gates now VERIFY the span against the note it
+    # reads from disk. Two consequences the first cut of TASK 064 missed, both fatal:
+    #
+    #   1. the entity footer sits in the MIDDLE of a `full`/`summary`/`thread` note, so
+    #      reconciling it SHIFTS every line below it — a span derived before the rebuild is
+    #      wrong for the bytes actually written (`SOURCE_SPAN_QUOTE_MISMATCH`);
+    #   2. a candidate the rail refuses (empty definition, one-token quote, a `person`)
+    #      killed the ENTIRE batch at exit 6 — destroying every legitimate concept beside it
+    #      and leaving the filed note's footer wikilinks dangling.
+    #
+    # `finalize_candidates` re-derives the span against the final text and judges each
+    # candidate with the RAIL'S OWN validators, DROPPING the failures into `skipped[]`
+    # instead of failing. A drop shrinks the footer, which shifts the lines again — hence
+    # the fixed point. It terminates: every iteration that does not break STRICTLY shrinks
+    # `candidates`.
+    for _ in range(len(candidates) + 1):
+        resolvable = {c["name"] for c in candidates} | {
+            s["name"] for s in skipped if s.get("reason") == "collides-existing-page"}
+        footer_names = [n for n in san_names if n in resolvable]
         fname, note_text = _assemble(footer_names)
+        candidates, rail_dropped = finalize_candidates(candidates, note_text, layout)
+        if not rail_dropped:
+            break
+        skipped.extend(rail_dropped)
 
     note_path = note_dir / fname   # note_dir resolved + validated above
     if note_path.is_symlink():  # refuse writing through a symlinked target (R-26)

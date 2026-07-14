@@ -1,0 +1,28 @@
+{
+  "why": "★★ TWO CANDIDATES, ONE FILE — and the count still looks right. `Падёж` (mass death of livestock: an insured event) and `Падеж` (grammatical case: what the farm-name normalizer must strip) are GENUINELY DIFFERENT concepts that a real Russian transcript spells inconsistently — this input.md does exactly that, printing `падеж скота` without the `ё` in the very same note. Under `transliterate` (cybos) both names slugify to `padezh`: `classify_candidates` dedups only against the KNOWN set, so BOTH classify `create`, and the second `write_concept_page` OVERWRITES the first. One file, one DB row, one concept GONE — and ZERO lint issues, because the surviving page is perfectly valid and the count is right. `wiki-lint` has no rule for `last one wins`; nothing downstream can miss what was never written. G6 (`check_in_batch_collisions`, IN_BATCH_SLUG_COLLISION) is the ONLY thing standing between this note and silent data loss, and it is a real mechanism. Under `preserve-unicode` (the operator's live vault) the same two names stay distinct (`падёж` / `падеж`) and BOTH pages are correctly written — the counterexample is ACCEPTED there, and that is not a bug: the gate is LAYOUT-DEPENDENT, which is the whole reason this set runs on more than one layout. The correct extraction therefore uses names a HUMAN can tell apart (`Падёж скота` / `Грамматический падеж`, SKILL STEP 3), which survive every slug strategy. Census-graded and UNBACKED here: nothing refuses the junk this note dangles (`тултип`, `loss_code`, `left join`, the schema column) and nothing refuses `Марина Ковалёва` if the model relabels her `entity_type: concept` to dodge ENTITY_TYPE_NOT_ALLOWED — `forbidden[]` is the only gate on those. ★ Also unbacked: on `preserve-unicode` NOTHING would catch these two slugs if they were the SAME concept misspelled twice — G5 (NEAR_DUPLICATE_SLUG) compares a candidate only against the vault's EXISTING slugs, never against its in-batch siblings, and G6 needs an EXACT slug match. Two pages, zero refusals. ★ THAT is why the BARE names `падёж` / `падеж` / `padezh` head the `forbidden` list: on `preserve-unicode` the rail ACCEPTS this counterexample, so the census is the ONLY grader left standing on that layout — without them, the whole `accepted_on` branch of this fixture would assert NOTHING and still look green. The bare names are forbidden precisely because a human cannot tell them apart; the disambiguated `Падёж скота` / `Грамматический падеж` are what `expect` requires.",
+  "expect": {"concept": 2},
+  "expect_mentions": 0,
+  "forbidden": [
+    "падёж",
+    "падеж",
+    "padezh",
+    "тултип",
+    "loss_code",
+    "left join",
+    "left-join",
+    "код убытка",
+    "Марина Ковалёва",
+    "марина-ковалёва",
+    "Артём Луговой",
+    "КРС"
+  ],
+  "empty_is_success": false,
+  "layouts": ["cybos", "obsidian-personal"],
+  "counterexample": {
+    "refused_with": "IN_BATCH_SLUG_COLLISION",
+    "refused_with_by_item": [null, null],
+    "graded_by_census_only": false,
+    "on_layouts": ["cybos"],
+    "accepted_on": ["obsidian-personal"]
+  }
+}

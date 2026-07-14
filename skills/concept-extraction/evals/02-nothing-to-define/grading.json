@@ -1,0 +1,23 @@
+{
+  "why": "★★ THE FIXTURE THE WHOLE TASK EXISTS FOR: an ordinary Russian status meeting that DEFINES NOTHING — a late connection, an apology, an undelivered mockup, an owner question nobody settles, «давайте вернёмся к этому на следующей неделе», and an action item with no due date. Most notes are like this. The correct extraction is `[]`, and the correct outcome is exit 0, `action: no_candidates`. THE MECHANISM HISTORY IS THE POINT. Until TASK 064, `wiki_extract_concepts/_validation.py::_CANDIDATE_COUNT_MIN` was 1, so `[]` was an exit-4 `CANDIDATE_COUNT_OUT_OF_BOUNDS` FAILURE, while the old prompt ordered «Identify 3-10 key concepts» (SKILL.md §THE ONE RULE). On a source like this one an honest model had NO green path, and the cheapest route to a green run was to INVENT — the model was not being careless, it was obeying a quota. This is diagnosed, not hypothesised: the sibling rail names THIS FILE and refuses to clone it (`wiki_extract_decisions/__init__.py:138-143` — «the precedent (`wiki_extract_concepts._validation._CANDIDATE_COUNT_MIN`) is 1; cloning it here would make 'no decisions in this note' an exit-4 failure and hand the model a reason to fabricate one»), and the junk that quota pumped into the operator's live vault (`тултип`, `hex-код-цвета`, `coalesce`, `block_number`) is the receipt. G0 is now 0 (`_validation.py:105-120`) and this fixture is the ONLY thing that exercises it: without it, the most important constant on the rail is a value no eval proves is reachable. ★ NOW THE HALF NO MECHANISM COVERS, SAID PLAINLY: the counterexample — three concepts padded out of the meeting's own chatter (Еженедельный статус, Зона ответственности, Следующие шаги) — is REFUSED BY NOTHING. Each quote is a raw verbatim single-line substring of the body, each span really contains its quote, each definition is ≥40 chars of clean prose that is not a copy of its quote, none is `entity_type: person`, none collides in-batch, none near-duplicates a known slug. It passes EVERY gate on all three layouts. G0 makes `[]` POSSIBLE; it does not make junk IMPOSSIBLE. No validator can see that a concept is worthless (SKILL STEP 1 — durable · lookup-able · recurring; all three fail here) or that a definition is a confident, well-formed tautology (SKILL STEP 2), and `entities.definition` is never even populated, so no lint rule or health check will ever look at it. Hence this fixture is graded by CENSUS: `expect: {}` plus a `forbidden` list (which also carries the four attendee names — `ENTITY_TYPE_NOT_ALLOWED` fires only on `entity_type: person`, so «Марина» filed as a `concept` walks straight through the code). THE ONLY THING STANDING BETWEEN THIS SOURCE AND THREE JUNK PAGES IS THE SKILL TEXT. This fixture measures whether that text holds on a WEAK model — which follows quotas and examples far more literally than a strong one.",
+  "expect": {},
+  "expect_mentions": 0,
+  "forbidden": [
+    "Еженедельный статус",
+    "Зона ответственности",
+    "Следующие шаги",
+    "еженедельный статус",
+    "зона ответственности",
+    "следующие шаги",
+    "Марина",
+    "Олег",
+    "Дмитрий",
+    "Саша"
+  ],
+  "empty_is_success": true,
+  "counterexample": {
+    "graded_by_census_only": true,
+    "accepted_on": ["karpathy", "cybos", "obsidian-personal"],
+    "on_layouts": []
+  }
+}

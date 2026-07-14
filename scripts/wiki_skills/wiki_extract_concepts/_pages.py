@@ -62,9 +62,21 @@ def write_concept_page(
         ``PathTraversalError`` BEFORE any read, hash-compute, or write.
       - Content-hash skip: if the file exists with byte-identical content
         to the would-be-written payload → return ``(target, "unchanged")``.
-        If it exists with different content → atomic rewrite + return
-        ``(target, "updated")`` + ``logger.warning``. New file →
-        ``(target, "created")``.
+        New file → ``(target, "created")``.
+      - ★ **G7 (TASK 064) — existing target with DIFFERENT content → REFUSE**
+        (``ExtractionParseError(error="CONCEPT_PAGE_EXISTS")``). This used to
+        atomically REWRITE the file, log a warning, and return ``"updated"`` —
+        i.e. **it overwrote a human's hand-authored concept page with the
+        model's definition and reported exit 0.** Data loss as success. The
+        reachable path is mundane: page on disk, entity row absent (a
+        hand-written page, a rebuilt DB, a stale index) → the classifier says
+        ``create`` → the writer clobbers it.
+        The caller now classifies **any page present on disk as a `mention`**,
+        so this is a BELT that should never fire; it is here because the
+        classifier's inputs are two sets that can disagree with the filesystem,
+        and "should never fire" is not an argument for silently destroying a
+        file when it does. Precedent: ``wiki-import`` already refuses this
+        (``_authoring.py`` ``collides-existing-page``).
       - Markdown sanitization: ``name``, ``definition``, ``source_quote``,
         and ``source_span`` are sanitized before being embedded into the
         body.
@@ -197,11 +209,20 @@ def write_concept_page(
         if (hashlib.sha256(existing_bytes).hexdigest()
                 == hashlib.sha256(payload_bytes).hexdigest()):
             return target, "unchanged"
-        action = "updated"
-        logger.warning(
-            "write_concept_page: rewriting %s — existing content differs "
-            "from would-be-written payload (content-hash mismatch)",
-            target,
+        # ★ G7 (TASK 064): REFUSE. Never overwrite a page that already exists with
+        # different content — it may be the operator's own, and a `logger.warning` +
+        # exit 0 is not consent. The refusal names the slug (model-authored) and NEVER
+        # the resolved path (CWE-209: the absolute path leaks the operator's vault
+        # location) nor a byte of either file's content.
+        raise ExtractionParseError(
+            f"concept page for slug {slug!r} already exists with different content",
+            error="CONCEPT_PAGE_EXISTS",
+            field="slug",
+            reason=(f"`_concepts/{slug}.md` already exists on disk and its content "
+                    "differs from what this candidate would write. It may be "
+                    "hand-authored. This rail does not overwrite a page it did not "
+                    "just create — re-emit the candidate as a mention of the existing "
+                    "slug, or rename the concept."),
         )
 
     fd, tmp_name = tempfile.mkstemp(

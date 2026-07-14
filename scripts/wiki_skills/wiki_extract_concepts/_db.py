@@ -20,11 +20,90 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._errors import ExtractionParseError
 from ._validation import _parse_source_span
 
 # source_kind partition key for `source_state` idempotency rows (used only by
 # check_idempotency / update_idempotency_state, both below).
 _SOURCE_KIND = "extract-concepts"
+
+
+def check_page_slug_collisions(
+    repo: Any,
+    vault_id: str,
+    create_list: list[dict[str, Any]],
+    vault_root: Path,
+    concepts_dir: Path,
+    source_slug: str,
+) -> None:
+    """★★ F6 (TASK 064) — REFUSE A CONCEPT THAT WOULD **EVICT AN EXISTING PAGE**.
+
+    `pages` is `UNIQUE(vault_id, slug, project)`. Writing a concept page whose slug
+    equals an existing page's slug in the same project makes the indexer's `upsert_page`
+    silently REPLACE that row — its `type` and its `file_path`. The victim page is then
+    GONE from the index: not in `wiki-search`, not in the graph, no error, no warning, no
+    lint issue. Exit 0.
+
+    The easy live case is the SOURCE NOTE'S OWN SLUG — extract the concept `backtesting`
+    from `_sources/backtesting.md` and the note evicts itself. Reproduced end to end:
+    `pages` went from ('backtesting','summary','_sources/backtesting.md') to
+    ('backtesting','concept','_concepts/backtesting.md'), rc=0.
+
+    Every other gate on this rail compares candidates against the `entities` table and the
+    on-disk `_concepts/` pages — **never against `pages`**, which is the table that
+    actually gets evicted. `wiki-import`'s `derive_candidates` has guarded exactly this for
+    a year (`self-collision` + `collides-existing-page` in `_authoring.py`); the guard was
+    simply never ported to this rail. This is that port: pre-write, zero-file.
+
+    ⚠️ THE GHOST-ROW CARVE-OUT (TASK 053 / R3). A `pages` row whose `file_path` IS the
+    concept page we are about to write is not a victim — it is a STALE row for a page that
+    was deleted without a reindex, and re-creating that page is the self-heal the
+    classifier just asked for. Compare `file_path`, not merely `slug`.
+
+    CWE-209: the violation names the model's own slug and the VAULT-RELATIVE path of the
+    page it would evict (the same shape the success envelope already emits in
+    `written[].path`) — never an absolute path, never a byte of either file's content.
+    """
+    from scripts.wiki_index.layout_config import derive_project_for_path
+
+    if not create_list:
+        return
+    conn = repo._connect()
+    violations: list[dict[str, Any]] = []
+    for cand in create_list:
+        slug = str(cand["slug"])
+        target = concepts_dir / f"{slug}.md"
+        target_rel = target.relative_to(vault_root).as_posix()
+        project = derive_project_for_path(target, vault_root)
+        row = conn.execute(
+            "SELECT type, file_path FROM pages "
+            "WHERE vault_id = ? AND slug = ? AND project = ?",
+            (vault_id, slug, project),
+        ).fetchone()
+        if row is None:
+            continue
+        page_type, file_path = str(row[0]), str(row[1])
+        if file_path == target_rel:
+            continue  # the ghost row for the very page we are re-creating — self-heal
+        violations.append({
+            "slug": slug,
+            "occupied_by": file_path,
+            "page_type": page_type,
+            "is_source_note": slug == source_slug,
+        })
+    if violations:
+        raise ExtractionParseError(
+            f"{len(violations)} candidate slug(s) collide with an existing page",
+            error="SLUG_COLLIDES_WITH_PAGE",
+            field="slug",
+            reason=("this slug is already taken by a DIFFERENT page in the index "
+                    "(`occupied_by`). Filing a concept there would EVICT that page from "
+                    "the index — it would vanish from wiki-search with no error. If the "
+                    "collision is with the source note itself, the concept is the note's "
+                    "own topic: it does not need a concept page. Otherwise, give the "
+                    "concept a more specific name."),
+            violations=violations,
+        )
 
 
 def load_known_entities(repo: Any, vault_id: str) -> list[dict[str, Any]]:

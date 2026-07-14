@@ -95,23 +95,42 @@ from ._validation import (  # noqa: E402
     _SLUG_RE,
     _is_valid_slug,
     _ALLOWED_ENTITY_TYPES,
+    _REFUSED_ENTITY_TYPES,
     _SOURCE_HASH_RE,
     _ORCHESTRATOR_ID_RE,
     _REQUIRED_CANDIDATE_KEYS,
     _CANDIDATE_COUNT_MIN,
     _CANDIDATE_COUNT_MAX,
     _FIELD_CAPS,
+    _FIELD_MIN_WORDS,
+    _NAME_MIN_CHARS,
     _NAME_ALLOWLIST,
     _SPAN_REGEX,
+    _norm,
     _path_is_absolute,
     _validate_source_hash,
     _validate_orchestrator_id,
     _validate_candidates_schema,
+    check_in_batch_collisions,
     classify_candidates,
     _sanitize_name,
     _sanitize_definition,
     _parse_source_span,
     _preflight_sanitize,
+)
+# TASK 064: the LAYOUT-AWARE gates (G5 near-duplicate / G8 slug-derivation / G10
+# the write-dir-must-be-indexable preflight). A separate leaf because `_validation`
+# is a PURE stdlib-only leaf and that purity is what makes "a refusal writes zero
+# files" true by construction rather than by care.
+from ._gates import (  # noqa: E402
+    NEAR_DUP_CUTOFF,
+    _dup_key,
+    build_dup_keys,
+    check_slugs_derived_from_names,
+    concepts_dir_for_source,
+    derive_concept_slug,
+    layout_indexes_concepts,
+    near_duplicate_warnings,
 )
 # TASK 016 bead 016-04: source-IO / path-resolution leaf re-export.
 from ._sourcing import (  # noqa: E402
@@ -138,6 +157,7 @@ from ._db import (  # noqa: E402
     _SOURCE_KIND,
     load_known_entities,
     _lookup_entity_row,
+    check_page_slug_collisions,
     upsert_extracted_entity,
     upsert_entity_refs,
     check_idempotency,
@@ -445,10 +465,74 @@ def _recon_single(
     }
     if include_known:
         # Single-page: embed inline (backward-compatible envelope). Batch
-        # omits these — they are emitted ONCE at the batch top level.
-        entry["known_concepts"] = known_out
+        # omits these — they are emitted ONCE at the batch top level (they are
+        # SOURCE-INDEPENDENT, and re-serialising them per entry is the O(N·|known|)
+        # stdout blow-up P-6 exists to prevent). `slug_strategy` joins them for the
+        # same reason: one vault, one answer.
+        entry["known_concepts"] = _annotate_dup_keys(known_out)
         entry["missing_concept_files"] = missing_concept_files
+        entry.update(_layout_contract(vault_root))
     return entry
+
+
+def _layout_contract(vault_root: Path) -> dict[str, Any]:
+    """★ TASK 064 / G8 — the LAYOUT half of the contract the REASON step must obey.
+
+    Before this, `prepare`'s envelope carried 7 keys and NOT ONE WORD about the layout,
+    so the model had to GUESS how this vault turns a concept NAME into a SLUG — and the
+    SKILL told it to guess ASCII (`^[a-z0-9][a-z0-9-]{0,62}$`), which is simply false
+    for the operator's `preserve-unicode` Cyrillic vault. A model obeying the doc emits
+    `vitalik-buterin`; every `[[Виталик Бутерин]]` in that vault resolves to
+    `виталик-бутерин`; the page is filed and NOTHING CAN EVER LINK TO IT. Both slugs are
+    live in his vault today.
+
+    A contract that omits the rule the caller is judged against is not a contract.
+    Mirrors `wiki_extract_decisions.prepare`, which emits `slug_strategy` for exactly
+    this reason. Additive keys — no existing consumer breaks.
+
+    ★ AND IT CARRIES THE NEAR-DUPLICATE ADVICE (F2, TASK 064 FIX-LOOP). The advice is
+    ONLY actionable BEFORE authoring: told at `apply` time that your slug resembles an
+    existing one, the cheapest fix is to re-send — told at `prepare` time, you simply
+    reuse the existing slug and the vault compounds instead of splitting. The `dup_key`
+    is the part a model cannot derive for itself: `виталик-бутерин` and `vitalik-buterin`
+    are 100% dissimilar as strings and IDENTICAL as keys, which is exactly the operator's
+    most expensive live split.
+    """
+    from scripts.wiki_index.layout_config import resolve_layout_config as _rlc
+    config = _rlc(vault_root)
+    return {
+        "layout": config.layout,
+        "slug_strategy": config.slug_strategy,
+        "near_duplicate_advice": (
+            "Before you invent a slug, check `known_concepts`: if the vault ALREADY has "
+            "this concept under any spelling — a plural, a transliteration, a word-order "
+            "variant — reuse its EXACT slug so your candidate files as a mention instead "
+            "of minting a second page. Compare against `dup_key` (the transliterated "
+            "form), not just the slug: «Виталик Бутерин» and `vitalik-buterin` look "
+            "nothing alike and are the same person. `apply` will WARN about near "
+            "matches, but it will not refuse them — string similarity cannot tell "
+            "`serialization` from `deserialization`, and you can."),
+    }
+
+
+def _annotate_dup_keys(
+    known_out: list[dict[str, Any]] | list[str],
+) -> list[dict[str, Any]] | list[str]:
+    """Add `dup_key` to each `known_concepts` entry whose transliterated key DIFFERS from
+    its slug — the cross-script information a model cannot compute itself.
+
+    Only when it differs: for an ASCII vault every key equals its slug and the annotation
+    would be 720 lines of pure noise (P-6). `slugs-only` format is left untouched (it is a
+    list of bare strings by contract).
+    """
+    if not known_out or not isinstance(known_out[0], dict):
+        return known_out
+    for e in known_out:
+        assert isinstance(e, dict)
+        key = _dup_key(str(e["slug"]))
+        if key != e["slug"]:
+            e["dup_key"] = key
+    return known_out
 
 
 def _batch_prepare(args: argparse.Namespace) -> int:
@@ -504,8 +588,11 @@ def _batch_prepare(args: argparse.Namespace) -> int:
     finally:
         repo.close()
     return emit({
-        "known_concepts": known_out,
+        "known_concepts": _annotate_dup_keys(known_out),
         "missing_concept_files": missing_concept_files,
+        # TASK 064 / G8 + the F2 near-duplicate advice: source-INDEPENDENT, so both ride
+        # at the top level next to `known_concepts` — not repeated per entry (P-6).
+        **_layout_contract(vault_root),
         "batch": entries,
     })
 
@@ -592,6 +679,31 @@ def apply(args: argparse.Namespace) -> int:
         source_slug = result["source_slug"]
         current_hash = result["source_hash"]
 
+        # ★ G0 — the empty extraction. Record the hash (so a re-run short-circuits) and
+        # report SUCCESS. No pages, no entities, no refs, no indexer dispatch — and,
+        # critically, NO `upsert_entity_refs`, which would have cleared this source's
+        # existing mentions (see `_apply_write`).
+        if result.get("_no_candidates"):
+            if not _try_update_idempotency_state(
+                repo, args.vault, source_slug, current_hash, {},
+            ):
+                return emit({
+                    "action": "partial",
+                    "error": "IDEMPOTENCY_UPDATE_FAILED",
+                    "source_slug": source_slug,
+                    "reason": ("no candidates to write, but the source_state update "
+                               "failed; the next run will safely re-extract"),
+                }, exit_code=5)
+            return emit({
+                "action": "no_candidates",
+                "source_slug": source_slug,
+                "written": [],
+                "mentioned": [],
+                "message": ("no extractable concepts in this source — this is a "
+                            "SUCCESS, not a failure. Nothing was written and the "
+                            "source's existing concept mentions are untouched."),
+            })
+
         if args.ingest:
             try:
                 # R-015-2: reuse apply's already-open repo so the upsert
@@ -625,7 +737,13 @@ def apply(args: argparse.Namespace) -> int:
                                "but source_state update failed; next "
                                "run will safely re-extract"),
                 }, exit_code=5)
-            return emit({"extraction": manifest, "index": summary})
+            # G5's near-duplicate advisory rides TOP-LEVEL here too — `manifest` is nested
+            # under `extraction` on this branch, and advice the caller has to go digging
+            # for is advice the caller does not read.
+            ingest_env: dict[str, Any] = {"extraction": manifest, "index": summary}
+            if result.get("_warnings"):
+                ingest_env["warnings"] = result["_warnings"]
+            return emit(ingest_env)
 
         if not _try_update_idempotency_state(
             repo, args.vault, source_slug, current_hash, manifest,
@@ -735,9 +853,53 @@ def _apply_validate(
             "_exit_code": 2,
         }
 
-    # Step 4 — strict schema validation + sanitization pre-flight (M-4).
+    # ★ Step 3b (TASK 064 / G10) — CAN THIS LAYOUT EVEN SEE A CONCEPT PAGE?
+    #
+    # `apply` writes to a hardcoded `_concepts` dir on EVERY layout — including
+    # `dev-project`, which maps no `concept` type and whose read globs (`tasks/*.md`)
+    # never reach a `_concepts/` sibling. The pages were written, never discovered by
+    # `iter_pages`, never indexed, and never linted: a page the walker cannot SEE is a
+    # page `wiki-lint` is *structurally incapable* of reporting. This is TASK 063's G4
+    # lesson, which this rail never learned.
+    #
+    # Refuse BEFORE the schema pass so the operator's answer is about the LAYOUT (which
+    # is what they must fix) and not about candidate #7's quote.
+    from scripts.wiki_index.layout_config import resolve_layout_config as _rlc
+    config = _rlc(vault_root)
+    concepts_dir = concepts_dir_for_source(source_path, vault_root, config)
+    if not layout_indexes_concepts(config, vault_root, concepts_dir):
+        return {
+            "error": "LAYOUT_CANNOT_INDEX_CONCEPTS",
+            "layout": config.layout,
+            "reason": (
+                f"layout {config.layout!r} cannot index a concept page filed for this "
+                f"source: either it maps no `concept` type (→ UnmappedTypeError, the "
+                f"page is silently DROPPED at reindex) or its read globs never reach "
+                f"the `_concepts/` dir we would write to. The pages would exist on "
+                f"disk, index nowhere, and raise no lint issue — invisible. Add a "
+                f"`concept` type_mapping + a `_concepts/**/*.md` path glob to the "
+                f"layout, or extract into a concept-capable layout (karpathy, "
+                f"obsidian-personal, cybos)."),
+            "_exit_code": 4,
+        }
+
+    # Step 4 — strict schema validation + sanitization pre-flight (M-4), then the one
+    # remaining pure gate. ALL of this is pre-DB and pre-write, so a violation is a
+    # guaranteed ZERO-FILE, DB-never-opened no-op — by CONSTRUCTION, not by care.
+    #
+    # ★ G8 IS NOT HERE (F3, TASK 064 FIX-LOOP). It used to be — and judging candidates
+    # BEFORE `classify_candidates` meant judging the ones that are MENTIONS of pages that
+    # ALREADY EXIST. Any existing page whose slug is not exactly `slugify(name)` — every
+    # ACRONYM page (`amm`, `wal`, `pos`, `nft`, `dex`), every hand-authored page, every
+    # page written before TASK 064 — could never be mentioned again, and the prescribed
+    # repair MANUFACTURED a second page for the same concept. G8 now runs in
+    # `_apply_write`, on the CREATE list only. It still writes zero files.
     try:
         _validate_candidates_schema(candidates, source_body=source_body)
+        # ★ G6 — two candidates, one slug: the second `write_concept_page` would see
+        #   different bytes and silently OVERWRITE the first. Zero lint issues, because
+        #   the count is right. (Ported from `wiki_extract_decisions`.)
+        check_in_batch_collisions(candidates)
         _preflight_sanitize(candidates)
     except ExtractionParseError as e:
         env = _envelope_from_parse_error(e)
@@ -748,6 +910,8 @@ def _apply_validate(
         "source_path": source_path,
         "source_slug": source_slug,
         "current_hash": current_hash,
+        "config": config,
+        "concepts_dir": concepts_dir,
         "_exit_code": 0,
     }
 
@@ -790,6 +954,33 @@ def _apply_write(
     source_slug: str = validated["source_slug"]
     current_hash: str = validated["current_hash"]
 
+    # ★★ G0 (TASK 064) — AN EMPTY EXTRACTION IS A SUCCESS, AND IT MUTATES NOTHING.
+    #
+    # `_CANDIDATE_COUNT_MIN` is now 0, so `[]` reaches here instead of dying at exit 4.
+    # It must touch NOTHING but `source_state` — and in particular it must NOT fall
+    # through to the write path, because `upsert_entity_refs` does an atomic
+    # DELETE+INSERT keyed on the source page: called with an empty list it **CLEARS the
+    # source's existing refs** (an existing test pins that clearing behaviour, and it is
+    # correct for a re-extraction that legitimately found nothing NEW to link). On the
+    # empty path it would silently drop this source out of every concept's
+    # `BEGIN-AUTO:mentions` ledger — turning "I found no concepts" into "I deleted the
+    # ones you had". Mirrors `wiki_extract_decisions.apply`.
+    #
+    # The caller updates `source_state` (so a re-run short-circuits) and emits
+    # `action: no_candidates` at exit 0.
+    if not candidates:
+        logger.info(
+            "apply: no candidates for %r — this is a SUCCESS, not a failure; "
+            "nothing written, existing refs preserved", source_slug,
+        )
+        return {
+            "_no_candidates": True,
+            "_manifest": None,
+            "source_slug": source_slug,
+            "source_hash": current_hash,
+            "_exit_code": 0,
+        }
+
     # M-9: warn when --orchestrator-id omitted (opaque provenance). Fires
     # only once validation has passed and we are about to write — same
     # position relative to the write as the former monolithic apply().
@@ -811,12 +1002,16 @@ def _apply_write(
     # TASK 040 / ADR-007: concepts-anchor is config (the source-nesting subdir), not a fork.
     # source_subdir non-empty (karpathy "_sources") → concepts at the container `<parent.parent>/`;
     # "" (PARA) → sibling `<parent>/`. karpathy value == SOURCES_SUBDIR → byte-identical.
+    # TASK 064: ONE definition of that dir (`concepts_dir_for_source`), reused by the G10
+    # preflight in `_apply_validate` — a preflight that checked a different directory than
+    # the writer uses would not be a preflight. `_apply_validate` already resolved both;
+    # a library caller that skipped it gets them resolved here.
     from scripts.wiki_index.layout_config import resolve_layout_config as _rlc
-    _src_subdir = _rlc(vault_root).write.source_subdir
-    if _src_subdir and source_path.parent.name == _src_subdir:
-        target_concepts_dir = source_path.parent.parent / CONCEPTS_SUBDIR
-    else:
-        target_concepts_dir = source_path.parent / CONCEPTS_SUBDIR
+    config = validated.get("config") or _rlc(vault_root)
+    target_concepts_dir: Path = (
+        validated.get("concepts_dir")
+        or concepts_dir_for_source(source_path, vault_root, config)
+    )
     concepts_rel = target_concepts_dir.relative_to(vault_root).as_posix()
     source_project = _derive_source_project(source_path, vault_root)
     try:
@@ -825,20 +1020,132 @@ def _apply_write(
             known_slugs = {e["slug"] for e in known}
         if present_concept_files is None:
             present_concept_files = _present_concept_slugs(vault_root)
-        # TASK 053 / R3 (DF-8): dedup to `mention` ONLY for a slug that is both a
-        # known entity AND present on disk. A known-but-missing slug is a GHOST
-        # row (its `_concepts/<slug>.md` was deleted without a reindex); intersect
-        # so it reclassifies `create` and self-heals. NEW local — do NOT rebind
-        # `known_slugs` (the batch path mutates that shared set in place below).
-        # Both sides are NFC-normalized (R3 fix-up): `present_concept_files` is
-        # normalized at its FS source, and `known_slugs` is normalized here to
-        # defend against a reindex-derived NFD entity slug on macOS/iCloud — else
-        # {NFD} ∩ {NFC} would drop a present Cyrillic concept and re-`create` it
-        # every run (the same NFC/NFD boundary R1 closes for source_state).
-        effective_known = {
-            unicodedata.normalize("NFC", s) for s in known_slugs
-        } & present_concept_files
+        # ★★ G7 (TASK 064) — **A PAGE ON DISK IS ALWAYS A `mention`.**
+        #
+        # This was `known_entity_rows ∩ present_concept_files`, and the INVERSE case is
+        # the bug: page ON DISK, entity row ABSENT (a hand-authored page; a rebuilt DB;
+        # a stale index) fell OUTSIDE the intersection, classified `create`, and
+        # `write_concept_page` **OVERWROTE THE HUMAN'S PAGE** with the model's
+        # definition — `logger.warning`, exit 0. Data loss reported as success.
+        #
+        # Dropping the `known ∩` conjunct fixes it without costing the TASK-053/R3
+        # ghost-row self-heal: that case is `known row + file GONE`, which is still
+        # NOT present ⇒ still `create` ⇒ still self-heals. The intersection was never
+        # what made R3 work; PRESENCE was. (Its test stays green, and stays.)
+        #
+        # NFC on both sides (R3 fix-up): `present_concept_files` is normalised at its FS
+        # source (macOS/iCloud store NFD), candidate slugs arrive NFC.
+        effective_known = set(present_concept_files)
         create_list, mention_list = classify_candidates(candidates, effective_known)
+        known_nfc = {unicodedata.normalize("NFC", s) for s in known_slugs}
+
+        # ★ G8 (F3, TASK 064 FIX-LOOP) — ON THE **CREATE LIST**, AND ONLY ON SLUGS THE
+        # VAULT DOES NOT ALREADY HAVE.
+        #
+        # Judging a slug the vault ALREADY OWNS is not a contract check, it is a demand to
+        # rename someone else's page — and every ACRONYM page in the vault (`amm`, `wal`,
+        # `pos`, `nft`, `dex`) has a slug that is not `slugify(name)`. Under the first cut
+        # they became permanently UNMENTIONABLE, and the prescribed repair ("re-emit `amm`
+        # as `автоматический-маркет-мейкер`") minted a SECOND page for AMM. The gate is
+        # only meaningful for a slug that does not exist yet.
+        check_slugs_derived_from_names(
+            [c for c in create_list
+             if unicodedata.normalize("NFC", str(c["slug"])) not in known_nfc
+             and unicodedata.normalize("NFC", str(c["slug"])) not in present_concept_files],
+            config,
+        )
+
+        # ★★ F6 (TASK 064 FIX-LOOP) — A CONCEPT CAN **EVICT THE SOURCE NOTE FROM THE
+        # INDEX**, AT EXIT 0.
+        #
+        # `pages` is UNIQUE(vault_id, slug, project). A candidate whose slug equals an
+        # existing page's slug — the SOURCE NOTE'S OWN being the easy case: extract
+        # `backtesting` from `_sources/backtesting.md` — makes `upsert_page` silently
+        # REPLACE that row's type + file_path. Reproduced: rc=0, and `pages` afterwards
+        # holds ('backtesting', 'concept', '_concepts/backtesting.md'). The source note is
+        # GONE from the index and unfindable by `wiki-search`, with no error, no warning
+        # and no lint issue.
+        #
+        # The other gates compare candidates against ENTITY rows and on-disk `_concepts/`
+        # pages — never against `pages`. `wiki-import`'s `derive_candidates` has carried
+        # `self-collision` + `collides-existing-page` guards for a year (`_authoring.py`);
+        # they were simply never ported to this rail. Ported now, pre-write, zero-file.
+        check_page_slug_collisions(
+            repo, vault_id, create_list, vault_root, target_concepts_dir, source_slug,
+        )
+
+        # ★ F7 (TASK 064 FIX-LOOP) — G7's REFUSAL IS NOW **ATOMIC**.
+        #
+        # `CONCEPT_PAGE_EXISTS` is raised from inside `write_concept_page`, i.e. on
+        # iteration k — AFTER k-1 pages are already on disk and their entity rows
+        # committed. That contradicts this rail's own zero-file invariant. Check every
+        # target BEFORE the loop starts. (The belt inside `write_concept_page` stays; this
+        # makes it unreachable in practice, which is what a belt should be. Note this
+        # cannot fire on an idempotent re-run: a page on disk classifies `mention` above,
+        # so it is not in `create_list` at all.)
+        # ★ `lexists`, NOT `exists`. `Path.exists()` FOLLOWS the symlink, so a DANGLING one
+        # at `_concepts/<slug>.md` reports False here, sails past this guard, and then trips
+        # `write_concept_page`'s symlink refusal — a `PathTraversalError`, which is a
+        # ValueError, NOT an ExtractionParseError. Nothing catches it: the process dies inside
+        # the write loop with a traceback, no JSON envelope, a non-zero exit that is not one of
+        # the contract's codes — and the pages written on iterations 0..k-1 still on disk with
+        # their entity rows committed. Both invariants (zero-file refusal, one envelope + a
+        # stable exit code) break on a single broken symlink.
+        collisions = [
+            {"slug": str(c["slug"])} for c in create_list
+            if os.path.lexists(target_concepts_dir / f"{c['slug']}.md")
+        ]
+        if collisions:
+            raise ExtractionParseError(
+                f"{len(collisions)} concept page(s) already exist on disk",
+                error="CONCEPT_PAGE_EXISTS",
+                field="slug",
+                reason=("a `_concepts/<slug>.md` for this candidate already exists on "
+                        "disk and this rail does not overwrite a page it did not just "
+                        "create — it may be hand-authored. Re-emit the candidate with "
+                        "the existing slug so it files as a mention, or rename the "
+                        "concept."),
+                violations=collisions,
+            )
+
+        # ★ G5 — the NEAR-DUPLICATE **ADVISORY**. It does NOT refuse (see
+        # `_gates.NEAR_DUP_CUTOFF`: the metric rates `централизация`/`децентрализация` at
+        # 0.941, HARDER than the real live duplicate it was built for) and it does NOT
+        # instruct a merge (a compliant model told to file `decentralized-exchange` as a
+        # mention of `centralized-exchange` writes a FALSIFIED provenance receipt into
+        # `page_entity_refs`, at exit 0 — an anti-duplicate gate that manufactures false
+        # knowledge). It hands the model the similar slugs and lets it judge.
+        warnings = near_duplicate_warnings(
+            create_list, build_dup_keys(known_nfc | set(present_concept_files)),
+        )
+
+        # ★ G7 (part 2) — HEAL THE DB, don't clobber the disk. A page present in the
+        # target dir whose `entities` row is missing is now a `mention`, so nothing
+        # would ever create that row and the concept would stay invisible to
+        # `wiki-search`/`wiki-graph` until someone ran a full reindex. Upsert it from
+        # the candidate.
+        # SCOPED DELIBERATELY to a page in the dir WE would have written to:
+        # `present_concept_files` spans EVERY `_concepts/` in the vault, and writing an
+        # entity row whose `file_path` points at OUR dir for a page that actually lives
+        # in another course's `_concepts/` would manufacture the exact `missing-on-disk`
+        # lint issue this rail is supposed to prevent.
+        # (`page_entity_refs` has NO FK to `entities` — checked, `sql/wiki-index-v2.sql`
+        # — so this heal is CORRECTNESS, not a crash-avoidance necessity.)
+        for cand in mention_list:
+            slug_nfc = unicodedata.normalize("NFC", str(cand["slug"]))
+            if (slug_nfc not in known_nfc
+                    and (target_concepts_dir / f"{cand['slug']}.md").is_file()):
+                logger.warning(
+                    "apply: concept page for %r exists on disk but has no entities "
+                    "row (stale index / hand-authored page) — healing the row instead "
+                    "of overwriting the page", cand["slug"],
+                )
+                cand["entity_action"] = upsert_extracted_entity(
+                    repo, vault_id, cand, source_slug, today,
+                    orchestrator_id=orchestrator_id,
+                    concepts_rel=concepts_rel,
+                )
+                known_slugs.add(str(cand["slug"]))
 
         for cand in create_list:
             _target, file_action = write_concept_page(
@@ -876,6 +1183,11 @@ def _apply_write(
             create_list, mention_list, log_event, vault_root,
             concepts_rel=concepts_rel,
         )
+        # ★ G5's advisory rides the SUCCESS envelope (exit 0) — it is advice, not a
+        # refusal. Omitted entirely when there is nothing to say (no empty `warnings: []`
+        # noise on the overwhelmingly common clean run).
+        if warnings:
+            manifest["warnings"] = warnings
     except ExtractionParseError as e:
         # v2 parity: downstream raises (e.g. _parse_source_span on an
         # inverted L10-L5 range that the regex validator passed) map to
@@ -886,6 +1198,7 @@ def _apply_write(
 
     return {
         "_manifest": manifest,
+        "_warnings": warnings,
         "source_slug": source_slug,
         "source_hash": current_hash,
         "_exit_code": 0,
@@ -1020,6 +1333,17 @@ def _batch_apply(args: argparse.Namespace) -> int:
                 continue
             manifest = result["_manifest"]
             current_hash = result["source_hash"]
+            # ★ G0 parity with the single-page path: an empty entry is a SUCCESS that
+            # writes nothing and clears nothing. Without this branch the batch path
+            # would fall through to `--ingest` with a `None` manifest.
+            if result.get("_no_candidates"):
+                _try_update_idempotency_state(
+                    repo, args.vault, source_slug, current_hash, {},
+                )
+                batch_results.append({"source_slug": source_slug,
+                                      "action": "no_candidates",
+                                      "written": [], "mentioned": []})
+                continue
             if args.ingest:
                 try:
                     summary = dispatch_to_indexer(
@@ -1058,9 +1382,15 @@ def _batch_apply(args: argparse.Namespace) -> int:
                                       "error": "IDEMPOTENCY_UPDATE_FAILED",
                                       "manifest": manifest})
                 continue
-            batch_results.append({"source_slug": source_slug,
-                                  "action": "applied",
-                                  "manifest": manifest})
+            entry_result: dict[str, Any] = {"source_slug": source_slug,
+                                            "action": "applied",
+                                            "manifest": manifest}
+            # G5's advisory, lifted next to `action` — same reason as the single-page
+            # `--ingest` branch: advice buried inside a nested manifest is advice nobody
+            # reads. Omitted when empty.
+            if result.get("_warnings"):
+                entry_result["warnings"] = result["_warnings"]
+            batch_results.append(entry_result)
     finally:
         repo.close()
     return emit({"batch": batch_results})

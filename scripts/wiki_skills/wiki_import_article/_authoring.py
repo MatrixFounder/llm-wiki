@@ -16,10 +16,17 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from scripts.wiki_index.layout_config import _apply_slug_strategy
+from scripts.wiki_index.layout_config import LayoutConfig, _apply_slug_strategy
+from scripts.wiki_skills.wiki_extract_concepts._errors import ExtractionParseError
+from scripts.wiki_skills.wiki_extract_concepts._gates import (
+    check_slugs_derived_from_names,
+    derive_concept_slug,
+)
 from scripts.wiki_skills.wiki_extract_concepts._validation import (
     _NAME_ALLOWLIST,
     _is_valid_slug,
+    _preflight_sanitize,
+    _validate_candidates_schema,
 )
 
 _FNAME_BAD = re.compile(r'[/\\:*?"<>|#^\[\]]')
@@ -108,7 +115,11 @@ def verbatim_quote(agent_quote: str | None, name: str, body: str) -> str:
     # Same footer guard as the line-scan path below: never source a quote from the
     # the entity-index wikilink-index line — footer reconciliation rebuilds it, so the
     # quote would no longer be a substring of the final on-disk note (→ EXTRACTION_PARSE_ERROR).
-    if aq and aq in body and not any(_INDEX_LINE_RE.match(ln.strip()) for ln in aq.splitlines()):
+    # `split("\n")`, not `splitlines()` (F5): the LAST line-splitter on this path. A `\x0c`
+    # (form feed — a routine PDF→markdown artifact) inside a quote must not be treated as a
+    # line break here when neither the span deriver nor the rail's span check treats it as
+    # one. One definition of "a line" across producer and consumer, or they disagree.
+    if aq and aq in body and not any(_INDEX_LINE_RE.match(ln.strip()) for ln in aq.split("\n")):
         return aq[:_QUOTE_CAP]
     # Probe order: the two PRE-EXISTING probes first (full name, then a short prefix) so any line
     # the old code already matched is returned unchanged — then the BASE name with a trailing
@@ -341,6 +352,116 @@ def assemble_note(
     return fname, fm + body
 
 
+def span_for_quote(quote: str, text: str) -> str | None:
+    """The `L{start}-L{end}` span that ACTUALLY CONTAINS `quote` in `text` — or `None`.
+
+    ★★ F1 (TASK 064 FIX-LOOP) — THE OLD DERIVATION WAS **STRUCTURALLY INCAPABLE** OF
+    DESCRIBING A MULTI-LINE QUOTE. It took the quote's FIRST line, found the body line
+    containing it, and emitted `L{line}-L{line}` — a ONE-LINE span. `wiki-extract-concepts`
+    now VERIFIES that the span contains the quote (G9), so any quote spanning two lines
+    could never satisfy it: guaranteed `SOURCE_SPAN_QUOTE_MISMATCH`, and the whole import
+    dies at exit 6 with ZERO concept pages written.
+
+    ★ `\\n`-ONLY, NEVER `splitlines()` (F5). `str.splitlines()` also breaks on `\\x0c`
+    (form feed — a routine PDF→markdown artifact, and `wiki-import` IS the PDF on-ramp),
+    `\\x0b`, `\\x85`, `U+2028`, `U+2029`. The consumer counts `\\n`; so must the producer,
+    or the two disagree about what line 12 is on exactly the sources this rail is fed.
+    """
+    idx = text.find(quote)
+    if idx == -1:
+        return None
+    start = text.count("\n", 0, idx) + 1
+    end = start + quote.count("\n")
+    return f"L{start}-L{end}"
+
+
+# `wiki-extract-concepts` refusal code → the `skipped[]` reason we report instead.
+#
+# ★★ THE POINT OF THIS TABLE: `wiki-import` HAS NO CONCEPT WRITER OF ITS OWN — `_file_concepts`
+# SHELLS OUT to `wiki-extract-concepts apply`. So the rail's gates run on candidates THIS file
+# produces, and a producer/consumer divergence does not degrade the import, it DESTROYS it:
+# one offending entity ⇒ exit 4 from the rail ⇒ exit 6 + `action: partial` from `wiki-import`
+# ⇒ **zero** concept pages, including every legitimate one in the same batch, and a filed note
+# whose footer wikilinks now dangle. That is exactly what TASK 064's first cut shipped.
+#
+# The repair is not "keep the two in sync by being careful" — that is the promise that just
+# failed. `finalize_candidates` runs the RAIL'S OWN VALIDATORS and turns each refusal into a
+# per-candidate SKIP. A future gate added to the rail lands here as a skip, never as a batch
+# kill, and `tests/test_import_concepts_contract.py` drives the real subprocess to prove it.
+_SKIP_REASON_BY_CODE = {
+    "DEFINITION_IS_QUOTE": "definition-is-quote",
+    "DEFINITION_NOT_PROSE": "definition-not-prose",
+    "ENTITY_TYPE_NOT_ALLOWED": "participant-not-concept",
+    "FIELD_QUOTE_NOT_IN_BODY": "no-verbatim-quote",
+    "FIELD_TOO_LONG": "field-too-long",
+    "INVALID_NAME_FORMAT": "unfilable-name",
+    "INVALID_SLUG_CHARSET": "invalid-slug",
+    "SLUG_NOT_DERIVED_FROM_NAME": "invalid-slug",
+    "SOURCE_SPAN_OUT_OF_RANGE": "no-verbatim-quote",
+    "SOURCE_SPAN_QUOTE_MISMATCH": "no-verbatim-quote",
+}
+# FIELD_TOO_SHORT is per-FIELD: an empty definition and a one-token quote are different
+# operator problems with different fixes, and one hint cannot serve both.
+_SKIP_REASON_BY_SHORT_FIELD = {
+    "definition": "definition-too-short",
+    "source_quote": "no-verbatim-quote",
+    "name": "unfilable-name",
+}
+
+
+def _skip_reason(err: ExtractionParseError) -> str:
+    if err.error == "FIELD_TOO_SHORT":
+        return _SKIP_REASON_BY_SHORT_FIELD.get(err.field or "", "rejected-by-concept-rail")
+    return _SKIP_REASON_BY_CODE.get(err.error or "", "rejected-by-concept-rail")
+
+
+def finalize_candidates(
+    candidates: list[dict[str, Any]],
+    note_text: str,
+    config: LayoutConfig,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Re-derive each candidate's span against the FINAL note text, then run the RAIL'S OWN
+    validators over it. Returns ``(kept, dropped)`` — **it never raises.**
+
+    ★ WHY THE SPAN MUST BE RE-DERIVED HERE. `apply` assembles the note, derives candidates,
+    then RECONCILES THE FOOTER and re-assembles — and on the `full`/`summary`/`thread`
+    grammars the entity-index footer sits in the MIDDLE of the note (`head + summary +
+    bullets + ENTS + full_text`). Dropping one entity from that footer shifts every
+    subsequent line UP. A span computed against the pre-reconciliation text is therefore
+    simply WRONG for the bytes that reach disk — which nobody noticed while the rail
+    accepted spans unverified, and which becomes an instant `SOURCE_SPAN_QUOTE_MISMATCH`
+    now that it verifies them. Spans are derived from the text that is actually WRITTEN.
+
+    ★ AND WHY THE VALIDATION IS THE RAIL'S, NOT A COPY OF IT. See `_SKIP_REASON_BY_CODE`.
+    A re-implementation is a second contract that can drift from the first; calling the
+    real `_validate_candidates_schema` / `check_slugs_derived_from_names` /
+    `_preflight_sanitize` means the producer is judged by the consumer's own law. A
+    candidate that fails is DROPPED and REPORTED — never fatal to the batch, because a
+    partial concept filing is correct and a zero-concept import is not.
+    """
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, str]] = []
+    for cand in candidates:
+        span = span_for_quote(str(cand["source_quote"]), note_text)
+        if span is None:
+            # The quote is not in the FINAL bytes (it was only supported by a footer line
+            # that reconciliation removed). Nothing to point a span at.
+            dropped.append({"name": str(cand["name"]), "reason": "no-verbatim-quote"})
+            continue
+        probe = {**cand, "source_span": span}
+        try:
+            _validate_candidates_schema([probe], source_body=note_text)
+            check_slugs_derived_from_names([probe], config)
+            _preflight_sanitize([probe])
+        except ExtractionParseError as err:
+            dropped.append({"name": str(cand["name"]), "reason": _skip_reason(err),
+                            "code": str(err.error or "EXTRACTION_PARSE_ERROR")})
+            continue
+        cand["source_span"] = span
+        kept.append(cand)
+    return kept, dropped
+
+
 def derive_candidates(
     entities: list[dict[str, Any]],
     note_text: str,
@@ -352,41 +473,48 @@ def derive_candidates(
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Entities → extract-concepts candidates + a `skipped` report (R-4/R-5).
 
-    Skips (reported, never silent): empty/unfilable name, a `person` entity when
-    ``grammar == "pyramid"`` (`participant-not-concept`, TASK 052 — a meeting/lesson
-    attendee belongs in the note's `participants:` frontmatter, not a concept page),
-    dup slug, slug == the source note's own slug (self-collision), slug ∈
-    existing_page_slugs (a generic name that would evict an owner page), over the
-    candidate cap (`max-candidates`), or no verbatim/mention support in the body
-    (`no-verbatim-quote`). The last two are
-    the RECOVERABLE-loss reasons the `apply` envelope surfaces loudly (the literal
-    strings key `_LOSSY_SKIP_REASONS` there — keep them in sync). Every kept
-    candidate's `source_quote` is a guaranteed-verbatim substring of `note_text`.
+    This is the SELECTION pass. The spans it emits are provisional — `finalize_candidates`
+    re-derives them against the note text that is actually written, and applies the rail's
+    own validators (see its docstring).
+
+    Skips (reported, never silent): empty/unfilable name, a **`person` entity on ANY
+    grammar** (`participant-not-concept`), dup slug, slug == the source note's own slug
+    (self-collision), slug ∈ existing_page_slugs (a generic name that would evict an owner
+    page), over the candidate cap (`max-candidates`), or no verbatim/mention support in the
+    body (`no-verbatim-quote`). The RECOVERABLE ones are surfaced loudly by the `apply`
+    envelope (the literal strings key `_LOSSY_SKIP_REASONS` there — keep them in sync).
+    Every kept candidate's `source_quote` is a guaranteed-verbatim substring of `note_text`.
     """
     existing = set(existing_page_slugs)
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
-    note_lines = note_text.splitlines()  # hoisted: was re-split per kept candidate
     for e in entities:
         name = sanitize_name(e.get("name", ""))
         if not name_is_filable(name):
             skipped.append({"name": str(e.get("name")), "reason": "unfilable-name"})
             continue
-        # TASK 052: a meeting/lesson (pyramid) records attendees in the note's `participants:`
-        # frontmatter, NOT as `_concepts/` person pages. Deterministically drop `person`-typed
-        # entities for pyramid grammar so a model that types an attendee `person` in `entities[]`
-        # (the observed failure — the Айва demo) never spawns a person concept page. NB this also
-        # drops a `person` merely MENTIONED (a cited author, a candidate): pyramid notes do not
-        # concept-track people by design; the drop stays visible in `skipped[]` (create a page
-        # deliberately via /wiki-extract-concepts if one is ever wanted). INTENTIONAL, not a
-        # recoverable loss → kept OUT of `_LOSSY_SKIP_REASONS` (no CONCEPTS_DROPPED warning).
-        # `group` is deliberately kept: a committee/team can be a real domain concept (Q-052-1).
-        if grammar == "pyramid" and str(e.get("type", "")).strip().lower() == "person":
+        # ★★ F1 (TASK 064 FIX-LOOP) — `person` IS DROPPED ON **EVERY** GRAMMAR.
+        #
+        # TASK 052 dropped it only under `grammar == "pyramid"`, so the ARTICLE path leaked:
+        # `уоррен-баффет` and `гарри-марковиц` are LIVE person pages in the operator's vault,
+        # filed by this very function. `wiki-extract-concepts` now refuses `person` outright
+        # (G4, `ENTITY_TYPE_NOT_ALLOWED`) — so on the article path the leak did not merely
+        # continue, it turned FATAL: one `person` entity killed the entire concept batch.
+        # The operator's standing rule has no grammar clause in it: an attendee belongs in
+        # `participants:`, a cited author in the note body, neither in `_concepts/`.
+        #
+        # INTENTIONAL, not a recoverable loss → deliberately NOT in `_LOSSY_SKIP_REASONS`
+        # (visible in `skipped[]`, no CONCEPTS_DROPPED warning). `group` is deliberately
+        # KEPT: a committee/team can be a real domain concept (Q-052-1).
+        if str(e.get("type", "")).strip().lower() == "person":
             skipped.append({"name": name, "reason": "participant-not-concept"})
             continue
-        slug = _apply_slug_strategy(name, slug_strategy)
-        if not _is_valid_slug(slug, max_len=None):
+        # Mint through the RAIL's own derivation (`_gates.derive_concept_slug`), which
+        # normalises `_`→`-` and rejects a degenerate result — so the slug this function
+        # produces is one the rail's charset gate and G8 both accept, by construction.
+        slug = derive_concept_slug(name, slug_strategy)
+        if slug is None:
             skipped.append({"name": name, "reason": "invalid-slug"})
             continue
         if slug in seen:
@@ -404,18 +532,16 @@ def derive_candidates(
             skipped.append({"name": name, "reason": "max-candidates"})
             continue
         q = verbatim_quote(e.get("quote"), name, note_text)
-        if len(q.strip()) < 3:  # empty/degenerate body → no meaningful mention quote
+        if not q.strip():  # empty/degenerate body → no meaningful mention quote
             skipped.append({"name": name, "reason": "no-verbatim-quote"})
             continue
         seen.add(slug)
-        q_lines = q.splitlines()
-        first = q_lines[0] if q_lines else q  # multi-line quote → true start line
-        line = next((i for i, l in enumerate(note_lines, 1)
-                     if first[:40] and first[:40] in l), 1)
         out.append({
             "slug": slug, "name": name,
-            "definition": e.get("definition", ""),
-            "source_quote": q, "source_span": f"L{line}-L{line}",
-            "entity_type": e.get("type", "concept"),
+            "definition": str(e.get("definition", "") or ""),
+            "source_quote": q,
+            # Provisional — `finalize_candidates` recomputes it against the FINAL bytes.
+            "source_span": span_for_quote(q, note_text) or "L1-L1",
+            "entity_type": str(e.get("type", "concept") or "concept"),
         })
     return out, skipped

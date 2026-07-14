@@ -1,0 +1,22 @@
+{
+  "why": "★ THE JUNK-CLASS FIXTURE — the highest-volume garbage class in the live corpus, and NOTHING IN THE CODE REFUSES ANY OF IT. A tutorial-shaped source (a Dune dashboard walkthrough) explains, in one identical enthusiastic register, two durable ideas and a flood of UI chrome (тултип, hex-код цвета, индикатор прогресса, текстовый виджет, режим стекирования), SQL primitives (COALESCE, LEFT JOIN, ROW_NUMBER, GROUP BY) and schema identifiers (block_number, block_time, prices_usd). This is not hypothetical: exactly this kind of source minted тултип.md, hex-код-цвета.md, индикатор-прогресса.md, coalesce.md and block_number.md as PERMANENT pages in the operator's live vault, and coalesce.md has since accreted six inbound mentions — the derived BEGIN-AUTO:mentions ledger makes junk look well-connected and important, and wiki-query will cite it as knowledge. The trap is deliberate and sharp: the source genuinely EXPLAINS coalesce and тултип, so the cheap heuristic 'does the source explain this term?' mints them both. Only the three STEP-1 questions (durable · lookup-able · recurring, in THIS VAULT'S DOMAIN) reject them — nobody searches a crypto-analytics vault for a definition of a tooltip, and knowledge of SQL is not knowledge of the domain. Every one of the counterexample's five junk pages passes every mechanical gate: quote verbatim ≥40 chars, span checked, definition ≥40 chars, plain prose, not a copy of the quote, entity_type not `person`, slug derived from the name, no near-duplicate, no in-batch collision. `apply` writes all seven files and exits 0. THE SKILL IS THE ONLY GATE, so the counterexample is graded_by_census_only and the `forbidden` list is the whole enforcement. One caveat stated honestly: the underscore-bearing identifiers (block_number, prices_usd, row_number) are the ONE sub-class with a partial mechanism — INVALID_SLUG_CHARSET refuses a slug containing `_`, which under preserve-unicode/identity is what those names derive to, though under transliterate they slugify to a clean block-number and sail through. They are deliberately kept OUT of counterexample.json and enforced by `forbidden` only: had they been in the batch, the atomic refusal would fire on a CHARSET technicality on some layouts, the fixture would look green, and тултип and coalesce — the ones nothing catches, on any layout — would have gone unexamined. A fixture that passes for the wrong reason is worse than no fixture.",
+  "expect": {"concept": 2},
+  "expect_mentions": 0,
+  "forbidden": [
+    "тултип", "tultip",
+    "hex-код-цвета", "hex-kod-tsveta",
+    "индикатор-прогресса", "indikator-progressa",
+    "текстовый-виджет", "tekstovyi-vidzhet",
+    "режим-стекирования", "rezhim-stekirovaniia",
+    "coalesce", "left-join", "group-by",
+    "row-number", "row_number",
+    "block_number", "block-number",
+    "block_time", "block-time",
+    "prices_usd", "prices-usd"
+  ],
+  "empty_is_success": false,
+  "counterexample": {
+    "graded_by_census_only": true,
+    "accepted_on": ["karpathy", "cybos", "obsidian-personal"]
+  }
+}
