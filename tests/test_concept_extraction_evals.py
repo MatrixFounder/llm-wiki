@@ -499,7 +499,15 @@ def test_SKILL_md_documents_the_rules_the_fixtures_demonstrate() -> None:
     assert "NEAR_DUPLICATE_SLUG" in text                               # 05
     assert "IN_BATCH_SLUG_COLLISION" in text                           # 09
     assert "SLUG_NOT_DERIVED_FROM_NAME" in text                        # 08
-    assert "SOURCE_SPAN_OUT_OF_RANGE" in text                          # 10
+    # ★ 10 — the span. The contract INVERTED in TASK 066: the SKILL used to teach
+    # `SOURCE_SPAN_OUT_OF_RANGE` (a refusal the model had to avoid by COUNTING LINES). The rail
+    # now DERIVES the span, so that code is UNREACHABLE and the SKILL must say the OPPOSITE:
+    # do not count, omit the field. A doc that still taught the old rule would be teaching the
+    # model to do the very thing that produced 9 of its 13 failures.
+    assert "SOURCE_SPAN_OUT_OF_RANGE" not in text, (
+        "the SKILL still names a refusal the rail can no longer raise — it is teaching a gate "
+        "that does not exist, and asking the model to count lines to avoid it")
+    assert "OPTIONAL — OMIT IT" in text and "computes it from your quote" in text
     assert "BEGIN-SOURCE" in text and "UNTRUSTED DATA" in text         # 11 (H-6 armor)
 
     # ★ THE HONESTY LEDGER. The three rules with no mechanism must be NAMED as such — the

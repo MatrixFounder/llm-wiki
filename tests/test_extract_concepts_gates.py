@@ -30,6 +30,8 @@ Plus the four cross-cutting invariants the contract requires:
 """
 from __future__ import annotations
 
+import re
+
 import argparse
 import difflib
 import hashlib
@@ -54,6 +56,7 @@ from scripts.wiki_skills.wiki_extract_concepts._gates import (
     near_duplicate_warnings,
 )
 from scripts.wiki_skills.wiki_extract_concepts._validation import (
+    derive_source_span,
     _validate_candidates_schema,
 )
 
@@ -428,8 +431,10 @@ def test_g3_no_refusal_reason_ever_names_an_env_var() -> None:
         _cand(entity_type="banana"),
         _cand(slug="block_number"),
         _cand(source_quote="A sentence this source does not contain at all, ever."),
-        _cand(source_span="L9999-L9999"),
-        _cand(source_span="L2-L2"),
+        # ⚠️ the two span perturbations that used to live here no longer REFUSE — the span is
+        # DERIVED (TASK 066), so they are corrected, not rejected. A MALFORMED span still
+        # refuses, and that is the surface that must stay swept.
+        _cand(source_span="line 8"),
     ]
     reasons: list[str] = []
     for cand in perturbations:
@@ -1032,58 +1037,96 @@ def test_g8_underscore_slug_refused(slug: str) -> None:
 
 
 # =========================================================================== #
-# G9 — the source_span is VERIFIED against the body
+# G9 — the source_span is **DERIVED**, not verified (TASK 066)
+#
+# ★★ THE CONTRACT CHANGED, AND A MEASUREMENT CHANGED IT.
+#
+# G9 used to REFUSE a bad span. It now DERIVES the right one and ignores what the model
+# said. The reason is in `skills/concept-extraction/evals/baseline.json`: 33 fresh Haiku
+# contexts, 56 candidates —
+#
+#     source_quote VERBATIM in the body     56/56  (100%)   ← the anti-fabrication gate WORKS
+#     the model's source_span is CORRECT    40/56  ( 71%)   ← it is COUNTING LINES, and failing
+#     the span is DERIVABLE from the quote  56/56  (100%)
+#
+# NINE of thirteen failing runs were a bad span — the largest failure class, hitting 8 of 11
+# fixtures. We were asking a LANGUAGE MODEL to do ARITHMETIC ON LINE NUMBERS, and then
+# refusing the WHOLE BATCH when it got the arithmetic wrong. The concepts were right. The
+# quotes were right. The counting was not.
+#
+# ★ DERIVATION IS STRICTLY STRONGER THAN THE CHECK IT REPLACES. G9 existed because the span
+# was an honour system — `L9999-L9999` on a 3-line body was written into `page_entity_refs`
+# AS IF IT WERE PROVENANCE. A DERIVED span cannot be fabricated: it is computed from a quote
+# that is itself proven verbatim. **The attack is not detected — it is UNREACHABLE.**
+#
+# Every property the old tests protected is asserted below, against the new mechanism.
 # =========================================================================== #
 
-def test_g9_span_out_of_range_refused() -> None:
-    """`L9999-L9999` on a 10-line body was exit 0 — straight into
-    `page_entity_refs.line_start/line_end` AS IF IT WERE PROVENANCE. Shape-validated
-    three times, verified against the body ZERO times."""
-    with pytest.raises(ExtractionParseError) as ei:
-        _validate_candidates_schema(
-            [_cand(source_span="L9999-L9999")], source_body=_BODY)
-    assert ei.value.error == "SOURCE_SPAN_OUT_OF_RANGE"
+def test_g9_an_out_of_range_span_is_CORRECTED_never_written() -> None:
+    """★ THE OLD BUG (`L9999-L9999` into `page_entity_refs` as provenance) is now
+    UNREACHABLE — and the fix costs the operator NOTHING, where the old gate cost them the
+    entire batch.
+
+    The fabricated span does not reach the DB, and the candidate is not refused: it is
+    written with the TRUE span. Both halves are asserted — a fix that silently dropped the
+    candidate would pass the first half alone.
+    """
+    batch = [_cand(source_span="L9999-L9999")]
+    _validate_candidates_schema(batch, source_body=_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L8-L8", (
+        "the fabricated span must be REPLACED by the derived one, not merely rejected")
 
 
-def test_g9_span_that_does_not_contain_the_quote_refused() -> None:
-    """The span must point AT the quote. L2 is `type: summary`; the quote is on L8."""
-    with pytest.raises(ExtractionParseError) as ei:
-        _validate_candidates_schema([_cand(source_span="L2-L2")], source_body=_BODY)
-    assert ei.value.error == "SOURCE_SPAN_QUOTE_MISMATCH"
+def test_g9_a_span_that_misses_the_quote_is_CORRECTED() -> None:
+    """The span must point AT the quote — and now it does BY CONSTRUCTION. L2 is
+    `type: summary`; the quote is on L8. The model's L2 is discarded."""
+    batch = [_cand(source_span="L2-L2")]
+    _validate_candidates_schema(batch, source_body=_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L8-L8"
+
+
+def test_g9_the_span_is_OPTIONAL_and_the_model_need_not_count_at_all() -> None:
+    """★★ THE POINT OF THE WHOLE CHANGE. A candidate with NO `source_span` is valid — the
+    model is no longer asked to count lines, which is the thing it cannot do."""
+    cand = _cand()
+    del cand["source_span"]
+    batch = [cand]
+    _validate_candidates_schema(batch, source_body=_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L8-L8"
 
 
 def test_g9_line_one_is_the_files_first_line_including_frontmatter() -> None:
-    """★ THE LINE ORIGIN, PINNED. It was UNDEFINED, which is why the repo's canonical
-    apply fixture carried a wrong span for a year and nobody noticed.
+    """★ THE LINE ORIGIN, STILL PINNED — the derivation must produce the SAME semantics the
+    old gate enforced, or every span in the vault silently shifts by the frontmatter's height.
 
-    `source_body` is the WHOLE FILE as read — the same string the quote check grounds
-    against — so **L1 is the file's first line: the opening `---`.** The prose quote is
-    therefore on L8, NOT on L4 (which is where it would be if the origin were the first
-    line of prose). Both the hit and the off-by-one miss are asserted, so the origin
-    cannot silently shift.
+    `source_body` is the WHOLE FILE as read, so **L1 is the opening `---`.** The prose quote
+    is on **L8**, not L4 (where it would be if the origin were the first line of prose).
     """
     assert len(_BODY.splitlines()) == 10
+    cand = _cand()
+    del cand["source_span"]
+    batch = [cand]
+    _validate_candidates_schema(batch, source_body=_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L8-L8", (
+        "the line origin shifted — every span in the vault would move with it")
 
-    # The quote grounds at L8 — counting the frontmatter.
-    _validate_candidates_schema([_cand(source_span="L8-L8")], source_body=_BODY)
-
-    # It does NOT ground one line earlier: the origin is exact, not approximate.
-    with pytest.raises(ExtractionParseError) as ei:
-        _validate_candidates_schema([_cand(source_span="L7-L7")], source_body=_BODY)
-    assert ei.value.error == "SOURCE_SPAN_QUOTE_MISMATCH"
-
-    # A WIDER span that still CONTAINS the quote is fine (L6-L8 spans the heading too).
-    _validate_candidates_schema([_cand(source_span="L6-L8")], source_body=_BODY)
-
-    # And L10 — the last line of the file — is in range and grounds its own quote.
-    _validate_candidates_schema(
-        [_cand(slug="perpetual-future", name="Perpetual Future",
-               definition="A derivative contract that never expires, held open "
-                          "indefinitely via a periodic funding payment.",
-               source_quote="A perpetual future is a derivative contract with no "
-                            "expiry date.",
-               source_span="L10-L10")],
-        source_body=_BODY)
+    # ...and the LAST line of the file derives correctly too (an off-by-one at the tail is
+    # the classic way a line-origin fix breaks the far end).
+    tail = _cand(
+        slug="perpetual-future", name="Perpetual Future",
+        definition="A derivative contract that never expires, held open "
+                   "indefinitely via a periodic funding payment.",
+        source_quote="A perpetual future is a derivative contract with no expiry date.",
+    )
+    del tail["source_span"]
+    batch = [tail]
+    _validate_candidates_schema(batch, source_body=_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L10-L10"
 
 
 # --------------------------------------------------------------------------- #
@@ -1100,26 +1143,22 @@ _FF_BODY = ("---\ntitle: Дюна\n---\n\n"
 _FF_QUOTE = "Ставка финансирования удерживает цену контракта у спота."
 
 
-def test_g9_form_feed_body_counts_lines_the_way_every_tool_counts_them() -> None:
-    """★★ F5 — ON A PDF-DERIVED SOURCE, THE OLD GATE REFUSED THE **CORRECT** SPAN AND
-    ACCEPTED ONLY THE WRONG ONE.
+def test_g9_form_feed_the_DERIVED_span_counts_lines_the_way_every_tool_counts_them() -> None:
+    """★★ F5 SURVIVES THE REWRITE — and it matters MORE now, not less.
 
-    `str.splitlines()` breaks on `\\x0b \\x0c \\x1c \\x1d \\x1e \\x85 U+2028 U+2029`. EVERY
-    tool a model counts lines with — the Read tool, `cat -n`, any editor, `wc -l` — breaks
-    on `\\n` and nothing else. On `_FF_BODY` the two disagree, and the disagreement is not
-    academic:
+    `str.splitlines()` breaks on `\x0b \x0c \x1c \x1d \x1e \x85 U+2028 U+2029`. EVERY tool a
+    human or a model counts lines with — the Read tool, `cat -n`, an editor, `wc -l` — breaks
+    on `\n` and nothing else. On `_FF_BODY` the two disagree:
 
-        split("\\n")   → the quote is on **L6**   ← what the model SEES
-        splitlines()  → the quote is on **L7**, and L6 is EMPTY
+        split("\n")   → the quote is on **L6**   ← what the operator SEES in their editor
+        splitlines()  → the quote is on **L7**
 
-    So a model that counted CORRECTLY got `SOURCE_SPAN_QUOTE_MISMATCH`, and the only span
-    that could pass was one nobody could derive by looking at the file. The gate was
-    actively teaching the wrong line numbers on exactly the sources it exists to guard.
-
-    Both directions are asserted, so a regression to `splitlines()` flips BOTH and cannot
-    hide: the correct span must PASS, and the splitlines-derived span must be REFUSED.
+    Under the OLD gate a `splitlines()` bug REFUSED the correct span. Under the NEW one it
+    would WRITE THE WRONG SPAN INTO THE VAULT, silently, on every PDF-derived source — and
+    nobody would ever be refused, so nobody would ever look. **The regression got quieter,
+    so the test got more important.**
     """
-    # The two line-splitters genuinely disagree on this body — the premise of the test.
+    # the two splitters genuinely disagree on this body — the premise, asserted
     assert _FF_BODY.split("\n").index("\x0c" + _FF_QUOTE) + 1 == 6
     assert _FF_BODY.splitlines().index(_FF_QUOTE) + 1 == 7
 
@@ -1128,33 +1167,59 @@ def test_g9_form_feed_body_counts_lines_the_way_every_tool_counts_them() -> None
         definition="периодический платёж между лонгами и шортами.",
         source_quote=_FF_QUOTE,
     )
+    del ff_cand["source_span"]
 
-    # (1) THE CORRECT SPAN PASSES. L6 is where `cat -n` and the Read tool put the quote.
-    _validate_candidates_schema(
-        [{**ff_cand, "source_span": "L6-L6"}], source_body=_FF_BODY)
-
-    # (2) THE `splitlines()` SPAN IS REFUSED. Under the old code this was the ONLY span
-    #     that worked — the inversion is the whole bug.
-    with pytest.raises(ExtractionParseError) as ei:
-        _validate_candidates_schema(
-            [{**ff_cand, "source_span": "L7-L7"}], source_body=_FF_BODY)
-    assert ei.value.error == "SOURCE_SPAN_QUOTE_MISMATCH"
+    batch = [ff_cand]
+    _validate_candidates_schema(batch, source_body=_FF_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L6-L6", (
+        "the derived span used splitlines() — on every PDF-derived source the vault would "
+        "now carry a span that disagrees with `cat -n`, and NOTHING would refuse it")
 
 
-def test_g9_form_feed_does_not_inflate_the_body_line_count() -> None:
-    """The same bug seen through `SOURCE_SPAN_OUT_OF_RANGE`: `splitlines()` would report a
-    LONGER body than the file has `\\n`-lines, so an out-of-range span could slip through
-    the range check on any form-feed-bearing source. The range must be `\\n`-lines."""
+def test_g9_a_supplied_span_is_only_a_HINT_and_never_overrides_the_truth() -> None:
+    """A supplied span cannot make the rail write a lie. It disambiguates a repeated quote;
+    it does not get to be wrong.
+
+    (The old `SOURCE_SPAN_OUT_OF_RANGE` case — a span past the end of a form-feed body —
+    is simply overwritten. There is no range left to be out of.)
+    """
     ff_cand = _cand(
         slug="ставка-финансирования", name="Ставка финансирования",
         definition="периодический платёж между лонгами и шортами.",
-        source_quote=_FF_QUOTE, source_span="L8-L8",
+        source_quote=_FF_QUOTE, source_span="L8-L8",   # past the end of the body
     )
-    with pytest.raises(ExtractionParseError) as ei:
-        _validate_candidates_schema([ff_cand], source_body=_FF_BODY)
-    assert ei.value.error == "SOURCE_SPAN_OUT_OF_RANGE"
-    # the reason states the `\n`-line count (7), never splitlines()' inflated one
-    assert "7 lines" in str(ei.value.reason)
+    batch = [ff_cand]
+    _validate_candidates_schema(batch, source_body=_FF_BODY)
+    out = batch
+    assert out[0]["source_span"] == "L6-L6"
+
+
+def test_g9_the_HINT_picks_between_TWO_occurrences_of_the_same_quote() -> None:
+    """★ The one job a supplied span still has. The same sentence appears twice; the hint
+    says which one. With no hint the FIRST occurrence wins — still true provenance, because
+    the quote really is there."""
+    quote = "Ставка финансирования удерживает цену контракта у спота."
+    body = ("---\ntitle: t\n---\n"          # L1-L3
+            f"{quote}\n"                     # L4  ← first occurrence
+            "Между ними другой текст.\n"      # L5
+            f"{quote}\n")                    # L6  ← second
+    cand = _cand(
+        slug="ставка-финансирования", name="Ставка финансирования",
+        definition="периодический платёж между лонгами и шортами.",
+        source_quote=quote,
+    )
+    del cand["source_span"]
+
+    # no hint → the first occurrence
+    b1 = [dict(cand)]
+    _validate_candidates_schema(b1, source_body=body)
+    assert b1[0]["source_span"] == "L4-L4"
+
+    # a hint pointing at the second → the second
+    b2 = [{**cand, "source_span": "L6-L6"}]
+    _validate_candidates_schema(b2, source_body=body)
+    assert b2[0]["source_span"] == "L6-L6"
 
 
 # =========================================================================== #
@@ -1218,9 +1283,41 @@ _PRE_DB_REFUSALS: list[tuple[str, dict[str, Any]]] = [
      _cand(source_quote="Never appears in this body at all, not even once.")),
     ("ENTITY_TYPE_NOT_ALLOWED", _cand(entity_type="person")),
     ("INVALID_SLUG_CHARSET", _cand(slug="block_number")),
-    ("SOURCE_SPAN_OUT_OF_RANGE", _cand(source_span="L9999-L9999")),
-    ("SOURCE_SPAN_QUOTE_MISMATCH", _cand(source_span="L2-L2")),
+    # ⚠️ `SOURCE_SPAN_OUT_OF_RANGE` and `SOURCE_SPAN_QUOTE_MISMATCH` were HERE until TASK 066.
+    # They are now UNREACHABLE FROM CANDIDATE INPUT — the span is DERIVED, so there is no
+    # candidate a caller can write that makes the rail refuse on one.
+    #
+    # ★ Removing a row from a refusal roster is EXACTLY how a gate silently shrinks. So the
+    # removal is not silent: `test_the_SPAN_REFUSALS_are_UNREACHABLE_not_merely_untested`
+    # below PROVES the two codes cannot be provoked, rather than leaving them merely absent.
 ]
+
+
+def test_the_SPAN_REFUSALS_are_UNREACHABLE_not_merely_untested() -> None:
+    """★ THE ROSTER SHRANK BY TWO, AND THIS IS THE PROOF THAT IT WAS SAFE.
+
+    A row quietly deleted from a refusal roster is a gate quietly deleted. So the two span
+    refusals are not merely *removed* — they are shown to be **unprovokable**: the span is
+    DERIVED, so the worst input a caller can write is CORRECTED, not refused.
+
+    The old attack — `L9999-L9999` on a 10-line body, written into `page_entity_refs` as if
+    it were provenance — is not *caught* here. It is **impossible**.
+
+    ⚠️ What IS still reachable, and must stay so: a supplied span that is not `Lx-Ly` at all.
+    A malformed hint is a caller bug, and silently ignoring it would be the fail-open this
+    repo keeps having to close.
+    """
+    for span in ("L9999-L9999", "L2-L2", "L1-L1"):
+        batch = [_cand(source_span=span)]
+        _validate_candidates_schema(batch, source_body=_BODY)      # no raise
+        assert batch[0]["source_span"] == "L8-L8", (
+            f"a candidate carrying {span!r} must be CORRECTED to the truth")
+
+    # a MALFORMED hint is still refused — the fail-open stays closed
+    with pytest.raises(ExtractionParseError) as ei:
+        _validate_candidates_schema(
+            [_cand(source_span="line 8")], source_body=_BODY)
+    assert ei.value.field == "source_span"
 
 
 @pytest.mark.parametrize(
@@ -1373,3 +1470,54 @@ def test_canary_the_page_collision_refusal_leaks_no_absolute_path(
     for s in _walk(env):
         assert str(root) not in s
         assert _CANARY not in s
+
+
+def test_the_DERIVED_span_ALWAYS_contains_its_own_quote() -> None:
+    """★★ THE UNIVERSAL INVARIANT — and it replaces a property that used to belong to ONE
+    fixture's counterexample.
+
+    Since TASK 066 the span is COMPUTED from the quote, so the guarantee is no longer
+    *"a fabricated span is refused"* but the stronger *"no span can be fabricated at all."*
+    That deserves to be asserted **everywhere**, not in one place:
+
+        for EVERY fixture, for EVERY candidate (expected AND counterexample):
+            the DERIVED span points AT the quote it was derived from.
+
+    A fixture-specific gate protects a fixture. This protects the rail. And it fires on any
+    future body shape — a form feed, a CRLF file, a quote spanning three lines — without
+    anybody remembering to add a case.
+    """
+    import json
+    import unicodedata
+
+    evals = (Path(__file__).resolve().parents[1]
+             / "skills" / "concept-extraction" / "evals")
+    checked = 0
+    for fixture in sorted(p for p in evals.iterdir() if (p / "input.md").is_file()):
+        body = (fixture / "input.md").read_text(encoding="utf-8")
+        for which in ("expected", "counterexample"):
+            f = fixture / f"{which}.json"
+            if not f.is_file():
+                continue
+            for item in json.loads(f.read_text(encoding="utf-8")):
+                quote = item.get("source_quote")
+                if not quote:
+                    continue
+                norm = lambda s: re.sub(                       # noqa: E731
+                    r"\s+", " ", unicodedata.normalize("NFC", s)).strip().casefold()
+                if norm(quote) not in norm(body):
+                    continue                                   # a deliberately-bad quote
+                span = derive_source_span(body, quote)
+                start, end = (int(x[1:]) for x in span.split("-"))
+                lines = body.split("\n")                       # NEVER splitlines() — F5
+                assert 1 <= start <= end <= len(lines), (
+                    f"{fixture.name}/{which}: derived {span} is outside a "
+                    f"{len(lines)}-line body")
+                assert norm(quote) in norm("\n".join(lines[start - 1:end])), (
+                    f"{fixture.name}/{which}: the DERIVED span {span} does not contain the "
+                    f"quote it was derived FROM — the derivation is broken")
+                checked += 1
+
+    assert checked >= 20, (
+        f"the invariant examined only {checked} candidates — a sweep over an empty population "
+        f"reports green, which is this project's signature failure mode")

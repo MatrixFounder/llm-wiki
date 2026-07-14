@@ -100,8 +100,32 @@ _ORCHESTRATOR_ID_RE = ORCH_ID_RE  # TASK 050: shared shape (explicit re-export f
 
 # v3.1 strict-validator caps (003-v3-02 / H-2 / H-6 / H-9):
 _REQUIRED_CANDIDATE_KEYS = {
-    "slug", "name", "definition", "source_quote", "source_span", "entity_type",
+    "slug", "name", "definition", "source_quote", "entity_type",
 }
+# ★★ `source_span` IS NO LONGER REQUIRED — TASK 066, and the reason is a MEASUREMENT.
+#
+# The weak-model harness ran 33 fresh Haiku contexts over the 11 fixtures and produced 56
+# candidates. Of those:
+#
+#     source_quote VERBATIM in the body      56/56  (100%)   ← the anti-fabrication gate WORKS
+#     the model's source_span is CORRECT     40/56  ( 71%)   ← it is COUNTING LINES, and failing
+#     the span is DERIVABLE from the quote   56/56  (100%)
+#
+# NINE of the thirteen failing runs were a bad span — the single largest failure class, hitting
+# 8 of the 11 fixtures. The model is off-by-3 on one fixture (it miscounted the frontmatter),
+# off-by-1 on another, and on a third it emitted `L407` where the truth is `L34`.
+#
+#     WE WERE ASKING A LANGUAGE MODEL TO DO ARITHMETIC ON LINE NUMBERS.
+#     THE SPAN IS A COMPUTATION, NOT A JUDGEMENT.
+#
+# So `apply` DERIVES it (`derive_source_span`). A supplied span is now only a HINT, used to
+# disambiguate a quote that occurs more than once.
+#
+# ★ DERIVATION IS STRICTLY STRONGER THAN THE CHECK IT REPLACES. G9 existed because the span
+# was an honour system — `L9999-L9999` on a 3-line body was written into `page_entity_refs` as
+# provenance. A DERIVED span cannot be fabricated: it is computed from a quote that is itself
+# verified verbatim. There is nothing left to lie about.
+_OPTIONAL_CANDIDATE_KEYS = {"source_span"}
 # ★★ G0 (TASK 064) — ZERO. THE MOST IMPORTANT LINE IN THIS FILE.
 #
 # This was 1. A floor of 1 means: on a source with no extractable concepts, EVERY
@@ -428,7 +452,8 @@ def _validate_candidates_schema(
     # L-1 (vdd-multi 2026-05-28): also type-check the non-capped fields
     # so a `null` slug / span / entity_type produces a clear
     # "not a string" envelope instead of `re.match` on coerced `"None"`.
-    _NONCAPPED_STR_FIELDS = ("slug", "source_span", "entity_type")
+    _NONCAPPED_STR_FIELDS = ("slug", "entity_type")
+    _NONCAPPED_OPTIONAL_STR_FIELDS = ("source_span",)
 
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
@@ -439,8 +464,11 @@ def _validate_candidates_schema(
                 reason=f"item #{idx} is not a JSON object",
             )
 
-        # H-9: strict-equality on keys (no extras, no missing).
-        extra = item.keys() - _REQUIRED_CANDIDATE_KEYS
+        # H-9: strict on keys — no true extras, no missing REQUIRED ones. `source_span` is
+        # now OPTIONAL (see `_OPTIONAL_CANDIDATE_KEYS`): the rail DERIVES it, and a supplied
+        # one is only a disambiguation hint. Still allowed, so every existing caller and every
+        # fixture keeps working byte-identically.
+        extra = item.keys() - _REQUIRED_CANDIDATE_KEYS - _OPTIONAL_CANDIDATE_KEYS
         missing = _REQUIRED_CANDIDATE_KEYS - item.keys()
         if extra:
             offending = sorted(extra)[0]
@@ -520,7 +548,19 @@ def _validate_candidates_schema(
                         "symbol, not a concept — extract the CONCEPT it belongs to "
                         "(e.g. the table or the window function), or drop it."),
             )
-        if not _SOURCE_SPAN_RE.match(item["source_span"]):
+        for field_name in _NONCAPPED_OPTIONAL_STR_FIELDS:
+            if field_name in item and not isinstance(item[field_name], str):
+                raise ExtractionParseError(
+                    f"candidate #{idx} field {field_name!r} is not a string",
+                    error="EXTRACTION_PARSE_ERROR",
+                    field=field_name,
+                    reason=(f"item #{idx} field {field_name!r} is "
+                            f"{type(item[field_name]).__name__}, expected str"),
+                )
+
+        # A SUPPLIED span must still be well-formed — it is a hint, and a malformed hint is a
+        # bug in the caller, not a thing to silently ignore.
+        if "source_span" in item and not _SOURCE_SPAN_RE.match(item["source_span"]):
             raise ExtractionParseError(
                 f"candidate #{idx} source_span fails Lstart-Lend regex",
                 error="EXTRACTION_PARSE_ERROR",
@@ -647,28 +687,109 @@ def _validate_candidates_schema(
             # repo's PDF on-ramp: so on exactly the sources this rail is fed, a model that
             # counts CORRECTLY would be refused and only the WRONG span could pass. The
             # gate would have been actively teaching the wrong line numbers.
+            # ★★ THE SPAN IS DERIVED, NOT TRUSTED — TASK 066.
+            #
+            # The quote is ALREADY proven verbatim in the body two checks above
+            # (`FIELD_QUOTE_NOT_IN_BODY`). Its line range is therefore a COMPUTATION. The
+            # model's span — which it got wrong 29% of the time, because we were asking a
+            # language model to count lines — is downgraded to a HINT, used only to pick
+            # between multiple occurrences of the same quote.
+            #
+            # This is STRICTLY STRONGER than the check it replaces: a derived span cannot be
+            # fabricated. The `L9999-L9999`-on-a-3-line-body attack G9 was built for is not
+            # detected here — it is UNREACHABLE.
+            item["source_span"] = derive_source_span(
+                source_body, quote, hint=item.get("source_span"))
+
+            # A SELF-CHECK on our own derivation (the G1 discipline: gate your own write).
+            # It cannot fire on correct code — which is exactly why it is cheap to keep, and
+            # why a mutation of `derive_source_span` is caught HERE rather than in the vault.
             lines = source_body.split("\n")
             start, end = _parse_source_span(str(item["source_span"]))
-            if not (1 <= start <= end <= len(lines)):
-                raise ExtractionParseError(
-                    f"candidate #{idx} source_span outside the body",
-                    error="SOURCE_SPAN_OUT_OF_RANGE",
-                    field="source_span",
-                    reason=(f"item #{idx} source_span L{start}-L{end} is outside the "
-                            f"source body, which has {len(lines)} lines. Line 1 is the "
-                            f"FIRST LINE OF THE FILE (the opening `---` of the "
-                            f"frontmatter), not the first line of prose."),
-                )
             span_text = "\n".join(lines[start - 1:end])
-            if _norm(quote) not in _norm(span_text):
-                raise ExtractionParseError(
-                    f"candidate #{idx} source_quote is not inside its source_span",
+            if not (1 <= start <= end <= len(lines)) or _norm(quote) not in _norm(span_text):
+                raise ExtractionParseError(          # pragma: no cover - a derivation bug
+                    f"candidate #{idx}: the DERIVED span does not contain its own quote",
                     error="SOURCE_SPAN_QUOTE_MISMATCH",
                     field="source_span",
-                    reason=(f"item #{idx}: the quote does not occur within lines "
-                            f"L{start}-L{end}. The span must point AT the quote. Count "
-                            "from line 1 = the file's first line (the opening `---`)."),
+                    reason=(f"item #{idx}: `derive_source_span` produced L{start}-L{end}, "
+                            f"which does not contain the quote it was derived FROM. This is "
+                            f"a bug in the rail, not in the candidate."),
                 )
+
+
+def derive_source_span(
+    source_body: str, quote: str, *, hint: str | None = None
+) -> str:
+    """★ THE SPAN, COMPUTED FROM THE QUOTE (TASK 066). `L<start>-L<end>`, 1-indexed from the
+    file's FIRST line — the opening `---` of the frontmatter is L1.
+
+    Why this exists: the weak-model harness measured 56 candidates from 33 fresh Haiku
+    contexts. **The quote was verbatim 56/56 (100%). The model's span was right 40/56 (71%).**
+    Nine of the thirteen failing runs were a bad span — the largest single failure class,
+    hitting 8 of 11 fixtures. *We were asking a language model to do arithmetic on line
+    numbers.* The quote it copies; the span it must COUNT — and counting is not what it is for.
+
+    ★ `split("\n")`, NEVER `splitlines()` (F5, TASK 064). `splitlines()` also breaks on
+    `\x0b \x0c \x1c \x1d \x1e \x85 U+2028 U+2029`. Every tool a human or a model counts
+    lines with — the Read tool, `cat -n`, an editor, `wc -l` — breaks on `\n` and nothing
+    else. A FORM FEED is a routine PDF→markdown artifact, and `wiki-import` IS this repo's PDF
+    on-ramp: on exactly the sources this rail is fed, `splitlines()` would compute a span that
+    disagrees with every tool the operator can check it with.
+
+    `hint` (the model's own span, now optional) is used for ONE thing: when the same quote
+    occurs more than once in the body, it picks which occurrence. With no usable hint the
+    FIRST occurrence wins — which is still a true provenance pointer, because the quote really
+    is there.
+    """
+    # ★ THE OFFSETS MUST BE IN THE **ORIGINAL** BODY — and the first draft of this function
+    # got that wrong, in the one way the self-check below was written to catch.
+    #
+    # `_norm` COLLAPSES WHITESPACE (`\s+` → one space). So an offset into `_norm(body)` cannot
+    # be turned back into a LINE NUMBER — the newlines are gone. The first draft counted `\n`
+    # in the normalised text, found none, and derived `L1-L1` for every candidate. The
+    # self-check caught it on the first test run, which is exactly its job: **gate your own
+    # write.**
+    #
+    # So: search the ORIGINAL (NFC + casefold, whitespace INTACT) with a pattern that tolerates
+    # the whitespace differences `_norm` was tolerating — one `\s+` between the quote's tokens.
+    # The match offsets are then real, and the line count is real.
+    body_o = unicodedata.normalize("NFC", source_body).casefold()
+    tokens = _norm(quote).split(" ")
+    if not tokens or tokens == [""]:                 # pragma: no cover - a >=4-word floor
+        raise ExtractionParseError(
+            "the quote is empty",
+            error="FIELD_QUOTE_NOT_IN_BODY", field="source_quote",
+            reason="derive_source_span called on an empty quote",
+        )
+    pattern = re.compile(r"\s+".join(re.escape(tok) for tok in tokens))
+
+    matches = list(pattern.finditer(body_o))
+    if not matches:                                  # pragma: no cover - FIELD_QUOTE_NOT_IN_BODY
+        raise ExtractionParseError(
+            "the quote is not in the body",
+            error="FIELD_QUOTE_NOT_IN_BODY", field="source_quote",
+            reason="derive_source_span called on a quote that is not verbatim in the body",
+        )
+
+    def _span_of(m: "re.Match[str]") -> tuple[int, int]:
+        # ★ split("\n"), NEVER splitlines() — see the docstring. Counting `\n` is the same
+        # rule, expressed the same way.
+        start = body_o.count("\n", 0, m.start()) + 1
+        end = start + body_o.count("\n", m.start(), m.end())
+        return start, end
+
+    chosen = matches[0]
+    if len(matches) > 1 and hint and _SOURCE_SPAN_RE.match(hint):
+        h_start, h_end = _parse_source_span(hint)
+        for m in matches:
+            s, e = _span_of(m)
+            if h_start <= s and e <= h_end:
+                chosen = m
+                break
+
+    start, end = _span_of(chosen)
+    return f"L{start}-L{end}"
 
 
 def classify_candidates(

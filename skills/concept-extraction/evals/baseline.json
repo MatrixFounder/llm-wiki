@@ -1,39 +1,39 @@
 {
- "recorded": "2026-07-14",
+ "recorded": "2026-07-15",
  "model": "claude-haiku-4-5",
- "artifact": "reports/haiku-4.5-2026-07-14.json",
- "note": "★ THE HONEST BASELINE — and it REFUTES the published one. `evals/README.md` claimed 9/11 with 'Zero junk'. MEASURED with the instrument: 7/11, and TWO forbidden names. The published number was produced by hand and was never reproducible; this one is a recording anyone can re-grade offline.",
+ "artifact": "reports/haiku-4.5-2026-07-15-span-derived.json",
+ "supersedes": "the 2026-07-14 recording, taken BEFORE `source_span` became derived",
+ "note": "★ THE FLOOR AFTER THE FIX THE INSTRUMENT FOUND. The published, hand-produced baseline claimed 9/11 with 'Zero junk'. The instrument measured 7/11 with TWO forbidden names, and then showed WHY: 9 of 13 failing runs were a bad `source_span`. `apply` now DERIVES the span from the (already-verbatim) quote, and the model is no longer asked to count lines. RESULT: 7/11 -> 10/11, and the CLEAN subset -- the only number that measures the SKILL rather than the prompt's memory of the answer -- went 2/3 -> 3/3. THREE fixtures improved, ZERO regressed, and the forbidden count did NOT rise: no recall was bought with junk.",
  "clean_fixtures": [
   "03-ui-chrome-and-primitives",
   "04-participants-are-not-concepts",
   "05-reuse-the-existing-concept"
  ],
  "score": {
+  "overall": "10/11",
+  "clean": "3/3",
+  "contaminated": "6/7",
+  "forbidden_total": 2
+ },
+ "previous_score": {
   "overall": "7/11",
   "clean": "2/3",
-  "contaminated": "4/7",
   "forbidden_total": 2
  },
  "diagnosis": {
-  "headline": "THE DOMINANT FAILURE IS `source_span` — MECHANICAL, NOT RECALL. DF-064-4 is filed as an under-extraction/recall gap. The instrument says otherwise: of 13 failing runs, 10 are MECHANICAL (span/slug) and only ONE is a census drop.",
-  "measured": {
-   "failing_runs": 13,
-   "of_runs": 33,
-   "source_span_mismatch": 9,
-   "forbidden_name": 2,
-   "slug_not_derived": 1,
-   "census_drop_recall": 1,
-   "quotes_verbatim": "56/56 (100%)",
-   "model_span_correct": "40/56 (71%)",
-   "span_derivable_from_quote": "56/56 (100%)"
+  "headline": "★ THE MECHANICAL NOISE IS GONE, AND THE REAL RECALL GAP NOW STANDS ALONE. Before the fix the failure census was 9 span / 1 recall -- the recall gap DF-064-4 is named for was buried under arithmetic the model cannot do. It is now the ONLY thing left.",
+  "failure_census_now": {
+   "census_recall": 5,
+   "forbidden": 1
   },
-  "root_cause": "The SKILL asks a LANGUAGE MODEL to do ARITHMETIC ON LINE NUMBERS (`source_span: L21-L21`, 1-indexed from the file's first line, frontmatter included). It gets that wrong 29% of the time — off-by-3 on fixture 01 (miscounted frontmatter), off-by-1 on 03, and outright hallucinated (L407 where the truth is L34). Meanwhile the `source_quote` — which the rail ALREADY forces to be VERBATIM — is correct 100% of the time. THE SPAN IS A COMPUTATION, NOT A JUDGEMENT.",
-  "fix": "`apply` DERIVES `source_span` from `source_quote` (body.index(quote) -> line range). The model is not asked for it at all. Deterministic, zero-guess, and it removes the single largest failure class."
+  "candidates_still_emitting_a_span": 0,
+  "of_candidates": 54,
+  "what_remains": "Fixture 09 alone: the model extracts «Падёж» under its BARE name (item 1 on that fixture's forbidden list) and drops «Грамматический падеж». THIS is DF-064-4's original diagnosis -- and it is now ISOLATED and MEASURABLE, which it never was before. Note that SKILL.md ALREADY carries fixture 09's exact expected names plus an explicit 'And extract BOTH', and the model fails anyway: prompt text is not the lever. The next task must find a MECHANICAL one, and it must be measured on THIS instrument."
  },
  "fixtures": {
   "01-domain-concepts-explained": {
-   "pass": false,
-   "passes": 1,
+   "pass": true,
+   "passes": 3,
    "k": 3,
    "forbidden": 0
   },
@@ -44,26 +44,26 @@
    "forbidden": 0
   },
   "03-ui-chrome-and-primitives": {
-   "pass": false,
-   "passes": 1,
-   "k": 3,
-   "forbidden": 0
-  },
-  "04-participants-are-not-concepts": {
    "pass": true,
    "passes": 2,
    "k": 3,
    "forbidden": 0
   },
-  "05-reuse-the-existing-concept": {
+  "04-participants-are-not-concepts": {
    "pass": true,
    "passes": 3,
    "k": 3,
    "forbidden": 0
   },
+  "05-reuse-the-existing-concept": {
+   "pass": true,
+   "passes": 2,
+   "k": 3,
+   "forbidden": 0
+  },
   "06-definition-is-not-the-quote": {
-   "pass": false,
-   "passes": 1,
+   "pass": true,
+   "passes": 3,
    "k": 3,
    "forbidden": 0
   },
@@ -75,7 +75,7 @@
   },
   "08-slug-is-derived-by-the-layout": {
    "pass": true,
-   "passes": 2,
+   "passes": 3,
    "k": 3,
    "forbidden": 0
   },
@@ -93,7 +93,7 @@
   },
   "11-the-source-is-data-not-instructions": {
    "pass": true,
-   "passes": 2,
+   "passes": 3,
    "k": 3,
    "forbidden": 0
   }

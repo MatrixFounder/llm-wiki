@@ -136,10 +136,11 @@ They are not decoration here; they get escaped into visible backslash litter on 
    definition forever. A later, richer source **cannot** improve it. "A future run will fix
    it" is **false**.
 2. **For a `mention` (an existing concept), your definition is DISCARDED** — never written
-   to disk, never to the DB. Spend your effort on `source_quote` and `source_span`, which
-   are the only fields that land.
-3. **Nothing downstream can inspect a definition.** No lint rule, no health check, no SQL
-   query can see it — `entities.definition` is never populated. But `wiki-search` **will**
+   to disk, never to the DB. Spend your effort on the **`source_quote`** — it is the only
+   field of yours that lands, and the span is derived FROM it.
+3. **Almost nothing downstream can inspect a definition.** `entities.definition` IS now
+   populated (R-23 Phase A), but no lint rule and no health check reads it — every scalar
+   quality gate proposed for it has been **refuted by measurement**. And `wiki-search` **will**
    retrieve it and `wiki-query` **will** cite it as knowledge. A weak definition does not
    sit quietly; it **compounds**.
 
@@ -198,7 +199,6 @@ Exactly these **six** keys. No extras, none missing.
     "name": "Проскальзывание",
     "definition": "Разница между ожидаемой ценой сделки и ценой её фактического исполнения; растёт с размером ордера и падает с глубиной ликвидности.",
     "source_quote": "На тонком рынке проскальзывание съедало до 40 базисных пунктов на каждой сделке.",
-    "source_span": "L42-L43",
     "entity_type": "concept"
   }
 ]
@@ -210,7 +210,7 @@ Exactly these **six** keys. No extras, none missing.
 | `name` | the human name, as the source writes it |
 | `definition` | **≥ 4 words**, plain prose, passes the STEP-2 test. The floor kills tokens («Метрика.»), not brevity — **`Форк — расхождение цепочки блоков.` is a good definition. Never pad to clear it.** |
 | `source_quote` | **★ VERBATIM from the source body**, **≥ 4 words**. Copy-paste it; do not retype or paraphrase. Pick the sentence that best supports the concept — a short one is fine; do not reach for a longer, less relevant sentence just to clear the floor |
-| `source_span` | `L<start>-L<end>`, **1-indexed from the FIRST LINE OF THE FILE** — the opening `---` of the frontmatter is **L1**. ★ **Both halves are ALWAYS present**: a quote sitting on one line is **`L12-L12`**, never `L12`. The quote must really be inside those lines; `apply` checks. |
+| `source_span` | ★★ **OPTIONAL — OMIT IT. `apply` computes it from your quote.** You do not have to count lines, and you should not try: when this field was mandatory, a weak model got it wrong **29% of the time** (measured — 33 fresh contexts, 56 candidates), and a miscount **refused the whole batch** even though the concepts and the quotes were right. Your quote is verbatim, so its line range is arithmetic — and arithmetic is not what you are for. *(If you do supply one — `L<start>-L<end>`, 1-indexed from the file's first line — it is treated only as a HINT, used to pick which occurrence you meant when the same sentence appears twice.)* |
 | `entity_type` | `concept` · `company` · `product` · `group` · `event` · `work` · `external`. **`person` is refused.** |
 
 ### ★ Two concepts in ONE source must have names a HUMAN can tell apart
@@ -249,8 +249,6 @@ fails any line:
 - [ ] The definition is plain prose: no newlines, no `[[`, no backticks, no bullets
 - [ ] I searched `known_concepts` for a variant, and reused the **exact** slug if it exists
 - [ ] Every `source_quote` is **verbatim** — I copied it, character for character
-- [ ] Every `source_span` really contains its quote (counting the frontmatter from L1), and is
-      written `L<a>-L<b>` — **both halves**, even for one line (`L12-L12`)
 - [ ] Every `slug` is **lowercase** and is what `slug_strategy` derives from its `name`
 - [ ] If two of my concepts have look-alike names, I gave each a name that stands alone
 
@@ -293,7 +291,7 @@ Every refusal is **exit 4, zero files written.** The batch is atomic — fix the
 | `SLUG_NOT_DERIVED_FROM_NAME` | the slug is not what the layout's `slug_strategy` derives from the name |
 | `SLUG_COLLIDES_WITH_PAGE` | the slug is already some **page's** slug — filing it would EVICT that page from the index |
 | `CONCEPT_PAGE_EXISTS` | a `_concepts/<slug>.md` already exists with different content — it may be hand-authored; this rail never overwrites it |
-| `SOURCE_SPAN_OUT_OF_RANGE` / `SOURCE_SPAN_QUOTE_MISMATCH` | the span is fabricated, or the quote is not in it. **Count lines by `\n`, from L1 = the file's first line (the opening `---`)** |
+
 | `LAYOUT_CANNOT_INDEX_CONCEPTS` | this vault's layout cannot see `_concepts/` — **stop; do not work around it** |
 
 ### What `apply` only WARNS about (exit 0 — it files the page anyway)

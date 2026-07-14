@@ -382,3 +382,50 @@ def test_the_refutation_probes_carry_BOTH_classes() -> None:
     assert any("SKILL" in p["note"] for p in m.PROBES), (
         "at least one GOOD probe must be quoted from the SKILL itself — a guard whose first "
         "victim is the definition style the SKILL teaches is the finding, and it must be pinned")
+
+
+def test_the_GATE_CAN_FAIL_targeted_mutation_with_a_PREDICTED_blast_radius(
+    tmp_path: Path,
+) -> None:
+    """★★ A GATE THAT CANNOT FAIL IS A GREEN LIGHT WITH A NUMBER PRINTED ON IT.
+
+    Blanking `SKILL.md` would also drop the score — and would prove almost nothing: only that
+    the harness reads a file. **The mutation must be TARGETED, and its blast radius NAMED IN
+    ADVANCE.** That is the difference between a mutation test and a screenshot.
+
+    THE MUTATION: corrupt the recorded output of the three fixtures whose answers appear NOWHERE
+    in the prompt — the CLEAN subset {03, 04, 05}. They pass 3/3 at baseline.
+
+    PREDICTED BLAST RADIUS, stated BEFORE the run: **exactly those three fixtures regress**, and
+    the property's first half — *no fixture that PASSES at baseline may FAIL* — must catch all
+    three. If it catches fewer, the floor is not enforcing what it claims.
+    """
+    art = _load_artifact()
+    predicted = ["03-ui-chrome-and-primitives",
+                 "04-participants-are-not-concepts",
+                 "05-reuse-the-existing-concept"]
+
+    base: dict[str, Any] = json.loads(BASELINE.read_text(encoding="utf-8"))
+    for name in predicted:
+        assert base["fixtures"][name]["pass"], (
+            f"{name} does not pass at baseline — the mutation's premise is gone")
+
+    # ★ the mutation: those three fixtures now extract NOTHING
+    mutated = json.loads(json.dumps(art))
+    for name in predicted:
+        mutated["fixtures"][name]["runs"] = [[] for _ in art["fixtures"][name]["runs"]]
+
+    verdicts: dict[str, dict[str, Any]] = {}
+    for name, rec in mutated["fixtures"].items():
+        runs = [_grade_run(EVALS / name, r, tmp_path / f"{name}-{i}")
+                for i, r in enumerate(rec["runs"])]
+        passes = sum(1 for r in runs if r["ok"])
+        verdicts[name] = {"pass": passes * 2 > len(runs)}
+
+    regressed = sorted(n for n, b in base["fixtures"].items()
+                       if b["pass"] and not verdicts[n]["pass"])
+
+    assert regressed == sorted(predicted), (
+        f"THE BLAST RADIUS MISSED. Predicted {sorted(predicted)}, the gate caught {regressed}. "
+        f"A gate that catches fewer regressions than the mutation causes is not enforcing the "
+        f"floor it advertises.")

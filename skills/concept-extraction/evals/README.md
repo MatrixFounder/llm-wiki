@@ -111,33 +111,81 @@ The SKILL must work for **any** LLM. A strong model's priors mask weak skill tex
 on **Haiku 4.5** — one fresh context per fixture, given only the SKILL and what `prepare` really
 emits.
 
-### Baseline: **9 / 11** (Haiku 4.5, `obsidian-personal`, 2026-07-14)
+### ★★ Baseline: **10 / 11** — MEASURED, and it corrected the number it replaced
 
-**Zero junk. Zero invalid payloads.** Both remaining failures are **under**-extraction, which is the
-correct side to err on:
+**The old published baseline said 9/11 with "Zero junk". Both halves were wrong**, and nobody
+could have known, because it was produced BY HAND and was never reproducible. TASK 066 built the
+instrument (`harness.py` + `tests/test_concept_extraction_weak_model.py`), re-ran the set on
+**33 fresh Haiku contexts**, and graded the recording through the **real** validators:
 
-| fixture | miss |
+| | published (by hand) | measured (the instrument) |
+|---|---|---|
+| overall | 9/11 | **7/11** |
+| "Zero junk" | claimed | **TWO forbidden names** — the bare `Падёж`, item 1 on fixture 09's own list |
+
+### ★★★ And then the instrument found the CAUSE — which was not the one the issue named
+
+DF-064-4 is filed as an **under-extraction / recall** gap. The failure census said otherwise:
+
+```
+13 failing runs of 33
+   9  ← source_span mismatch     (8 of the 11 fixtures)
+   2  ← forbidden name (09)
+   1  ← slug not derived
+   1  ← CENSUS drop (recall)     ← the thing the issue is NAMED for
+```
+
+Per candidate (n=56):
+
+| | |
 |---|---|
-| **03** | found 1 of 2 durable concepts — but emitted **no** `тултип`, `coalesce`, or `block_number` |
-| **09** | extracted only `Падёж`, under its **bare** name; the second concept (`Грамматический падеж`) was dropped |
+| `source_quote` **verbatim** in the body | **56/56 (100%)** — the anti-fabrication gate is perfect |
+| the model's `source_span` is **correct** | **40/56 (71%)** — it is COUNTING LINES, and failing |
+| the span is **derivable from the quote** | **56/56 (100%)** |
 
-**The floor is 9.** A change that drops below it — or that trades an under-extraction for a piece of
-junk — regresses the skill, whatever the fixture count says.
+> **We were asking a LANGUAGE MODEL to do ARITHMETIC ON LINE NUMBERS** — and then refusing the
+> whole batch when it miscounted, though the concepts and the quotes were right. Off-by-3 on
+> fixture 01 (it miscounted the frontmatter), off-by-1 on 03, and `L407` where the truth was
+> `L34`.
+>
+> **The span is a COMPUTATION, not a judgement.** `apply` now derives it; `source_span` is
+> **OPTIONAL** and the model is told to omit it.
 
-### What the measurement earned (it is not ceremony)
+### The result, measured on the same instrument
 
-Three defects in the SKILL were found **only** by running it on a weak model:
+| | before | after |
+|---|---|---|
+| overall | 7/11 | **10/11** |
+| **CLEAN subset** {03, 04, 05} | 2/3 | **3/3** |
+| forbidden names | 2 | **2** *(unchanged — no recall was bought with junk)* |
+| runs failing on the span | **9** | **0** |
+| candidates still emitting a span | 56 | **0 of 54** |
 
-1. **A rule that read "extract only what the source EXPLAINS"** made Haiku return `[]` on an incident
-   report — because incident reports *use* their vocabulary without defining it. Those are exactly
-   the notes the rail exists for. Fixed: *the source does not have to define the term; the definition
-   is what you ADD.*
-2. **Loosening that rule then caused over-extraction** (6 concepts where 2 belong: `Ретраи`,
-   `Обработчик`, `Платёжный шлюз`). The durability bar and the "no definition needed" rule are
-   **coupled** — a weak model does not hold the balance a strong one holds silently. Fixed with the
-   **theme-vs-prop** table and a count smell test.
-3. **Mechanical traps**: `L12` instead of `L12-L12`, a capitalised slug, a transliterated slug on a
-   `preserve-unicode` vault. Each is a one-line clarification a strong model never needed.
+**Three fixtures improved. ZERO regressed.** The property — *(no passing fixture may fail)* AND
+*(forbidden ≤ baseline)* — held.
+
+### ★ Why the CLEAN subset is reported separately
+
+**9 of the 19 expected names are printed in `SKILL.md`** (a census, and now a TEST). Fixture 08's
+name *and its exact expected slug* are the SKILL's own worked example of the very derivation 08
+tests — a pass there measures *"can the model copy the example"*, not *"can it derive a slug."*
+So the **CLEAN subset {03, 04, 05}** — the fixtures whose answers appear nowhere in the prompt —
+is the only number that measures the **skill**. It is now **3/3**.
+
+### ★ What REMAINS — and it is finally visible
+
+```
+5  CENSUS (recall)      ← DF-064-4's original diagnosis, now ISOLATED
+1  forbidden name
+```
+
+Only **fixture 09** fails: the model extracts «Падёж» under its **bare** name and drops
+«Грамматический падеж». **The mechanical noise is gone, and the real recall gap stands alone for
+the first time.**
+
+⚠️ And note what will NOT fix it: `SKILL.md` **already** carries fixture 09's exact expected names
+*and* an explicit *"And extract BOTH."* **The model is handed the answer and does not produce it.**
+Prompt text is not the lever. The next task must find a MECHANICAL one — and measure it here.
 
 ### Re-running it
 
