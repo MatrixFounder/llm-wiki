@@ -1,7 +1,7 @@
 ---
 id: DF-064-2
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-07-14
 category: performance
 severity: SEV-3
@@ -49,3 +49,37 @@ slug: df-064-2-lint-near-duplicate-scan-is-quadratic
   3. Either way: **re-measure against the live pairs the cutoff was calibrated on**
      (`виталик-бутерин`/`vitalik-buterin`, `сатоши-накамото`/`сатоси-накамото`,
      `бессрочный-фьючерс`/`бессрочные-фьючерсы`) — a faster scan that stops finding them is not a fix.
+
+---
+
+## ★ FIXED (2026-07-15) — the difflib cascade, completed. 3× faster, output-identical.
+
+**Profiled first, not assumed.** `wiki-lint --strict` on the live vault (~2.0 s) was dominated
+by `check_near_duplicate_concepts` → `difflib.SequenceMatcher.ratio()` (~1.4 s self-time in
+`find_longest_match` + `get_matching_blocks`). It was the single largest cost of the whole run —
+so the "6 SEV-3 with a common root" framing was wrong: there is no common root, and ONE
+dominates.
+
+**Root cause, exact:** difflib is a THREE-rung cascade of ever-tighter upper bounds on `ratio()`
+— `real_quick_ratio` (length) → `quick_ratio` (char multiset) → `ratio` (LCS). The scan inlined
+the FIRST rung and jumped straight to the THIRD, skipping the middle one. Measured on the live
+684-concept corpus: of **47,474** pairs that clear the length bound, `quick_ratio` clears all but
+**4** — so **99%** of the `ratio()` calls were avoidable.
+
+**Fix:** add the `quick_ratio` rung + reuse the `SequenceMatcher` seq2 chain (built once per
+outer key, not once per pair). `quick_ratio() >= ratio()` ALWAYS, so the reported set is provably
+unchanged — it only drops calls that were going to fail. Result: **2000 ms → 651 ms** (3× on the
+full `--strict` run; 6× on the scan itself), with the near-dup output byte-identical.
+
+**Order-stability:** the seq2-reuse loop walks j-outer, which would emit in a different order than
+the original i-outer scan on a corpus with more than today's 2 hits. `out.sort(...)` restores the
+original's exact (page_slug, duplicate_of) order. `test_near_dup_cascade_is_OUTPUT_IDENTICAL_to_
+the_naive_scan` pins it against a from-scratch naive re-implementation, on a fixture whose
+near-dup pairs STRADDLE in sort order so the two loop orders genuinely diverge (the first fixture
+did not, and its "MUT ⇒ RED" claim was false until the fixture was rebuilt and the mutation
+re-run).
+
+**Still quadratic in the pair COUNT** — but the constant is now tiny, and the tail is bounded by
+the cheap `quick_ratio`, not the expensive `ratio`. A true sub-quadratic blocking scheme is
+unnecessary at the corpus sizes this vault will reach; if it is ever needed, the sound approach is
+length-window blocking (a strictly tighter version of the length prune already here).

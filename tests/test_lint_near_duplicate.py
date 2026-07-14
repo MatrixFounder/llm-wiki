@@ -180,3 +180,70 @@ def test_the_exclusion_is_not_a_blanket_strict_bypass(
     assert NEAR_DUPLICATE_CATEGORY in cats          # still reported…
     assert cats - {NEAR_DUPLICATE_CATEGORY}, f"expected a gating issue to coexist: {cats}"
     assert rc == 1, f"--strict must still gate on real issues; categories={cats}"
+
+
+# --------------------------------------------------------------------------- #
+# ★ DF-064-2 — the difflib cascade: output-identical, and order-stable
+# --------------------------------------------------------------------------- #
+
+def test_near_dup_cascade_is_OUTPUT_IDENTICAL_to_the_naive_scan(tmp_path: Path) -> None:
+    """★ THE OPTIMIZATION MUST NOT CHANGE WHAT THE SCAN REPORTS.
+
+    The shipped scan completes difflib's cascade (adds the `quick_ratio` rung the code
+    skipped) and reuses the seq2 chain — killing 99% of `ratio()` calls on the live vault.
+    `quick_ratio() >= ratio()` ALWAYS, so the optimization can only skip pairs that were
+    going to fail: the reported set is provably unchanged. This pins it against a
+    from-scratch naive re-implementation, on a corpus with MULTIPLE hits so the ORDER is
+    actually exercised (with today's 2 live hits the lists coincided by luck).
+
+    MUT: delete the `out.sort(...)` line ⇒ this goes RED (the seq2-reuse loop emits in a
+    different order than the naive i-outer scan).
+    """
+    import difflib
+
+    from scripts.wiki_index.lint import check_near_duplicate_concepts
+    from scripts.wiki_skills.wiki_extract_concepts._gates import (
+        NEAR_DUP_CUTOFF,
+        _dup_key,
+    )
+
+    # ★ THE FIXTURE MUST MAKE THE TWO LOOP ORDERS DIVERGE, or the sort is untested.
+    #
+    # `deserialization`/`serialization` are a near-dup pair that sorts FAR APART (d… vs s…).
+    # A SECOND near-dup pair whose members sort BETWEEN them (`markt-…`, m…) STRADDLES the
+    # first. Sorted: [deserialization, markt-menedzher, markt-menedzhery, serialization].
+    #   i-outer (naive):  (deser,ser) then (markt,markt-y)   — by page_slug
+    #   j-outer (shipped):(markt,markt-y) then (deser,ser)   — REVERSED
+    # Without the final sort the two disagree — which is exactly what this test must catch.
+    slugs = sorted([
+        "deserialization", "serialization",           # near-dup, sorts FAR apart (d… / s…)
+        "markt-menedzher", "markt-menedzhery",         # near-dup, sorts BETWEEN them (m…) — straddles
+        "централизация", "децентрализация",           # antonyms the metric can't tell apart
+        "type-i-error", "type-ii-error",
+        "оракул", "ликвидация", "стейкинг",            # unrelated distractors
+    ])
+    repo, _ = _seed(tmp_path, slugs)
+    try:
+        shipped = [(x.page_slug, x.details["duplicate_of"], x.details["similarity"])
+                   for x in check_near_duplicate_concepts(repo, "dupv")]
+    finally:
+        repo.close()
+
+    # the NAIVE reference: the algorithm exactly as it was before the cascade
+    keys = {s: _dup_key(s) for s in slugs}
+    naive = []
+    for i in range(len(slugs)):
+        for j in range(i + 1, len(slugs)):
+            ka, kb = keys[slugs[i]], keys[slugs[j]]
+            total = len(ka) + len(kb)
+            if not total or 2.0 * min(len(ka), len(kb)) / total < NEAR_DUP_CUTOFF:
+                continue
+            r = difflib.SequenceMatcher(None, ka, kb).ratio()
+            if r >= NEAR_DUP_CUTOFF:
+                naive.append((slugs[i], slugs[j], round(r, 3)))
+
+    assert shipped == naive, (
+        f"the cascade changed the output.\n  shipped: {shipped}\n  naive:   {naive}")
+    assert len(naive) >= 3, (
+        "the fixture must produce SEVERAL hits, or the order is not actually tested — a "
+        "single hit coincides trivially")
