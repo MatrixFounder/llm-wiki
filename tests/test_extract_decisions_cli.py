@@ -77,19 +77,34 @@ def test_prepare_on_a_bare_vault_refuses_rather_than_stubbing(
     assert "cybos" in env["message"]        # names a layout that WOULD work
 
 
-def test_apply_stub_envelope(
+def test_apply_on_a_bare_vault_refuses_at_the_SAME_preflight_as_prepare(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """STUB-FIRST STEP 4: was `test_apply_stub_envelope`; REWRITTEN, not deleted.
+
+    ★ The point of the rewrite is the shared preflight. `apply` refuses a bare vault
+    with the EXACT code and message `prepare` does, because both call
+    `_resolve_context` — one G4 gate, two callers. Two copies of that gate would let
+    `apply` write into a folder `prepare` had refused, which is the whole failure this
+    task exists to prevent.
+
+    It refuses BEFORE the `--source-hash` mismatch is even considered: a vault that
+    cannot hold typed pages is a more fundamental fact than a stale hash.
+    """
+    src = tmp_path / "meetings" / "m1.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("# Protocol\n", encoding="utf-8")
     cands = tmp_path / "c.json"
     cands.write_text("[]", encoding="utf-8")
+
     code, env = _run(capsys, [
         "apply", "--vault", "v", "--vault-root", str(tmp_path),
         "--source-page", "meetings/m1.md", "--source-hash", "deadbeef",
         "--candidates-file", str(cands),
     ])
-    assert code == 0
-    assert env["action"] == "stub"
-    assert env["written"] == []
+    assert code == 2
+    assert env["error"] == "LAYOUT_CANNOT_INDEX_CLASSES"   # ← identical to prepare's
+    assert env["layout"] == "karpathy"
 
 
 def test_apply_requires_a_candidates_source(tmp_path: Path) -> None:

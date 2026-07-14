@@ -69,14 +69,21 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import logging
 import os
+import sqlite3
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+import frontmatter
 
 from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout_config import (
     LayoutConfig,
+    glob_covers,
     resolve_layout_config,
     resolve_typed_write_dir,
     typed_write_refusal,
@@ -87,14 +94,36 @@ from scripts.wiki_index.sync_config import (
     ExtractDecisionsDirs,
 )
 from scripts.wiki_skills._common import build_repo_config, emit
+from scripts.wiki_skills._manifest_consumer import (
+    WikiIngestError,
+    index_from_manifest,
+    validate_manifest,
+)
 from scripts.wiki_skills._resummarize import resolve_extract_decisions
 
 from ._db import (
     check_idempotency,
     count_open_commitments,
     load_existing_page_slugs,
+    load_own_page_slugs,
+    load_resolvable_targets,
     load_typed_pages,
+    resolve_target_classes,
+    update_idempotency_state,
 )
+from ._errors import ExtractionParseError, envelope_from_parse_error
+from ._pages import render_page, write_page
+from ._validation import (
+    CANDIDATES_MAX_BYTES,
+    check_in_batch_collisions,
+    derive_slugs,
+    page_refs,
+    validate_candidates_schema,
+    validate_ontology,
+    validate_refs,
+)
+
+logger = logging.getLogger("wiki_extract_decisions")
 
 # The v1 roster — read from the CONFIG dataclass, never restated. `dirs` and the
 # roster are the same three classes by construction, so they cannot drift apart.
@@ -224,105 +253,125 @@ def _ontology_contract(config: LayoutConfig, roster: tuple[str, ...]) -> dict[st
     }
 
 
-def prepare(args: argparse.Namespace) -> int:
-    """Deterministic recon + the ontology contract + the `--source-hash` handshake.
+class _Refused(Exception):
+    """A preflight refusal, carrying its envelope + exit code.
 
-    NO LLM CALL (Decision-17). The orchestrator takes this envelope, reads the
-    source body, and synthesises candidates in its OWN context.
+    An exception rather than an `int` return so the SAME preflight can serve BOTH
+    `prepare` and `apply` without either of them re-deciding what a refusal looks
+    like. Two copies of the G4 gate is the exact failure this task exists to
+    prevent — it would let `apply` write into a folder `prepare` had refused."""
 
-    ★ THE G4 PREFLIGHT — refuse EARLY, refuse LOUDLY. Two refusals, both exit 2,
-    both raised before any reasoning is requested:
+    def __init__(self, envelope: dict[str, Any], exit_code: int = 2) -> None:
+        super().__init__(envelope.get("error", "REFUSED"))
+        self.envelope = envelope
+        self.exit_code = exit_code
 
-      LAYOUT_CANNOT_INDEX_CLASSES     the layout's `type_mapping` maps NONE of the
-                                      roster (karpathy, stock obsidian-personal)
-      TYPED_DIR_NOT_COVERED_BY_LAYOUT the configured folder is invisible to the
-                                      layout's read globs — the SAME helper, and the
-                                      SAME code, `wiki-config validate` renders
 
-    Refusing costs the operator one message. NOT refusing costs them a decision page
+class _Context:
+    """Everything both subcommands resolve identically: the source, the layout, the
+    roster, and the walker-verified typed dirs."""
+
+    def __init__(
+        self, *, vault_root: Path, source_page: str, source_path: Path,
+        body: bytes, source_hash: str, source_slug: str, config: LayoutConfig,
+        roster: tuple[str, ...], typed_dirs: dict[str, str],
+    ) -> None:
+        self.vault_root = vault_root
+        self.source_page = source_page
+        self.source_path = source_path
+        self.body = body
+        self.source_hash = source_hash
+        self.source_slug = source_slug
+        self.config = config
+        self.roster = roster
+        self.typed_dirs = typed_dirs
+        self.ontology = _ontology_contract(config, roster)
+        # ★ Can the walker SEE the source note itself? If not, a `[[backlink]]` to it
+        # would be an ORPHAN LINK of our own manufacture — the exact defect the rail
+        # exists to prevent. Found by G2 refusing our own output.
+        self.source_indexable = glob_covers(config, source_page)
+
+
+def _resolve_context(args: argparse.Namespace) -> _Context:
+    """The shared preflight. Raises `_Refused` (exit 2) rather than returning an
+    error, so a caller CANNOT proceed past a refusal by forgetting to check.
+
+    ★ THE G4 PREFLIGHT — refuse EARLY, refuse LOUDLY:
+
+      LAYOUT_CANNOT_INDEX_CLASSES     the `type_mapping` routes NONE of the roster
+                                      (karpathy, stock obsidian-personal) — a typed
+                                      page here would be indexed under no class
+      TYPED_DIR_NOT_COVERED_BY_LAYOUT the folder is invisible to the read globs —
+                                      the SAME code, from the SAME helper, that
+                                      `wiki-config validate` renders
+
+    Refusing costs the operator one message. Not refusing costs them a decision page
     that is written, never indexed, and raises no lint issue — because a
     glob-invisible page is never discovered by the walk, so nothing downstream can
-    report it. That is why the gate is here and not after the write.
-
-    ★ `vacuous_validation` — TASK 061's lesson, applied to ourselves before the
-    first line of logic. `dev-project` maps the typed classes but declares NO
-    `ontology:` block, so G1 there degrades to a roster-only check and G3 is moot.
-    The delta property still holds (both sides vacuous) — this is not a lie. But a
-    green `apply` there means "validated almost nothing", and that must be
-    ANNOUNCED, not inferred. Hence the denominators AND the explicit marker:
-
-        a validator that examined nothing must not look green.
+    report it.
     """
     vault_root = args.vault_root.resolve()
     source_page = str(args.source_page)
 
     if Path(source_page).is_absolute():
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "INVALID_SOURCE_PATH",
-            "message": "--source-page must be vault-relative, not absolute",
-        }, exit_code=2)
+            "message": "--source-page must be vault-relative, not absolute"})
 
     source_path = vault_root / source_page
 
     # ORDER, deliberately: existence FIRST (so a plain typo gets SOURCE_NOT_FOUND,
-    # not the alarming INVALID_SOURCE_PATH — they are different diagnoses and the
-    # operator acts differently on each), then CONTAINMENT, and only then the read.
-    # Nothing is read before containment: `is_file()` is a stat, and a traversal or
-    # a symlink pointing outside still stats True and is refused on the next line.
+    # not the alarming INVALID_SOURCE_PATH — different diagnoses, different operator
+    # actions), then CONTAINMENT, and only then the read. Nothing is read before
+    # containment: `is_file()` is a stat, and a traversal or an outward symlink still
+    # stats True and is refused on the next line.
     if not source_path.is_file():
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "SOURCE_NOT_FOUND",
-            "message": f"source page not found: {source_page}",
-        }, exit_code=2)
+            "message": f"source page not found: {source_page}"})
     try:
         validate_inside_vault(source_path, vault_root)
     except (PathTraversalError, OSError):
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "INVALID_SOURCE_PATH",
-            "message": "--source-page resolves outside the vault",
-        }, exit_code=2)
+            "message": "--source-page resolves outside the vault"}) from None
 
     config = resolve_layout_config(vault_root)
 
-    # ---- G4 preflight, conjunct 1: does the layout ROUTE the typed classes? ----
+    # ---- G4, conjunct 1: does the layout ROUTE the typed classes? ----
     roster = tuple(c for c in ROSTER if c in config.type_mapping)
     if not roster:
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "LAYOUT_CANNOT_INDEX_CLASSES",
-            "layout": config.layout,
-            "missing_classes": list(ROSTER),
+            "layout": config.layout, "missing_classes": list(ROSTER),
             "message": (
                 f"layout '{config.layout}' maps NONE of {list(ROSTER)} in its "
                 f"`type_mapping`, so a typed page written here would be indexed "
                 f"under no class at all. Add them to `type_mapping` in "
                 f".wiki/layout.yaml, or use a layout that has them "
-                f"(cybos, dev-project)."),
-        }, exit_code=2)
+                f"(cybos, dev-project).")})
 
     # ---- the per-folder policy (cascading) → the folder names ----
-    # A vault with NO `extract_decisions` block resolves to `None`, and that is not
-    # a refusal: an explicit `prepare` invocation is consent. What `None` means is
-    # "never AUTO-dispatched" (the 063-17 marker), so the defaults apply here.
+    # No `extract_decisions` block ⇒ `None`, and that is NOT a refusal: an explicit
+    # invocation is consent. `None` means "never AUTO-dispatched" (the 063-17
+    # marker), so the defaults apply here.
     policy = resolve_extract_decisions(source_path, vault_root=vault_root)
     dirs_cfg = policy.dirs if policy is not None else ExtractDecisionsDirs()
-    dirs = {cls: str(getattr(dirs_cfg, cls)) for cls in roster}
 
-    # ---- G4 preflight, conjunct 2: can the WALKER SEE the write dirs? ----
-    # ONE helper, TWO callers: `wiki-config validate` (063-03) calls the same
-    # `typed_write_refusal`, so the two can never disagree about the same vault.
+    # ---- G4, conjunct 2: can the WALKER SEE the write dirs? ----
     # ONE authority decides (`resolve_typed_write_dir`); the other only EXPLAINS
     # (`typed_write_refusal`). An earlier draft asked the explainer first and then
-    # `assert`ed the decider agreed — which turns any disagreement between them
-    # into a crash instead of an envelope, and hides the disagreement behind an
-    # assertion the operator can do nothing with.
+    # `assert`ed the decider agreed — turning any disagreement between them into a
+    # crash the operator can do nothing with.
     typed_dirs: dict[str, str] = {}
-    for cls, dir_name in dirs.items():
+    for cls in roster:
+        dir_name = str(getattr(dirs_cfg, cls))
         write_dir = resolve_typed_write_dir(
             config, dir_name=dir_name, source_rel=source_page)
         if write_dir is None:
             refusal = typed_write_refusal(
                 config, dir_name=dir_name, source_rel=source_page) or "unmatched"
-            return emit({
+            raise _Refused({
                 "action": "refused", "error": "TYPED_DIR_NOT_COVERED_BY_LAYOUT",
                 "layout": config.layout, "page_class": cls,
                 "dir_name": dir_name, "reason": refusal,
@@ -330,41 +379,68 @@ def prepare(args: argparse.Namespace) -> int:
                     f"the folder configured for `{cls}` is not visible to the "
                     f"walker of layout '{config.layout}' (reason: {refusal}). A "
                     f"page written there would never be indexed and would raise no "
-                    f"lint issue. `wiki-config validate` reports the same finding."),
-            }, exit_code=2)
+                    f"lint issue. `wiki-config validate` reports the same finding.")})
         typed_dirs[cls] = write_dir
 
-    # ---- the source: bounded read + hash + idempotency ----
     try:
-        body_bytes = _read_source_bounded(source_path)
+        body = _read_source_bounded(source_path)
     except ValueError:
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "SOURCE_TOO_LARGE",
             "message": f"source page exceeds the {MAX_SOURCE_BODY_BYTES}-byte cap",
-        }, exit_code=2)
+        }) from None
     except OSError:
-        return emit({
+        raise _Refused({
             "action": "refused", "error": "SOURCE_NOT_FOUND",
             "message": "source page could not be opened (symlink swap or I/O error)",
-        }, exit_code=2)
+        }) from None
 
-    source_hash = hashlib.sha256(body_bytes).hexdigest()
-    source_slug = Path(source_page).stem
+    return _Context(
+        vault_root=vault_root, source_page=source_page, source_path=source_path,
+        body=body, source_hash=hashlib.sha256(body).hexdigest(),
+        source_slug=Path(source_page).stem, config=config, roster=roster,
+        typed_dirs=typed_dirs,
+    )
+
+
+def prepare(args: argparse.Namespace) -> int:
+    """Deterministic recon + the ontology contract + the `--source-hash` handshake.
+
+    NO LLM CALL (Decision-17). The orchestrator takes this envelope, reads the source
+    body, and synthesises candidates in its OWN context.
+
+    ★ `vacuous_validation` — TASK 061's lesson, applied to ourselves before the first
+    line of logic. `dev-project` maps the typed classes but declares NO `ontology:`
+    block, so G1 there degrades to a roster-only check and G3 is moot. The delta
+    property still holds (both sides vacuous) — so this is not a lie. But a green
+    `apply` there means "validated almost nothing", and that must be ANNOUNCED, not
+    inferred from a zero:
+
+        a validator that examined nothing must not look green.
+    """
+    try:
+        ctx = _resolve_context(args)
+    except _Refused as r:
+        return emit(r.envelope, exit_code=r.exit_code)
 
     repo = make_repo(build_repo_config(
-        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
+        args.vault, vault_root=ctx.vault_root, db_path_flag=args.db_path))
     try:
-        is_unchanged = check_idempotency(repo, args.vault, source_slug, source_hash)
-        known = load_typed_pages(repo, args.vault, roster)
+        is_unchanged = check_idempotency(
+            repo, args.vault, ctx.source_slug, ctx.source_hash)
+        known = load_typed_pages(repo, args.vault, ctx.roster)
         existing_slugs = load_existing_page_slugs(repo, args.vault)
         open_commitments = count_open_commitments(repo, args.vault)
     finally:
         repo.close()
 
-    ontology = _ontology_contract(config, roster)
+    config, roster, ontology = ctx.config, ctx.roster, ctx.ontology
+    typed_dirs, source_slug = ctx.typed_dirs, ctx.source_slug
+    source_hash, source_page = ctx.source_hash, ctx.source_page
     drift = [
         {"class": r.page_class, "edge": r.edge,
-         "expect_status": r.expect_status, "forbid_status": list(r.forbid_status or ())}
+         "expect_status": r.expect_status,
+         "forbid_status": list(r.forbid_status or ())}
         for r in config.drift_rules if r.page_class in roster
     ]
 
@@ -398,44 +474,298 @@ def prepare(args: argparse.Namespace) -> int:
 
 
 
+def _load_candidates(args: argparse.Namespace) -> Any:
+    """Read the candidates payload. Overflow REFUSES, never truncates (R-063-11) —
+    a silently truncated batch loses its last decisions without a word."""
+    if args.candidates_stdin:
+        raw = sys.stdin.read(CANDIDATES_MAX_BYTES + 1)
+    else:
+        path = Path(args.candidates_file)
+        if not path.is_file():
+            raise _Refused({
+                "action": "refused", "error": "INVALID_CANDIDATES_PATH",
+                "message": "--candidates-file not found"})
+        raw = path.read_text(encoding="utf-8")
+    if len(raw.encode("utf-8")) > CANDIDATES_MAX_BYTES:
+        raise ExtractionParseError(
+            f"candidates payload exceeds the {CANDIDATES_MAX_BYTES}-byte cap",
+            error="CANDIDATES_TOO_LARGE")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ExtractionParseError(
+            "candidates payload is not valid JSON",
+            error="EXTRACTION_PARSE_ERROR", reason="JSON_DECODE") from exc
+
+
 def apply(args: argparse.Namespace) -> int:
-    """STUB (063-04) → LOGIC (063-06 … 063-14).
+    """Validate every guarantee, THEN write. NO LLM CALL (Decision-17).
 
-    Will, IN THIS ORDER (the ordering is normative — 063-09):
-      1. re-check `--source-hash` against the body on disk;
-      2. parse + strict-validate the candidates schema (063-06), including the
-         mandatory verbatim `source_quote` — a quote that is not IN the body is
-         a contract violation, which is what makes fabrication mechanically
-         expensive rather than merely discouraged;
-      3. derive slugs with the LAYOUT'S OWN `slug_strategy`; an in-batch slug
-         collision REFUSES the batch (063-07) — two Russian titles collapsing to
-         one transliterated slug would otherwise silently lose a decision, with
-         zero lint issues;
-      4. drop benign-skip candidates, THEN validate the POST-DROP batch (I-8) —
-         a validation computed against a batch that is not the one being written
-         is not a validation;
-      5. G1: every candidate against the ontology — class ∈ roster, edge domain,
-         edge RANGE (an out-of-batch target's class resolved FROM THE DB),
-         `status` ∈ that class's enum. ALL violations listed at once;
-      6. G2: every ref resolves (063-10);
-      7. G3: supersede reconciliation, DRIVEN BY THE LAYOUT'S `drift_rules` —
-         never a hardcoded `status: superseded` (063-13);
-      8. write (063-12), atomically, only then;
-      9. emit the manifest; `--ingest` indexes it in-process.
+    ★★ THE ORDERING IS NORMATIVE (063-09), AND IT IS A REAL BUG, NOT BOOKKEEPING.
 
-    ANY contract violation ⇒ exit 4 and ZERO files written. A partially written
-    typed batch is worse than none: the graph would assert edges to pages that
-    do not exist.
+        1. re-check `--source-hash`               (the candidates describe THIS body)
+        2. schema + anti-fabrication              (063-06)
+        3. slugs, via the LAYOUT'S strategy       (063-07)
+        4. IN-BATCH collision  → refuse           (063-07)
+        5. EXISTING-PAGE collision → DROP         (benign; someone else owns that page)
+        6. ★ G1 + G2 over the POST-DROP batch     (063-08, 063-10)
+        7. ★ a SURVIVOR referencing a DROPPED one → REFUSE
+        8. write                                  (063-12)
+
+    Why step 7 exists, and why step 6 must come AFTER step 5:
+
+    Validate `{D, R}` where `D.implements: [[r-slug]]`. The range check passes against
+    the IN-BATCH R. Then R is dropped on a slug collision. Then D is written anyway —
+    and D's edge now resolves to the PRE-EXISTING page of that slug, whose class
+    (`summary`) is not in `implements.to`. We have just AUTHORED an ontology violation.
+
+    And BOTH halves of the acceptance property are blind to it: the counts still
+    reconcile (the dropped candidate was never written), so G6 passes; and G1/G2
+    already passed — against a batch that no longer exists.
+
+        A VALIDATION COMPUTED AGAINST A HYPOTHETICAL BATCH IS NOT A VALIDATION OF
+        WHAT GOT WRITTEN. A benign drop is benign only when nothing depends on it.
+
+    So the post-drop list is the ONLY list G1/G2 can see — not "called in the right
+    order", but structurally the only list in scope. And `referenced_dropped` is
+    computed over THE SAME extracted-ref set G2 uses (`page_refs` over the RENDERED
+    page), never over an ad-hoc peek at `edges` — otherwise a bare ID in prose
+    ("заменяет DEC-004") referencing a dropped candidate slips past this gate while
+    G2 catches only its unresolved cousin: two ref populations, one of them wrong.
+
+    ANY contract violation ⇒ exit 4 and ZERO files written. A partially written typed
+    batch is worse than none: the graph would assert edges to pages that do not exist.
     """
+    try:
+        ctx = _resolve_context(args)
+    except _Refused as r:
+        return emit(r.envelope, exit_code=r.exit_code)
+
+    # 1. the handshake. The candidates describe a body; if that body changed, they
+    #    describe something that no longer exists.
+    if args.source_hash != ctx.source_hash:
+        return emit({
+            "action": "refused", "error": "SOURCE_CHANGED_DURING_EXTRACTION",
+            "message": "the source body changed between prepare and apply; "
+                       "re-run prepare (the candidates describe the old body)",
+        }, exit_code=2)
+
+    # 2-4. PURE VALIDATION — no repo is open yet, so "a contract violation writes
+    #      ZERO files" is true BY CONSTRUCTION, not by care.
+    try:
+        payload = _load_candidates(args)
+        candidates = validate_candidates_schema(
+            payload, source_body=ctx.body.decode("utf-8", "replace"),
+            roster=ctx.roster)
+        if not candidates:
+            # ★ AN EMPTY SET IS SUCCESS (R-063-7). A note with no decisions in it is
+            # a normal note. If this were a failure, the cheapest green run would be
+            # to invent one.
+            return emit({
+                "action": "no_candidates", "written": [], "dropped": [],
+                "source_slug": ctx.source_slug,
+                "message": "no typed knowledge in this source — this is a SUCCESS, "
+                           "not a failure",
+            })
+        slugs = derive_slugs(candidates, ctx.config)
+        check_in_batch_collisions(candidates, slugs)
+    except _Refused as r:
+        return emit(r.envelope, exit_code=r.exit_code)
+    except ExtractionParseError as exc:
+        return emit(envelope_from_parse_error(exc), exit_code=4)
+
+    repo = make_repo(build_repo_config(
+        args.vault, vault_root=ctx.vault_root, db_path_flag=args.db_path))
+    try:
+        if check_idempotency(repo, args.vault, ctx.source_slug, ctx.source_hash) \
+                and not args.force:
+            return emit({
+                "action": "unchanged", "written": [], "dropped": [],
+                "source_slug": ctx.source_slug,
+                "message": "source unchanged since the last extraction; "
+                           "pass --force to re-extract",
+            })
+
+        # 5. EXISTING-PAGE collision → DROP. The `prepare` snapshot is a HINT for the
+        #    orchestrator; the gate is this RE-CHECK against the open repo. A slug can
+        #    appear between prepare and apply — the orchestrator's reasoning takes real
+        #    time — and a slug collision does not error, it OVERWRITES.
+        # ★ OURS vs SOMEONE ELSE'S (R-063-9). The drop protects a page we do not own.
+        # A page carrying `extracted_from: <our source>` IS ours — re-extracting must
+        # UPDATE it, not drop it. Without this line the rail is a one-shot: it can
+        # create knowledge and never correct it, because the second run drops
+        # everything the first one wrote.
+        existing = set(load_existing_page_slugs(repo, args.vault))
+        ours = load_own_page_slugs(repo, args.vault, ctx.source_slug)
+        kept: list[dict[str, Any]] = []
+        kept_slugs: list[str] = []
+        dropped: list[dict[str, Any]] = []
+        for cand, slug in zip(candidates, slugs):
+            if slug in existing and slug not in ours:
+                logger.warning(
+                    "dropping candidate: slug %r already exists in the vault "
+                    "(another source owns that page)", slug)
+                dropped.append({"slug": slug, "reason": "existing-page-collision"})
+            else:
+                kept.append(cand)
+                kept_slugs.append(slug)
+
+        # 6. ★ G1 + G2 over the POST-DROP batch — `kept` is the ONLY list from here on.
+        batch_classes = {s: str(c["class"]) for c, s in zip(kept, kept_slugs)}
+        edge_targets = sorted({
+            t for c in kept for targets in (c.get("edges") or {}).values()
+            for t in targets})
+        db_classes = resolve_target_classes(repo, args.vault, edge_targets)
+        rendered = [
+            render_page(cand, slug=slug, vault_id=args.vault,
+                        source_slug=ctx.source_slug, today=date.today(),
+                        classification=_source_classification(ctx),
+                        source_indexable=ctx.source_indexable)
+            for cand, slug in zip(kept, kept_slugs)
+        ]
+        try:
+            validate_ontology(
+                kept, ontology=ctx.ontology, batch_classes=batch_classes,
+                db_classes=db_classes)
+            # The batch's own slugs resolve, and so does the SOURCE — but only when
+            # the walker can see it. If it can see it, the next `--full` indexes it,
+            # so the backlink resolves even against a stale DB; if it cannot, we did
+            # not author a link to it at all (see `render_page`).
+            resolvable = load_resolvable_targets(repo, args.vault) | set(kept_slugs)
+            if ctx.source_indexable:
+                resolvable.add(ctx.source_slug)
+            links_checked = validate_refs(
+                rendered, config=ctx.config, resolvable=resolvable)
+
+            # 7. ★ A SURVIVOR REFERENCING A DROPPED CANDIDATE. Computed over the SAME
+            #    ref set G2 uses — the rendered page — so a bare ID in prose counts.
+            #    G2 could never catch this: the dropped slug RESOLVES (to someone
+            #    else's page). That is the whole bug.
+            dropped_slugs = {d["slug"] for d in dropped}
+            still_referenced = [
+                {"survivor": kept_slugs[i], "dropped_target": target}
+                for i, text in enumerate(rendered)
+                for target in page_refs(text, ctx.config)
+                if target in dropped_slugs
+            ]
+            if still_referenced:
+                raise ExtractionParseError(
+                    "a surviving candidate references a DROPPED one — its edge would "
+                    "silently re-point at the pre-existing page of that slug",
+                    error="DROPPED_CANDIDATE_STILL_REFERENCED",
+                    violations=still_referenced)
+        except ExtractionParseError as exc:
+            return emit(envelope_from_parse_error(exc), exit_code=4)
+
+        # 8. Only now: write.
+        written: list[dict[str, Any]] = []
+        for cand, slug, text in zip(kept, kept_slugs, rendered):
+            typed_dir = ctx.typed_dirs[str(cand["class"])]
+            try:
+                path, action = write_page(ctx.vault_root, typed_dir, slug, text)
+            except PathTraversalError as exc:
+                return emit({
+                    "action": "refused", "error": "INVALID_SOURCE_PATH",
+                    "message": str(exc), "written": [w["path"] for w in written],
+                }, exit_code=4)
+            written.append({
+                "kind": str(cand["class"]),
+                "path": path.relative_to(ctx.vault_root).as_posix(),
+                "action": action, "scope": "vault", "slug": slug,
+            })
+
+        manifest = {
+            "status": "ok",
+            "vault_id": args.vault,
+            "source": {"slug": ctx.source_slug, "hash": ctx.source_hash},
+            "written": written,
+            "mentioned": [],
+            "log_event": {
+                # `ingest` — an ALLOWED value. `log_events.event_type` carries a CHECK
+                # constraint, and ZERO-DDL (I-1) means the rail does not get to invent
+                # a new enum member for itself: `user_version` stays 7. The rail is
+                # identified by `source_kind` in `source_state` instead, which is a
+                # free-text partition key.
+                "event_type": "ingest",
+                "source_slug": ctx.source_slug,
+                "orchestrator_id": args.orchestrator_id,
+            },
+        }
+
+        index_result: dict[str, Any] | None = None
+        if args.ingest:
+            try:
+                validate_manifest(manifest, args.vault, ctx.vault_root)
+            except WikiIngestError as exc:
+                return emit({
+                    "action": "refused", "error": "MANIFEST_INVALID",
+                    "message": str(exc)}, exit_code=6)
+            index_result = index_from_manifest(
+                manifest, args.vault, ctx.vault_root, repo=repo)
+            if index_result.get("failed"):
+                # ★ `source_state` is NOT updated ⇒ THE RETRY IS SAFE (the C-1
+                # invariant). Marking the source "done" before the index succeeded
+                # would make the retry a silent no-op and the pages would never index.
+                return emit({
+                    "action": "partial", "error": "PARTIAL_INDEX_FAILURE",
+                    "written": [w["path"] for w in written],
+                    "failed": index_result["failed"],
+                    "message": "pages written but not all indexed; source_state left "
+                               "UNSET so a retry re-indexes them",
+                }, exit_code=5)
+
+        try:
+            update_idempotency_state(
+                repo, args.vault, ctx.source_slug, ctx.source_hash)
+        except sqlite3.OperationalError:
+            return emit({
+                "action": "partial", "error": "IDEMPOTENCY_UPDATE_FAILED",
+                "written": [w["path"] for w in written],
+                "message": "pages written + indexed, but source_state was not "
+                           "recorded; the next run will safely re-extract",
+            }, exit_code=5)
+    finally:
+        repo.close()
+
     return emit({
-        "action": "stub",
-        "source_page": args.source_page,
-        "written": [],
-        "reconciled": [],
-        "stale": [],
-        "edges": [],
-        "manifest": None,
+        "action": "applied",
+        "vault_id": args.vault,
+        "source_slug": ctx.source_slug,
+        "layout": ctx.config.layout,
+        "typed_dirs": ctx.typed_dirs,
+        "written": written,
+        "dropped": dropped,
+        "indexed": index_result,
+        "manifest": manifest,
+        "validation": {
+            "roster_size": len(ctx.roster),
+            "edges_checked": len(ctx.ontology.get("edges", [])),
+            "properties_checked": len(ctx.ontology.get("properties", [])),
+            "links_checked": links_checked,
+            "candidates_submitted": len(candidates),
+            "candidates_written": len(written),
+            "candidates_dropped": len(dropped),
+        },
+        "vacuous_validation": not ctx.ontology,
     })
+
+
+def _source_classification(ctx: _Context) -> str | None:
+    """The SOURCE page's `classification:`, inherited by every page we generate from
+    it (R-063-10(b)) — never the vault default.
+
+    Honest statement of what this does TODAY: nothing observable. Policy is
+    declared-but-off, and `classification-leak` fires only on `cited`/`verifies` refs,
+    which typed pages do not carry. It is here because the moment R-16 is switched on,
+    a decision extracted from a `confidential` transcript that silently picked up the
+    vault's `default_level` turns this rail into a DECLASSIFICATION PUMP — a security
+    regression created by a config flip somewhere else, in a rail nobody re-audits."""
+    try:
+        post = frontmatter.loads(ctx.body.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    value = post.metadata.get("classification")
+    return str(value) if isinstance(value, str) and value.strip() else None
 
 
 def main(argv: list[str] | None = None) -> int:

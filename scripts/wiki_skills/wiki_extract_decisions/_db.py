@@ -18,6 +18,7 @@ a query here using `pages.type` would silently match the wrong population, becau
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 # A DISTINCT partition key. `source_state` is shared with the concepts rail, and a
@@ -43,6 +44,28 @@ def check_idempotency(
     if row is None or row["value"] is None:
         return False
     return bool(row["value"] == current_hash)
+
+
+def update_idempotency_state(
+    repo: Any, vault_id: str, source_slug: str, new_hash: str
+) -> None:
+    """Record that this rail has extracted this body.
+
+    ★ CALLED LAST, AND ONLY ON FULL SUCCESS (the C-1 invariant). If the index step
+    failed, this row must stay UNSET — otherwise the retry sees "unchanged", no-ops,
+    and the written pages never reach the index. A source marked done before the work
+    finished is worse than one not marked at all: the second is retried, the first is
+    silently abandoned."""
+    now = datetime.now(timezone.utc).isoformat()
+    repo._connect().execute(
+        "INSERT INTO source_state (vault_id, source_kind, scope, key, value, "
+        "                          updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (vault_id, source_kind, scope, key) DO UPDATE SET "
+        "  value = excluded.value, updated_at = excluded.updated_at",
+        (vault_id, _SOURCE_KIND, source_slug, "source_hash", new_hash, now),
+    )
+    repo._connect().commit()
 
 
 def load_typed_pages(
@@ -86,6 +109,31 @@ def load_existing_page_slugs(repo: Any, vault_id: str) -> list[str]:
         (vault_id,),
     ).fetchall()
     return [str(r["slug"]) for r in rows]
+
+
+def load_own_page_slugs(repo: Any, vault_id: str, source_slug: str) -> set[str]:
+    """Slugs of pages THIS rail already wrote FROM THIS SOURCE (`extracted_from`).
+
+    ★ THE OWNERSHIP LINE (R-063-9). The existing-page-collision drop exists to protect
+    SOMEONE ELSE'S page — never our own. Without this distinction a re-extraction
+    (`--force`, or a corrected source) would DROP every page the previous run wrote,
+    because their slugs now exist, and the rail would become a one-shot: it could
+    create knowledge but never correct it.
+
+    Found by the idempotency test, not by review: after `--ingest`, the rail's own
+    pages are in the index, and the very next `--force` run treated them as foreign.
+
+    A page NOT carrying our `extracted_from` is somebody else's — a hand-authored
+    page, or one from another source — and Class A is the operator's: we drop the
+    candidate rather than overwrite it.
+    """
+    rows = repo._connect().execute(
+        "SELECT slug FROM pages "
+        "WHERE vault_id = ? "
+        "  AND json_extract(frontmatter_json, '$.extracted_from') = ?",
+        (vault_id, source_slug),
+    ).fetchall()
+    return {str(r["slug"]) for r in rows}
 
 
 def load_resolvable_targets(repo: Any, vault_id: str) -> set[str]:
