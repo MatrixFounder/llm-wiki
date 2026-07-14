@@ -181,3 +181,51 @@ be the fourth precision/recall trade in this SKILL's history, and the first thre
   operator's **685 live entities**, name-pairs collapsing onto one slug = **0** under BOTH slug
   strategies. So it ships as a **WARNING**, never a refusal: a refusal would fire on nothing, and
   that is exactly how the 0.88 near-duplicate gate came to block correct work.
+
+---
+
+## ★ LIVE-CORPUS MEASUREMENT (2026-07-15) — the gap is REAL but it is BREADTH, not look-alikes
+
+The instrument (TASK 066) made a live go/no-go possible. Ran concept extraction on **10
+knowledge-dense live notes** (a project-management learning zone — generic PM content, no
+client material) through **Haiku vs Opus**, fresh context each, and compared the concept-name
+sets (NFC + casefold + fuzzy pairing ≥0.8 to absorb «5 зачем»/«пяти зачем»-style variance).
+
+| | |
+|---|---|
+| Opus concepts found | **37** |
+| Haiku MISSED (of Opus's) | **15** → **recall 59%** |
+| Haiku found beyond Opus | **10** |
+
+**The recall gap is real and material — ~40% loss to a strong-model proxy.** Haiku dropped
+genuine durable concepts: SCRUM, PMI, Crashing, Fast-track, метод набегающей волны, ИСР,
+управленческие резервы, оценка снизу-вверх / сверху-вниз.
+
+### ★★ BUT THE MEASUREMENT REFUTES THE PROPOSED MECHANICAL LEVER
+
+The candidate fix (a confusable-term / collision detector, aimed at fixture 09's look-alike
+case) targets the WRONG failure. The live gap is **broad under-extraction** — Haiku simply
+finds fewer concepts, worst on long notes — NOT look-alike disambiguation. A collision
+detector would fire on almost none of these 15 misses.
+
+And `haiku-only = 10` shows it is **not** "Haiku is strictly worse": both models carry
+variance (Haiku found Burndown Chart, Earned Value Analysis, Инициация проекта that Opus
+missed). Opus is systematically **broader and more specific** (where Haiku gave a generic
+«Резервы», Opus split it into «управленческие резервы» + «резервы на непредвиденные»).
+
+### Caveats (stated, not hidden)
+
+- **Opus is a strong-model PROXY, not ground truth.** A rigorous version needs a human judge.
+- **K=1 per note** — the exact number is noisy; the direction and magnitude are not.
+
+### DECISION
+
+- **The collision/disambiguation lever (R-23 point 3, original scope) is NO-GO** — refuted by
+  measurement, it aims at a failure the live corpus does not exhibit.
+- **What survives:** recall is real, and **model choice dominates any prompt tweak.** The
+  practical lever already shipped — the TASK-066 harness measures ANY model before it is
+  trusted. An operator who needs full recall runs the rail on a strong model and can now
+  *prove* the difference (this measurement is that proof).
+- **If a general breadth lever is ever attempted**, it must be measured on this harness against
+  BOTH the eval fixtures AND a live-note sample — not reasoned about. Prompt text alone is a
+  weak lever here: fixture 09 already carries its answer in the SKILL and the model still fails.
