@@ -1,87 +1,150 @@
-# TASK 065 — R-23 Phase A: the concept `definition` becomes inspectable · DF-064-3
+# TASK 066 — DF-064-4: the weak-model recall gap, and the harness that can prove it closed
 
 ## 0. Meta Information
 
-- **Task ID**: 065
-- **Slug**: definition-projection-and-slug-sentinel
-- **Origin**: the two TASK-064 follow-ups the operator chose to pair — the quick isolated fix
-  (**DF-064-3**) and the one that unlocks a capability (**DF-064-1** → ROADMAP **R-23**).
-- **Type**: Bugfix (DF-064-3) + Enabler (R-23 Phase A)
-- **Effort**: S
-- **Schema**: **zero DDL** (`user_version` 7). `entities.definition` already exists — this closes a
-  **projection** gap, not a schema gap.
+| | |
+|---|---|
+| **Tracks** | [[df-064-4-weak-model-extraction-recall-gap\|DF-064-4]] (SEV-3, open) — the **HEAD** of ROADMAP **R-23** |
+| **Folds in** | **R-23 Phase B** (re-scoped 2026-07-14: the corpus sweep was measured EMPTY; the detectors move to the WRITE path) |
+| **Status** | v1 — Analysis |
+| **Baseline** | `2848 passed, 14 skipped` · `mypy --strict scripts/` clean |
 
 ---
 
-## 1. The problem
+## 1. The problem, stated honestly
 
-### 1.1 DF-064-1 — the column nothing ever wrote
+`skills/concept-extraction/SKILL.md` scores **9 / 11** on **Haiku 4.5**. Both misses are
+**under-extraction** — *recall, not junk*:
 
-`entities.definition` has been in the schema since v2 and was **never written**. It stayed NULL
-forever, so **no SQL query, no `wiki-lint` rule and no `wiki-health` check could inspect the one
-field a concept page exists to carry** — while `wiki-search` retrieved it from FTS and `wiki-query`
-**cited it as knowledge**. The `entity_cards` VIEW already selects `definition AS tldr`: it was
-serving NULL to every consumer.
+| fixture | miss |
+|---|---|
+| **03** ui-chrome-and-primitives | found **1 of 2** durable concepts (dropped «Параметризованный запрос»); emitted **no** junk |
+| **09** two-candidates-one-file | extracted only **«Падёж»**, under its **bare** name — the second concept («Грамматический падеж») dropped entirely, and the bare name is itself on the fixture's `forbidden` list |
 
-The definition is also **write-once** (the first source to mention a concept owns it forever) and
-**un-improvable**. TASK 064 shipped every gate that can run at *write* time and then had to write
-into the SKILL's honesty ledger, in those words, that *"is this definition TRUE?"* has **no
-mechanism and cannot have one**. That admission is a direct consequence of this defect:
-**detection is impossible while the column is dead.**
-
-### 1.2 DF-064-3 — one function answering two questions
-
-`derive_concept_slug` returns `None` for two unrelated reasons: *"this layout declares no name→slug
-rule"* (`identity`) and *"the derivation is degenerate"*. `wiki-import`'s `derive_candidates` read
-the first as the second and skipped the candidate as `invalid-slug` — so a caller passing
-`layout.slug_strategy` straight through would file **zero concepts on every karpathy vault, at exit
-0**, reporting `invalid-slug` for perfectly valid names. It never fired only because the *caller*
-happened to substitute `preserve-unicode` first — i.e. a fix the **next** caller would not inherit.
+**Nothing counts what was left behind.** No validator, no lint rule, no health check can see a
+concept the extraction *dropped* — it is one of the three rules the SKILL's own honesty ledger names
+as having **no mechanism at all**. The eval set is the only instrument that can observe it.
 
 ---
 
-## 2. Requirements Traceability Matrix
+## 2. ★★ THE BLOCKER NOBODY FILED — the harness does not exist
 
-| ID | Requirement | Verified by |
+DF-064-4's own fix sketch reads: *"any change must be re-run through the Haiku harness before it is
+believed."*
+
+**THAT HARNESS DOES NOT EXIST AS CODE.**
+
+Verified, not assumed: `grep -rl "haiku|anthropic|messages.create"` over `tests/`, `scripts/`,
+`skills/`, `bin/` returns **only the Decision-17 gates** — the tests that assert an LLM client is
+*absent*. `tests/test_concept_extraction_evals.py` grades the **static `expected.json`**, never a
+model run. The `evals/README.md` "Re-running it" section is **four sentences of prose**, not a script.
+
+**The 9/11 was produced by hand** — one agent spawned per fixture, graded by hand-invoked validators.
+That number is therefore:
+
+- **not reproducible** by anyone but the person who ran it,
+- **not defensible** against regression — the "floor is 9" cannot fail a build,
+- **not vendor-agnostic** (the operator's standing requirement), and
+- **not a gate** — every future SKILL edit is, today, believed rather than measured.
+
+> **The first deliverable is the instrument.** Every other requirement in this task is unverifiable
+> without it, and the issue's own fix sketch presumes it.
+
+---
+
+## 3. ★ THE PERVERSE INCENTIVE — a defect in the CODE, not the prompt (new; not in the issue)
+
+Fixture 09 expects two disambiguated concepts («Падёж скота», «Грамматический падеж»); the **bare**
+`падёж` / `падеж` are on its `forbidden` list, because under `transliterate` they **collapse to one
+slug** and the second page silently overwrites the first.
+
+The rail **has** a mechanism for this: `IN_BATCH_SLUG_COLLISION` — exit 4, zero writes.
+
+**But it only fires if the model extracts BOTH.**
+
+A model that **drops one** creates no collision, passes every gate, and is written. So:
+
+> **The collision gate REWARDS under-extraction.** The safest way for a weak model to survive it is
+> to extract fewer concepts — which is exactly the failure this task exists to fix.
+
+That is a property of the code. Teaching the SKILL to disambiguate is necessary but not sufficient:
+a model that cannot see the ambiguity will keep taking the exit the mechanism holds open for it.
+
+---
+
+## 4. ★ THE COUPLING RISK — a precision guard can DESTROY recall
+
+R-23 Phase B folds in here: the **tautology / stub guard** moves to the write path, because the live
+corpus was measured **clean** (685/685 definitions, **0 empty, 0 tautological**) and a health check
+over it would fire on nothing.
+
+But this SKILL's entire history is **precision and recall trading against each other**:
+
+| SKILL state | Haiku | failure |
 |---|---|---|
-| **R-065-1** | ★ The definition **round-trips byte-identically**: `apply` writes it, `wiki-reindex --full` rebuilds it from the markdown **alone**, and the two agree. | `tests/test_definition_projection.py::test_the_definition_ROUND_TRIPS_byte_identically` — **mutation-tested both directions** |
-| **R-065-2** | Class A is the source of truth: the definition is read from the page **body** (raw markdown), not re-derived from the candidate, so a **hand-edited** definition is the one that lands. | the parser's parametrised cases (no H1 · no AUTO block · multi-paragraph) |
-| **R-065-3** | A full rebuild **alone** populates the column — the existing corpus becomes inspectable with no re-extraction, only re-indexing. | `test_a_full_rebuild_ALONE_populates_the_definition` |
-| **R-065-4** | The derived mentions ledger (Class B) never leaks into the definition. | `test_the_AUTO_block_is_NOT_swallowed_into_the_definition` |
-| **R-065-5** | The gate and the producer ask **different questions**, and neither can be mistaken for the other. | `layout_derives_slugs` / `mint_concept_slug`; `identity` now mints valid slugs |
+| *"extract only what the source EXPLAINS"* | 7/11 | returned `[]` on an incident report — the notes the rail exists for |
+| that rule removed | 6/11 | **over**-extracted (6 concepts where 2 belong) |
+| + theme-vs-prop table + count smell test | **9/11** | under-extracts on 03 / 09 |
 
-### ★ The acceptance criterion is the ROUND-TRIP, not the column
-
-`write_concept_page` puts the **sanitized** definition into the body (markdown-actives escaped:
-`*args` → `\*args`). The rebuilder reads **that** back. A writer storing the **raw** candidate would
-round-trip to a *different value* — **and every existing test would still pass**, because each side
-is internally consistent. The first `wiki-reindex --full` would then silently **change** the column,
-and ADR-002 §D8 (*Class B is a 100%-rebuildable cache of Class A*) would be **false**.
-
-That is why the gate's fixture definition deliberately begins with a markdown-active character, and
-why "the column is populated" was never allowed to be the exit criterion.
+**Three edits, three trades.** A new *refusal* on the write path is a fourth: a weak model that fears
+rejection extracts less. **The guard's effect on RECALL must be MEASURED on the same harness, not
+reasoned about.** A guard that buys precision at the cost of the 9-floor is a regression, whatever
+its own test says.
 
 ---
 
-## 3. Scope
+## 5. Requirements Traceability Matrix
 
-**In**: `wiki_skills/_common.py` (the shared parser) · `wiki_index/repository.py` +
-`sqlite_repository/_entities.py` (DAL) · `wiki_extract_concepts/_db.py` (write) ·
-`wiki_index/reindex.py` (read-back) · `wiki_extract_concepts/_gates.py` +
-`wiki_import_article/_authoring.py` (DF-064-3) · `tests/test_definition_projection.py`.
-
-**Out, and deliberately so — R-23 Phase B (`wiki-health definitions`)**. Detection is now
-*possible*; it is not yet *right*. A first sweep flagged the stub (`тултип`) but **missed the
-tautology** («Синергия — это когда есть синергия…») because a naive stop-list lacks
-`работает`/`вместе`. That is the same class of decision that produced the 0.88 near-duplicate cutoff
-— **a threshold calibrated on the examples that motivated it is not calibrated.** Phase B must
-measure a false-positive population before it ships a verdict, and bundling that decision with a
-projection change would make a regression un-attributable.
+| ID | Requirement |
+|---|---|
+| **R-066-1** | ★ **THE HARNESS.** A runnable weak-model eval harness: one **fresh context per fixture**, given only `SKILL.md` + the **real** `prepare` envelope + the source body in the H-6 sentinel. Output graded through the **REAL** validators **and** the fixture's `expect` census **and** its `forbidden` list — **never by eye**. **Vendor-agnostic**: the model provider is pluggable, not hardcoded. |
+| **R-066-2** | ★ **THE HARNESS MUST BE PROVEN ABLE TO FAIL.** Run it against a deliberately degraded SKILL ⇒ the score **MUST drop**. A harness that cannot go red is not an instrument — it is a green light with a number printed on it. |
+| **R-066-3** | The harness **reproduces the 9/11 baseline** on the *unchanged* SKILL, **before** any edit. A harness that reports a different number is not measuring the thing the floor was set on, and no subsequent delta means anything. |
+| **R-066-4** | Close **fixture 03**: 2 of 2 durable concepts, and **zero** `forbidden` names. |
+| **R-066-5** | Close **fixture 09**: 2 of 2, **disambiguated** («Падёж скота» / «Грамматический падеж»), and **no bare** `падёж`. |
+| **R-066-6** | ★ **The collision gate must stop REWARDING under-extraction** (§3). Whatever the fix, a model that drops one of two colliding concepts must not sail through more easily than one that extracts both. |
+| **R-066-7** | **R-23 Phase B**: the **tautology / stub guard on the WRITE path**, calibrated on the **measured population** (IDF over the live 685: garbage **4.6–22.0**, corpus **min 29.3**) — **never on the example that motivated it** (the 0.88 lesson). Its **boundary is STATED**: an IDF measure calibrated on its own corpus cannot see garbage typical of that corpus. |
+| **R-066-8** | ★ **R-066-7 MUST NOT REGRESS RECALL** — measured on the harness (§4), not argued. |
+| **R-066-9** | Any miss that remains ships as an **`xfail(strict=True)` tripwire** carrying `tracks: df-064-4` — so an unexpected **xPASS** signals the gap closed and the floor is re-baselined, instead of the miss quietly becoming the norm. |
+| **R-066-P** | ★ **THE PROPERTY — a CONJUNCTION.** `(score ≥ 9)` **AND** `(zero forbidden names emitted)`. *The floor catches REGRESSION; the forbidden list catches the TRADE.* A fix that buys recall by emitting junk passes the first half perfectly — and this SKILL's history is three such trades. |
 
 ---
 
-## 4. Non-goals
+## 6. Acceptance criteria
 
-- No DDL. No new columns.
-- No behaviour change to what the extractor *writes to disk* — only to what the index *records
-  about it*.
+- [ ] `pytest tests/` ≥ 2848 passed, 0 failed. `mypy --strict scripts/` clean.
+- [ ] **The harness runs from a clean checkout** and prints a per-fixture verdict + a total.
+- [ ] **R-066-2 EXECUTED**: the degraded-SKILL run is **RED**. Recorded with its score.
+- [ ] **R-066-3 EXECUTED**: the unchanged SKILL scores **9/11**, and the two failures are **03** and
+      **09** — the *same* two. A different 9 is a different skill.
+- [ ] Final score **≥ 9**, `forbidden` emissions **= 0**, and every remaining miss carries an
+      `xfail(strict=True)` tripwire.
+- [ ] **Decision-17 survives**: the harness is a **dev instrument**, not part of the rail. The
+      `no import anthropic` gate over `scripts/wiki_skills/` stays green — asserted, not assumed.
+- [ ] **Zero DDL** — `user_version` stays 7.
+
+---
+
+## 7. Out of scope
+
+- `wiki-health definitions` **as a corpus sweep** — measured EMPTY (R-23 Phase B, re-scoped). If a
+  future sweep finds a non-empty population it is reconsidered; the sweep is now a one-liner because
+  Phase A shipped.
+- **DF-064-2** (the O(n²) near-duplicate scan) — independent; `wiki-lint --strict` measures **1.8 s**
+  on the live vault today (re-measured 2026-07-14, with a vacuity probe taken *from* the timed op).
+- Re-litigating the **0.88 near-duplicate cutoff** — it was correctly demoted to a warning; no scalar
+  cutoff exists.
+
+---
+
+## 8. Open questions
+
+- **Q-066-1** — **Where does the harness live, given Decision-17?** The rail carries no LLM client by
+  contract. An eval harness *is* an LLM caller. Candidate: `skills/concept-extraction/harness/` with a
+  pluggable provider, **outside** `scripts/wiki_skills/` so the house gate is untouched — and the gate
+  must be re-asserted, not assumed unaffected. **Blocking** — it is a boundary question, and this
+  project's failures come from unstated boundaries.
+- **Q-066-2** — **How is the fix for §3 shaped?** The collision gate cannot refuse what it cannot see.
+  Options: (a) `prepare` surfaces "these known concepts would collide under your slug_strategy" as a
+  warning the model reads; (b) the SKILL carries a disambiguation rule; (c) both. **(c) is likely, but
+  the split must be measured** — a SKILL-only fix is another untested trade.
