@@ -75,7 +75,7 @@ away (`wiki_extract_concepts/__init__.py:449-450` — `source_hash` + `check_ide
 
 | fixture | expected names printed in the prompt |
 |---|---|
-| **08** slug-is-derived | **1/1 — THE ENTIRE CANDIDATE**: name, slug, definition *and* source_quote (`SKILL.md:126-127, 197-200, 209`) |
+| **08** slug-is-derived | **1/1 — its NAME *and its exact expected SLUG***: `Проскальзывание` → `proskalzyvanie` is the SKILL's worked example **of the very derivation fixture 08 tests**. So its pass measures *"can the model copy the example"*, not *"can it derive a slug."* ⚠️ **CORRECTED:** v3 said "the entire candidate — name, slug, definition *and* quote." **That was repeated from the review and never checked. Measured: the definition and the quote are NOT in the SKILL.** An over-stated finding is as damaging as a missed one — and it is corrected here rather than quietly dropped, because this task exists precisely because a number was believed instead of measured. |
 | **06** definition-is-not-the-quote | **2/2** |
 | **09** two-candidates-one-file | **2/2** |
 | 01 · 07 · 10 · 11 | 1 of each |
