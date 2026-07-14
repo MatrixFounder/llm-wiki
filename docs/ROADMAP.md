@@ -985,11 +985,23 @@ separate — they **interleave**. The "min 29.3" was an ARTIFACT: every definiti
 Length-normalising does not rescue it: good **4.02–4.28**, garbage **4.40–4.58** — a 0.12 gap,
 **inverted**, on N=2 vs N=2.
 
-> **NO SCALAR CUTOFF EXISTS.** Exactly as with the 0.88 near-duplicate gate, which was demoted for
-> the same reason. And the failure is the sharper for being self-inflicted: the calibration's garbage
-> class had **N=2**, and **both were the examples that motivated the check.** *"Calibrated on the
-> population"* was true of the 685 and **false of the band that set the threshold** — the exact shape
-> the paragraph above warns against, committed by the author of that warning, in the same day.
+> ### The IDF-SUM FAMILY is refuted. The GENERAL question is **UNMEASURED** — and the difference matters.
+>
+> One counterexample legitimately falsifies a claimed *clean separation*; confirming a threshold needs
+> a population. «Форк» at 12.8 below «Синергия» at 22.0 **is** that counterexample, so the cut is
+> sound. But *"no scalar cutoff exists"* — which this paragraph said in its first draft — is a
+> **universal negative drawn from N=2 vs N=2**: the very sin it condemns, committed in the sentence
+> condemning it. (The tell was already here: it declared no cutoff existed and then said reopening
+> requires ≥30 per class. If none existed, no sample size would reopen it.)
+>
+> What is TRUE: **the IDF-sum family failed its first false-positive control**, and the failure is
+> self-inflicted — the calibration's garbage class had **N=2**, and **both were the examples that
+> motivated the check.** *"Calibrated on the population"* was true of the 685 and **false of the band
+> that set the threshold.**
+>
+> **Reopening requires ≥30 per class, INCLUDING SHORT-BUT-GOOD DEFINITIONS** — the class whose absence
+> produced the artifact. The measurement itself ships as committed code (TASK 066, R-066-8): closing a
+> roadmap phase on four hand-run numbers is the same unreproducibility TASK 066 §2 exists to indict.
 
 **Phase B is CLOSED as REFUTED.** Not deferred — refuted. Reopening it requires a measured population
 of **BOTH** classes (≥30 each, *including short-but-good definitions*), not two hand-written strings.
