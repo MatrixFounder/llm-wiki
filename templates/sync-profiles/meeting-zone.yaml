@@ -13,3 +13,20 @@ summarize:
   extract_concepts: false
 resummarize:
   mode: if-missing
+
+# Typed-knowledge extraction (TASK 063 / RFC-004) — OFF by default; uncomment to enable.
+#
+# A meeting protocol is exactly what `wiki-extract-decisions` turns into typed
+# `decision` / `requirement` / `risk` pages + edges (this is the zone the pilot ran on).
+# When `enabled: true`, `wiki-sync`/`wiki-import` emit a DISPATCH MARKER after a summary is
+# filed and the ORCHESTRATOR runs the rail as a second step — the CLIs never call an LLM.
+#
+# `dirs` names the per-class folders, RELATIVE TO THE SOURCE NOTE'S OWN FOLDER; omit it to
+# use the defaults below. Each must be a folder the layout's read globs can SEE —
+# `wiki-config validate` refuses a name the walker would skip (TYPED_DIR_NOT_COVERED_BY_LAYOUT).
+# extract_decisions:
+#   enabled: true
+#   dirs:
+#     decision: decisions
+#     requirement: requirements
+#     risk: risks

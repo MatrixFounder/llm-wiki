@@ -312,3 +312,80 @@ def test_schema_json_identity_with_yaml_source() -> None:
     json_doc = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))
     yaml_doc = yaml.safe_load(SYNC_SCHEMA_PATH.read_text(encoding="utf-8"))
     assert json_doc == yaml_doc
+
+
+# --------------------------------------------------------------------------- #
+# ★ THE TEMPLATES MUST STAY VALID — and their commented examples must too
+#   (TASK 066 follow-up: the operator had to enable extract_decisions by hand,
+#    because no template documented it, and nothing gated the templates at all)
+# --------------------------------------------------------------------------- #
+
+_TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
+
+# ★ THE FULL sync-config template surface — and getting THIS wrong is the disease.
+# The first cut globbed `sync-profiles/*.yaml` alone and MISSED `connector-zone.sync.yaml`,
+# which lives one level up. The rule that enumerates ALL of them (and excludes non-sync
+# templates like `agent-files.yaml`): under `sync-profiles/`, OR named `*.sync.yaml`.
+_SYNC_PROFILES = sorted(
+    set(_TEMPLATES.glob("sync-profiles/*.yaml")) | set(_TEMPLATES.glob("*.sync.yaml")))
+
+
+def test_every_sync_profile_template_validates_against_the_schema() -> None:
+    """★ THE SURFACE, ENUMERATED. A `wiki-config init` template that has drifted from the
+    schema ships broken and is caught only when an operator applies it — this project's
+    signature failure mode, on a surface that had NO gate at all.
+
+    Globbed, never hand-listed: a template added later is checked automatically.
+    """
+    import yaml
+
+    from scripts.wiki_index.sync_config import _validate
+
+    names = {p.name for p in _SYNC_PROFILES}
+    assert "connector-zone.sync.yaml" in names, (
+        "the `*.sync.yaml` template one level up is missing — the glob narrowed back to "
+        "sync-profiles/ alone, which is the hole this census exists to close")
+    assert len(_SYNC_PROFILES) >= 6, (
+        f"the template glob found only {sorted(names)} — is the path right?")
+    for tpl in _SYNC_PROFILES:
+        raw = yaml.safe_load(tpl.read_text(encoding="utf-8")) or {}
+        assert isinstance(raw, dict), f"{tpl.name} is not a mapping"
+        _validate(raw)                                   # raises SyncConfigError on drift
+
+
+def test_meeting_zone_DOCUMENTS_the_extract_decisions_rail_and_its_example_is_LIVE() -> None:
+    """★ DISCOVERABILITY, AS A CHECKED ARTIFACT, NOT PROSE.
+
+    A meeting protocol is exactly what `wiki-extract-decisions` extracts from — so the
+    meeting-zone template is where an operator should DISCOVER the rail. It carries a
+    commented example, and this test ties that example to the schema so it cannot rot: when
+    uncommented, it must be a VALID `extract_decisions` block. A doc example that no longer
+    parses is worse than none — it teaches a shape the loader rejects.
+    """
+    import yaml
+
+    from scripts.wiki_index.sync_config import _validate
+
+    tpl = next(p for p in _SYNC_PROFILES if p.name == "meeting-zone.yaml")
+    text = tpl.read_text(encoding="utf-8")
+    assert "extract_decisions" in text, (
+        "meeting-zone no longer documents the typed-knowledge rail — the operator's only "
+        "discovery path for TASK 063 in a meeting zone is gone")
+
+    # uncomment the example block (a run of `# `-prefixed lines starting at the marker) and
+    # prove it validates — the guarantee that the documented shape is the REAL shape.
+    lines = text.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == "# extract_decisions:")
+    block = []
+    for ln in lines[start:]:
+        if ln.startswith("# "):
+            block.append(ln[2:])
+        elif ln.startswith("#"):
+            block.append(ln[1:])
+        else:
+            break
+    raw = yaml.safe_load("\n".join(block))
+    assert set(raw) == {"extract_decisions"}, raw
+    _validate(raw)                                       # the documented block is schema-valid
+    assert raw["extract_decisions"]["enabled"] is True
+    assert set(raw["extract_decisions"]["dirs"]) == {"decision", "requirement", "risk"}
