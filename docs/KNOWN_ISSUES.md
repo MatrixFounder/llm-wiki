@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-09T16:48:56.966550 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-07-14T18:06:41.097583 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -9,6 +9,7 @@
 
 - **DF-046-2** [[df-046-2-wiki-sync-can-upsert-a-nested-raw-capture|wiki-sync can \`upsert\` a nested \`_raw/\` capture (Class-B drift if the 4d marker is skipped)]] — status `open`, opened 2026-06-30
 - **DF-7** [[df-7-resummarize-gate-trusts-source-state-without-disk-check|\`wiki-sync\`'s resummarize gate (\`source_state\`/\`provenance_ref\`/\`mirror\`) never checks that the output it claims exists is still on disk]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
+- **DF-064-1** [[df-064-1-entities-definition-never-populated|\`entities.definition\` is never populated — so a concept's definition is invisible to every automated check, while \`wiki-query\` cites it as knowledge]] — severity `SEV-2`, status `open`, opened 2026-07-14
 
 ## correctness
 
@@ -16,6 +17,7 @@
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 - **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
+- **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `open`, opened 2026-07-14
 
 ## dogfood
 
@@ -73,6 +75,7 @@
 - **R-X1-OBS-WALK** [[r-x1-obsidian-multiglob-rewalk|obsidian-personal multi-glob subtree re-walk]] — severity `SEV-3`, status `fixed`, opened 2026-06-01
 - **R-X3-MF-SCAN** [[r-x3-metadata-filter-unindexed-scan|wiki-search metadata filter is an unindexed json_extract scan + filesort]] — severity `SEV-3`, status `open`, opened 2026-06-01
 - **P-030-DELTA-BULK** [[p-030-delta-bulk-ingest-per-file-txns|\`reindex_delta\` whole-vault bulk ingest keeps per-file transactions]] — severity `SEV-3`, status `open`, opened 2026-06-13
+- **DF-064-2** [[df-064-2-lint-near-duplicate-scan-is-quadratic|\`wiki-lint\`'s near-duplicate-concept scan is an unbounded O(n²) pairwise \`SequenceMatcher\` sweep]] — severity `SEV-3`, status `open`, opened 2026-07-14
 
 ## quality
 
@@ -82,6 +85,7 @@
 - **Q-007-1** [[q-007-1-wiki-query-apply-re-runs-the-full-retrieval-to-recompute-the-hash|\`wiki-query apply\` re-runs the full retrieval to recompute the hash]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **Q-007-2** [[q-007-2-self-index-re-reads-the-just-written-query-page|self-index re-reads the just-written query page]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **DF-017-1** [[df-017-1-check-drift-type-mismatch-not-layout-mapping-aware|check_drift type-mismatch is not layout-type-mapping-aware (false positives on non-karpathy layouts)]] — severity `SEV-3`, status `fixed`, opened 2026-06-02
+- **DF-064-4** [[df-064-4-weak-model-extraction-recall-gap|\`concept-extraction\` on a weak model under-extracts: 9/11 on Haiku 4.5, and the two misses are RECALL, not junk]] — severity `SEV-3`, status `open`, opened 2026-07-14
 
 ## robustness
 

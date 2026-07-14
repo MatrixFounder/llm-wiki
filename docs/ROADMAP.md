@@ -893,6 +893,56 @@ access (works with a broken index — the recovery path). 116 new tests.
 
 ---
 
+## P2 — Concept-definition health (the last un-inspectable field)
+
+Opened 2026-07-14 out of **TASK 064**, which shipped the anti-garbage rail for
+`wiki-extract-concepts` and, in doing so, ran into the one thing it could **not** fix from
+the write side.
+
+### R-23. Make a concept's `definition` INSPECTABLE — the enabler for definition health
+
+**Status: OPEN.** Tracks **[[df-064-1-entities-definition-never-populated|DF-064-1]]** (SEV-2).
+
+**The gap.** `entities.definition TEXT` exists in the schema and is **never written**. The
+definition lives only in the concept page's **body**, so **no SQL query, no `wiki-lint` rule and
+no `wiki-health` check can ever see it.** It is reachable only through FTS — which means a bad
+definition is not inert: `wiki-search` **retrieves** it and `wiki-query` **cites it as
+knowledge**, and the citation is then re-summarised downstream. **Garbage in this field
+compounds.**
+
+**Why it is a roadmap theme and not just a bug.** The definition **IS** the concept page, it is
+**write-once** (the first source to mention a concept owns it forever — a `mention` discards the
+candidate's `definition` entirely), and it is **un-inspectable**. TASK 064 shipped every gate that
+can run at *write* time (`DEFINITION_IS_QUOTE`, `DEFINITION_NOT_PROSE`, a word floor), and then
+had to write into `skills/concept-extraction/SKILL.md`'s **honesty ledger**, in those words, that
+*"is this definition TRUE, or merely well-formed?"* has **no mechanism and cannot have one.**
+Prevention is currently the only lever — which is exactly the posture **ADR-006 / R-15** exists to
+move the project away from. **Detection is impossible while the column is dead.**
+
+**Shape** (zero-DDL — the column is already there; this is a projection gap, not a schema gap):
+
+1. `upsert_extracted_entity` writes `definition` from the candidate.
+2. `reindex` reads it back from the page body (the page shape is fixed and byte-stable), so
+   `wiki-reindex --full` reproduces it — **the Class-B rebuildability gate (ADR-002 §D8) is the
+   acceptance criterion**, not an afterthought.
+3. **Then** `wiki-health definitions` becomes possible: *tautology* (the definition's content words
+   ⊆ its own name), *stub* (under N words), *source-local deixis* («те 20%, о которых
+   договорились»). A working prototype of the first already exists — as
+   `tests/test_concept_extraction_evals.py::_is_tautology`, which lives in the **eval runner**
+   precisely because the DB cannot answer the question.
+
+**Sizing**: 1 small TASK. **Builds on** R-15 (derived knowledge health) + ADR-006. **Files**:
+`wiki_extract_concepts/_db.py`, `wiki_index/reindex.py`, `repository.py`/`sqlite_repository.py`,
+`wiki_skills/wiki_health.py`.
+
+**Also open under this theme** (filed, not scheduled):
+[[df-064-2-lint-near-duplicate-scan-is-quadratic|DF-064-2]] (the near-duplicate lint sweep is
+O(n²) — 0.6 s at 720 concepts, ~32 s at 5 000, and the corpus is *designed* to compound) ·
+[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] (the skill under-extracts on a weak model —
+9/11 on Haiku 4.5; **recall, not junk** — and nothing but the eval set can ever observe it).
+
+---
+
 ## P2 — Cross-project indexing
 
 Design doc: [`docs/proposals/indexing-agentic-dev-artifacts.md`](proposals/indexing-agentic-dev-artifacts.md)
