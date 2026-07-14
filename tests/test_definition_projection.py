@@ -210,10 +210,73 @@ def test_the_AUTO_block_is_NOT_swallowed_into_the_definition(tmp_path: Path) -> 
 # --------------------------------------------------------------------------- #
 
 
+def test_the_LEGACY_pre_047_page_shape_is_read_correctly() -> None:
+    """★★ THE PAGES THAT ACTUALLY EXIST, NOT THE PAGES THE WRITER PRODUCES.
+
+    TASK 047 replaced the hand-written `## Mentions` section with the derived
+    `<!-- BEGIN-AUTO:mentions -->` block. But **nothing ever rewrote the old pages** — a
+    `mention` never rewrites a page — so a vault written before 047 is full of the LEGACY
+    shape, and that is what a rebuild actually meets.
+
+    The first version of this parser cut on the AUTO sentinel alone. Measured on the
+    operator's live vault, it swallowed the entire ledger — quote, backlink, line-span —
+    into the definition of **676 of 720 concepts (94%)**. It had been tested only against
+    the shape the current writer emits.
+
+    This body is copied from a real page in that vault.
+    """
+    body = (
+        "\n# Hasu\n\n"
+        "Один из двух авторов статьи, аналитик в области криптоэкономики и DeFi.\n\n"
+        "## Mentions\n\n"
+        "> \\**_Статья \\[Hasu\\](https://twitter.com/hasufl)_**\n"
+        "> — [[новая-ментальная-модель-для-казначейств-defi]] (L112-L112)\n"
+    )
+    assert definition_from_concept_body(body) == (
+        "Один из двух авторов статьи, аналитик в области криптоэкономики и DeFi.")
+
+
+def test_a_RICH_hand_authored_page_yields_its_LEAD_not_the_whole_document() -> None:
+    """★★ `entity_cards` selects `definition AS tldr`. A tldr that is a five-screen document
+    is not a tldr.
+
+    The operator writes RICH concept pages — a lead paragraph, then `## Перечень функций`,
+    then `### 1. …`, tables, links. A parser that cut only at the mentions ledger swallowed
+    all of it into one column (measured live on `_concepts/айва.md`).
+
+    A definition is PROSE, and prose has no headings. So the lead ends at the first
+    sub-heading of ANY kind — which also means the rule needs no list of section names to keep
+    up to date.
+    """
+    body = (
+        "# Айва\n\n"
+        "Платформа для построения цифровой модели компании; по сути — «цифровой двойник "
+        "предприятия».\n\n"
+        "## Перечень функций платформы\n\n"
+        "> Составлено по трём источникам: протокол демо [[демо-платформы-айва]]…\n\n"
+        "### 1. Организации, пользователи и доступ\n"
+        "- Регистрация организации\n"
+    )
+    assert definition_from_concept_body(body) == (
+        "Платформа для построения цифровой модели компании; по сути — «цифровой двойник "
+        "предприятия».")
+
+
 @pytest.mark.parametrize(("body", "expected"), [
     # the shape write_concept_page emits
     ("# Имя\n\nОпределение.\n\n<!-- BEGIN-AUTO:mentions -->\nx\n<!-- END-AUTO:mentions -->\n",
      "Определение."),
+    # ★ a rich hand-authored page: the lead only
+    ("# Имя\n\nЛид.\n\n## Раздел\n\nтело раздела\n", "Лид."),
+    ("# Имя\n\nЛид.\n\n### Подраздел\n\nтело\n", "Лид."),
+    # ★ the LEGACY shape (pre-TASK-047) — 94% of the operator's live corpus
+    ("# Имя\n\nОпределение.\n\n## Mentions\n\n> цитата\n> — [[источник]] (L1-L1)\n",
+     "Определение."),
+    # TASK 047's own heading, if a page carries it without the sentinel
+    ("# Имя\n\nОпределение.\n\n## Mentions across sources\n\n- [[src]]\n", "Определение."),
+    # ★ an `##` INSIDE prose must NOT truncate — the cut is line-anchored
+    ("# Имя\n\nОпределение со словом ## внутри строки.\n",
+     "Определение со словом ## внутри строки."),
     # ★ a HUMAN edited it: no H1, no AUTO block. A parser that demanded the generated shape
     # would NULL the definition on exactly the pages someone cared enough to touch.
     ("Просто определение, без заголовка.\n", "Просто определение, без заголовка."),

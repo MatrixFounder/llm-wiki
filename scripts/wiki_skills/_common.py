@@ -121,6 +121,34 @@ def format_concept_mentions_body(source_slugs: list[str]) -> str:
 
 # --- R-23 Phase A: the definition, read back OUT of the page --------------------------
 
+# ★★ THE DEFINITION IS THE **LEAD** — from the H1 to the first sub-heading. Nothing else.
+#
+# Two measurements on the operator's live 720-concept vault forced this, and each one killed
+# a parser that had passed every test written against the shape the CURRENT writer emits:
+#
+#   1. TASK 047 replaced the hand-written `## Mentions` section with the derived
+#      `<!-- BEGIN-AUTO:mentions -->` block — but **nothing ever rewrote the old pages** (a
+#      `mention` never rewrites a page). A cut on the sentinel alone therefore swallowed the
+#      whole ledger — quote, backlink, line-span — into the definition of **676 of 720
+#      concepts (94%)**.
+#
+#   2. Cutting on the ledger in *either* spelling then still swallowed a **hand-authored rich
+#      page** whole: its lead paragraph, then `## Перечень функций`, then `### 1. …`, tables
+#      and links — the entire document landed in one column. But `entity_cards` selects
+#      `definition AS tldr` (sql/wiki-index-v2.sql). **A tldr that is a five-screen document
+#      is not a tldr.**
+#
+# The rule that satisfies both, and that needs no list of ledger spellings to maintain: a
+# definition is PROSE, and prose has no headings. So the lead ends at the first sub-heading of
+# any kind — `## Mentions`, `## Mentions across sources`, `## Перечень функций`, all of it —
+# or at the AUTO sentinel (an HTML comment, not a heading).
+#
+# Line-anchored, so a `##` occurring *inside* a sentence cannot truncate a definition.
+_LEAD_END = re.compile(
+    r"^(?:<!--\s*BEGIN-AUTO:|#{2,}\s)",
+    re.MULTILINE,
+)
+
 
 def definition_from_concept_body(body: str) -> str | None:
     """The definition a concept page **carries** — parsed back out of its Class-A body.
@@ -130,6 +158,12 @@ def definition_from_concept_body(body: str) -> str | None:
     reproduce it from the markdown alone, or the DB has stopped being rebuildable. So the
     definition is read from where it actually lives — the body — and never re-derived from a
     candidate the operator may since have edited away.
+
+    ★ **It is the LEAD: from the H1 to the first sub-heading.** A definition is prose, and
+    prose has no headings — so whatever comes after one (the mentions ledger in either of its
+    two spellings, or a hand-authored page's `## Перечень функций` and everything under it) is
+    *not* the definition. That rule needs no list of section names to keep up to date, and it
+    keeps `entity_cards`' `definition AS tldr` an actual tldr rather than a whole document.
 
     The shape `write_concept_page` emits is::
 
@@ -147,11 +181,8 @@ def definition_from_concept_body(body: str) -> str | None:
     Returns `None` only when there is genuinely no prose — never as a way of saying
     "unexpected shape".
     """
-    text = body
-    marker = f"<!-- BEGIN-AUTO:{AUTO_MENTIONS_NAME} -->"
-    cut = text.find(marker)
-    if cut != -1:
-        text = text[:cut]
+    m = _LEAD_END.search(body)
+    text = body[:m.start()] if m else body
     lines = text.lstrip().split("\n")
     if lines and lines[0].lstrip().startswith("# "):
         lines = lines[1:]
