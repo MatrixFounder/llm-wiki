@@ -20,9 +20,13 @@ slug: df-064-2-lint-near-duplicate-scan-is-quadratic
 
   | concepts | pairs | added to every lint run |
   |---|---|---|
-  | **720** (today) | 258,840 | **0.62 s** |
+  | **685** (re-counted from the live DB, 2026-07-14) | **~234,600** | **~0.6 s** |
   | 2,000 | 1,999,000 | 4.98 s |
   | 5,000 | 12,497,500 | **31.9 s** |
+
+  *(The "720" in the original filing was an estimate; the live `entities` table holds **685** —
+  684 concept pages. The conclusion is unchanged, and the number is now measured rather than
+  remembered.)*
 
 - **Why it is only SEV-3 today, and why it will not stay that way**: 0.6 s is tolerable. But a
   compounding vault is the **explicit design goal** of this project, so the input to this loop grows

@@ -901,7 +901,8 @@ the write side.
 
 ### R-23. Make a concept's `definition` INSPECTABLE — the enabler for definition health
 
-**Status: Phase A ✅ SHIPPED (TASK 065, 2026-07-14) · Phase B OPEN.**
+**Status: Phase A ✅ SHIPPED (TASK 065, 2026-07-14) · Phase B ⛔ RE-SCOPED, 2026-07-14 —
+the live corpus was MEASURED and the cleanup queue Phase B existed to serve is EMPTY.**
 Tracks **[[df-064-1-entities-definition-never-populated|DF-064-1]]** (SEV-2, now `fixed`).
 
 **Phase A — the projection (SHIPPED).** Zero-DDL: the column was never a schema gap, it was a
@@ -919,21 +920,61 @@ would then silently CHANGE the column and §D8 would be false. Gated by
 `test_the_definition_ROUND_TRIPS_byte_identically` (fixture definition begins with a markdown-active
 char on purpose), mutation-tested both directions.
 
-**Phase B — `wiki-health definitions` (OPEN), and the delay is deliberate.** Detection is now
-*possible*. It is not yet *right*: a first sweep flagged the stub (`тултип`) but **missed the
-tautology** («Синергия — это когда есть синергия…») because a naive stop-list lacks
-`работает`/`вместе`. That is exactly the class of decision that produced the 0.88 near-duplicate
-cutoff — **a threshold calibrated on the examples that motivated it is not calibrated.** Phase B
-must MEASURE a false-positive population before it ships a verdict. A working prototype of the
-tautology check already exists as `tests/test_concept_extraction_evals.py::_is_tautology` — it lives
-in the *eval runner* only because, until Phase A, the DB could not answer the question.
+### ★ Phase B — RE-SCOPED, because Phase A let us MEASURE, and the measurement reversed it
 
-**The gap.** `entities.definition TEXT` exists in the schema and is **never written**. The
-definition lives only in the concept page's **body**, so **no SQL query, no `wiki-lint` rule and
-no `wiki-health` check can ever see it.** It is reachable only through FTS — which means a bad
-definition is not inert: `wiki-search` **retrieves** it and `wiki-query` **cites it as
-knowledge**, and the citation is then re-summarised downstream. **Garbage in this field
-compounds.**
+**Phase A's whole purpose was to make the question answerable. It is now answered.** The first
+sweep of the LIVE `personal` vault (2026-07-14, 685 entities · 684 concept pages):
+
+| | |
+|---|---|
+| entities carrying a definition | **685 / 685 (100 %)** |
+| **EMPTY / stub definitions** | **0** |
+| **TAUTOLOGICAL definitions** | **0** |
+
+**There is no garbage.** The cleanup queue Phase B was designed to produce **does not exist**, and
+`wiki-health definitions` over this corpus would be a **VACUOUS GREEN** — a check examining a
+population in which nothing can fire, reporting clean. That is TASK 061's disease, and shipping it
+here would be committing it deliberately.
+
+**★ The zero is EARNED, not assumed — and proving that took two attempts.**
+
+The prototype (`tests/test_concept_extraction_evals.py::_is_tautology`) **is blind to the canonical
+case**, exactly as the previous revision of this section predicted: «Синергия — это когда есть
+синергия между командами» **PASSES** it, because a stop-list author never thought of `есть` or
+`командами`. Its zero would have been meaningless. *A check that cannot fire on the example that
+motivated it cannot certify a corpus.*
+
+So the sweep was re-run with a detector carrying **no stop-list and no hand-picked threshold** —
+IDF over the **real 685**, scoring how much information a definition carries *beyond its own name*:
+
+| | score |
+|---|---|
+| «Тултип это тултип» | **4.6** |
+| «Синергия — это когда есть синергия между командами» | **22.0** |
+| a good definition (Kafka: *«распределённый лог сообщений с гарантией порядка внутри партиции»*) | 34.2 |
+| **the WORST definition in the live corpus** | **29.3** |
+
+Garbage ≤ 22, corpus ≥ 29.3 — **a clean separation with no overlap**, and the corpus's own bottom
+ten are all specific and correct. This is what *"a threshold calibrated on the examples that
+motivated it is not calibrated"* looks like when you actually fix it: calibrate on the **population**.
+
+⚠️ **STATED BOUNDARY**: an IDF measure calibrated on its own corpus cannot detect garbage that is
+*typical of that corpus*. The zero holds for the canonical failure SHAPES (stub, tautology), not for
+every conceivable one.
+
+**So Phase B becomes a WRITE-TIME guard, not a corpus sweep — and it MERGES INTO
+[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]].** The corpus is clean *because a strong model
+wrote it*; the exposure is **future writes by a weaker one**. Both items are the same question —
+*"what happens when the extraction is bad?"* — and the corpus has now answered *"today, it isn't."*
+Detection over the past is inert; prevention on the future is not.
+
+**The gap Phase A closed.** `entities.definition TEXT` existed in the schema and was **never
+written**. The definition lived only in the concept page's **body**, so **no SQL query, no
+`wiki-lint` rule and no `wiki-health` check could ever see it** — reachable only through FTS, which
+means a bad definition was never inert: `wiki-search` **retrieves** it and `wiki-query` **cites it as
+knowledge**, and the citation is re-summarised downstream. **Garbage in this field compounds** — the
+mechanism is real, which is why the field had to become inspectable. The measurement above says the
+mechanism has not yet been fed.
 
 **Why it is a roadmap theme and not just a bug.** The definition **IS** the concept page, it is
 **write-once** (the first source to mention a concept owns it forever — a `mention` discards the
@@ -944,27 +985,29 @@ had to write into `skills/concept-extraction/SKILL.md`'s **honesty ledger**, in 
 Prevention is currently the only lever — which is exactly the posture **ADR-006 / R-15** exists to
 move the project away from. **Detection is impossible while the column is dead.**
 
-**Shape** (zero-DDL — the column is already there; this is a projection gap, not a schema gap):
+**Shape — SHIPPED (1 and 2); 3 is REVERSED by the measurement above:**
 
-1. `upsert_extracted_entity` writes `definition` from the candidate.
-2. `reindex` reads it back from the page body (the page shape is fixed and byte-stable), so
-   `wiki-reindex --full` reproduces it — **the Class-B rebuildability gate (ADR-002 §D8) is the
-   acceptance criterion**, not an afterthought.
-3. **Then** `wiki-health definitions` becomes possible: *tautology* (the definition's content words
-   ⊆ its own name), *stub* (under N words), *source-local deixis* («те 20%, о которых
-   договорились»). A working prototype of the first already exists — as
-   `tests/test_concept_extraction_evals.py::_is_tautology`, which lives in the **eval runner**
-   precisely because the DB cannot answer the question.
+1. ✅ `upsert_extracted_entity` writes `definition` from the candidate.
+2. ✅ `reindex` reads it back from the page body, so `wiki-reindex --full` reproduces it — **the
+   Class-B rebuildability gate (ADR-002 §D8) was the acceptance criterion**, not an afterthought.
+3. ⛔ ~~`wiki-health definitions` over the corpus~~ — **the corpus is clean; the check would fire on
+   nothing.** The tautology / stub detectors move to the **write path** (DF-064-4), where a weak
+   model is the actual threat. `wiki-health definitions` is reconsidered only if a future sweep
+   finds a non-empty population — and the sweep is now a one-liner, because Phase A shipped.
 
-**Sizing**: 1 small TASK. **Builds on** R-15 (derived knowledge health) + ADR-006. **Files**:
-`wiki_extract_concepts/_db.py`, `wiki_index/reindex.py`, `repository.py`/`sqlite_repository.py`,
-`wiki_skills/wiki_health.py`.
+**What to do NEXT under this theme, in the order the evidence supports:**
 
-**Also open under this theme** (filed, not scheduled):
-[[df-064-2-lint-near-duplicate-scan-is-quadratic|DF-064-2]] (the near-duplicate lint sweep is
-O(n²) — 0.6 s at 720 concepts, ~32 s at 5 000, and the corpus is *designed* to compound) ·
-[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] (the skill under-extracts on a weak model —
-9/11 on Haiku 4.5; **recall, not junk** — and nothing but the eval set can ever observe it).
+1. **[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] — now the HEAD of the theme.** The only
+   item with evidence of a real problem: the skill under-extracts on a weak model (9/11 on Haiku
+   4.5) — **recall, not junk** — and *nothing but the eval set can ever observe it*. Phase B's
+   tautology guard folds in here as the write-time mechanism. The corpus is clean because a strong
+   model wrote it; that is not a property of the code.
+2. **[[df-064-2-lint-near-duplicate-scan-is-quadratic|DF-064-2]]** — independent, do it when
+   convenient. Re-measured 2026-07-14: **685 entities ⇒ ~235 000 pair comparisons** per `wiki-lint`
+   run (~0.6 s — tolerable). It is quadratic, and the corpus is *designed* to compound.
+
+**Sizing**: Phase A was 1 small TASK (done). What remains is DF-064-4 (1 TASK) + DF-064-2 (S).
+**Builds on** R-15 (derived knowledge health) + ADR-006.
 
 ---
 

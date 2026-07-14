@@ -54,3 +54,42 @@ slug: df-064-4-weak-model-extraction-recall-gap
 
 - **Do not "fix" this by loosening the census.** A fixture that lowers its own `expect` to match what
   the model produced is how a recall gap becomes permanent and green.
+
+---
+
+## ★ PROMOTED to the HEAD of ROADMAP R-23 (2026-07-14) — and R-23 Phase B folds in here
+
+The live-corpus sweep that Phase A made possible (685 entities · 684 concept pages) came back:
+
+| | |
+|---|---|
+| definitions present | **685 / 685 (100 %)** |
+| **EMPTY / stub** | **0** |
+| **TAUTOLOGICAL** | **0** |
+
+**There is no garbage to clean.** `wiki-health definitions` over that corpus would fire on nothing —
+a vacuous green, which is the one thing this project has learned not to ship. So R-23 Phase B's
+tautology / stub detectors **move here, to the WRITE path**, and this issue becomes the theme's head.
+
+**The reasoning is the point:** the corpus is clean **because a strong model wrote it.** That is not
+a property of the code — it is a property of the model that happened to run. This issue *is* the
+measurement of what happens when a weaker one does, and it already shows the loss (9/11). Detection
+over a clean past is inert; prevention on the future is not.
+
+**The zero was EARNED, and earning it took two attempts** — worth knowing before anyone reuses these
+detectors:
+
+- The prototype `_is_tautology` (stop-list + stem-subset) is **BLIND to the canonical case**:
+  «Синергия — это когда есть синергия между командами» **PASSES** it, because no stop-list author
+  thought of `есть`/`командами`. Its zero would have been meaningless. *A check that cannot fire on
+  the example that motivated it cannot certify a corpus.*
+- The sweep that produced the zero uses **no stop-list and no hand-picked threshold** — IDF over the
+  real 685, scoring information carried *beyond the concept's own name*. Garbage scores **4.6–22.0**;
+  the corpus's **worst** definition scores **29.3**. Clean separation, no overlap.
+- ⚠️ **STATED BOUNDARY**: an IDF measure calibrated on its own corpus cannot see garbage that is
+  *typical of that corpus*. The zero holds for the canonical failure shapes, not for every
+  conceivable one.
+
+**So the write-time guard must be calibrated the same way** — on a measured population, never on the
+example that motivated it. That is the 0.88 lesson, and it is the reason this issue leads the theme
+instead of a corpus sweep that would have reported clean and taught nothing.
