@@ -61,10 +61,26 @@ for wrapper in "$REPO"/bin/wiki-*; do                 # executable wrappers only
 done
 # obsidian-active-note: the obsidian-cli skill's active-note resolver (TASK 041) — not a wiki-* CLI.
 [[ -x "$REPO/bin/obsidian-active-note" ]] && safe_link "$REPO/bin/obsidian-active-note" "$BIN_DIR/obsidian-active-note"
-# link the wiki-* skills + obsidian-cli into a vendor's global skills dir (same set per vendor).
+# ★ ENUMERATE THE POPULATION — NEVER GUESS IT FROM A NAME PREFIX.
+#
+# This globbed `skills/wiki-*/ + obsidian-cli/`, and that filter SILENTLY EXCLUDED the two
+# most important skills in the repo. The naming convention is that a CLI skill is `wiki-<cli>`
+# while a REASON contract is NOT (`concept-extraction`, `decision-extraction`) — so the prefix
+# filter dropped **every REASON contract that did not happen to start with `wiki-`**.
+#
+# `wiki-query-synthesis` survived by luck of its name. `concept-extraction` and
+# `decision-extraction` did not: they were installed in the REPO tree (install-project-symlinks
+# globs `skills/*/`, unfiltered) and therefore worked in development — while being unreachable
+# from a VAULT, which is the only place an operator actually runs these rails. The contract
+# carrying the whole anti-garbage discipline never loaded on the shipped path, and the model
+# improvised. Re-running this script would never have fixed it; the skills were not forgotten,
+# they were filtered out.
+#
+# So: every directory under skills/ is a skill, and every one ships. If a skill should ever be
+# repo-only, mark it IN the skill, do not encode the policy in a glob here.
 link_skills_into() {
   local dest="$1" src
-  for src in "$REPO"/skills/wiki-*/ "$REPO"/skills/obsidian-cli/; do
+  for src in "$REPO"/skills/*/; do
     [[ -d "$src" ]] || continue
     safe_link "${src%/}" "$dest/$(basename "$src")"
   done
@@ -74,7 +90,9 @@ link_skills_into "$CLAUDE_SKILLS"
 echo "skills → $PI_SKILLS"           # TASK 043
 link_skills_into "$PI_SKILLS"
 echo "commands → $CLAUDE_COMMANDS"
-for src in "$REPO"/commands/wiki-*.md; do
+# Same rule as the skills above: enumerate, don't guess. Every command ships. (Today they all
+# happen to be `wiki-*` — which is exactly how the skills glob looked right, until it didn't.)
+for src in "$REPO"/commands/*.md; do
   [[ -f "$src" ]] || continue
   safe_link "$src" "$CLAUDE_COMMANDS/$(basename "$src")"
 done
