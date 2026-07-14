@@ -429,3 +429,40 @@ def test_the_GATE_CAN_FAIL_targeted_mutation_with_a_PREDICTED_blast_radius(
         f"THE BLAST RADIUS MISSED. Predicted {sorted(predicted)}, the gate caught {regressed}. "
         f"A gate that catches fewer regressions than the mutation causes is not enforcing the "
         f"floor it advertises.")
+
+
+def test_DECISION_17_survives_the_instrument_and_the_CENSUS_IS_DERIVED_BY_GREP() -> None:
+    """★ THE INSTRUMENT MUST NOT SMUGGLE IN THIS REPO'S FIRST LLM CLIENT.
+
+    `requirements.txt` carries **no `anthropic`** — the dependency was deliberately REMOVED by a
+    shipped task (`task-003-v3-10-drop-anthropic-dep`). And `skills/concept-extraction/` is
+    **symlinked into user installs**, so an SDK there would ship a model client *inside the rail
+    whose defining invariant is "no LLM client here."*
+
+    The runner is therefore the ORCHESTRATOR — which is Decision-17 (*"the calling orchestrator
+    owns the reasoning step"*), not an exception to it.
+
+    ★★ AND THE CENSUS IS **DERIVED BY GREP**, NOT HAND-LISTED. TASK 066 v2 hand-listed *three*
+    `anthropic` gates in its acceptance criteria; there are at least **five**. A denominator
+    maintained by hand is this project's signature failure mode — so this test globs the
+    population at runtime and cannot forget a file that lands tomorrow.
+    """
+    import re as _re
+
+    rail = sorted((REPO / "scripts" / "wiki_skills").rglob("*.py"))
+    instrument = sorted((EVALS).rglob("*.py"))
+    assert len(rail) >= 40, f"the rail glob found only {len(rail)} files — is the path right?"
+    assert len(instrument) >= 2, "the instrument glob found nothing"
+
+    offenders = [
+        f.name for f in (rail + instrument)
+        if _re.search(r"^\s*(import anthropic|from anthropic)",
+                      f.read_text(encoding="utf-8"), _re.MULTILINE)
+    ]
+    assert offenders == [], (
+        f"an LLM client reached the deterministic rail or the instrument: {offenders}")
+
+    reqs = (REPO / "requirements.txt").read_text(encoding="utf-8").lower()
+    assert "anthropic" not in reqs, (
+        "the `anthropic` dependency is back. It was removed by a shipped task; the harness must "
+        "not reintroduce it — the ORCHESTRATOR is the runner.")

@@ -52,6 +52,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import unicodedata
@@ -347,6 +348,25 @@ def prepare(args: argparse.Namespace) -> int:
         return emit(result)
     finally:
         repo.close()
+
+
+def _name_map(known: list[dict[str, Any]]) -> dict[str, str]:
+    """slug (NFC) → the page's authored name. Built ONCE per batch, beside `known_slugs`."""
+    return {unicodedata.normalize("NFC", str(e["slug"])): str(e.get("name") or "")
+            for e in known}
+
+
+def _name_differs(a: str, b: str) -> bool:
+    """Two concept names that landed on ONE slug — the SAME concept written twice, or TWO
+    concepts the slug strategy collapsed?
+
+    NFC + casefold + whitespace-collapse, exactly as every other content comparison on this rail
+    (`_validation._norm`). What is left is a real difference: «Падёж скота» vs «Грамматический
+    падеж» differ; «Идемпотентность» vs «идемпотентность » do not.
+    """
+    def _n(s: str) -> str:
+        return re.sub(r"\s+", " ", unicodedata.normalize("NFC", s)).strip().casefold()
+    return bool(a) and bool(b) and _n(a) != _n(b)
 
 
 def _load_known_and_drift(
@@ -925,6 +945,7 @@ def _apply_write(
     today: date,
     repo: Any,
     known_slugs: set[str] | None = None,
+    known_names: dict[str, str] | None = None,
     present_concept_files: set[str] | None = None,
 ) -> dict[str, Any]:
     """Step 5 of ``apply()`` — write pages + entities + refs + manifest on an
@@ -1018,6 +1039,7 @@ def _apply_write(
         if known_slugs is None:
             known = load_known_entities(repo, vault_id)
             known_slugs = {e["slug"] for e in known}
+            known_names = _name_map(known)
         if present_concept_files is None:
             present_concept_files = _present_concept_slugs(vault_root)
         # ★★ G7 (TASK 064) — **A PAGE ON DISK IS ALWAYS A `mention`.**
@@ -1038,6 +1060,43 @@ def _apply_write(
         effective_known = set(present_concept_files)
         create_list, mention_list = classify_candidates(candidates, effective_known)
         known_nfc = {unicodedata.normalize("NFC", s) for s in known_slugs}
+
+        # ★ THE CROSS-SOURCE `mention` HAZARD — a WARNING, and deliberately NOT a refusal.
+        #
+        # `classify_candidates` files a candidate as a `mention` on SLUG ALONE, never on name —
+        # and a mention DISCARDS the candidate's definition. So «Падеж» (grammatical case),
+        # extracted from a later note into a vault that already owns `padezh` («Падёж» — mass
+        # death of livestock), would be filed as A MENTION OF THE LIVESTOCK PAGE: a falsified
+        # provenance receipt, written at exit 0, with a correct-looking count.
+        #
+        # ⚠️ IT IS A WARNING BECAUSE THE POPULATION WAS MEASURED, AND IT IS **ZERO**. Across the
+        # operator's 685 live entities, the number of name-pairs that collapse to one slug is 0
+        # under `preserve-unicode` AND 0 under `transliterate`. A REFUSAL here would be a gate
+        # that fires on nothing — and a refusal on a currently-exit-0 path is EXACTLY how the
+        # 0.88 near-duplicate gate came to block correct work and had to be demoted. The lesson
+        # is one page away in this rail's own SKILL; we are not learning it twice.
+        #
+        # So it SURFACES (where the operator can act) and refuses nothing.
+        # ★ P-7: the name map is THREADED, never re-queried. The first cut called
+        # `load_known_entities` here — inside the per-entry path — and
+        # `test_apply_batch_known_loaded_once` caught the N+1 on the first run. A warning is
+        # not worth a query per candidate.
+        mention_name_warnings: list[dict[str, Any]] = []
+        name_by_slug = known_names or {}
+        for m in mention_list:
+            slug_n = unicodedata.normalize("NFC", str(m["slug"]))
+            owner = name_by_slug.get(slug_n)
+            mine = str(m.get("name") or "")
+            if owner and _name_differs(owner, mine):
+                mention_name_warnings.append({
+                    "warning": "MENTION_NAME_DIFFERS",
+                    "slug": slug_n,
+                    "reason": (
+                        f"this candidate is being filed as a MENTION of an existing page "
+                        f"because it derived the same slug — but the page's name differs. "
+                        f"Its definition will be DISCARDED. If these are two DIFFERENT "
+                        f"concepts, give this one a name that stands alone."),
+                })
 
         # ★ G8 (F3, TASK 064 FIX-LOOP) — ON THE **CREATE LIST**, AND ONLY ON SLUGS THE
         # VAULT DOES NOT ALREADY HAVE.
@@ -1115,7 +1174,7 @@ def _apply_write(
         # mention of `centralized-exchange` writes a FALSIFIED provenance receipt into
         # `page_entity_refs`, at exit 0 — an anti-duplicate gate that manufactures false
         # knowledge). It hands the model the similar slugs and lets it judge.
-        warnings = near_duplicate_warnings(
+        warnings = mention_name_warnings + near_duplicate_warnings(
             create_list, build_dup_keys(known_nfc | set(present_concept_files)),
         )
 
@@ -1215,6 +1274,7 @@ def _apply_candidates_to_db(
     today: date,
     repo: Any,
     known_slugs: set[str] | None = None,
+    known_names: dict[str, str] | None = None,
     present_concept_files: set[str] | None = None,
 ) -> dict[str, Any]:
     """Validate + write ONE source page's candidates on an already-open repo
@@ -1236,6 +1296,7 @@ def _apply_candidates_to_db(
     return _apply_write(
         validated, vault_id, vault_root, candidates,
         orchestrator_id, today, repo, known_slugs=known_slugs,
+        known_names=known_names,
         present_concept_files=present_concept_files,
     )
 
@@ -1288,6 +1349,7 @@ def _batch_apply(args: argparse.Namespace) -> int:
         # re-scan the entities table per entry (O(E) once, not O(N·E)).
         known = load_known_entities(repo, args.vault)
         known_slugs = {e["slug"] for e in known}
+        known_names_map = _name_map(known)
         # TASK 053 / R3 (DF-8): scan on-disk concept slugs ONCE too and thread
         # the shared set (grown in place per create) so the ghost-row self-heal
         # does not reintroduce an O(N·walk) `_all_concepts_dirs` sweep per entry.
@@ -1313,6 +1375,7 @@ def _batch_apply(args: argparse.Namespace) -> int:
                     source_slug, entry["source_hash"], args.vault, vault_root,
                     entry["candidates"], orchestrator_id_val, today, repo,
                     known_slugs=known_slugs,
+                    known_names=known_names_map,
                     present_concept_files=present_concept_files,
                 )
             # Per-entry isolation: expected FS/parse/DB faults route to this

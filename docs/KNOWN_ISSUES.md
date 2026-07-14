@@ -85,7 +85,7 @@
 - **Q-007-1** [[q-007-1-wiki-query-apply-re-runs-the-full-retrieval-to-recompute-the-hash|\`wiki-query apply\` re-runs the full retrieval to recompute the hash]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **Q-007-2** [[q-007-2-self-index-re-reads-the-just-written-query-page|self-index re-reads the just-written query page]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **DF-017-1** [[df-017-1-check-drift-type-mismatch-not-layout-mapping-aware|check_drift type-mismatch is not layout-type-mapping-aware (false positives on non-karpathy layouts)]] — severity `SEV-3`, status `fixed`, opened 2026-06-02
-- **DF-064-4** [[df-064-4-weak-model-extraction-recall-gap|\`concept-extraction\` on a weak model under-extracts: 9/11 on Haiku 4.5, and the two misses are RECALL, not junk]] — severity `SEV-3`, status `open`, opened 2026-07-14
+- **DF-064-4** [[df-064-4-weak-model-extraction-recall-gap|\`concept-extraction\` on a weak model under-extracts: 9/11 on Haiku 4.5, and the two misses are RECALL, not junk]] — severity `SEV-3`, status `partially-fixed`, opened 2026-07-14
 
 ## robustness
 

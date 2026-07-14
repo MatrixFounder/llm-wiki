@@ -1,7 +1,7 @@
 ---
 id: DF-064-4
 type: known-issue
-status: open
+status: partially-fixed
 opened_at: 2026-07-14
 category: quality
 severity: SEV-3
@@ -84,12 +84,100 @@ detectors:
   thought of `есть`/`командами`. Its zero would have been meaningless. *A check that cannot fire on
   the example that motivated it cannot certify a corpus.*
 - The sweep that produced the zero uses **no stop-list and no hand-picked threshold** — IDF over the
-  real 685, scoring information carried *beyond the concept's own name*. Garbage scores **4.6–22.0**;
-  the corpus's **worst** definition scores **29.3**. Clean separation, no overlap.
-- ⚠️ **STATED BOUNDARY**: an IDF measure calibrated on its own corpus cannot see garbage that is
-  *typical of that corpus*. The zero holds for the canonical failure shapes, not for every
-  conceivable one.
+  real 685, scoring information carried *beyond the concept's own name*.
 
-**So the write-time guard must be calibrated the same way** — on a measured population, never on the
-example that motivated it. That is the 0.88 lesson, and it is the reason this issue leads the theme
-instead of a corpus sweep that would have reported clean and taught nothing.
+> ### ⛔ AND THE WRITE-TIME GUARD WAS **REFUTED** THE SAME DAY (TASK 066 review)
+>
+> This section originally claimed *"garbage 4.6–22.0, the corpus's worst 29.3 — clean separation,
+> no overlap."* **The false-positive control was never run.** When it was:
+>
+> | definition | class | IDF |
+> |---|---|---|
+> | «Форк — расхождение цепочки блоков.» | ★ **the SKILL's OWN example of a GOOD definition** | **12.8** |
+> | «Синергия — это когда есть синергия между командами.» | **GARBAGE** | **22.0** |
+>
+> **The definition the SKILL teaches scores BELOW the garbage the guard was built to catch.** The
+> bands do not separate — they **interleave**. "Min 29.3" was an ARTIFACT: every live definition is
+> **long** (80–320 chars), so the IDF *sum* was measuring **LENGTH**. Length-normalising does not
+> rescue it either.
+>
+> **The IDF-SUM FAMILY is refuted; the general question is UNMEASURED.** (An earlier draft wrote
+> *"no scalar cutoff exists"* — a universal negative from N=2 vs N=2, i.e. the very sin it condemns.)
+> The measurement now ships as code: `evals/measure_definition_idf.py`, reproducible on a clean
+> checkout. **R-23 Phase B is CLOSED AS REFUTED.**
+
+**The lesson that survives:** a guard must be calibrated on a **measured population of BOTH
+classes** — never on the examples that motivated it. That is the 0.88 lesson, and this issue
+leads the theme precisely because a corpus sweep would have reported clean and taught nothing.
+
+
+---
+
+## ★★ TASK 066 (2026-07-15) — THE INSTRUMENT WAS BUILT, AND IT REFUTED THIS ISSUE'S OWN DIAGNOSIS
+
+**This issue is filed as an under-extraction / RECALL gap. It was not — not mostly.**
+
+The fix sketch above says *"any change must be re-run through the Haiku harness before it is
+believed."* **That harness did not exist.** The 9/11 was produced by hand and was never
+reproducible. TASK 066 built it (`evals/harness.py` + `tests/test_concept_extraction_weak_model.py`
++ a stamped, committed artifact), re-ran the set on **33 fresh Haiku contexts**, and graded the
+recording through the **real** validators.
+
+### It corrected the number
+
+| | published (by hand) | measured |
+|---|---|---|
+| overall | 9/11 | **7/11** |
+| "Zero junk" | claimed | **TWO forbidden names** |
+
+### And then it named the actual cause
+
+```
+13 failing runs of 33
+   9  ← source_span mismatch     (8 of the 11 fixtures)
+   2  ← forbidden name (09)
+   1  ← slug not derived
+   1  ← CENSUS drop (RECALL)     ← the thing THIS ISSUE is named for
+```
+
+Per candidate (n=56): the `source_quote` was **verbatim 56/56 (100 %)**; the model's
+`source_span` was correct **40/56 (71 %)**; the span was **derivable from the quote 56/56 (100 %)**.
+
+> **We were asking a LANGUAGE MODEL to do ARITHMETIC ON LINE NUMBERS** — and then refusing the
+> whole batch when it miscounted, though the concepts and the quotes were right.
+
+**`apply` now DERIVES the span.** `source_span` is OPTIONAL; the SKILL tells the model to omit it.
+
+### The result — measured on the same instrument
+
+| | before | after |
+|---|---|---|
+| overall | 7/11 | **10/11** |
+| **CLEAN subset** {03, 04, 05} | 2/3 | **3/3** |
+| forbidden | 2 | **2** *(no recall bought with junk)* |
+| span failures | 9 | **0** |
+
+## ★ WHAT REMAINS — and it is finally ISOLATED
+
+```
+5  CENSUS (recall)   ← THIS issue, now standing alone
+1  forbidden name
+```
+
+**Only fixture 09 fails.** The mechanical noise is gone and the recall gap is measurable for the
+first time.
+
+⚠️ **And what will NOT close it:** `SKILL.md` **already** carries fixture 09's exact expected
+names *and* an explicit *"And extract BOTH."* **The model is handed the answer and does not
+produce it.** Prompt text is not the lever — that entire class of fix is refuted by measurement.
+
+**The next task must find a MECHANICAL lever, and measure it on this instrument.** A guess would
+be the fourth precision/recall trade in this SKILL's history, and the first three all failed.
+
+## Also closed by TASK 066
+
+- **The cross-source `mention` hazard** (`_validation.py`: a candidate is filed as a `mention` on
+  **slug alone**, discarding its definition). Real — but the population was MEASURED: across the
+  operator's **685 live entities**, name-pairs collapsing onto one slug = **0** under BOTH slug
+  strategies. So it ships as a **WARNING**, never a refusal: a refusal would fire on nothing, and
+  that is exactly how the 0.88 near-duplicate gate came to block correct work.

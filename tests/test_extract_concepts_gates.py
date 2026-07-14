@@ -55,6 +55,7 @@ from scripts.wiki_skills.wiki_extract_concepts._gates import (
     build_dup_keys,
     near_duplicate_warnings,
 )
+from scripts.wiki_skills.wiki_extract_concepts import _name_differs
 from scripts.wiki_skills.wiki_extract_concepts._validation import (
     derive_source_span,
     _validate_candidates_schema,
@@ -1521,3 +1522,30 @@ def test_the_DERIVED_span_ALWAYS_contains_its_own_quote() -> None:
     assert checked >= 20, (
         f"the invariant examined only {checked} candidates — a sweep over an empty population "
         f"reports green, which is this project's signature failure mode")
+
+
+def test_a_slug_match_with_a_DIFFERENT_name_WARNS_and_never_refuses() -> None:
+    """★ THE CROSS-SOURCE `mention` HAZARD (DF-064-4 / M-1) — surfaced, never refused.
+
+    `classify_candidates` files a candidate as a `mention` on **SLUG ALONE**, never on name — and
+    a mention **DISCARDS the definition**. So «Падеж» (grammatical case), extracted from a LATER
+    note into a vault that already owns `padezh` («Падёж» — mass death of livestock), is filed as
+    **a mention of the livestock page**: a falsified provenance receipt, at exit 0, with a
+    correct-looking count.
+
+    ⚠️ IT IS A WARNING, NOT A REFUSAL — AND THE POPULATION IS WHY.
+
+    Across the operator's **685 live entities**, the number of name-pairs that collapse onto one
+    slug is **ZERO** under `preserve-unicode` AND **ZERO** under `transliterate`. A refusal here
+    would be a gate that fires on nothing. And a refusal on a currently-exit-0 path is *exactly*
+    how the 0.88 near-duplicate gate came to **block correct work** and had to be demoted — the
+    lesson is one page away in this rail's own SKILL, and we are not learning it twice.
+
+    MUT: delete the `_name_differs` branch ⇒ RED.
+    """
+    assert _name_differs("Падёж скота", "Грамматический падеж")
+    # ...and it does NOT fire on the SAME name written differently — a warning that cried wolf
+    # on every mention would be noise, and noise gets muted.
+    assert not _name_differs("Идемпотентность", " идемпотентность ")
+    assert not _name_differs("Slippage", "slippage")
+    assert not _name_differs("", "Anything")            # an unnamed page cannot disagree

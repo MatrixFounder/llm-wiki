@@ -1041,11 +1041,22 @@ move the project away from. **Detection is impossible while the column is dead.*
 
 **What to do NEXT under this theme, in the order the evidence supports:**
 
-1. **[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] — now the HEAD of the theme.** The only
-   item with evidence of a real problem: the skill under-extracts on a weak model (9/11 on Haiku
-   4.5) — **recall, not junk** — and *nothing but the eval set can ever observe it*. Phase B's
-   tautology guard folds in here as the write-time mechanism. The corpus is clean because a strong
-   model wrote it; that is not a property of the code.
+1. ✅ **[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] — TASK 066 SHIPPED (2026-07-15),
+   `partially-fixed`.** The instrument was built (`evals/harness.py` + an offline gate over a
+   stamped, committed artifact) — and it **refuted both the number and the diagnosis**:
+
+   * the hand-produced *"9/11, Zero junk"* measured **7/11 with TWO forbidden names**;
+   * and **9 of 13 failing runs were a bad `source_span`** — not recall. *We were asking a
+     LANGUAGE MODEL to do ARITHMETIC ON LINE NUMBERS.* The quote was verbatim **56/56**; the span
+     was right **40/56**; the span was **derivable from the quote 56/56**.
+
+   `apply` now DERIVES the span. **7/11 → 10/11; the CLEAN subset 2/3 → 3/3; forbidden unchanged.**
+   Phase B's tautology guard did **not** fold in — it was **REFUTED** (above).
+
+   ★ **What remains is the recall gap this issue was NAMED for, and it is now ISOLATED**: fixture
+   09 alone. And prompt text cannot close it — `SKILL.md` already carries 09's exact expected names
+   *and* an explicit *"And extract BOTH"*, and the model fails anyway. **The next task needs a
+   MECHANICAL lever, measured on the instrument.**
 2. **[[df-064-2-lint-near-duplicate-scan-is-quadratic|DF-064-2]]** — independent, do it when
    convenient. Re-measured 2026-07-14: **685 entities ⇒ ~235 000 pair comparisons** per `wiki-lint`
    run (~0.6 s — tolerable). It is quadratic, and the corpus is *designed* to compound.
