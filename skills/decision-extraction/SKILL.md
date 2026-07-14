@@ -108,6 +108,77 @@ inverse contradicts it.
 `existing_page_slugs`, or the slug another candidate in THIS batch will get. Everything
 else is an unresolved ref.
 
+---
+
+## ★★ EDGES — the part that is actually hard. Do this systematically.
+
+Pages without edges are a **list**. Edges are what make it a **graph**, and a graph is
+the only reason to type the knowledge at all. This section exists because the first real
+run of this rail produced good pages and a **thin, half-empty graph** — the pages were
+faithful and the links were an afterthought.
+
+### Step 1 — DERIVE the legal edge set. Never guess it.
+
+`prepare` gave you `ontology.edges` with a `from` (domain) and `to` (range). **Intersect
+them with your roster** and you get the complete list of edges you are allowed to author.
+For the usual `{decision, requirement, risk}` roster that is:
+
+| edge | direction | the question it answers |
+|---|---|---|
+| `implements` | **decision → requirement** | *which requirement does this decision satisfy?* |
+| `supersedes` | decision → decision \| requirement | *does this replace an earlier one?* |
+| `causes` | **decision → risk** | *what risk does this decision CREATE?* |
+| `causes` | risk → risk | *does this risk trigger another one?* |
+
+**There is no `mitigates`.** A decision that *reduces* a risk has **no edge for it** —
+say it in the body prose. `closed_types` is on: inventing `mitigates` is an
+`ONTOLOGY_VIOLATION` and refuses the whole batch.
+
+### Step 2 — for EVERY decision, ask three questions in order
+
+1. **Does the protocol state a requirement / НФТ / KPI that this decision satisfies?**
+   → `implements`. This is the workhorse edge; most decisions have one.
+2. **Does it overturn an earlier decision?** → `supersedes` (and the rail will reconcile
+   the target's `status` for you — do not patch it yourself).
+3. **★ Does it CREATE a new risk — cost, dependency, complexity, a constraint?**
+   → `causes`. **This is the edge everyone forgets.** A decision is a trade-off; the
+   thing it traded away is usually sitting in the risk registry already.
+
+   > *«Паспорта — приоритетный поток, ≤ 5 сек»* **causes** *«≤ 5 сек при плохом качестве
+   > может требовать GPU → рост стоимости»*. The protocol says both. Nobody links them.
+
+### Step 3 — for every risk, ask: does another risk in this batch trigger it?
+
+→ `causes`. Bad scan quality *causes* the GPU/cost risk. Scope uncertainty *causes* the
+estimation risk. Chains like this are the whole point of a risk registry.
+
+### ★ A `requirement` authors almost NO edges — and that is a signal, not a limitation
+
+`requirement` is not in `implements.from` or `causes.from`. Its links arrive **from the
+decisions that point at it** (the inverse `implemented-by` is auto-derived at reindex).
+
+**If you find yourself wanting to give a requirement an edge, you have the direction
+backwards.**
+
+### ★ THE COMMONEST MISS: a decision that implements a requirement you never extracted
+
+If a decision *satisfies* something, that something **IS a requirement — extract it.**
+
+A decision with no `implements` on a protocol that HAS an НФТ / KPI section is a **smell**:
+you probably dropped the requirement and kept only the decision. Go back and look.
+
+> Real example from the first run: *«Human-in-the-loop обязателен»* was extracted as a
+> decision, and the requirement it implements — *«спорные документы всегда проверяет
+> человек»* — was never extracted at all. The decision floated free, and the graph lost
+> a link it should have had.
+
+### Do not force edges
+
+An unconnected decision is fine — some decisions are pure scope calls («XML не
+обрабатываем») and satisfy nothing. **A fabricated edge is worse than a missing one**: it
+is a false claim in a graph people will query. The three questions are a *checklist*, not
+a *quota*.
+
 ## What `apply` will refuse (so you can avoid it)
 
 | refusal | cause |

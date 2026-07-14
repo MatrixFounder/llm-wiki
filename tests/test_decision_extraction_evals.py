@@ -213,3 +213,55 @@ def test_SKILL_md_documents_the_id_ref_hazard_and_the_empty_success() -> None:
     # ...and the SKILL is a CONTRACT, not a call: the orchestrator owns REASON.
     assert "import anthropic" not in text
     assert "anthropic" not in text.lower()
+
+
+def test_SKILL_md_teaches_the_EDGE_procedure_and_it_matches_the_ONTOLOGY() -> None:
+    """★ THE EDGE GUIDANCE, AND IT IS GATED AGAINST THE REAL ONTOLOGY.
+
+    The first live run of this rail produced faithful pages and a THIN, HALF-EMPTY GRAPH:
+    28 pages, 4 edges. The pages are a LIST; the edges are what make it a graph, and a
+    graph is the only reason to type the knowledge at all.
+
+    Root cause, found by deriving the legal edge set instead of assuming it: the
+    `decision --causes--> risk` edge — *"what risk does this decision CREATE?"* — was
+    never even considered. A decision is a trade-off, and the thing it traded away is
+    usually already sitting in the risk registry.
+
+    So the SKILL now carries a PROCEDURE (three questions per decision), and this test
+    pins that procedure to the ACTUAL ontology of the `cybos` layout — a doc that taught
+    an edge the ontology forbids would be worse than no doc, and one that omits a legal
+    edge is how the graph stays thin.
+    """
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    cfg = load_layout_config(Path("/nonexistent"), {"layout": "cybos"})
+    assert cfg.ontology is not None
+
+    roster = set(ROSTER)
+    legal: set[tuple[str, str, str]] = {
+        (f, e.edge, t)
+        for e in cfg.ontology.edges
+        for f in roster & set(e.frm)
+        for t in roster & set(e.to)
+    }
+    # every edge NAME the roster can legally author must be TAUGHT
+    for _f, edge, _t in legal:
+        assert f"`{edge}`" in text, (
+            f"the ontology lets a {ROSTER} page author `{edge}`, and the SKILL never "
+            f"mentions it — that edge will simply never be authored")
+
+    # ★ the edge everyone forgets, named explicitly
+    assert "decision → risk" in text or "decision --causes--> risk" in text
+    assert "CREATE" in text                       # "what risk does this decision CREATE?"
+
+    # ★ and the edge the SKILL must warn does NOT exist
+    assert "mitigates" not in {e.edge for e in cfg.ontology.edges}
+    assert "There is no `mitigates`" in text, (
+        "a decision that REDUCES a risk has no edge for it; without this warning the "
+        "model invents `mitigates` and the batch is refused as an ONTOLOGY_VIOLATION")
+
+    # ★ the direction rule — a requirement authors almost nothing
+    assert "requirement` authors almost NO edges" in text
+    assert "requirement" not in {
+        f for e in cfg.ontology.edges if e.edge == "implements" for f in e.frm}, (
+        "the ontology changed: a requirement can now author `implements`, so the "
+        "SKILL's direction rule is wrong")
