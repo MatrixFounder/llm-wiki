@@ -901,8 +901,9 @@ the write side.
 
 ### R-23. Make a concept's `definition` INSPECTABLE — the enabler for definition health
 
-**Status: Phase A ✅ SHIPPED (TASK 065, 2026-07-14) · Phase B ⛔ RE-SCOPED, 2026-07-14 —
-the live corpus was MEASURED and the cleanup queue Phase B existed to serve is EMPTY.**
+**Status: Phase A ✅ SHIPPED (TASK 065) · Phase B ⛔ CLOSED AS REFUTED (2026-07-14) — the cleanup
+queue was measured EMPTY, and the write-time threshold that would have replaced it was then
+REFUTED by its own false-positive control. The theme now lives in DF-064-4 / TASK 066.**
 Tracks **[[df-064-1-entities-definition-never-populated|DF-064-1]]** (SEV-2, now `fixed`).
 
 **Phase A — the projection (SHIPPED).** Zero-DDL: the column was never a schema gap, it was a
@@ -962,11 +963,42 @@ motivated it is not calibrated"* looks like when you actually fix it: calibrate 
 *typical of that corpus*. The zero holds for the canonical failure SHAPES (stub, tautology), not for
 every conceivable one.
 
-**So Phase B becomes a WRITE-TIME guard, not a corpus sweep — and it MERGES INTO
-[[df-064-4-weak-model-extraction-recall-gap|DF-064-4]].** The corpus is clean *because a strong model
-wrote it*; the exposure is **future writes by a weaker one**. Both items are the same question —
-*"what happens when the extraction is bad?"* — and the corpus has now answered *"today, it isn't."*
-Detection over the past is inert; prevention on the future is not.
+### ⛔⛔ AND THE WRITE-TIME GUARD IS **REFUTED TOO** — the IDF threshold is 0.88 in a new hat
+
+The re-scope above proposed moving the tautology/stub detector to the **write path**. The TASK-066
+review demanded the one thing the sweep never measured — a **false-positive control** — and it
+**kills the threshold outright.**
+
+The SKILL itself blesses a short definition as GOOD (`SKILL.md:211`, verbatim: *"`Форк — расхождение
+цепочки блоков.` is a good definition. **Never pad to clear it.**"*). Scored against the live 685:
+
+| definition | class | IDF |
+|---|---|---|
+| **«Форк — расхождение цепочки блоков.»** | ★ **the SKILL's OWN example of a GOOD definition** | **12.8** |
+| «Разница между ожидаемой и фактической ценой сделки.» | good | 28.1 |
+| «Синергия — это когда есть синергия между командами.» | **GARBAGE** | **22.0** |
+| «Тултип это тултип.» | GARBAGE | 4.6 |
+
+**The definition the SKILL teaches scores BELOW the garbage it was built to catch.** The bands do not
+separate — they **interleave**. The "min 29.3" was an ARTIFACT: every definition in the live corpus is
+**long** (80–320 chars), so the IDF *sum* was measuring **LENGTH**, not informativeness.
+Length-normalising does not rescue it: good **4.02–4.28**, garbage **4.40–4.58** — a 0.12 gap,
+**inverted**, on N=2 vs N=2.
+
+> **NO SCALAR CUTOFF EXISTS.** Exactly as with the 0.88 near-duplicate gate, which was demoted for
+> the same reason. And the failure is the sharper for being self-inflicted: the calibration's garbage
+> class had **N=2**, and **both were the examples that motivated the check.** *"Calibrated on the
+> population"* was true of the 685 and **false of the band that set the threshold** — the exact shape
+> the paragraph above warns against, committed by the author of that warning, in the same day.
+
+**Phase B is CLOSED as REFUTED.** Not deferred — refuted. Reopening it requires a measured population
+of **BOTH** classes (≥30 each, *including short-but-good definitions*), not two hand-written strings.
+Per this repo's own 0.88 precedent, **that is a SUCCESS**: the gate that would have shipped had its
+first victim been measured, and its first victim was the definition style the SKILL teaches.
+
+**What survives** is [[df-064-4-weak-model-extraction-recall-gap|DF-064-4]] — the corpus is clean
+*because a strong model wrote it*, which is a property of the model, not of the code. **TASK 066**
+carries it.
 
 **The gap Phase A closed.** `entities.definition TEXT` existed in the schema and was **never
 written**. The definition lived only in the concept page's **body**, so **no SQL query, no
