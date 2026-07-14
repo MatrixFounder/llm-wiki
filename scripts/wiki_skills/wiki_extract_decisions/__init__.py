@@ -104,6 +104,8 @@ from scripts.wiki_skills._resummarize import resolve_extract_decisions
 from ._db import (
     check_idempotency,
     count_open_commitments,
+    load_page_paths,
+    load_target_statuses,
     load_existing_page_slugs,
     load_own_page_slugs,
     load_resolvable_targets,
@@ -112,12 +114,13 @@ from ._db import (
     update_idempotency_state,
 )
 from ._errors import ExtractionParseError, envelope_from_parse_error
-from ._pages import render_page, write_page
+from ._pages import backup_page, patch_frontmatter_scalar, render_page, write_page
 from ._validation import (
     CANDIDATES_MAX_BYTES,
     check_in_batch_collisions,
     derive_slugs,
     page_refs,
+    plan_reconciliation,
     validate_candidates_schema,
     validate_ontology,
     validate_refs,
@@ -654,6 +657,46 @@ def apply(args: argparse.Namespace) -> int:
                     "silently re-point at the pre-existing page of that slug",
                     error="DROPPED_CANDIDATE_STILL_REFERENCED",
                     violations=still_referenced)
+
+            # ★ G3 — supersede reconciliation. NOT FLAG-GATED: by authoring
+            # `supersedes: [[D1]]` the operator has ALREADY asserted D1 is superseded,
+            # and leaving its status untouched would fire the vault's own drift rule.
+            # An opt-in flag would make the headline invariant conditional on a flag.
+            #
+            # `--no-reconcile` is the OPT-OUT, and it refuses the WHOLE BATCH: writing
+            # the pages WITHOUT the patch would silently break G3 and turn the opt-out
+            # into a footgun that leaves the vault non-strict-clean.
+            supersede_targets = sorted({
+                t for c in kept
+                for t in (c.get("edges") or {}).get("supersedes", [])})
+            if supersede_targets and args.no_reconcile:
+                raise ExtractionParseError(
+                    "the batch supersedes existing pages; --no-reconcile refuses it "
+                    "WHOLE rather than writing pages whose targets keep a status the "
+                    "vault's drift rule contradicts",
+                    error="REQUIRES_STATUS_RECONCILIATION",
+                    violations=[{"target": t} for t in supersede_targets])
+            reconcile_plan = plan_reconciliation(
+                kept, config=ctx.config,
+                target_status=load_target_statuses(
+                    repo, args.vault, supersede_targets),
+                target_class=db_classes)
+
+            # G1 SELF-CHECK ON OUR OWN WRITE: the value we are about to patch in must
+            # be in the target class's enum. The v2 bug (`status: superseded` on a
+            # `requirement`) would be caught HERE even if it slipped past the config.
+            enums = {p["class"]: p["enum"]
+                     for p in ctx.ontology.get("properties", [])
+                     if p["field"] == "status"}
+            for row in reconcile_plan:
+                enum = enums.get(row["page_class"])
+                if enum is not None and row["to"] not in enum:
+                    raise ExtractionParseError(
+                        f"the reconciliation would author a status outside the class "
+                        f"enum — the drift rule and the ontology disagree",
+                        error="ONTOLOGY_VIOLATION",
+                        violations=[{"kind": "status", "class": row["page_class"],
+                                     "detail": f"`{row['to']}` not in {enum}"}])
         except ExtractionParseError as exc:
             return emit(envelope_from_parse_error(exc), exit_code=4)
 
@@ -672,6 +715,29 @@ def apply(args: argparse.Namespace) -> int:
                 "kind": str(cand["class"]),
                 "path": path.relative_to(ctx.vault_root).as_posix(),
                 "action": action, "scope": "vault", "slug": slug,
+            })
+
+        # The reconciliation patches — AFTER the new pages exist, so a failure here
+        # never leaves a target marked superseded by a page that does not exist.
+        reconciled: list[dict[str, Any]] = []
+        page_paths = load_page_paths(
+            repo, args.vault, [r["slug"] for r in reconcile_plan])
+        for row in reconcile_plan:
+            rel = page_paths.get(row["slug"])
+            if rel is None:
+                continue
+            target_path = ctx.vault_root / rel
+            backup = backup_page(ctx.vault_root, target_path)
+            old_value, new_value = patch_frontmatter_scalar(
+                target_path, "status", str(row["to"]))
+            reconciled.append({**row, "from": old_value, "path": rel,
+                               "backup": backup})
+            # ★ G5: the PATCHED page goes into the manifest too. A mutated file whose
+            # DB row still carries the old hash is a `hash-mismatch` — a lint issue we
+            # would have CREATED while fixing another one.
+            written.append({
+                "kind": row["page_class"], "path": rel, "action": "updated",
+                "scope": "vault", "slug": row["slug"],
             })
 
         manifest = {
@@ -735,6 +801,7 @@ def apply(args: argparse.Namespace) -> int:
         "typed_dirs": ctx.typed_dirs,
         "written": written,
         "dropped": dropped,
+        "reconciled": reconciled,
         "indexed": index_result,
         "manifest": manifest,
         "validation": {

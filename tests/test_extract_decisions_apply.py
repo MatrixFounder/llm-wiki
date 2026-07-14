@@ -879,3 +879,204 @@ def test_bad_RANGE_refused_via_a_DB_LOOKUP(
         "the target resolves only through the DB — a batch-only range check would "
         "have accepted this edge")
     assert list((v / "decisions").glob("*.md")) == []
+
+
+# --------------------------------------------------------------------------- #
+# ★ G3 — supersede reconciliation, DRIFT-RULE-DRIVEN
+# --------------------------------------------------------------------------- #
+
+
+def _seed_typed(v: Path, db: Path, subdir: str, slug: str, cls: str, status: str) -> None:
+    (v / subdir).mkdir(exist_ok=True)
+    (v / subdir / f"{slug}.md").write_text(
+        f"---\ntype: {cls}\nslug: {slug}\nstatus: {status}\n"
+        f"title: Старое решение\n---\n# Старое\n\nТекст.\n", encoding="utf-8")
+    _reindex(v, db)
+
+
+def test_supersedes_RECONCILES_the_target_status_from_the_DRIFT_RULE(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ G3, and it is GUARANTEED to be needed, not hypothetical: without the patch,
+    cybos's own rule `{class: decision, edge: superseded-by, expect_status: superseded}`
+    fires and the vault is no longer `--strict`-clean.
+
+    The value comes from the RULE (`expect_status`), never from a literal — v2
+    hardcoded `superseded` and thereby authored a G1 violation on a `requirement`,
+    whose enum has no such member.
+    """
+    import frontmatter
+
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "accepted")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"], extra=["--ingest"])
+    assert code == 0, env
+
+    assert len(env["reconciled"]) == 1
+    row = env["reconciled"][0]
+    assert (row["slug"], row["from"], row["to"]) == ("dec-staroe", "accepted", "superseded")
+
+    patched = frontmatter.loads(
+        (v / "decisions" / "dec-staroe.md").read_text(encoding="utf-8"))
+    assert patched.metadata["status"] == "superseded"
+    # the body is re-attached BYTE-IDENTICALLY — we edited one scalar, not the page
+    assert "# Старое\n\nТекст." in patched.content
+    assert patched.metadata["title"] == "Старое решение"
+
+    # ★ G5: the PATCHED page is in the manifest. A mutated file whose DB row keeps the
+    # old hash is a `hash-mismatch` — a lint issue we would have CREATED.
+    assert "decisions/dec-staroe.md" in {e["path"] for e in env["manifest"]["written"]}
+
+    # ...and a BACKUP exists: an escalation that cannot be undone is not safe.
+    assert (v / row["backup"]).is_file()
+
+
+def test_a_forbid_status_shaped_rule_patches_NOTHING(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ M-9 — the shape NEITHER v2 NOR v3 caught, and it is reachable from CONFIG.
+
+    `DriftRule` carries exactly one of `expect_status` / `forbid_status`. An operator
+    may legitimately declare the FORBID shape for `(decision, superseded-by)`. Then
+    `expect_status is None` and THERE IS NO VALUE TO PATCH TO — `forbid_status` says
+    what a status must NOT be, which does not determine what it SHOULD be.
+
+    Same branch as "no rule at all": patch nothing, and do not invent a value.
+    """
+    import frontmatter
+
+    v = _vault(tmp_path / "v", override={
+        "drift_rules": [
+            {"class": "decision", "edge": "superseded-by",
+             "forbid_status": ["proposed", "accepted"]},
+        ]})
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "accepted")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"])
+    assert code == 0, env
+    assert env["reconciled"] == []
+    assert frontmatter.loads(
+        (v / "decisions" / "dec-staroe.md").read_text(encoding="utf-8")
+    ).metadata["status"] == "accepted"        # untouched
+
+
+def test_a_PROTECTED_status_REFUSES_the_batch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ Superseding a REJECTED decision is a semantic contradiction the OPERATOR must
+    resolve — overwriting `rejected` with `superseded` would DESTROY that fact.
+
+    And the protected set is DERIVED FROM CONFIG, not hardcoded (hardcoding `rejected`
+    would be v2's disease a third time): a class's `forbid_status` rules enumerate the
+    statuses the vault still treats as LIVE (cybos: `invalidated-by` forbids
+    [proposed, accepted]). A status OUTSIDE that live set is one the operator already
+    resolved.
+
+    A SKIP would be wrong too: it leaves the `lifecycle-drift` finding standing and
+    BREAKS the property. Refuse — exit 4, zero writes.
+    """
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "rejected")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"])
+    assert code == 4
+    assert env["error"] == "REQUIRES_STATUS_RECONCILIATION"
+    assert env["violations"][0]["status"] == "rejected"
+    assert list((v / "decisions").glob("*.md")) == [v / "decisions" / "dec-staroe.md"]
+
+
+def test_no_reconcile_REFUSES_THE_WHOLE_BATCH(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--no-reconcile` is the OPT-OUT, and it refuses the batch WHOLE.
+
+    Writing the pages WITHOUT the patch would silently break G3 — the target keeps a
+    status its own vault's drift rule contradicts — and turn the opt-out into a
+    footgun that leaves the vault non-strict-clean. An opt-out that quietly damages the
+    invariant is worse than no opt-out.
+    """
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "accepted")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"], extra=["--no-reconcile"])
+    assert code == 4
+    assert env["error"] == "REQUIRES_STATUS_RECONCILIATION"
+    assert list((v / "decisions").glob("*.md")) == [v / "decisions" / "dec-staroe.md"]
+
+
+def test_an_already_reconciled_target_is_a_NOOP(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Idempotent: a target already at `expect_status` is not re-patched, and no
+    gratuitous Class-A edit is made to a page that was never drifting."""
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "superseded")
+
+    before = (v / "decisions" / "dec-staroe.md").read_bytes()
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"])
+    assert code == 0, env
+    assert env["reconciled"] == []
+    assert (v / "decisions" / "dec-staroe.md").read_bytes() == before   # byte-identical
+
+
+def test_the_PRECONDITION_is_the_rules_own_firing_condition_not_a_decision_set(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ v3's BUG, PINNED — and this test exists because a MUTATION found it missing.
+
+    v3 fixed the reconciliation VALUE (read it from `expect_status`) but left the
+    PRECONDITION hardcoded as `{proposed, accepted}` — a DECISION-specific set. cybos
+    also declares `{class: workflow, edge: superseded-by, expect_status: superseded}`,
+    and `workflow`'s enum is [draft, active, deprecated, superseded]. An `active`
+    workflow is not in `{proposed, accepted}`, so v3 would NEVER PATCH IT and the drift
+    rule would fire anyway. v2's bug, one field to the left.
+
+    The precondition is the drift rule's OWN firing condition (`_health_rules.py`):
+    a scalar text status that differs from `expect_status`. Nothing about decisions in
+    it.
+
+    A `decision` may supersede a `workflow` — cybos's `supersedes.to` includes it — so
+    this is reachable, not contrived.
+
+    MUT: `if status not in {"proposed", "accepted"}: continue` ⇒ RED. (Run: it was
+    GREEN against every other test in this file, which is how the gap was found.)
+    """
+    import frontmatter
+
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "workflows", "wf-staryi", "workflow", "active")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["wf-staryi"]})],
+                       p["source_hash"])
+    assert code == 0, env
+    assert len(env["reconciled"]) == 1
+    row = env["reconciled"][0]
+    assert (row["page_class"], row["from"], row["to"]) == (
+        "workflow", "active", "superseded")
+    assert frontmatter.loads(
+        (v / "workflows" / "wf-staryi.md").read_text(encoding="utf-8")
+    ).metadata["status"] == "superseded"

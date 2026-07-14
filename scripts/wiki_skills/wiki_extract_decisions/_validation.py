@@ -334,6 +334,109 @@ def validate_ontology(
             error="ONTOLOGY_VIOLATION", violations=violations)
 
 
+def plan_reconciliation(
+    candidates: list[dict[str, Any]],
+    *,
+    config: LayoutConfig,
+    target_status: dict[str, str],
+    target_class: dict[str, str],
+) -> list[dict[str, Any]]:
+    """★ G3 — the supersede reconciliation plan. DRIFT-RULE-DRIVEN, NEVER HARDCODED.
+
+    A `supersedes` edge must reconcile the target's `status`, or the vault's own drift
+    rule (`{class: decision, edge: superseded-by, expect_status: superseded}`) fires
+    and it is no longer `--strict`-clean. G3 is GUARANTEED to be needed, not
+    hypothetical.
+
+    ★★ THE TWO BUGS THIS FUNCTION EXISTS TO NOT REPEAT — both were written, both were
+    caught, and both are the same mistake one field apart:
+
+      v2 hardcoded `status: superseded` — and that VIOLATES G1. `supersedes` is legal
+         `requirement → requirement`, and the requirement enum is
+         [draft, approved, implemented, dropped]: THERE IS NO `superseded`. The fix for
+         G3 authored the exact contradiction G1 exists to prevent.
+
+      v3 fixed the VALUE but left the PRECONDITION hardcoded as {proposed, accepted} —
+         a decision-specific set. `workflow`'s enum is [draft, active, deprecated,
+         superseded], so v3 would NEVER patch a workflow and drift would fire anyway.
+
+    So BOTH come from config:
+      value        = the matching rule's `expect_status`
+      precondition = THE DRIFT RULE'S OWN FIRING CONDITION (`_health_rules.py:290-325`):
+                     a SCALAR text status that differs from `expect_status`. An absent
+                     or non-scalar status never drifts, so it is never patched — no
+                     gratuitous Class-A edit.
+
+    ⚠️ A `forbid_status`-SHAPED RULE PATCHES NOTHING (plan-review M-9). `DriftRule`
+    carries exactly ONE of `expect_status` / `forbid_status`, and an operator may
+    legitimately declare the forbid shape for `(class, superseded-by)`. Then
+    `expect_status is None` and THERE IS NO VALUE TO PATCH TO — `forbid_status` says
+    what a status must NOT be, which does not determine what it SHOULD be. Same branch
+    as "no rule at all". This is the shape neither v2 nor v3 caught, and it is
+    reachable from CONFIG, not from code.
+
+    ★ THE PROTECTED-STATUS REFUSAL, ALSO DERIVED FROM CONFIG. Superseding a REJECTED
+    decision is a semantic contradiction: the operator already moved past it, and
+    overwriting `rejected` with `superseded` would DESTROY that fact. But which
+    statuses are "already moved past"? Hardcoding `{rejected}` would be v2's disease a
+    third time. So it is derived: **a class's `forbid_status` rules enumerate the
+    statuses the vault still considers LIVE** (cybos: `invalidated-by` forbids
+    [proposed, accepted] — i.e. those are the states an incident may still void). A
+    status OUTSIDE that live set is one the operator has already resolved, and the rail
+    refuses the batch (REQUIRES_STATUS_RECONCILIATION) rather than paper over it.
+
+    STATED BOUNDARY: when a class declares NO `forbid_status` rule at all, there is no
+    live-set signal, and every drift-firing status is patched (cybos `workflow` is such
+    a class). That is a real gap in what config can tell us, and it is named here
+    rather than left to be discovered. Returning nothing there would be worse: drift
+    would fire and the vault would not be strict-clean.
+    """
+    rules = {
+        (r.page_class, r.edge): r for r in config.drift_rules
+        if r.edge == "superseded-by"
+    }
+    live_by_class: dict[str, set[str]] = {}
+    for r in config.drift_rules:
+        if r.forbid_status:
+            live_by_class.setdefault(r.page_class, set()).update(r.forbid_status)
+
+    plan: list[dict[str, Any]] = []
+    protected: list[dict[str, Any]] = []
+    for cand in candidates:
+        for target in (cand.get("edges") or {}).get("supersedes", []):
+            cls = target_class.get(target)
+            if cls is None:
+                continue                     # not a page we can see — G2's surface
+            rule = rules.get((cls, "superseded-by"))
+            if rule is None or rule.expect_status is None:
+                continue                     # no rule, or the forbid shape ⇒ NO PATCH
+            status = target_status.get(target)
+            if not isinstance(status, str) or not status:
+                continue                     # absent/non-scalar ⇒ never drifts
+            if status == rule.expect_status:
+                continue                     # already reconciled — idempotent
+
+            live = live_by_class.get(cls)
+            if live is not None and status not in live:
+                protected.append({
+                    "target": target, "page_class": cls, "status": status,
+                    "detail": f"`{target}` is a `{cls}` with status `{status}`, which "
+                              f"this vault does not treat as live "
+                              f"(live: {sorted(live)}). Superseding it would DESTROY "
+                              f"that status. Resolve it by hand."})
+                continue
+
+            plan.append({"slug": target, "page_class": cls, "field": "status",
+                         "from": status, "to": rule.expect_status})
+
+    if protected:
+        raise ExtractionParseError(
+            f"{len(protected)} supersede target(s) carry a status the operator must "
+            f"adjudicate",
+            error="REQUIRES_STATUS_RECONCILIATION", violations=protected)
+    return plan
+
+
 def page_refs(page_text: str, config: LayoutConfig) -> list[str]:
     """Every ref target the LAYOUT'S OWN `ref_extraction` rules find in the rendered
     page — slugified exactly as `reindex._body_refs` does.

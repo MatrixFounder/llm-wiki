@@ -14,14 +14,18 @@ disagrees with the code it gates.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import os
+import re
+import shutil
 import tempfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import frontmatter
+from ruamel.yaml import YAML
 
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
 from scripts.wiki_skills._common import sanitize_markdown_text
@@ -108,6 +112,58 @@ def render_page(
         f"— {cite}\n"
     )
     return str(frontmatter.dumps(frontmatter.Post(body, **fm)))
+
+
+_FM_SPLIT = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n(.*)\Z", re.DOTALL)
+
+
+def patch_frontmatter_scalar(path: Path, key: str, value: str) -> tuple[str, str]:
+    """Patch ONE frontmatter scalar in place. Returns `(old, new)`.
+
+    ★ THE COMMENT-PRESERVING RUAMEL SANDWICH (TASK 058). The page is Class A — the
+    OPERATOR'S — and we are editing it. A `frontmatter.dumps()` round-trip would
+    silently reorder keys, drop comments, re-quote strings and re-wrap long lines: a
+    diff the operator never asked for, in a file they own. So: split the frontmatter
+    block off, round-trip ONLY that block through ruamel, and re-attach the body
+    BYTE-IDENTICALLY.
+
+    Editing one scalar means editing one scalar.
+    """
+    text = path.read_text(encoding="utf-8")
+    m = _FM_SPLIT.match(text)
+    if m is None:
+        raise ValueError("page has no frontmatter block to patch")
+    block, body = m.group(1), m.group(2)
+
+    rt = YAML(typ="rt")
+    rt.preserve_quotes = True
+    rt.width = 4096                      # never re-wrap an operator's line
+    data = rt.load(block + "\n")
+    old = str(data.get(key, ""))
+    data[key] = value
+
+    buf = io.StringIO()
+    rt.dump(data, buf)
+    new_block = buf.getvalue().rstrip("\n")
+
+    # the body is re-attached verbatim — not re-rendered
+    tmp = path.with_suffix(".md.patch.tmp")
+    tmp.write_text(f"---\n{new_block}\n---\n{body}", encoding="utf-8")
+    os.replace(tmp, path)
+    return old, value
+
+
+def backup_page(vault_root: Path, path: Path) -> str:
+    """Byte-exact copy into `.wiki/backups/` before we touch a Class-A page.
+
+    The reconciliation patch is an ESCALATION — the rail modifying a page it did not
+    write. An escalation that cannot be undone is not a safe escalation."""
+    dest_dir = vault_root / ".wiki" / "backups"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = dest_dir / f"{path.stem}.{stamp}.md.bak"
+    shutil.copy2(path, dest)
+    return dest.relative_to(vault_root).as_posix()
 
 
 def write_page(

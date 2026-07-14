@@ -176,6 +176,46 @@ def resolve_target_classes(
     return {str(r["slug"]): str(r["cls"]) for r in rows if r["cls"]}
 
 
+def load_target_statuses(
+    repo: Any, vault_id: str, slugs: list[str]
+) -> dict[str, str]:
+    """slug → its AUTHORED `status` scalar, for G3's precondition.
+
+    Only a SCALAR text status is read (`json_type(...) = 'text'`) — the SAME predicate
+    the drift rule itself uses (`_health_rules.py:311`). An absent status, or a
+    non-scalar one (`status: [superseded]` json_extract's to the TEXT `["superseded"]`
+    and would phantom-match), NEVER drifts — so it must never be patched either.
+    Reading it with a different predicate than the rule fires on is how a "fix" comes
+    to edit a page that was never drifting."""
+    if not slugs:
+        return {}
+    placeholders = ",".join("?" for _ in slugs)
+    rows = repo._connect().execute(
+        f"SELECT slug, CAST(json_extract(frontmatter_json, '$.status') AS TEXT) AS st "
+        f"FROM pages "
+        f"WHERE vault_id = ? AND slug IN ({placeholders}) "
+        f"  AND json_type(frontmatter_json, '$.status') = 'text'",
+        (vault_id, *slugs),
+    ).fetchall()
+    return {str(r["slug"]): str(r["st"]) for r in rows}
+
+
+def load_page_paths(repo: Any, vault_id: str, slugs: list[str]) -> dict[str, str]:
+    """slug → vault-relative `file_path`. The column is `file_path` (never
+    `source_path`) — going through the index rather than a filesystem search is what
+    makes this work on an iCloud vault with Cyrillic, spaces and `.icloud`
+    placeholders."""
+    if not slugs:
+        return {}
+    placeholders = ",".join("?" for _ in slugs)
+    rows = repo._connect().execute(
+        f"SELECT slug, file_path FROM pages "
+        f"WHERE vault_id = ? AND slug IN ({placeholders})",
+        (vault_id, *slugs),
+    ).fetchall()
+    return {str(r["slug"]): str(r["file_path"]) for r in rows}
+
+
 def count_open_commitments(repo: Any, vault_id: str) -> int:
     """Requirements carrying no `implemented-by` edge — reported as DATA, exit 0.
 
