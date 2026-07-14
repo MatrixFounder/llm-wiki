@@ -1080,3 +1080,38 @@ def test_the_PRECONDITION_is_the_rules_own_firing_condition_not_a_decision_set(
     assert frontmatter.loads(
         (v / "workflows" / "wf-staryi.md").read_text(encoding="utf-8")
     ).metadata["status"] == "superseded"
+
+
+def test_the_candidate_denominator_does_NOT_count_a_PATCHED_page(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """★ A DENOMINATOR THAT LIES — caught by reading the live envelope, not by a test.
+
+    `written` is the MANIFEST list: everything we touched, because G5 requires every
+    touched page to be indexed (a mutated file whose DB row keeps the old hash is a
+    `hash-mismatch` we would have created). A page patched by G3 is something we
+    TOUCHED but did not EXTRACT.
+
+    Counting it as a written CANDIDATE reported `submitted: 2, written: 3` — an
+    arithmetic impossibility, in the one envelope whose entire job is honest
+    denominators. `candidates_written` is now frozen before the patched pages join the
+    manifest list.
+
+    MUT: `"candidates_written": len(written)` ⇒ RED.
+    """
+    v = _vault(tmp_path / "v")
+    db = tmp_path / "x.db"
+    _seed_typed(v, db, "decisions", "dec-staroe", "decision", "accepted")
+
+    p = _prepared(capsys, v, db)
+    code, env = _apply(capsys, v, db,
+                       [_cand(edges={"supersedes": ["dec-staroe"]})],
+                       p["source_hash"], extra=["--ingest"])
+    assert code == 0, env
+
+    val = env["validation"]
+    assert val["candidates_submitted"] == 1
+    assert val["candidates_written"] == 1          # NOT 2 — the patched page is not ours
+    assert len(env["reconciled"]) == 1
+    # ...and the manifest still carries BOTH (G5: every page we touched is indexed)
+    assert len(env["manifest"]["written"]) == 2

@@ -14,7 +14,7 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**18 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**19 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
 
 - *Construct* — `wiki-import` (the unified external-source on-ramp **and per-source
   engine** — URL/HTML/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/thread/transcript →
@@ -24,7 +24,19 @@ event graph, cited RAG answers, and a verification layer.
   + `--diagrams`/`--no-concepts` modifiers; content-type via `--kind`, layout via config —
   orthogonal; `wiki-import-article` is a back-compat alias),
   `wiki-extract-concepts` (densify an indexed source; concept pages carry a derived
-  `BEGIN-AUTO:mentions` ledger — TASK 047), `wiki-index-upsert` (index one
+  `BEGIN-AUTO:mentions` ledger — TASK 047),
+  `wiki-extract-decisions` (TASK 063 / RFC-004 — the **typed-knowledge extraction rail**:
+  a summarised note → `decision`/`requirement`/`risk` pages + forward edges. `prepare`
+  emits the **ontology contract** (roster · edge domain/range · per-class status enums)
+  and PREFLIGHTS G4 (the layout must map the classes **AND** its read globs must SEE the
+  write dir — a page the walker cannot see is a page `wiki-lint` is *structurally
+  incapable* of reporting); `apply` validates every candidate against that contract
+  BEFORE any write (violation ⇒ exit 4, **zero** files) and reconciles supersede targets
+  from the layout's OWN `drift_rules`. Anti-fabrication is a MECHANISM: an empty
+  extraction is SUCCESS, `source_quote` must be verbatim, and there is no escape hatch.
+  Config-driven via the cascading `extract_decisions:` block in `.wiki/sync.yaml`;
+  `wiki-sync`/`wiki-import` emit a **dispatch marker**, never an LLM call),
+  `wiki-index-upsert` (index one
   file), `wiki-sync` (TASK 046 — a batch **DRIVER**: `scan` classifies a zone and
   delegates each distil source to `wiki-import` per a per-folder `.wiki/sync.yaml`
   `summarize:` config; ready notes → `wiki-index-upsert`; no inline summarise/convert),
@@ -53,10 +65,14 @@ event graph, cited RAG answers, and a verification layer.
   rebuildability gate); Class C = minimal DB-only operational state. The DB never holds
   knowledge the markdown doesn't.
 - **Decision-17 (deterministic plumbing).** The LLM-shaped skills (`wiki-query`,
-  `wiki-verify-multi`, `wiki-extract-concepts`, `wiki-sync`) carry **no `import
-  anthropic`** — Python does retrieval/validation/filing in a `prepare`/`apply`
-  contract; the calling orchestrator owns the reasoning step. Every CLI emits one JSON
-  envelope + a stable exit code.
+  `wiki-verify-multi`, `wiki-extract-concepts`, `wiki-extract-decisions`, `wiki-sync`,
+  `wiki-import`) carry **no `import anthropic`** *and no `from anthropic`* — Python does
+  retrieval/validation/filing in a `prepare`/`apply` contract; the calling orchestrator
+  owns the reasoning step. Every CLI emits one JSON envelope + a stable exit code.
+  Config-driven auto-invocation is expressed as a **dispatch marker** in the envelope
+  (`wiki-sync`/`wiki-import` → `wiki-extract-decisions`), never as an inline call — the
+  marker is **omitted, not `false`**, when disabled. Gated over the whole population
+  (`tests/test_extract_decisions_dispatch.py`), not per-diff.
 - **Schema = `user_version 7`** (`sql/wiki-index-v2.sql`). A vN→vN+1 bump is a Class-B
   rebuild (delete `*.db*` → `wiki-init --register-existing` → `wiki-reindex --full`),
   never an in-place ALTER. Default posture is **zero-DDL** — filter/feature work rides

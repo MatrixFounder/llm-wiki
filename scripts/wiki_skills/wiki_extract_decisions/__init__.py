@@ -719,6 +719,13 @@ def apply(args: argparse.Namespace) -> int:
 
         # The reconciliation patches — AFTER the new pages exist, so a failure here
         # never leaves a target marked superseded by a page that does not exist.
+        #
+        # ★ The candidate count is FROZEN before the patched pages join `written`.
+        # `written` is the MANIFEST list (everything we touched, G5), and a patched page
+        # is something we touched but did NOT extract. Counting it as a written
+        # CANDIDATE would report `submitted: 2, written: 3` — a denominator that lies,
+        # and in the one envelope whose whole job is honest denominators.
+        candidates_written = len(written)
         reconciled: list[dict[str, Any]] = []
         page_paths = load_page_paths(
             repo, args.vault, [r["slug"] for r in reconcile_plan])
@@ -810,7 +817,7 @@ def apply(args: argparse.Namespace) -> int:
             "properties_checked": len(ctx.ontology.get("properties", [])),
             "links_checked": links_checked,
             "candidates_submitted": len(candidates),
-            "candidates_written": len(written),
+            "candidates_written": candidates_written,
             "candidates_dropped": len(dropped),
         },
         "vacuous_validation": not ctx.ontology,
