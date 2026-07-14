@@ -68,10 +68,40 @@ guarantee at a time.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import sys
 from pathlib import Path
+from typing import Any
 
-from scripts.wiki_skills._common import emit
+from scripts.wiki_index.factory import make_repo
+from scripts.wiki_index.layout_config import (
+    LayoutConfig,
+    resolve_layout_config,
+    resolve_typed_write_dir,
+    typed_write_refusal,
+)
+from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
+from scripts.wiki_index.sync_config import (
+    _EXTRACT_DECISIONS_DIR_FIELDS,
+    ExtractDecisionsDirs,
+)
+from scripts.wiki_skills._common import build_repo_config, emit
+from scripts.wiki_skills._resummarize import resolve_extract_decisions
+
+from ._db import (
+    check_idempotency,
+    count_open_commitments,
+    load_existing_page_slugs,
+    load_typed_pages,
+)
+
+# The v1 roster — read from the CONFIG dataclass, never restated. `dirs` and the
+# roster are the same three classes by construction, so they cannot drift apart.
+ROSTER: tuple[str, ...] = _EXTRACT_DECISIONS_DIR_FIELDS
+
+# 10 MiB, the house cap (`wiki_extract_concepts._sourcing`). Refuse, never truncate.
+MAX_SOURCE_BODY_BYTES = 10 * 1024 * 1024
 
 # ★ ZERO, and it is a safety property — see the module docstring. The precedent
 # (`wiki_extract_concepts._validation._CANDIDATE_COUNT_MIN`) is 1; cloning it here
@@ -147,42 +177,225 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _read_source_bounded(path: Path) -> bytes:
+    """O_NOFOLLOW + fstat-then-bounded-read (the house pattern,
+    `wiki_extract_concepts._sourcing._read_file_bounded`).
+
+    Two things at once: it closes the TOCTOU between `stat().st_size` and a later
+    `read_bytes()`, and O_NOFOLLOW makes a symlink swapped in AFTER the containment
+    check raise ELOOP instead of redirecting the read outside the vault. Raises
+    `ValueError` on the size cap, `OSError` on ELOOP/ENOENT."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        if os.fstat(fd).st_size > MAX_SOURCE_BODY_BYTES:
+            raise ValueError("source too large")
+        data = os.read(fd, MAX_SOURCE_BODY_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(data) > MAX_SOURCE_BODY_BYTES:
+        raise ValueError("source too large")
+    return data
+
+
+def _ontology_contract(config: LayoutConfig, roster: tuple[str, ...]) -> dict[str, Any]:
+    """The layout's ontology, projected into the contract the REASON step obeys.
+
+    Scoped to the roster: an edge whose domain AND range both fall outside the three
+    classes this rail extracts is not a rule the reasoning step can violate, and
+    shipping it would just be noise in the prompt. `closed_types` is carried through
+    verbatim — it is the layout's statement about whether an unknown class is an
+    error, and that is not ours to soften."""
+    onto = config.ontology
+    if onto is None:
+        return {}
+    rset = set(roster)
+    return {
+        "closed_types": onto.closed_types,
+        "edges": [
+            {"edge": e.edge, "from": list(e.frm), "to": list(e.to)}
+            for e in onto.edges
+            if rset & set(e.frm) or rset & set(e.to)
+        ],
+        "properties": [
+            {"class": p.page_class, "field": p.field, "enum": list(p.enum)}
+            for p in onto.properties
+            if p.page_class in rset
+        ],
+    }
+
+
 def prepare(args: argparse.Namespace) -> int:
-    """STUB (063-04) → LOGIC (063-05).
+    """Deterministic recon + the ontology contract + the `--source-hash` handshake.
 
-    Will: resolve the layout + the cascading `extract_decisions` policy for the
-    source note's folder; PREFLIGHT G4 (the layout maps the typed classes AND
-    `resolve_typed_write_dir` finds a walker-visible folder for each — refusing
-    with LAYOUT_CANNOT_INDEX_CLASSES / TYPED_DIR_NOT_COVERED_BY_LAYOUT rather
-    than writing a page nothing will ever index); hash the source body; check
-    `source_state` for `is_unchanged`; load the known typed pages and existing
-    slugs; and emit the ONTOLOGY CONTRACT the REASON step must obey — the class
-    roster, every edge's domain/range, every class's `status` enum — plus the
-    house-standard denominators (`validation: {roster_size, edges_checked,
-    properties_checked, links_checked}`) and a `vacuous_validation: true` marker
-    when the layout declares no `ontology:` block at all.
+    NO LLM CALL (Decision-17). The orchestrator takes this envelope, reads the
+    source body, and synthesises candidates in its OWN context.
 
-    That marker is TASK 061's lesson, applied before the first line of logic: a
-    validator that examined NOTHING must not look green.
+    ★ THE G4 PREFLIGHT — refuse EARLY, refuse LOUDLY. Two refusals, both exit 2,
+    both raised before any reasoning is requested:
+
+      LAYOUT_CANNOT_INDEX_CLASSES     the layout's `type_mapping` maps NONE of the
+                                      roster (karpathy, stock obsidian-personal)
+      TYPED_DIR_NOT_COVERED_BY_LAYOUT the configured folder is invisible to the
+                                      layout's read globs — the SAME helper, and the
+                                      SAME code, `wiki-config validate` renders
+
+    Refusing costs the operator one message. NOT refusing costs them a decision page
+    that is written, never indexed, and raises no lint issue — because a
+    glob-invisible page is never discovered by the walk, so nothing downstream can
+    report it. That is why the gate is here and not after the write.
+
+    ★ `vacuous_validation` — TASK 061's lesson, applied to ourselves before the
+    first line of logic. `dev-project` maps the typed classes but declares NO
+    `ontology:` block, so G1 there degrades to a roster-only check and G3 is moot.
+    The delta property still holds (both sides vacuous) — this is not a lie. But a
+    green `apply` there means "validated almost nothing", and that must be
+    ANNOUNCED, not inferred. Hence the denominators AND the explicit marker:
+
+        a validator that examined nothing must not look green.
     """
+    vault_root = args.vault_root.resolve()
+    source_page = str(args.source_page)
+
+    if Path(source_page).is_absolute():
+        return emit({
+            "action": "refused", "error": "INVALID_SOURCE_PATH",
+            "message": "--source-page must be vault-relative, not absolute",
+        }, exit_code=2)
+
+    source_path = vault_root / source_page
+
+    # ORDER, deliberately: existence FIRST (so a plain typo gets SOURCE_NOT_FOUND,
+    # not the alarming INVALID_SOURCE_PATH — they are different diagnoses and the
+    # operator acts differently on each), then CONTAINMENT, and only then the read.
+    # Nothing is read before containment: `is_file()` is a stat, and a traversal or
+    # a symlink pointing outside still stats True and is refused on the next line.
+    if not source_path.is_file():
+        return emit({
+            "action": "refused", "error": "SOURCE_NOT_FOUND",
+            "message": f"source page not found: {source_page}",
+        }, exit_code=2)
+    try:
+        validate_inside_vault(source_path, vault_root)
+    except (PathTraversalError, OSError):
+        return emit({
+            "action": "refused", "error": "INVALID_SOURCE_PATH",
+            "message": "--source-page resolves outside the vault",
+        }, exit_code=2)
+
+    config = resolve_layout_config(vault_root)
+
+    # ---- G4 preflight, conjunct 1: does the layout ROUTE the typed classes? ----
+    roster = tuple(c for c in ROSTER if c in config.type_mapping)
+    if not roster:
+        return emit({
+            "action": "refused", "error": "LAYOUT_CANNOT_INDEX_CLASSES",
+            "layout": config.layout,
+            "missing_classes": list(ROSTER),
+            "message": (
+                f"layout '{config.layout}' maps NONE of {list(ROSTER)} in its "
+                f"`type_mapping`, so a typed page written here would be indexed "
+                f"under no class at all. Add them to `type_mapping` in "
+                f".wiki/layout.yaml, or use a layout that has them "
+                f"(cybos, dev-project)."),
+        }, exit_code=2)
+
+    # ---- the per-folder policy (cascading) → the folder names ----
+    # A vault with NO `extract_decisions` block resolves to `None`, and that is not
+    # a refusal: an explicit `prepare` invocation is consent. What `None` means is
+    # "never AUTO-dispatched" (the 063-17 marker), so the defaults apply here.
+    policy = resolve_extract_decisions(source_path, vault_root=vault_root)
+    dirs_cfg = policy.dirs if policy is not None else ExtractDecisionsDirs()
+    dirs = {cls: str(getattr(dirs_cfg, cls)) for cls in roster}
+
+    # ---- G4 preflight, conjunct 2: can the WALKER SEE the write dirs? ----
+    # ONE helper, TWO callers: `wiki-config validate` (063-03) calls the same
+    # `typed_write_refusal`, so the two can never disagree about the same vault.
+    # ONE authority decides (`resolve_typed_write_dir`); the other only EXPLAINS
+    # (`typed_write_refusal`). An earlier draft asked the explainer first and then
+    # `assert`ed the decider agreed — which turns any disagreement between them
+    # into a crash instead of an envelope, and hides the disagreement behind an
+    # assertion the operator can do nothing with.
+    typed_dirs: dict[str, str] = {}
+    for cls, dir_name in dirs.items():
+        write_dir = resolve_typed_write_dir(
+            config, dir_name=dir_name, source_rel=source_page)
+        if write_dir is None:
+            refusal = typed_write_refusal(
+                config, dir_name=dir_name, source_rel=source_page) or "unmatched"
+            return emit({
+                "action": "refused", "error": "TYPED_DIR_NOT_COVERED_BY_LAYOUT",
+                "layout": config.layout, "page_class": cls,
+                "dir_name": dir_name, "reason": refusal,
+                "message": (
+                    f"the folder configured for `{cls}` is not visible to the "
+                    f"walker of layout '{config.layout}' (reason: {refusal}). A "
+                    f"page written there would never be indexed and would raise no "
+                    f"lint issue. `wiki-config validate` reports the same finding."),
+            }, exit_code=2)
+        typed_dirs[cls] = write_dir
+
+    # ---- the source: bounded read + hash + idempotency ----
+    try:
+        body_bytes = _read_source_bounded(source_path)
+    except ValueError:
+        return emit({
+            "action": "refused", "error": "SOURCE_TOO_LARGE",
+            "message": f"source page exceeds the {MAX_SOURCE_BODY_BYTES}-byte cap",
+        }, exit_code=2)
+    except OSError:
+        return emit({
+            "action": "refused", "error": "SOURCE_NOT_FOUND",
+            "message": "source page could not be opened (symlink swap or I/O error)",
+        }, exit_code=2)
+
+    source_hash = hashlib.sha256(body_bytes).hexdigest()
+    source_slug = Path(source_page).stem
+
+    repo = make_repo(build_repo_config(
+        args.vault, vault_root=vault_root, db_path_flag=args.db_path))
+    try:
+        is_unchanged = check_idempotency(repo, args.vault, source_slug, source_hash)
+        known = load_typed_pages(repo, args.vault, roster)
+        existing_slugs = load_existing_page_slugs(repo, args.vault)
+        open_commitments = count_open_commitments(repo, args.vault)
+    finally:
+        repo.close()
+
+    ontology = _ontology_contract(config, roster)
+    drift = [
+        {"class": r.page_class, "edge": r.edge,
+         "expect_status": r.expect_status, "forbid_status": list(r.forbid_status or ())}
+        for r in config.drift_rules if r.page_class in roster
+    ]
+
     return emit({
-        "action": "stub",
-        "source_page": args.source_page,
-        "source_slug": "",
-        "source_hash": "",
-        "is_unchanged": False,
-        "ontology": {},
-        "known_typed_pages": [],
-        "existing_page_slugs": [],
-        "typed_dirs": {},
+        "action": "prepared",
+        "vault_id": args.vault,
+        "source_slug": source_slug,
+        "source_path": source_page,          # RELATIVE — CWE-209, never the abs path
+        "source_hash": source_hash,
+        "is_unchanged": is_unchanged,
+        "layout": config.layout,
+        "roster": list(roster),
+        "ontology": ontology,
+        "drift_rules": drift,
+        "typed_dirs": typed_dirs,
+        "known_typed_pages": known,
+        "existing_page_slugs": existing_slugs,
+        "open_commitments": open_commitments,   # DATA, never a defect (Q-063-4)
+        # ★ The house-standard denominators. `roster_size` is what G1 CAN check;
+        # the other three are what the ONTOLOGY gives it to check WITH. Zeros here
+        # with a green apply mean "validated almost nothing" — which is why the
+        # marker below exists rather than leaving the reader to infer it.
         "validation": {
-            "roster_size": 0,
-            "edges_checked": 0,
-            "properties_checked": 0,
-            "links_checked": 0,
+            "roster_size": len(roster),
+            "edges_checked": len(ontology.get("edges", [])),
+            "properties_checked": len(ontology.get("properties", [])),
+            "links_checked": len(existing_slugs),
         },
-        "vacuous_validation": True,
+        "vacuous_validation": not ontology,
     })
+
 
 
 def apply(args: argparse.Namespace) -> int:

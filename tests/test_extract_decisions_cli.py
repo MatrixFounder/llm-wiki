@@ -42,24 +42,39 @@ def test_no_subcommand_is_a_usage_error() -> None:
     assert exc.value.code == 2  # argparse's own usage exit
 
 
-def test_prepare_stub_envelope(
+def test_prepare_on_a_bare_vault_refuses_rather_than_stubbing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """STUB-FIRST STEP 4: this test was `test_prepare_stub_envelope` in 063-04 and is
+    REWRITTEN to assert real behaviour, not deleted — the E2E shape survives, its
+    expectations become true.
+
+    A bare `tmp_path` has no `WIKI_SCHEMA.md`, so `resolve_layout_config` defaults to
+    **karpathy** (its documented back-compat fallback), which maps ZERO typed classes.
+    The real rail therefore REFUSES with exit 2 where the stub happily emitted an
+    envelope — and that difference IS the bead: the preflight fires before any
+    reasoning is requested, on the most default vault there is.
+
+    The envelope is checked for the operator-facing essentials: which layout, and
+    what to do about it.
+
+    (The source file is created because `prepare` checks the SOURCE before the
+    layout: the path you passed is the most immediate thing that can be wrong, and a
+    typo deserves SOURCE_NOT_FOUND rather than a lecture about `type_mapping`.)
+    """
+    src = tmp_path / "meetings" / "m1.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("# Protocol\n", encoding="utf-8")
+
     code, env = _run(capsys, [
         "prepare", "--vault", "v", "--vault-root", str(tmp_path),
         "--source-page", "meetings/m1.md",
     ])
-    assert code == 0
-    assert env["action"] == "stub"
-    assert env["source_page"] == "meetings/m1.md"
-    # ★ The vacuity marker exists from the FIRST line of the rail, not as an
-    # afterthought: a validator that examined nothing must not look green
-    # (TASK 061's lesson, applied before there is anything to validate).
-    assert env["vacuous_validation"] is True
-    assert env["validation"] == {
-        "roster_size": 0, "edges_checked": 0,
-        "properties_checked": 0, "links_checked": 0,
-    }
+    assert code == 2
+    assert env["error"] == "LAYOUT_CANNOT_INDEX_CLASSES"
+    assert env["layout"] == "karpathy"
+    assert "type_mapping" in env["message"]
+    assert "cybos" in env["message"]        # names a layout that WOULD work
 
 
 def test_apply_stub_envelope(
