@@ -50,6 +50,7 @@ from scripts.wiki_index.layout_config import (
     resolve_layout_config,
 )
 from scripts.wiki_index.security import PathTraversalError, validate_inside_vault
+from scripts.wiki_skills._resummarize import resolve_extract_decisions
 from scripts.wiki_skills._common import atomic_write_text, build_repo_config, emit
 from scripts.wiki_skills.wiki_extract_concepts._validation import _is_valid_slug
 
@@ -996,7 +997,7 @@ def apply(args: argparse.Namespace) -> int:
             "names": [s["name"] for s in skipped if s.get("reason") == reason],
             "hint": f"Concept pages were NOT written ({reason}): {_LOSSY_DROP_HINTS[reason]}",
         })
-    return emit({
+    envelope: dict[str, Any] = {
         "action": "imported" if ok else "partial",
         "vault_id": args.vault,
         "note": note_rel,
@@ -1011,7 +1012,40 @@ def apply(args: argparse.Namespace) -> int:
         "warnings": warnings,
         "index": idx_env,
         "concepts": cc_env,
-    }, exit_code=0 if ok else EXIT_DEP_MISSING)
+    }
+    marker = _extract_decisions_marker(vault_root, note_rel)
+    if marker is not None:
+        envelope["extract_decisions"] = marker
+    return emit(envelope, exit_code=0 if ok else EXIT_DEP_MISSING)
+
+
+def _extract_decisions_marker(
+    vault_root: Path, note_rel: str
+) -> dict[str, Any] | None:
+    """TASK 063 / R-063-3′(a) — the DISPATCH MARKER, and Decision-17 survives it.
+
+    `wiki-import` does NOT call the extraction rail. It emits a marker; the
+    ORCHESTRATOR runs `wiki-extract-decisions` as a second step — exactly how
+    `wiki-sync` already delegates to `wiki-import`. The CLI stays deterministic
+    plumbing on both sides of the REASON step.
+
+    ★ ABSENT, NOT `false`. When the config does not enable the rail, the key is OMITTED
+    from the envelope entirely. A marker that is ALWAYS PRESENT invites an orchestrator
+    to act on it — and `"extract_decisions": {"enabled": false}` reads, to a model
+    skimming an envelope, like a thing it could switch on. Omission cannot be misread.
+    """
+    policy = resolve_extract_decisions(vault_root / note_rel, vault_root=vault_root)
+    if policy is None or not policy.enabled:
+        return None
+    return {
+        "tool": "wiki-extract-decisions",
+        "source": note_rel,
+        "dirs": {
+            "decision": policy.dirs.decision,
+            "requirement": policy.dirs.requirement,
+            "risk": policy.dirs.risk,
+        },
+    }
 
 
 # --------------------------------------------------------------------------- CLI

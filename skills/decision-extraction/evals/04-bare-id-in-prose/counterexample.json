@@ -1,0 +1,10 @@
+[
+  {
+    "class": "decision",
+    "title": "Отменить прежнее решение по очередям",
+    "status": "accepted",
+    "body": "Это отменяет DEC-004.",
+    "source_quote": "Мы решили отменить прежнее решение по очередям.",
+    "edges": {"supersedes": ["dec-ocheredi"]}
+  }
+]

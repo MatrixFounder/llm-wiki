@@ -45,6 +45,7 @@ from scripts.wiki_skills._sync import (
     transcript_variant_skips,
 )
 from scripts.wiki_skills._resummarize import (
+    resolve_extract_decisions,
     ACTIONABLE,
     Caches,
     apply_policy,
@@ -230,6 +231,15 @@ def _build_entries(
                 "diagrams": sm.diagrams,
                 "concepts": sm.extract_concepts,
             }
+            # TASK 063 — the typed-knowledge DISPATCH MARKER, resolved through the SAME
+            # per-folder cascade `summarize:` uses. ABSENT when not enabled (never
+            # `false`): a marker that is always present invites an orchestrator to act
+            # on it. `wiki-sync` does not run the rail — the orchestrator does, after
+            # `wiki-import` has filed the note (Decision-17).
+            ed = resolve_extract_decisions(
+                cand.path, vault_root=vault_root, caches=caches)
+            if ed is not None and ed.enabled:
+                entry["delegate"]["extract_decisions"] = True
         if d.action != "skip":
             # Reuse the hoisted hash for ACTIONABLE; a non-ACTIONABLE non-skip
             # (`upsert`/ready-note) was NOT hoisted, so hash it once here (TASK 051

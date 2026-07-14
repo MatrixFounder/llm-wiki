@@ -27,3 +27,14 @@ wiki-sync scan <zone> --vault <id> --dry-run
 Exit codes: `0` ok · `2` precondition (zone missing / outside vault / no vault
 root) · `6` config-invalid (`.wiki/sync.yaml`). See `skills/wiki-sync/SKILL.md`
 for the plan-JSON schema + the full flag/exit reference.
+
+## The typed-knowledge dispatch flag (TASK 063)
+
+A `scan` entry's `delegate` block may carry `"extract_decisions": true`, resolved from
+the per-folder `.wiki/sync.yaml` cascade.
+
+When it is true, after `wiki-import` has filed the note, **run the extraction rail on
+that note** (`wiki-extract-decisions prepare` → REASON → `apply`). `wiki-sync` does not
+run it — it plans the work; the orchestrator does it.
+
+The flag is absent when the rail is not enabled for that folder.
