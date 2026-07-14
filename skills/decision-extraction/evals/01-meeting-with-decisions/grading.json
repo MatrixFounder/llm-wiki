@@ -1,0 +1,5 @@
+{
+  "why": "The happy path, and it is graded rather than merely parsed: the protocol has «Ключевые решения», НФТ and «Реестр рисков», and the extraction must BIND to those sections instead of free-forming. The class census is asserted because the first hand pass on a real protocol silently dropped 4 of 9 decision rows and 5 of 9 risks — a loss no validator can catch, since every page it DID write was perfectly valid.",
+  "expect": {"decision": 2, "requirement": 1, "risk": 1},
+  "edges": {"implements": 1}
+}

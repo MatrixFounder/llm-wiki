@@ -1,0 +1,5 @@
+{
+  "why": "G3 — a `supersedes` edge onto an EXISTING page. The rail reconciles that page's `status` from the layout's OWN drift rule (never a hardcoded `superseded`), so the vault stays `--strict`-clean. The edge target here is an existing slug (`dec-ocheredi`), NOT an in-batch title — the runner must handle both, exactly as the REASON step does.",
+  "expect": {"decision": 1},
+  "edges": {"supersedes": 1}
+}

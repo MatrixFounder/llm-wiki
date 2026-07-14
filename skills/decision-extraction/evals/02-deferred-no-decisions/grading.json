@@ -1,0 +1,6 @@
+{
+  "why": "★ THE NEGATIVE FIXTURE, and it is NOT optional. A transcript that explicitly DEFERS («отложили», «вернёмся к этому», «ничего не решать без данных»). The correct extraction is `[]` and the correct outcome is exit 0, `no_candidates`. Without this fixture `CANDIDATE_COUNT_MIN = 0` is a constant no eval ever exercises, and the whole anti-fabrication posture rests on a value nothing proves is reachable. If an empty extraction were a failure, the cheapest green run would be to invent a decision — and to invent the quote that grounds it.",
+  "expect": {},
+  "edges": {},
+  "empty_is_success": true
+}

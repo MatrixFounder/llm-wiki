@@ -1,0 +1,9 @@
+{
+  "why": "★ THE EDGE THE FIRST LIVE RUN FORGOT. `decision --causes--> risk` answers 'what risk does this decision CREATE?'. A decision IS a trade-off, and the thing it traded away is usually already sitting in the risk registry — the protocol here states BOTH halves («паспорта ≤ 5 сек» AND «≤ 5 сек может требовать GPU») and nothing links them. The first dogfood produced 28 faithful pages and 4 edges; this fixture is the reason that cannot happen silently again. It also pins the OTHER half of the procedure: the decision implements the requirement, so BOTH edge kinds appear on ONE page.",
+  "expect": {"decision": 1, "requirement": 1, "risk": 1},
+  "edges": {"implements": 1, "causes": 1},
+  "edge_targets_by_title": {
+    "implements": ["Паспорт распознаётся не дольше 5 секунд"],
+    "causes": ["Требование 5 секунд может потребовать GPU"]
+  }
+}

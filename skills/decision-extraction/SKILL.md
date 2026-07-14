@@ -56,32 +56,67 @@ client paused on a domestic-software-registry question, a partner action item wi
 due date. Every one was a genuine open question with a real client. Inventing a closure
 for any of them would have been a lie written into the knowledge base.
 
-## ★★ BARE IDs IN PROSE ARE REFS — never cite one
+## ★★ BARE IDs IN PROSE CAN BE REFS — and `prepare` tells you whether they are
 
-On the `cybos` layout, `ref_extraction` ships an `id-ref` rule:
+**This is LAYOUT-DEPENDENT, and `prepare` hands you the answer. Read it; do not assume.**
+
+```jsonc
+"ref_rules": ["id-ref", "markdown-link", "wiki-link"],
+"bare_ids_are_refs": true          // ← cybos: TRUE.  obsidian-personal: FALSE.
+```
+
+When `bare_ids_are_refs` is **true**, the layout ships an `id-ref` rule:
 
 ```
 \b(ADR-\d+|R-\d+(?:\.\d+)*|task-\d+(?:-\d+)*|DEC-\d+|INC-\d+|RISK-\d+|REQ-\d+|HYP-\d+)\b
 ```
 
-So a sentence in your **body text** like:
+and a sentence in your **body text** like
 
 > Это отменяет **DEC-004**.
 
-**creates a reference** that must resolve — and if `dec-004` is not a page, `apply`
-refuses the batch on G2 (`UNRESOLVED_REF`).
+**CREATES A REFERENCE** that must resolve. If `dec-004` is not a page, `apply` refuses the
+batch on G2 (`UNRESOLVED_REF`). On a layout where it is **false**, the same sentence is
+just prose and creates nothing.
 
-**Rule: reference other pages ONLY via wikilinks to slugs that exist or are in this
-same batch. Never cite a bare ID.**
+*(An earlier version of this SKILL stated the cybos answer as universal — and it was
+therefore **wrong on the operator's own vault**, which has no `id-ref` rule. Worse, the
+REASON step had no way to find out, because `prepare` never said. A contract that omits a
+rule you are judged against is not a contract. Now it says.)*
+
+**The rule, and it is safe on EVERY layout:**
+
+> **Reference other pages ONLY via wikilinks to slugs that exist or are in this same
+> batch. Never cite a bare ID.**
 
 ```
-✗  Это отменяет DEC-004.
-✓  Это отменяет [[dec-ocheredi]].          ← the slug exists (prepare listed it)
-✓  Это отменяет прежнее решение по очередям. ← or just say it in words
+✗  Это отменяет DEC-004.                    ← a ref on cybos; dead text elsewhere
+✓  Это отменяет [[dec-ocheredi]].            ← the slug exists (prepare listed it)
+✓  Это отменяет прежнее решение по очередям.  ← or just say it in words
 ```
 
-Without this rule, well-written prose bounces the batch repeatedly and the rail feels
-*flaky* — a correct gate producing an unusable product.
+A bare ID is never *better* than a wikilink, and on the layouts where it bites, it makes
+well-written prose bounce the batch repeatedly — the rail is then experienced as *flaky*:
+a correct gate producing an unusable product.
+
+## ★ SLUGS ARE DERIVED FROM YOUR TITLES — and the strategy is in the contract
+
+```jsonc
+"slug_strategy": "transliterate"     // cybos
+"slug_strategy": "preserve-unicode"  // obsidian-personal
+```
+
+You never choose a slug. The layout derives it from the **title** you write.
+
+**⚠️ Under `transliterate`, DISTINCT Russian titles can COLLAPSE onto ONE slug.**
+`Критерии приёмки` and `Критерии приемки` — `ё` versus `е`, spelled inconsistently in the
+same protocol, as real transcripts do — both become `kriterii-priemki`. The second page
+would **silently overwrite** the first: one file, one DB row, one requirement gone, and
+**zero lint issues**, because the file that survives is perfectly valid.
+
+`apply` refuses that batch (`IN_BATCH_SLUG_COLLISION`) rather than lose it. **Give your
+candidates distinct, specific titles** — the slug is a consequence of the title, so a
+vague title is a slug collision waiting to happen.
 
 ## The candidate shape
 

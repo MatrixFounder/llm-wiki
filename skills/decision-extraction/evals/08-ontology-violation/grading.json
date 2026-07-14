@@ -1,0 +1,6 @@
+{
+  "why": "★ THERE IS NO `mitigates`. A decision that REDUCES a risk is the single most natural edge to want — and the ontology does not have it. `closed_types` is on, so authoring it is an ONTOLOGY_VIOLATION and refuses the WHOLE batch (exit 4, zero files). Without this fixture the SKILL's warning is prose; with it, the refusal is demonstrated. The `expected.json` shows the correct move: state the mitigation IN THE BODY, as prose, and author no edge.",
+  "expect": {"decision": 1, "risk": 1},
+  "edges": {},
+  "counterexample": {"refused_with": "ONTOLOGY_VIOLATION"}
+}

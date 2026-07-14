@@ -1,0 +1,6 @@
+{
+  "why": "★ MEETING PARTICIPANTS ARE NOT KNOWLEDGE — the operator's own standing rule (attendees belong in `participants:` frontmatter, never as pages in the graph). The `wiki-import` pyramid guard does NOT cover this rail, so the ROSTER is the only enforcement point on this path: `class: person` is not in {decision, requirement, risk} and the batch is refused. The fixture's input has a `participants:` block precisely so the temptation is present and the refusal is real.",
+  "expect": {"decision": 1},
+  "edges": {},
+  "counterexample": {"refused_with": "ONTOLOGY_VIOLATION"}
+}

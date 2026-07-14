@@ -12,7 +12,7 @@
     "status": "accepted",
     "body": "Очередь избыточна для MVP: заменяется прямым вызовом.",
     "source_quote": "Мы решили отказаться от Kafka в MVP — очередь заменяется прямым вызовом.",
-    "edges": {"implements": ["latency-pod-200ms"]}
+    "edges": {"implements": ["Latency под 200ms"]}
   },
   {
     "class": "decision",

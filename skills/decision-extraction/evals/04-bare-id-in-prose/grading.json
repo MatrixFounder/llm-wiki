@@ -1,0 +1,18 @@
+{
+  "why": "★ BARE IDs IN PROSE ARE REFS — **but only on layouts that ship an `id-ref` rule**, and THAT is the lesson this fixture teaches by running on both. On `cybos` the rule exists, so «Это отменяет DEC-004» in BODY TEXT creates a reference that must resolve (and `find_orphan_links` scans `page_entity_refs` with NO ref_type filter, so there is nowhere for it to hide at lint time). On `obsidian-personal` — the OPERATOR'S LIVE VAULT — there is no such rule, and the same sentence is inert prose. The SKILL used to state the cybos answer as universal, which made it WRONG on the operator's own vault; `prepare` now emits `bare_ids_are_refs` so the REASON step can read the truth instead of assuming it. The wikilink form in `expected.json` is correct on BOTH — a bare ID is never better than a wikilink.",
+  "expect": {
+    "decision": 1
+  },
+  "edges": {
+    "supersedes": 1
+  },
+  "counterexample": {
+    "refused_with": "UNRESOLVED_REF",
+    "on_layouts": [
+      "cybos"
+    ],
+    "accepted_on": [
+      "para-typed"
+    ]
+  }
+}

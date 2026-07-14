@@ -1,0 +1,10 @@
+{
+  "why": "★ THE LAYOUT-DEPENDENT FIXTURE. `ё` and `е` are written inconsistently in real Russian protocols — this one contains BOTH spellings, exactly as a real transcript does. Under `transliterate` (cybos) `Критерии приёмки` and `Критерии приемки` collapse to ONE slug: the second page SILENTLY OVERWRITES the first. One file, one DB row, one requirement GONE, and ZERO lint issues — the count is right. Under `preserve-unicode` (the operator's live layout) they stay distinct and both are correct. BOTH behaviours are right; the point is that the gate is LAYOUT-DEPENDENT, and an eval set that ran on only one layout would prove nothing about the other.",
+  "expect": {"decision": 2},
+  "edges": {},
+  "counterexample": {
+    "refused_with": "IN_BATCH_SLUG_COLLISION",
+    "on_layouts": ["cybos"],
+    "accepted_on": ["para-typed"]
+  }
+}

@@ -447,10 +447,23 @@ def prepare(args: argparse.Namespace) -> int:
         for r in config.drift_rules if r.page_class in roster
     ]
 
+    # ★ THE REF GRAMMAR IS PART OF THE CONTRACT — derived, never restated.
+    #
+    # Whether a BARE ID in prose («это отменяет DEC-004») creates a reference is
+    # LAYOUT-DEPENDENT: `cybos` ships an `id-ref` rule, `obsidian-personal` does NOT.
+    # The SKILL used to hardcode the cybos answer, which made the rule wrong on the
+    # operator's own vault — and there was no way for the REASON step to find out,
+    # because `prepare` never told it. A contract that omits a rule the caller is
+    # judged against is not a contract.
+    ref_rules = sorted({r.kind for r in config.ref_extraction})
+
     return emit({
         "action": "prepared",
         "vault_id": args.vault,
         "source_slug": source_slug,
+        "ref_rules": ref_rules,
+        "bare_ids_are_refs": "id-ref" in ref_rules,
+        "slug_strategy": config.slug_strategy,
         "source_path": source_page,          # RELATIVE — CWE-209, never the abs path
         "source_hash": source_hash,
         "is_unchanged": is_unchanged,
