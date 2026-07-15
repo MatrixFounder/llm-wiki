@@ -19,6 +19,7 @@
     { "pattern": "obsidian rename", "description": "renames a vault note (T2)" },
     { "pattern": "obsidian history:restore", "description": "overwrites a note from history (T2)" },
     { "pattern": "obsidian sync:restore", "description": "restores from Obsidian Sync (T2)" },
+    { "pattern": "obsidian-selection apply", "description": "replaces the selected text in a note via the agent-bridge plugin (T2 mutation, confirm-gated)" },
     { "pattern": "obsidian dev:", "description": "Obsidian developer commands (T3)" },
     { "pattern": "obsidian devtools", "description": "opens the Obsidian devtools (T3)" },
     { "pattern": "obsidian plugin:", "description": "install/enable/disable plugins (T3)" },

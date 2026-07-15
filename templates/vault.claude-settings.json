@@ -32,6 +32,8 @@
       "Bash(obsidian recents*)",
       "Bash(obsidian-active-note *)",
       "Bash(obsidian-active-note)",
+      "Bash(obsidian-selection read*)",
+      "Bash(obsidian-selection)",
       "Bash(obsidian search *)",
       "Bash(obsidian search:context *)",
       "Bash(obsidian backlinks *)",

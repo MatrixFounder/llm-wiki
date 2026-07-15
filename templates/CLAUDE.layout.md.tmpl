@@ -255,7 +255,11 @@ wiki-reindex --full --vault ${vault_id}
   the current folder without copying a path)? `obsidian-active-note folder` derives the open
   note's containing folder (`--descriptor "X"` → a named note's folder); a folder is a
   **folder-WIDE** blast radius, so echo `folder ← note` and confirm before the folder-wide op
-  (a root note scopes the WHOLE vault). Routes
+  (a root note scopes the WHOLE vault). **Read/edit the live SELECTION:** *"what text is
+  selected"* / *"edit the selected text"* → `obsidian-selection read` (bare — auto-detects the
+  vault) returns the highlighted text; `obsidian-selection apply` (confirm-gated) replaces it via
+  the least-privilege `agent-bridge` plugin (never `obsidian eval`; plugin absent → exit 9, no
+  silent fallback). Routes
   knowledge lookups to `wiki-search` first and, after any app-side mutation of this
   vault, refreshes the index in the same turn (`wiki-index-upsert` after a content edit;
   **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030, the

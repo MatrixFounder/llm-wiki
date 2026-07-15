@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Dev-only type-check harness for the agent-bridge Obsidian plugin (TASK 068 / R-068-1). Not published; the plugin itself ships as manifest.json + main.js (CommonJS, no bundler).",
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

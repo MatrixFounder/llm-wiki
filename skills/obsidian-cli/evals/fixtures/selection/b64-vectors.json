@@ -1,0 +1,18 @@
+[
+  {
+    "plaintext": "Привет",
+    "expected_b64": "0J/RgNC40LLQtdGC"
+  },
+  {
+    "plaintext": "she said \"hello\"",
+    "expected_b64": "c2hlIHNhaWQgImhlbGxvIg=="
+  },
+  {
+    "plaintext": "a\\d-style backslash: C:\\Users\\d",
+    "expected_b64": "YVxkLXN0eWxlIGJhY2tzbGFzaDogQzpcVXNlcnNcZA=="
+  },
+  {
+    "plaintext": "line one\nline two\n",
+    "expected_b64": "bGluZSBvbmUKbGluZSB0d28K"
+  }
+]

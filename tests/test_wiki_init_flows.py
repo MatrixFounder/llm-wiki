@@ -175,7 +175,8 @@ def test_register_existing_vendor_pi(tmp_path):
     assert "rm -rf" in pats
     # security backstop (TASK 043 audit): fullAuto auto-runs safe bash, so the destructive /
     # eval-adjacent obsidian surfaces the obsidian-cli skill flags T2/T3 MUST be gated here.
-    assert {"obsidian eval", "obsidian command", "obsidian delete"} <= pats
+    # `obsidian-selection apply` (TASK 068) is a T2 note mutation — gated like move/rename/delete.
+    assert {"obsidian eval", "obsidian command", "obsidian delete", "obsidian-selection apply"} <= pats
     # VERBATIM copy of the shipped template (JSON, not Template-substituted)
     tmpl = Path(__file__).resolve().parent.parent / "templates" / "vault.pi-permissions.json"
     assert perms.read_text(encoding="utf-8") == tmpl.read_text(encoding="utf-8")
