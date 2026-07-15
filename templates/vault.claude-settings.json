@@ -11,6 +11,8 @@
       "Bash(wiki-index-upsert *)",
       "Bash(wiki-index-render *)",
       "Bash(wiki-extract-concepts *)",
+      "Bash(wiki-extract-decisions *)",
+      "Bash(wiki-config *)",
       "Bash(wiki-append-log *)",
       "Bash(wiki-confirm *)",
       "Bash(wiki-alias *)",
