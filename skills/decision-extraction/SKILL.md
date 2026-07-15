@@ -219,6 +219,7 @@ a *quota*.
 | refusal | cause |
 |---|---|
 | `FIELD_QUOTE_NOT_IN_BODY` | the quote is not verbatim in the source |
+| `INJECTION_CANARY` | `title`/`body` carries a prompt-injection marker (a `<\|…\|>` / `[INST]` control token, a shouted `SYSTEM:` role directive, or an "ignore previous instructions" override) copied out of the untrusted source — **do not launder it into a typed page**. A verbatim `source_quote` is exempt (H-6) |
 | `ONTOLOGY_VIOLATION` | class not in the roster · edge domain/range · status not in the enum |
 | `UNRESOLVED_REF` | a wikilink or a **bare ID in prose** that resolves to nothing |
 | `IN_BATCH_SLUG_COLLISION` | two candidates whose titles yield the same slug — **give them distinct titles** |

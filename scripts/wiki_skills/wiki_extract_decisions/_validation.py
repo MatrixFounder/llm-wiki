@@ -26,6 +26,7 @@ import unicodedata
 from typing import Any
 
 from scripts.wiki_index.layout_config import LayoutConfig, _apply_slug_strategy
+from scripts.wiki_skills._common import scan_injection_canaries
 from scripts.wiki_source.parsing import extract_refs
 
 from ._errors import ExtractionParseError
@@ -166,6 +167,22 @@ def validate_candidates_schema(
                                    "detail": f"`{key}` contains a YAML delimiter or "
                                              f"a control character"})
 
+        # ★ H-6 (LLM01 indirect prompt injection). `title` and `body` are the model's OWN
+        # prose — they become the page H1, frontmatter, and body. A chat-template control
+        # token or an "ignore previous instructions" imperative there is the model PARROTING
+        # an injection out of the untrusted protocol into a typed knowledge page the graph
+        # then trusts. `source_quote` is DELIBERATELY exempt: it is verbatim source content,
+        # a legitimate security protocol may quote these markers, and it is escaped inert on
+        # egress. Scanned via the shared `_common.scan_injection_canaries`; value NEVER
+        # echoed (CWE-117) — the detail names the canary family only.
+        for key in ("title", "body"):
+            canary = scan_injection_canaries(str(cand[key]))
+            if canary is not None:
+                violations.append({
+                    "index": i, "kind": "injection_canary",
+                    "detail": f"`{key}` contains {canary} — a prompt-injection marker "
+                              f"copied out of the source, not decision content"})
+
         # ★ MECHANISM 2. No env escape is consulted — deliberately. Grep this package
         # for NO_QUOTE_CHECK: it is ABSENT, not merely unused.
         if _norm(str(cand["source_quote"])) not in body_norm:
@@ -205,6 +222,7 @@ def _error_code_for(violations: list[dict[str, Any]]) -> str:
     mechanism so an operator reading only the code still learns the real cause."""
     kinds = {v["kind"] for v in violations}
     for kind, code in (
+        ("injection_canary", "INJECTION_CANARY"),
         ("quote_not_in_body", "FIELD_QUOTE_NOT_IN_BODY"),
         ("unknown_field", "UNKNOWN_FIELD"),
         ("field_too_long", "FIELD_TOO_LONG"),

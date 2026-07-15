@@ -171,7 +171,7 @@ Capture stdout (manifest envelope, or `{extraction, index}` wrapper if
 |---|---|---|
 | 2 | `SOURCE_CHANGED_DURING_EXTRACTION` | source body changed mid-pipeline → instruct operator to re-run `/wiki-extract-concepts` (workflow loops; orchestrator does NOT auto-retry). |
 | 2 | `INVALID_CANDIDATES_PATH` / `SOURCE_NOT_FOUND` / `INVALID_SOURCE_PATH` / `INVALID_SOURCE_SLUG` / `SOURCE_TOO_LARGE` | forward envelope and STOP. |
-| 4 | `EXTRACTION_PARSE_ERROR` / `UNKNOWN_FIELD` / `FIELD_TOO_LONG` / `CANDIDATE_COUNT_OUT_OF_BOUNDS` / `FIELD_QUOTE_NOT_IN_BODY` / `CANDIDATES_TOO_LARGE` | the orchestrator's synthesis violated the contract. Forward envelope; STOP. (Fix the synthesis on next invocation; do NOT silently retry.) |
+| 4 | `EXTRACTION_PARSE_ERROR` / `UNKNOWN_FIELD` / `FIELD_TOO_LONG` / `CANDIDATE_COUNT_OUT_OF_BOUNDS` / `FIELD_QUOTE_NOT_IN_BODY` / `INJECTION_CANARY` / `CANDIDATES_TOO_LARGE` | the orchestrator's synthesis violated the contract. Forward envelope; STOP. (`INJECTION_CANARY` = a model-authored field carried a prompt-injection marker from the untrusted source — H-6; do NOT re-file it, drop the candidate.) Fix the synthesis on next invocation; do NOT silently retry. |
 | 5 | `PARTIAL_INDEX_FAILURE` | some pages indexed, some failed (`--ingest` only). `source_state` was NOT updated (C-1 invariant), so a clean re-run will retry. Surface the envelope; the operator decides whether to re-invoke. |
 | 6 | `MANIFEST_INVALID` | manifest schema violation (rare — manifest is built deterministically). Forward envelope; STOP. |
 

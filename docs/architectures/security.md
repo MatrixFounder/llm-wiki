@@ -113,6 +113,29 @@ conversion), so its security posture is explicit:
   are on the second-stage `wiki-extract-concepts`/`wiki-query` only) — so the executor
   MUST fence each raw/converted body with a sentinel **before** `summarizing-meetings`,
   not only at the extractor. File content is **never executed**.
+- **Write-side injection canary (H-6 item (c), 2026-07-15):** ingress fencing (above) is
+  advice to the model; the canary is a **mechanism**. Both typed-knowledge extraction rails
+  (`wiki-extract-concepts`, `wiki-extract-decisions`) run the shared
+  `_common.scan_injection_canaries` over the **model-authored** candidate fields
+  (`name`/`definition`, `title`/`body`) and REFUSE — `INJECTION_CANARY`, exit 4, **zero
+  files** — a chat-template control token (`<|…|>`/`[INST]`/`<<SYS>>`), a **line-leading**
+  all-caps `SYSTEM:` role directive, or an `ignore`/`disregard previous instructions`-style
+  override the model has **parroted** out of a hostile body. Refuse-don't-escape: a laundered
+  marker never reaches a clean `_concepts/`/typed page a later scoped synthesis would read back
+  as an instruction. ⚠️ **Precision over recall, deliberately** (this is defense-in-depth, not
+  the primary control): the imperative family is `ignore`/`disregard` + an injection-object
+  noun ONLY — `override`/`forget` + `context`/`rule` are ordinary CS/ML definitions
+  (`override the previous rule`, an `LSTM forget gate`) and were dropped after a **measured
+  7/8 false-positive rate** on a technical-definition set (vdd-adversarial 2026-07-15); the
+  role directive is **line-anchored** so a mid-sentence all-caps role word passes. The rarer
+  phrasings those exemptions let through are covered by the structural-token canaries +
+  classification + egress-sanitisation, not by inflating this family into a live FP source.
+  ★ The verbatim `source_quote` is **deliberately exempt** — it is proven-in-body source
+  content (a legitimate security article quotes these markers), is escaped inert on egress by
+  `sanitize_markdown_text`, and `_raw/` is already classification-quarantined (item (d)); a
+  quote scan would refuse the source's own evidence — the gate an operator routes around.
+  Value never echoed (CWE-117). This closes the last concrete H-6 fix-plan item (issue →
+  `mitigated`; the residual injection class is architecturally inherent to LLM01).
 - **Resource bounds + YAML anchor-bomb (SEC-A5 corrected — SEC-N3, the binding fix):**
   binaries are skipped by extension *before* any read; a `.md` over
   `WIKI_SYNC_MD_MAX_BYTES` (8 MiB) is **skipped (`oversize-source`) before

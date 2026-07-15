@@ -154,9 +154,14 @@ state and user preferences, not domain knowledge.
   in `docs/architectures/` (the Q-0XX per-task design rationale is in
   `docs/architectures/open-questions.md`).
 - `docs/KNOWN_ISSUES.md` — **auto-rendered Class-B ledger** (TASK 012 / R-X3) over
-  the per-issue Class-A sources in `docs/issues/*.md`. Regenerate with
-  `wiki-index-render --auto-indexes`; a manual edit is flagged by `wiki-lint`
-  (PW-Q drift guard). Holds the deferred items (perf SEV-1 set, the R-X1-*
+  the per-issue Class-A sources in `docs/issues/*.md`. After editing an issue file,
+  regenerate with **`wiki-reindex --full --vault obsidian-llm-wiki --vault-root docs`**
+  — it rebuilds the DB from the Class-A issue files AND auto-renders the ledger in one
+  consistent pass. ⚠️ Do NOT regenerate with a bare `wiki-index-render --auto-indexes`:
+  it renders whatever is in `.wiki/index.db`, which is frequently STALE (mtime-delta
+  indexing lags disk), so a render-only pass silently reverts every issue whose status
+  changed since the DB was last built. A manual edit of the ledger is flagged by
+  `wiki-lint` (PW-Q drift guard). Holds the deferred items (perf SEV-1 set, the R-X1-*
   residuals, R-X3-META-FILTER). Edit the per-issue files, never the ledger.
 - `docs/adr/ADR-001-wiki-ingest-integration.md` — Option I (Wrap + Index).
   **Superseded (TASK 047):** `wiki-enrich` + the vendored `wiki_ingest` were retired;
