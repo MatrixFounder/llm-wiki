@@ -75,7 +75,7 @@
 - **R-X1-OBS-WALK** [[r-x1-obsidian-multiglob-rewalk|obsidian-personal multi-glob subtree re-walk]] — severity `SEV-3`, status `fixed`, opened 2026-06-01
 - **R-X3-MF-SCAN** [[r-x3-metadata-filter-unindexed-scan|wiki-search metadata filter is an unindexed json_extract scan + filesort]] — severity `SEV-3`, status `open`, opened 2026-06-01
 - **P-030-DELTA-BULK** [[p-030-delta-bulk-ingest-per-file-txns|\`reindex_delta\` whole-vault bulk ingest keeps per-file transactions]] — severity `SEV-3`, status `open`, opened 2026-06-13
-- **DF-064-2** [[df-064-2-lint-near-duplicate-scan-is-quadratic|\`wiki-lint\`'s near-duplicate-concept scan is an unbounded O(n²) pairwise \`SequenceMatcher\` sweep]] — severity `SEV-3`, status `open`, opened 2026-07-14
+- **DF-064-2** [[df-064-2-lint-near-duplicate-scan-is-quadratic|\`wiki-lint\`'s near-duplicate-concept scan is an unbounded O(n²) pairwise \`SequenceMatcher\` sweep]] — severity `SEV-3`, status `fixed`, opened 2026-07-14
 
 ## quality
 
