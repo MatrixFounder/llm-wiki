@@ -8,11 +8,39 @@ severity: SEV-3
 slug: df-064-4-weak-model-extraction-recall-gap
 ---
 
-# `concept-extraction` on a weak model under-extracts: 9/11 on Haiku 4.5, and the two misses are RECALL, not junk
+# `concept-extraction` under-extracts on a weak model — RECALL, not junk (span defect FIXED; residual is model-breadth, not code)
 
-- **Symptom**: the TASK-064 eval set, run on **Haiku 4.5** (one fresh context per fixture, given only
-  `SKILL.md` and what `prepare` really emits, graded through the real validators + census), scores
-  **9 / 11**. The floor is recorded in `skills/concept-extraction/evals/README.md`.
+> ## ★ RESOLUTION (2026-07-15) — read this first; the sections below are the audit trail
+>
+> This issue was worked to conclusion over TASK 066. The arc, and why nothing more is scheduled:
+>
+> 1. **The number was never measured** — the "9/11 on Haiku" was produced BY HAND. TASK 066 built
+>    the instrument (`skills/concept-extraction/evals/harness.py` + `tests/test_concept_extraction_
+>    weak_model.py` + a stamped, committed artifact) and re-ran it: the real score was **7/11**, with
+>    **2 forbidden names** the "zero junk" claim had missed.
+> 2. **The dominant cause was NOT recall** — it was `source_span`: **9 of 13** failing runs were a
+>    bad line-range. The model was doing arithmetic on line numbers. `apply` now DERIVES the span from
+>    the already-verbatim quote (`source_span` is OPTIONAL). Result: **7/11 → 10/11**, CLEAN subset
+>    **2/3 → 3/3**, forbidden unchanged.
+> 3. **The residual recall gap is REAL but it is not a code defect.** A live go/no-go (Haiku vs Opus
+>    on 10 real notes) measured **~40% recall loss** — but it is **BREADTH** (a weak model finds fewer
+>    concepts across the board), **not** the look-alike case the original fix sketch aimed at. **No
+>    mechanical lever applies** (§"LIVE-CORPUS MEASUREMENT" shows the collision lever fires on almost
+>    none of the misses). The practical lever is **model choice**, and the instrument now *measures
+>    any model before it is trusted* — that IS the deliverable.
+>
+> **DECISION: no further code work is scheduled. Status stays `partially-fixed`, and the "partial" is
+> PERMANENT, not pending** — the actionable defect (span) is fixed and measured; the residual is a
+> property of the model that runs the rail, documented, not a bug awaiting a patch. The original
+> **"Fix sketch" below is REFUTED** (annotated in place). Anyone reopening it must clear the bar in
+> §"LIVE-CORPUS MEASUREMENT": a lever must be *measured on the harness*, against BOTH the fixtures and
+> a live-note sample — prompt text alone is refuted (fixture 09 already carries its answer in the
+> SKILL and the model still fails it).
+
+- **Symptom** *(original filing — the number is superseded; see RESOLUTION)*: the TASK-064 eval set,
+  run on **Haiku 4.5**, was reported at **9 / 11** by hand. The instrument later measured **7 / 11**
+  (and **10 / 11** after the span fix). The floor is recorded in
+  `skills/concept-extraction/evals/README.md`.
 
   | fixture | miss |
   |---|---|
@@ -42,15 +70,18 @@ slug: df-064-4-weak-model-extraction-recall-gap
   | that rule removed | 6/11 | **over**-extracted: 6 concepts where 2 belong (`Ретраи`, `Обработчик`, `Платёжный шлюз`) |
   | + theme-vs-prop table + count smell test | **9/11** | under-extracts on 03 / 09 |
 
-- **Fix sketch** — and it must be **measured, not reasoned**:
-  1. Fixture **09** is the harder one: two concepts whose names differ by a single letter, in
-     different sections. Likely needs an explicit *"walk the source's sections; a headed section
-     usually carries at most one concept"* instruction — but the last two SKILL edits each traded one
-     failure class for another, so **any change must be re-run through the Haiku harness before it is
-     believed.**
-  2. Consider promoting these to **`expected_fail` xfail tripwires** carrying `tracks: df-064-4`
-     (the `skills/wiki-import/evals/` convention), so an unexpected **xPASS** signals the gap closed
-     and the floor can be re-baselined — instead of the misses quietly becoming the norm.
+- **~~Fix sketch~~ — ⛔ REFUTED by measurement (see RESOLUTION + §"LIVE-CORPUS MEASUREMENT").**
+  Its own instruction — *"any change must be re-run through the Haiku harness before it is believed"*
+  — was the right test, and when the harness (which did not exist) was finally built and run, it
+  refuted the sketch:
+  1. ~~Fixture 09 needs a "one concept per section" instruction.~~ **The SKILL already carries fixture
+     09's exact expected names AND an explicit "extract BOTH", and the model fails anyway** — the
+     answer is in the prompt and prose is not the lever. And the LIVE gap is **breadth**, not the
+     look-alike case this bullet describes.
+  2. `expected_fail` xfail tripwires — **superseded** by the stronger gate TASK 066 shipped:
+     `tests/test_concept_extraction_weak_model.py` enforces a PER-FIXTURE floor against a stamped,
+     committed baseline (no fixture that passes may regress), which does everything the xfail
+     tripwire would and also catches junk-for-recall trades.
 
 - **Do not "fix" this by loosening the census.** A fixture that lowers its own `expect` to match what
   the model produced is how a recall gap becomes permanent and green.
