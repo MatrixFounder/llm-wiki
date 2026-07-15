@@ -138,7 +138,6 @@
       "Bash(obsidian delete * permanent*)",
       "Bash(obsidian publish:*)",
       "Edit(.claude/**)",
-      "Write(.claude/**)",
       "Read(**/.env)",
       "Read(**/*.pem)",
       "Read(**/id_rsa*)",
