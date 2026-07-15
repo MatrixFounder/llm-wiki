@@ -5,13 +5,20 @@ Not exposed outside scripts/wiki_skills/. Underscore prefix marks intent.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+# The repo root, resolved the same way as `wiki_index.layout_config._REPO_ROOT`
+# (scripts/wiki_skills/_common.py → wiki_skills → scripts → repo). Used to locate the
+# integrity manifest + the pinned skill contracts under the tree the CLIs run from
+# ("the repo IS the implementation"; skills/ is symlinked into user installs).
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # TASK 050 (R-2): the ONE identity-token shape, shared by the --orchestrator-id
 # validators (wiki-query / wiki-verify-multi / wiki-extract-concepts) and the
@@ -191,6 +198,240 @@ def scan_injection_canaries(text: str) -> str | None:
         if pattern.search(text):
             return label
     return None
+
+
+# --- H-5 (LLM supply-chain / stored prompt injection) — SKILL-CONTRACT INTEGRITY -----
+#
+# TASK 067, fix-plan option (a). The sibling of the H-6 canary above: H-6 refuses an
+# injection copied out of an untrusted SOURCE; H-5 detects tampering with the REASONING
+# CONTRACT ITSELF — a `skills/<name>/SKILL.md` that the orchestrator loads VERBATIM into its
+# LLM context (Decision-17: the prompt lives in Markdown, not Python, so pip never pins its
+# bytes). An edit to one of those files is a stored prompt injection honoured on the next run.
+#
+# ★ WHAT THIS BUYS — AND WHAT IT DOES NOT (be honest, per the issue). It does NOT stop a
+# malicious maintainer who edits the prompt AND re-pins the hash in one commit — that is a
+# branch-protection / CODEOWNERS problem, out of this framework's runtime scope. It DOES:
+#   * detect on-disk drift / corruption / non-committer tampering at INVOCATION time (the
+#     rail's `prepare` verifies BEFORE the "Load skill" step and SURFACES a non-`ok` status in
+#     the envelope; the workflow instructs the orchestrator to STOP on it, and — enforced in
+#     Python — `WIKI_STRICT_SKILL_INTEGRITY=1` makes `prepare` REFUSE, exit 2. ⚠️ Be precise:
+#     the DEFAULT is fail-open-loud (a `warnings` note, normal exit), NOT a code-enforced stop;
+#     the code-enforced stop is the strict env knob, and the workflow STOP is advisory prose the
+#     orchestrator is instructed to honour);
+#   * make any prompt change a VISIBLE `config/skill-integrity.sha256` diff a reviewer cannot
+#     miss, and make the repo's OWN test suite go RED on an un-re-pinned edit — a mechanical,
+#     always-on, vendor-neutral control (the option-(d) "SECURITY-review the change" intent,
+#     delivered without a git-specific hook).
+#
+# ★ ENROLMENT IS GREP-DERIVED + CROSS-CHECKED, NEVER A SINGLE HAND-LIST (the unenumerated-surface
+# guard — which, un-cross-checked, is only as complete as an author's memory to paste the marker,
+# the exact blind spot the H-5 review found in v1). TWO independent enrolments that must AGREE:
+#   (1) `discover_integrity_roster()` — the `SECURITY-SENSITIVE` marker grep (minus `_INTEGRITY_
+#       EXEMPT`) → drives the MANIFEST. The single source shared with the re-pin script (Decision-16).
+#   (2) `_DESIGNATED_VERBATIM_CONTRACTS` — a POSITIVE allow-list of the skills the orchestrator
+#       loads verbatim as a reasoning/safety contract, each WITH its load-site evidence. The test
+#       asserts every designated contract is pinned AND every marker'd file is designated-or-exempt,
+#       so a contract that lost its marker (dropped from (1)) still FAILS via (2), and a rail wired
+#       to `Skill({skill:X})` in a workflow but missing the marker FAILS the load-site test. A gap
+#       in either enrolment is caught by the other.
+#
+# ★ VALUE-FREE (CWE-117/209). Results carry the repo-relative PATH + hex hashes only — never a
+# byte of a file body. A hash is not a payload.
+_INTEGRITY_MARKER = "SECURITY-SENSITIVE"
+# Files carrying the marker that are NOT verbatim-loaded reasoning prompts, so pinning them
+# would conflate "reasoning-contract integrity" with "any doc edited" and churn on ordinary
+# edits. Each is named WITH its reason; the exemption is itself test-enforced (H-5 / R-067-2),
+# so this can never silently become a blanket "ignore the marker" hole.
+_INTEGRITY_EXEMPT: dict[str, str] = {
+    # The /wiki-verify-multi CLI operator reference. The verbatim-loaded prompt it points at —
+    # `wiki-verify` — IS pinned; this file only carries the marker as a cross-reference bullet.
+    "skills/wiki-verify-multi/SKILL.md": "CLI operator doc, not a verbatim-loaded prompt; "
+                                         "the prompt it references (wiki-verify) is pinned",
+    # The repo-agent index. It carries the marker as PROSE (it DESIGNATES contracts as
+    # SECURITY-SENSITIVE / SECURITY-label); it is not itself loaded verbatim as a contract.
+    "skills/.AGENTS.md": "repo-agent index that designates contracts; not a loaded-verbatim prompt",
+}
+
+# ★ THE POSITIVE ALLOW-LIST (enrolment cross-check (2)). Every `skills/<name>/SKILL.md` the
+# orchestrator loads VERBATIM as a reasoning or SAFETY contract — the high-blast-radius stored-
+# prompt-injection surface — keyed by name → its load-site evidence. The test asserts each is
+# pinned; if one loses its `SECURITY-SENSITIVE` marker (dropping it from the marker-roster) this
+# list still fails the run. Maintained deliberately: adding a verbatim-loaded contract here
+# WITHOUT pinning it fails the test, which is the point.
+#
+# ⚠️ SCOPE BOUNDARY (stated, per the H-5 review): this is the *reasoning/safety* surface, not
+# "every SKILL.md the orchestrator ever reads." Operator CLI-reference contracts
+# (`wiki-import`/`wiki-sync`/`wiki-search`/`wiki-config`/… SKILL.md) are loaded as command docs,
+# not as authored-knowledge or safety-tier prompts; pinning them would churn on every ordinary
+# CLI-doc edit for a far lower blast radius. They are a documented residual, NOT enrolled here.
+#
+# ★ KEYED BY REPO-RELATIVE PATH, NOT skill name — because a verbatim-loaded contract is NOT always
+# a `skills/<name>/SKILL.md`: the cycle-2 review (security MAJOR) found repo-owned contract content
+# also lives in `references/*.md`. Both file shapes are enrolled here + by the marker grep.
+#
+# ⚠️ REPO-OWNED ONLY. This pins contract files this repo AUTHORS (and symlinks into user installs).
+# STATED EXCLUSIONS (denominator honesty): (a) `summarizing-meetings` — the summarize REASON meta-
+# skill loaded verbatim by wiki-import/wiki-sync — is VENDORED (`Reference/…/Universal-skills/`, not
+# `skills/`), so its bytes change by upstream re-sync and it is governed by the VENDORING POLICY
+# (§7.4), not this manifest; (b) `skills/obsidian-cli/references/recipes.md` — composed PLAYBOOKS
+# whose "binding conventions" RESTATE the pinned SKILL.md targeting discipline; not an independent
+# safety authority (the tier authorities SKILL.md + command-reference.md ARE pinned); (c) operator
+# CLI-reference SKILL.md (`wiki-import`/`wiki-sync`/… command docs) — loaded as documentation, far
+# lower blast radius, high edit-churn.
+_DESIGNATED_VERBATIM_CONTRACTS: dict[str, str] = {
+    "skills/concept-extraction/SKILL.md":   "REASON contract — `Skill({skill:\"concept-extraction\"})`, wiki-extract-concepts Step 4",
+    "skills/decision-extraction/SKILL.md":  "REASON contract — `Skill({skill:\"decision-extraction\"})`, wiki-extract-decisions Step 4",
+    "skills/wiki-query-synthesis/SKILL.md": "REASON contract — `Skill({skill:\"wiki-query-synthesis\"})`, wiki-query Step 4",
+    "skills/wiki-verify/SKILL.md":          "REASON contract — `Skill({skill:\"wiki-verify\"})`, wiki-verify-multi critics",
+    "skills/obsidian-cli/SKILL.md":         "SAFETY contract — the T1/T2/T3 tier model (T3 eval/RCE ban) loaded verbatim; "
+                                            "skills/.AGENTS.md designates it same-class (H-5 review MAJOR-1)",
+    "skills/obsidian-cli/references/command-reference.md":
+                                            "SAFETY contract — the per-command T1/T2/T3 tier TABLE (normative-must-agree "
+                                            "with the SKILL.md model); a T3→T1 re-tag is unbacked by the model (cycle-2 MAJOR)",
+    "skills/wiki-import/references/reason-contract.md":
+                                            "REASON contract — the canonical REASON-step schema + the H-6 injection FENCE "
+                                            "(Hard Rule nonce sentinel) for wiki-import/wiki-sync; loaded verbatim (cycle-2 MAJOR)",
+}
+SKILL_INTEGRITY_MANIFEST = _REPO_ROOT / "config" / "skill-integrity.sha256"
+
+
+class SkillIntegrity(NamedTuple):
+    """The verdict of a skill-contract integrity check. ``status`` is one of
+    ``ok`` · ``drift`` · ``unpinned`` · ``manifest_unavailable``. ``skill`` is the
+    repo-relative path; ``expected`` / ``actual`` are hex sha256 or ``None``. No file body."""
+
+    status: str
+    skill: str
+    expected: str | None
+    actual: str | None
+
+
+def _sha256_file(path: Path) -> str | None:
+    """Hex sha256 of ``path``, or ``None`` if it cannot be read. Never raises."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _iter_contract_files() -> list[Path]:
+    """The two repo-owned contract file SHAPES the orchestrator loads verbatim: a skill's
+    `SKILL.md`, and a skill's `references/*.md` (the cycle-2 review found contract content —
+    the H-6 fence, the tier table — also lives there). Deliberately NOT `evals/`, not
+    `skills/.AGENTS.md` (an index), not a bare `**/*.md` walk (which would churn on prose docs).
+    A marker'd file OUTSIDE these shapes is caught by the completeness test, which greps ALL
+    skills markdown and asserts pinned-or-exempt — so the shape assumption cannot silently hide
+    a contract."""
+    skills = _REPO_ROOT / "skills"
+    return sorted(set(skills.glob("*/SKILL.md")) | set(skills.glob("*/references/*.md")))
+
+
+def discover_integrity_roster() -> list[str]:
+    """Repo-relative POSIX paths of every contract file that MUST be integrity-pinned: it carries
+    the ``SECURITY-SENSITIVE`` marker AND is not in ``_INTEGRITY_EXEMPT``. Sorted, grep-derived
+    (H-5, the unenumerated-surface guard). Shared by the re-pin script and the test so the two
+    rosters cannot drift (Decision-16).
+
+    ★ FAIL-LOUD on a marker-candidate that cannot be read (`OSError`) or decode (`UnicodeDecode
+    Error`): a security roster that silently SHRINKS when a contract is unreadable would drop a
+    pin without a red test (H-5 review MINOR-2 + cycle-2 LOW). A broken contract file is an error
+    worth surfacing, not swallowing."""
+    roster: list[str] = []
+    for p in _iter_contract_files():
+        rel = p.relative_to(_REPO_ROOT).as_posix()
+        if rel in _INTEGRITY_EXEMPT:
+            continue
+        try:
+            body = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:  # do NOT swallow — a silent shrink is a hole
+            raise RuntimeError(f"cannot read a skill contract for integrity discovery: {rel}") from exc
+        if _INTEGRITY_MARKER in body:
+            roster.append(rel)
+    return roster
+
+
+def load_integrity_manifest() -> dict[str, str] | None:
+    """Parse ``config/skill-integrity.sha256`` (``sha256sum`` format: ``<hex>␠␠<relpath>``) into
+    ``{relpath: hex}``. Returns ``None`` if the manifest is absent/unreadable (the fail-open
+    signal — callers decide posture). Blank lines and ``#`` comments are ignored.
+
+    ★ `utf-8-sig` strips a UTF-8 BOM so a valid FIRST-LINE pin is not silently DROPPED: under plain
+    `utf-8` a leading BOM prepends to the hash token (`﻿` + 64 hex = 65 chars), which the hex
+    guard then rejects → that contract reads as `unpinned` (H-5 review cycle-2 MINOR-1, corrected).
+    ★ A token that is not a 64-hex sha256 is REJECTED, not stored — a malformed digest can never
+    silently become a "pin" (and a WRONG 64-hex value is kept, so it correctly surfaces as `drift`)."""
+    try:
+        text = SKILL_INTEGRITY_MANIFEST.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # `sha256sum` writes "<hex>  <path>" (two spaces); `split(None, 1)` keeps a spaced path.
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        digest, rel = parts[0].lower(), parts[1].strip()
+        if not _SHA256_HEX.match(digest):  # not a real pin — never a false-OK/false-drift entry
+            continue
+        out[rel] = digest
+    return out
+
+
+def verify_skill_integrity(skill_name: str) -> SkillIntegrity:
+    """Integrity verdict for the contract ``skills/<skill_name>/SKILL.md`` against the pinned
+    manifest. Never raises; never echoes a file body (CWE-209).
+
+    ``manifest_unavailable`` (no manifest on disk) and ``unpinned`` (manifest present, this
+    contract absent from it) are distinct so a caller can tell a broken deployment from a
+    missing pin. A pinned file that no longer reads is ``drift`` (its bytes changed to nothing)."""
+    rel = f"skills/{skill_name}/SKILL.md"
+    actual = _sha256_file(_REPO_ROOT / rel)
+    manifest = load_integrity_manifest()
+    if manifest is None:
+        return SkillIntegrity("manifest_unavailable", rel, None, actual)
+    expected = manifest.get(rel)
+    if expected is None:
+        return SkillIntegrity("unpinned", rel, None, actual)
+    if actual is None:
+        return SkillIntegrity("drift", rel, expected, None)
+    return SkillIntegrity("ok" if actual == expected else "drift", rel, expected, actual)
+
+
+def skill_integrity_block(skill_name: str) -> dict[str, Any]:
+    """The value-free ``integrity`` sub-envelope a ``prepare`` rail embeds for its contract."""
+    r = verify_skill_integrity(skill_name)
+    return {"status": r.status, "skill": r.skill, "expected": r.expected, "actual": r.actual}
+
+
+def emit_prepare_with_integrity(
+    result: dict[str, Any], skill_name: str, *, exit_code: int = 0,
+) -> int:
+    """Merge the ``integrity`` block into a ``prepare`` envelope, then emit it (H-5). On a
+    non-``ok`` status: with ``WIKI_STRICT_SKILL_INTEGRITY=1`` set, REFUSE (an
+    ``SKILL_INTEGRITY_DRIFT`` error envelope, exit 2 — the rails' existing "STOP, forward"
+    code); otherwise fail-open-loud (a ``warnings`` note, the normal exit).
+
+    Strict mode is an ENV knob, not a per-rail flag: it is vendor-neutral (works on every CLI
+    with zero argparse surface) and uniform across every rail. Default is fail-open so a broken
+    checkout / mid-edit never bricks every ``prepare``. ⚠️ The default STOP is ADVISORY, not
+    code-enforced: the envelope surfaces the non-``ok`` status and the workflow's "Load skill"
+    step instructs the orchestrator to STOP on it — the only IN-CODE refusal is strict mode."""
+    integ = skill_integrity_block(skill_name)
+    if integ["status"] != "ok":
+        if os.environ.get("WIKI_STRICT_SKILL_INTEGRITY") == "1":
+            return emit({"error": "SKILL_INTEGRITY_DRIFT", "integrity": integ}, exit_code=2)
+        result.setdefault("warnings", []).append(
+            f"skill contract '{skill_name}' integrity: {integ['status']} — verify "
+            f"config/skill-integrity.sha256; re-pin an approved edit via "
+            f"`python3 scripts/pin_skill_integrity.py --write` (H-5)")
+    result["integrity"] = integ
+    return emit(result, exit_code=exit_code)
 
 
 # --- TASK 047: shared concept-mentions AUTO-block format ---------------------

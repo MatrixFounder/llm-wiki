@@ -47,6 +47,7 @@ from scripts.wiki_skills._common import (
     atomic_write_text,
     build_repo_config,
     emit,
+    emit_prepare_with_integrity,
     resolve_vault_root_for_cli,
     sanitize_markdown_text,
 )
@@ -510,7 +511,8 @@ def prepare(args: argparse.Namespace) -> int:
                 payload["access_logged"] = True
             except sqlite3.Error:
                 payload["access_logged"] = False
-        return emit(payload)
+        # H-5: verify the wiki-query-synthesis contract's pin before the orchestrator loads it.
+        return emit_prepare_with_integrity(payload, "wiki-query-synthesis")
     finally:
         repo.close()
 

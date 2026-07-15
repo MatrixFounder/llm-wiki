@@ -66,7 +66,7 @@ from scripts.wiki_index.factory import make_repo
 from scripts.wiki_index.layout import (
     CONCEPTS_SUBDIR,
 )
-from scripts.wiki_skills._common import build_repo_config, emit
+from scripts.wiki_skills._common import build_repo_config, emit, emit_prepare_with_integrity
 from scripts.wiki_skills._common import (  # noqa: F401 — facade re-export for wec._sanitize_markdown_text
     sanitize_markdown_text as _sanitize_markdown_text,
 )
@@ -345,7 +345,8 @@ def prepare(args: argparse.Namespace) -> int:
         )
         if "error" in result:
             return emit(result, exit_code=2)
-        return emit(result)
+        # H-5: verify the concept-extraction contract's pin before the orchestrator loads it.
+        return emit_prepare_with_integrity(result, "concept-extraction")
     finally:
         repo.close()
 
@@ -607,14 +608,14 @@ def _batch_prepare(args: argparse.Namespace) -> int:
         ]
     finally:
         repo.close()
-    return emit({
+    return emit_prepare_with_integrity({
         "known_concepts": _annotate_dup_keys(known_out),
         "missing_concept_files": missing_concept_files,
         # TASK 064 / G8 + the F2 near-duplicate advice: source-INDEPENDENT, so both ride
         # at the top level next to `known_concepts` — not repeated per entry (P-6).
         **_layout_contract(vault_root),
         "batch": entries,
-    })
+    }, "concept-extraction")  # H-5: contract-integrity block
 
 
 def apply(args: argparse.Namespace) -> int:

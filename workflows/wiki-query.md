@@ -58,6 +58,12 @@ The same question over the same retrieval was already filed. Skip synthesis.
 
 ### Step 4 — Load the synthesis skill
 
+> ⚠️ **H-5 integrity gate (check BEFORE loading).** `prepare`'s envelope carries an
+> `integrity` block for `wiki-query-synthesis`. If `integrity.status != "ok"`, **STOP** — the
+> verbatim prompt may be tampered; surface the status and do not load a drifted contract. Re-pin
+> an approved edit with `python3 scripts/pin_skill_integrity.py --write`. (With
+> `WIKI_STRICT_SKILL_INTEGRITY=1`, `prepare` already refused with exit 2.)
+
 ```text
 Skill({skill: "wiki-query-synthesis"})
 ```

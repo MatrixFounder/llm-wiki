@@ -1,9 +1,9 @@
 {
  "recorded": "2026-07-15",
  "model": "claude-haiku-4-5",
- "artifact": "reports/haiku-4.5-2026-07-15-span-derived.json",
- "supersedes": "the 2026-07-14 recording, taken BEFORE `source_span` became derived",
- "note": "★ THE FLOOR AFTER THE FIX THE INSTRUMENT FOUND. The published, hand-produced baseline claimed 9/11 with 'Zero junk'. The instrument measured 7/11 with TWO forbidden names, and then showed WHY: 9 of 13 failing runs were a bad `source_span`. `apply` now DERIVES the span from the (already-verbatim) quote, and the model is no longer asked to count lines. RESULT: 7/11 -> 10/11, and the CLEAN subset -- the only number that measures the SKILL rather than the prompt's memory of the answer -- went 2/3 -> 3/3. THREE fixtures improved, ZERO regressed, and the forbidden count did NOT rise: no recall was bought with junk.",
+ "artifact": "reports/haiku-4.5-2026-07-15-h5-refresh.json",
+ "supersedes": "the span-derived recording (deleted): re-recorded on the current SKILL for TASK-067/H-5",
+ "note": "★ THE FLOOR AFTER THE FIX THE INSTRUMENT FOUND. The published, hand-produced baseline claimed 9/11 with 'Zero junk'. The instrument measured 7/11 with TWO forbidden names, and then showed WHY: 9 of 13 failing runs were a bad `source_span`. `apply` now DERIVES the span from the (already-verbatim) quote, and the model is no longer asked to count lines. RESULT: 7/11 -> 10/11, and the CLEAN subset -- the only number that measures the SKILL rather than the prompt's memory of the answer -- went 2/3 -> 3/3. THREE fixtures improved, ZERO regressed, and the forbidden count did NOT rise: no recall was bought with junk. ★ RE-RECORDED 2026-07-15 (haiku-4.5, K=3) for TASK-067/H-5: commit 3289e7f had added a single INJECTION_CANARY row to SKILL.md's refusal table (inert to these 11 extraction fixtures) without refreshing the artifact, leaving `test_the_artifact_is_not_STALE` red. The re-run on the current skill REPRODUCED this baseline unchanged -- no fixture regressed, forbidden count not raised -- confirming the change was inert.",
  "clean_fixtures": [
   "03-ui-chrome-and-primitives",
   "04-participants-are-not-concepts",

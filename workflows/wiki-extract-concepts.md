@@ -76,6 +76,14 @@ is free.
 
 ### Step 4 — Load extraction skill
 
+> ⚠️ **H-5 integrity gate (check BEFORE loading).** `prepare`'s envelope carries an
+> `integrity` block for this contract. If `prepare_output["integrity"]["status"] != "ok"`
+> (`drift` / `unpinned` / `manifest_unavailable`), **STOP** — the verbatim prompt you are
+> about to load may be tampered. Surface the status to the operator and do **not** load a
+> drifted contract; re-pin an approved edit with `python3 scripts/pin_skill_integrity.py
+> --write`. (With `WIKI_STRICT_SKILL_INTEGRITY=1`, `prepare` already refused with exit 2
+> `SKILL_INTEGRITY_DRIFT`, so you never reach this step.)
+
 ```text
 Skill({skill: "concept-extraction"})
 ```

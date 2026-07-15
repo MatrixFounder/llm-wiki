@@ -1,5 +1,17 @@
 # REASON-step contract (the orchestrator's one reasoning step)
 
+<!--
+  ⚠️ SECURITY-SENSITIVE. This reference is loaded VERBATIM into the orchestrator's LLM context as
+  the canonical REASON contract for `/wiki-import` and the `wiki-sync` batch driver (SKILL.md:190
+  "reuse it verbatim"). It is the **sole home of the H-6 injection fence** (Hard Rule — the
+  per-run nonce sentinel that quarantines untrusted `_raw/` bodies during REASON), so an edit here
+  is a stored prompt injection AND can dissolve the injection fence for the whole import/sync
+  pipeline (H-5). HASH-PINNED in `config/skill-integrity.sha256`; the repo test suite goes RED on an
+  un-re-pinned change. (`wiki-import` has no `prepare`-time skill-integrity check for THIS file —
+  the pin + CI test are the control.) Re-pin an approved edit with
+  `python3 scripts/pin_skill_integrity.py --write`. Changes require code review AND security audit.
+-->
+
 Reusable contract for the **REASON** step of a construct import — the single LLM step
 between `wiki-import prepare` and `apply`, run via the **`summarizing-meetings`** universal
 content harness (it handles meetings AND articles/papers/threads). Decision-17: the CLIs are

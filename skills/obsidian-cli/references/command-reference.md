@@ -1,5 +1,16 @@
 # Obsidian CLI — command reference
 
+<!--
+  ⚠️ SECURITY-SENSITIVE. This reference carries the authoritative per-command **T1/T2/T3 tier
+  table** (the normative-must-agree application of `obsidian-cli/SKILL.md`'s safety-tier model),
+  loaded into the orchestrator's LLM context to decide which of the 102 commands are safe to run
+  autonomously. Re-tagging a mutating/code-execution command (e.g. `reload`/a `sync`-class id)
+  from T3→T1 here is a stored prompt injection that the SKILL.md model does not individually
+  backstop (H-5). HASH-PINNED in `config/skill-integrity.sha256`; the repo test suite goes RED on
+  an un-re-pinned change. Re-pin an approved edit with `python3 scripts/pin_skill_integrity.py
+  --write`. Changes require code review AND security audit.
+-->
+
 > **Verified against Obsidian 1.12.7 (installer 1.12.7), macOS, 2026-06-12.** Source of
 > truth: the live `obsidian help` capture committed at
 > [`../evals/fixtures/obsidian-help-1.12.7.txt`](../evals/fixtures/obsidian-help-1.12.7.txt)

@@ -222,6 +222,15 @@ deadline via the PyPI [`regex`](https://pypi.org/project/regex/) engine with
 `timeout=`, env-overridable via `WIKI_REDOS_BUDGET_S`, default 2.0s). Built-in
 layouts use stdlib `re` and pay zero overhead.
 
+**Skill-contract integrity (TASK 067 / H-5):** the `SKILL.md` + `references/*.md`
+files loaded **verbatim** into the orchestrator's LLM context as reasoning/safety
+contracts are SHA-256-pinned in `config/skill-integrity.sha256`. Each REASON rail's
+`prepare` verifies the pin and surfaces drift (workflows STOP before loading;
+`WIKI_STRICT_SKILL_INTEGRITY=1` refuses), and `tests/test_h5_skill_integrity.py`
+goes red on any un-re-pinned edit — so tampering with a loaded prompt is a
+reviewable manifest diff and a failing build, not a silent supply-chain change.
+Re-pin an approved edit with `python3 scripts/pin_skill_integrity.py --write`.
+
 ---
 
 ## Installation

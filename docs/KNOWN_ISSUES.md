@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-15T10:26:40.670521 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-07-15T15:17:07.573630 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -96,7 +96,7 @@
 
 - **D-1** [[d-1-assert-no-symlink-escape-limited-on-unix|assert_no_symlink_escape limited on Unix]] — status `documented`, opened 2026-05-26
 - **D-2** [[d-2-r-26-not-enforced-on-cli-output-paths|R-26 not enforced on CLI output paths]] — status `open`, opened 2026-05-26
-- **H-5** [[h-5-concept-extraction-skill-md-integrity-is-trust-the-committer|concept-extraction SKILL.md integrity is "trust the committer"]] — status `open`, opened 2026-05-28
+- **H-5** [[h-5-concept-extraction-skill-md-integrity-is-trust-the-committer|concept-extraction SKILL.md integrity is "trust the committer"]] — status `mitigated`, opened 2026-05-28
 - **H-6** [[h-6-indirect-prompt-injection-via-source-body|indirect prompt injection via source_body]] — status `mitigated`, opened 2026-05-28
 - **D-010-1** [[d-010-1-cross-source-conflict-lens-rule-deferred-prompt-change|cross-source conflict lens rule (deferred prompt change)]] — status `fixed`, opened 2026-05-31
 - **D-010-2** [[d-010-2-completeness-omission-bleed-on-inversion-defects-v3-quantified|completeness-omission bleed on inversion defects (v3-quantified)]] — status `mitigated`, opened 2026-05-31

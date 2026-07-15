@@ -17,7 +17,9 @@ version: 1.2
   context at runtime; tampering enables stored prompt injection. Changes
   require code review AND security audit (mirrors concept-extraction M-4/H-5
   and wiki-query-synthesis). Any PR touching skills/wiki-verify/ MUST receive
-  a SECURITY label.
+  a SECURITY label. HASH-PINNED in `config/skill-integrity.sha256`;
+  `wiki-verify-multi prepare` verifies the pin and STOPs on drift. Re-pin an
+  approved edit with `python3 scripts/pin_skill_integrity.py --write` (H-5 / TASK 067).
 -->
 
 # wiki-verify (R-8)

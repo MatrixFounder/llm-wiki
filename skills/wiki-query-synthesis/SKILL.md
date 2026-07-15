@@ -14,6 +14,9 @@ version: 1.0
   ⚠️ SECURITY-SENSITIVE: this file is loaded into the orchestrator's LLM
   context at runtime; tampering enables stored prompt injection. Changes
   require code review AND security audit (mirrors concept-extraction M-4/H-5).
+  HASH-PINNED in `config/skill-integrity.sha256`; `wiki-query prepare` verifies
+  the pin and STOPs on drift. Re-pin an approved edit with
+  `python3 scripts/pin_skill_integrity.py --write` (H-5 / TASK 067).
 -->
 
 # wiki-query-synthesis

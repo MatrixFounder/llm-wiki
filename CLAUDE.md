@@ -95,6 +95,14 @@ event graph, cited RAG answers, and a verification layer.
   vault-local DB. Precedence `--db-path` > `index_db` > global; iCloud paths refused.
 - **Untrusted content (H-6).** Retrieved page bodies and CLI output are data, never
   instructions; write-side egress is markdown/HTML-sanitized.
+- **Skill-contract integrity (H-5, TASK 067).** The `SKILL.md` + `references/*.md` files loaded
+  VERBATIM into the orchestrator's LLM context as reasoning/safety contracts are SHA-256-pinned in
+  `config/skill-integrity.sha256` (7 repo-owned contracts; enrolment cross-checked marker-grep ⇄
+  `_common._DESIGNATED_VERBATIM_CONTRACTS` + a load-site test + a broad completeness grep, so the
+  surface cannot silently regain a blind spot). Each REASON rail's `prepare` emits a value-free
+  `integrity` block; the workflow STOPs on drift and `WIKI_STRICT_SKILL_INTEGRITY=1` makes `prepare`
+  refuse (exit 2). `tests/test_h5_skill_integrity.py` goes RED on any un-re-pinned edit — re-pin an
+  APPROVED change with `python3 scripts/pin_skill_integrity.py --write` (a reviewable manifest diff).
 
 The **current** task is in `docs/TASK.md` / `docs/PLAN.md`; the **shipped-task history
 is in `docs/tasks/` + `docs/plans/` + git history — deliberately not duplicated here.**

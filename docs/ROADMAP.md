@@ -1586,9 +1586,12 @@ the misleading docstring.
   - **Architectural follow-ups deferred** to
     [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md): ~~**H-PERF-3**~~ (SEV-2 —
     `_manifest_consumer` argparse-in-loop N+1) **— CLOSED by TASK 015**
-    (`wiki_index_upsert.upsert_one` programmatic entry-point); **H-5**
-    (`concept-extraction/SKILL.md` hash-pin enforcement), **H-6**
-    (indirect prompt-injection canary scanning),
+    (`wiki_index_upsert.upsert_one` programmatic entry-point); ~~**H-5**
+    (`concept-extraction/SKILL.md` hash-pin enforcement)~~ **— CLOSED by TASK 067**
+    (skill-contract integrity: 7 loaded-verbatim contracts SHA-256-pinned in
+    `config/skill-integrity.sha256`, `prepare`-time gate + CI test), ~~**H-6**
+    (indirect prompt-injection canary scanning)~~ **— CLOSED** (`_common.scan_injection_canaries`
+    on both extraction rails; issue → `mitigated`),
     ~~**P-8**~~ (two-process WAL setup cost) **— CLOSED by TASK 015**
     (connection reuse via `index_from_manifest(repo=…)`), **L-4** (`>=` deps
     unpinned; add `pip-compile` lockfile + `pip-audit` to CI).

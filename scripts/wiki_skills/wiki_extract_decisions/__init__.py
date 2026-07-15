@@ -93,7 +93,7 @@ from scripts.wiki_index.sync_config import (
     _EXTRACT_DECISIONS_DIR_FIELDS,
     ExtractDecisionsDirs,
 )
-from scripts.wiki_skills._common import build_repo_config, emit
+from scripts.wiki_skills._common import build_repo_config, emit, emit_prepare_with_integrity
 from scripts.wiki_skills._manifest_consumer import (
     WikiIngestError,
     index_from_manifest,
@@ -457,7 +457,7 @@ def prepare(args: argparse.Namespace) -> int:
     # judged against is not a contract.
     ref_rules = sorted({r.kind for r in config.ref_extraction})
 
-    return emit({
+    return emit_prepare_with_integrity({  # H-5: decision-extraction contract-integrity block
         "action": "prepared",
         "vault_id": args.vault,
         "source_slug": source_slug,
@@ -486,7 +486,7 @@ def prepare(args: argparse.Namespace) -> int:
             "links_checked": len(existing_slugs),
         },
         "vacuous_validation": not ontology,
-    })
+    }, "decision-extraction")
 
 
 

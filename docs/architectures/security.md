@@ -136,6 +136,40 @@ conversion), so its security posture is explicit:
   quote scan would refuse the source's own evidence — the gate an operator routes around.
   Value never echoed (CWE-117). This closes the last concrete H-6 fix-plan item (issue →
   `mitigated`; the residual injection class is architecturally inherent to LLM01).
+- **Skill-contract integrity (H-5 item (a), TASK 067, 2026-07-15):** the H-6 canary refuses an
+  injection copied out of an untrusted SOURCE; H-5 detects tampering with the REASONING CONTRACT
+  ITSELF — a `skills/*/SKILL.md` the orchestrator loads VERBATIM (Decision-17: the prompt is
+  Markdown, not Python, so pip never pins its bytes). The banner was a **comment**; this is a
+  **mechanism**, applied across the whole repo-owned loaded-verbatim surface (the hole is identical on
+  every REASON/safety contract — the unenumerated-surface lens). ★ **Enrolment cross-checked, not
+  single-source** — the adversarial review found marker-ONLY enrolment missed **`obsidian-cli`**, a
+  verbatim safety-tier model (T3 `eval`/RCE ban) that `skills/.AGENTS.md` *already* designated
+  same-class: a code-exec stored-injection hole leaving every gate green. Now TWO enrolments that must
+  agree — (1) the `SECURITY-SENSITIVE` marker grep (recursive `skills/**/SKILL.md`, shared by re-pin +
+  test) → manifest; (2) `_DESIGNATED_VERBATIM_CONTRACTS`, a positive allow-list asserted all-pinned —
+  a `Skill({skill:X})` load-site test; and — cycle-3 — a completeness test grepping **ALL** skills
+  markdown so a marker'd file in ANY location is pinned-or-exempt (enrolment is file-shape-independent,
+  not scoped to `SKILL.md`). **Seven** SHA-256-pinned in `config/skill-integrity.sha256`: 5 `SKILL.md`
+  (`concept-extraction`, `decision-extraction`, `wiki-query-synthesis`, `wiki-verify`, **`obsidian-cli`**)
+  **plus 2 `references/*.md`** (cycle-2 review MAJOR — verbatim contract content lives there too):
+  `obsidian-cli/references/command-reference.md` (per-command tier table; a T3→T1 re-tag the SKILL.md
+  model doesn't backstop) and `wiki-import/references/reason-contract.md` (the **sole home of the H-6
+  injection fence** for the import/sync REASON step). `wiki-verify-multi/SKILL.md` + `skills/.AGENTS.md`
+  **exempt by name+reason**. Stated residuals (exhaustive-sweep-verified): `summarizing-meetings`
+  (**vendored** → Vendoring Policy §7.4), `recipes.md` (playbooks), operator CLI-reference SKILL.md. ★ **Runtime:** each
+  rail's `prepare` embeds a value-free `integrity` block (`_common.verify_skill_integrity` — path +
+  hex hashes only, CWE-117/209); every workflow's load-skill step **STOPs before loading** on
+  `status != "ok"`, and `WIKI_STRICT_SKILL_INTEGRITY=1` makes `prepare` **refuse** (exit 2
+  `SKILL_INTEGRITY_DRIFT`) — the check sits BEFORE the load, so a drift STOPs the orchestrator before
+  the tampered prompt is ever in context. ★ **CI:** `tests/test_h5_skill_integrity.py` goes RED on any
+  un-re-pinned edit — the mechanical, vendor-neutral delivery of fix-plan item (d)'s "flag the change
+  for SECURITY review," without a git hook. Re-pin an approved edit with `scripts/pin_skill_integrity.py
+  --write` (a reviewable manifest diff). ⚠️ **Honest residual (stated, not hidden):** this does NOT
+  stop a malicious maintainer who edits a contract AND re-pins in the same commit — that is
+  branch-protection / CODEOWNERS on the manifest, an operator concern out of runtime scope; it makes
+  silent tampering impossible without a reviewable diff + a red test, and catches on-disk
+  drift/corruption/non-committer tampering at invocation. Options (b) signing / (c) prompt-into-Python
+  carry the *same* maintainer residual at more weight — deferred (TASK 067 §7).
 - **Resource bounds + YAML anchor-bomb (SEC-A5 corrected — SEC-N3, the binding fix):**
   binaries are skipped by extension *before* any read; a `.md` over
   `WIKI_SYNC_MD_MAX_BYTES` (8 MiB) is **skipped (`oversize-source`) before

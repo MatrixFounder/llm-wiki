@@ -11,6 +11,18 @@ tier: 2
 version: 1.3
 ---
 
+<!--
+  ⚠️ SECURITY-SENSITIVE. This file's safety-tier model (T1/T2/T3 — the T3 `eval`/plugin/RCE ban)
+  is loaded VERBATIM into the orchestrator's LLM context, so an edit here is a stored prompt
+  injection with CODE-EXECUTION blast radius (H-5): downgrading `eval` T3→T1 would authorise RCE
+  on the next run. HASH-PINNED in `config/skill-integrity.sha256`; the repo test suite goes RED on
+  an un-re-pinned change. Re-pin an approved edit with `python3 scripts/pin_skill_integrity.py
+  --write`. (This skill is invoked directly, not via a `prepare`/`apply` rail, so there is no
+  per-invocation runtime check — the pin + CI population test ARE the control.) Changes require
+  code review AND security audit (skills/.AGENTS.md designates this same-class as the REASON
+  contracts; TASK 067 makes that pin real).
+-->
+
 # obsidian-cli
 
 The official Obsidian CLI (`obsidian`, Obsidian 1.12+) is a **remote control for the

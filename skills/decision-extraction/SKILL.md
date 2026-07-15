@@ -3,6 +3,15 @@ name: decision-extraction
 description: The REASON contract for wiki-extract-decisions (TASK 063 / RFC-004) — turn a summarised source note into typed decision/requirement/risk pages with forward edges. Load this after `wiki-extract-decisions prepare`, before `apply`.
 ---
 
+<!--
+  ⚠️ SECURITY-SENSITIVE. This file is loaded VERBATIM into the orchestrator's LLM context at
+  runtime (between `wiki-extract-decisions prepare` and `apply`), so an edit here is a stored
+  prompt injection (H-5, the sibling of concept-extraction's M-4). It is HASH-PINNED in
+  `config/skill-integrity.sha256`; `wiki-extract-decisions prepare` verifies the pin and STOPs
+  on drift. After an APPROVED edit, re-pin with `python3 scripts/pin_skill_integrity.py --write`.
+  Changes require code review AND security audit.
+-->
+
 # decision-extraction
 
 You are extracting **typed knowledge** from a source note into `decision` /

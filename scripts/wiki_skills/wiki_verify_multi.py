@@ -54,6 +54,7 @@ from scripts.wiki_skills._common import (
     atomic_write_text,
     build_repo_config,
     emit,
+    emit_prepare_with_integrity,
     sanitize_markdown_text,
 )
 
@@ -292,7 +293,8 @@ def prepare(args: argparse.Namespace) -> int:
             # ONLY when a profile is active (NFR-1 — OFF envelope unchanged).
             env["restricted_count"] = restricted
             env["audience"] = profile.audience
-        return emit(env)
+        # H-5: verify the wiki-verify contract's pin before the orchestrator loads it.
+        return emit_prepare_with_integrity(env, "wiki-verify")
     finally:
         repo.close()
 
