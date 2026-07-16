@@ -172,11 +172,27 @@ appears.
 
 ## 5. The write-back contract (channel-independent — both the plugin and a manual `eval` fallback must honour it)
 
-**Optimistic concurrency guard (load-bearing, atomic, inside ONE program):**
-(a) `activeEditor.file.path === <path read>`, (b) `editor.getRange(from,to) === <exact baseline
-text captured at read time>`, (c) `somethingSelected() === true`. Refuse on **any** mismatch. A
-read in one CLI invocation and a write in a separate later one is a forbidden TOCTOU window unless
-this triple guard re-validates at write time — which it always must.
+**Optimistic concurrency guard (load-bearing, atomic, inside ONE program).** Refuse on **any**
+mismatch. A read in one CLI invocation and a write in a separate later one is a forbidden TOCTOU
+window unless the guards re-validate at write time — which they always must. As SHIPPED (the
+ordering matters; each rung has its own typed reason):
+
+1. `somethingSelected() === true`, else `empty-selection`.
+2. **saveable view** — the resolved editor is a `MarkdownView`, else `no-saveable-view`. `save()`
+   is inherited from `TextFileView` by `MarkdownView`; it is **not** on `MarkdownFileInfo`
+   (verified against the real obsidian typings), so this is checked BEFORE mutating: an
+   unsaveable view must be a typed refusal, never a `TypeError` after the buffer already changed.
+3. **GUARD 1 — path:** `payload.path === file.path`, else `path-mismatch`.
+4. **GUARD 2 — position:** `posToOffset(liveFrom/liveTo) === payload.fromOffset/toOffset`, else
+   `position-mismatch`. ★ Content alone is NOT a guard: an identical string re-selected elsewhere
+   in the same file would satisfy GUARD 3 and the WRONG occurrence would be replaced silently.
+   The offsets are REQUIRED on `apply` — a skippable guard is not a guard.
+5. **GUARD 3 — content:** `editor.getRange(liveFrom, liveTo) === expect`, else `stale-range`.
+   Still needed even with GUARD 2: offsets can survive while the text under them changes.
+
+The coordinates are always derived from the LIVE selection at apply time — the payload's offsets
+are used to *compare*, never as the replace coordinates (which would make GUARD 3 tautological
+and could write at stale positions).
 
 `editor.replaceRange`, **never** `vault.modify`/a raw disk write — keeps the mutation on Obsidian's
 own undo stack. Base64-encode the two **untrusted TEXT** payloads — the replacement text
@@ -196,16 +212,30 @@ in-memory buffer.
 
 ### Degradation ladder (every rung a typed `reason`, never a throw)
 
-| Condition | Detected by | `reason` | Caller action |
-|---|---|---|---|
-| terminal focused / no editor | `!activeEditor` | `no-editor` | ask user to click into the note |
-| wrong vault | `app.vault.getName()` mismatch | `vault-mismatch` | abort |
-| reading (preview) mode | `getMode()==="preview"` | `preview` | ask user to switch to source mode |
-| user switched tabs mid-flight | `file.path !==` baseline | `path-mismatch` | re-read, re-confirm |
-| nothing selected | `!somethingSelected()` | `empty-selection` | ask user to select text |
-| caret moved / line edited since read | `getRange !==` baseline | `stale-range` | re-read, **do NOT write** |
-| plugin not installed | `commands` scan lacks `agent-bridge:` | `plugin-absent` | tell user to install — **do NOT** fall back to `eval` |
-| ok | — | (`ok:true`) | `save()` already ran → run `wiki-index-upsert` |
+| Condition | Detected by | `reason` | exit | Caller action |
+|---|---|---|---|---|
+| no editor at all (none active AND no live remembered one) | `resolveEditor() === null` | `no-editor` | 3 | ask user to open/click a note. **NOT** the terminal-focused case — see the fallback below |
+| reading (preview) mode | `getMode?.()==="preview"` | `preview` | 3 | ask user to switch to source mode |
+| nothing selected | `!somethingSelected()` | `empty-selection` | 3 | ask user to select text |
+| resolved view can't be saved | `!(ed instanceof MarkdownView)` | `no-saveable-view` | 3 | re-read; refused BEFORE mutating |
+| wrong vault | `--expect-vault` ≠ resolved name | `vault-mismatch` | 6 | abort |
+| user switched tabs mid-flight | GUARD 1 `payload.path !== file.path` | `path-mismatch` | 7 | re-read, re-confirm |
+| selection moved / re-selected elsewhere | GUARD 2 `posToOffset(live) !==` payload offsets | `position-mismatch` | 7 | re-read, **do NOT write** |
+| text under the range changed since read | GUARD 3 `getRange !==` baseline | `stale-range` | 7 | re-read, **do NOT write** |
+| `replaceRange`/`save()` threw | try/catch around the mutate tail | `save-failed` | 7 | re-read — the write did not land deterministically |
+| unreadable `agent-edit.json` | JSON/read throw | `bad-payload` | 2 | fix the payload (nonce unmatchable ⇒ the wrapper also times out) |
+| offsets missing / non-integer | wrapper-side validation | `usage` | 2 | echo `fromOffset`/`toOffset` from the `read` envelope |
+| plugin not installed | `commands` scan lacks `agent-bridge:` | `plugin-absent` | 9 | tell user to install — **do NOT** fall back to `eval` |
+| ok | — | (`ok:true`) | 0 | `save()` already ran → run `wiki-index-upsert` |
+
+**The terminal-focused case is NOT a rung — it is the normal path.** `app.workspace.activeEditor`
+is **null** whenever the active leaf is not a markdown editor, which is exactly the case this whole
+feature exists for (the agent typing in Obsidian's integrated terminal — live-verified:
+`activeLeafType: "terminal:terminal"`, `activeEditor: null`, selection still held by the note's
+editor). The plugin therefore remembers the last active markdown editor (`active-leaf-change` +
+`onLayoutReady`, dropped when its leaf detaches) and resolves through it, tagging the envelope
+`source: "recent-editor"` (vs `"active"`) so a fallback resolve is visible, never silent — the same
+discipline as `obsidian_active_note.py`'s `recent-open`.
 
 ---
 
@@ -246,12 +276,22 @@ in-memory buffer.
 ## 7. What ships
 
 - **`skills/obsidian-cli/plugin/agent-bridge/`** — `main.ts` + `manifest.json`
-  (`{"id":"agent-bridge","name":"Agent Bridge","minAppVersion":"1.4.0","isDesktopOnly":false,…}`) +
-  a committed prebuilt `main.js` (§3.1). Two plain-`callback` commands: `export-selection` (writes
-  `.obsidian/agent-selection.json` or `{ok:false, reason:"no-editor"}`) and `apply-edit` (reads
-  `.obsidian/agent-edit.json`; runs GUARD 1/GUARD 2/`somethingSelected`; `replaceRange` + `save`;
-  mirrors every outcome — success or refusal — to `.obsidian/agent-result.json`). **All** I/O goes
-  through `app.vault.adapter` (vault-rooted; no absolute filesystem paths inside the plugin).
+  (`{"id":"agent-bridge","name":"Agent Bridge","minAppVersion":"1.4.0","isDesktopOnly":true,…}` —
+  desktop-only: the premise is the integrated terminal + the `obsidian` CLI, neither of which
+  exists on mobile) + a committed prebuilt `main.js` (§3.1) + a **vendored minimal `obsidian.d.ts`**
+  (real, non-`any` signatures — see the Completion note on why a *fabricated* type is worse than
+  an `any` one). **Three** plain-`callback` commands: `export-selection` (writes
+  `.obsidian/agent-selection.json` incl. `source`), `apply-edit` (the guard ladder in §5 →
+  `replaceRange` + `save`, the mutate tail wrapped so it can never leave the buffer edited with no
+  result mirrored), and `copy-selection-ref` (**human hotkey**, clipboard-only: puts
+  `@<path>#L<from>-<to>` + the **exact selected text** on the clipboard — a line ref alone is
+  line-granular, and an Obsidian paragraph is ONE source line, so a sub-line selection would
+  otherwise expand to the whole line). Plus a **CM6 editor extension** that keeps the selection
+  highlighted while the editor is unfocused (CM6 removes its own selection layer on blur — pure
+  CSS cannot restore it, so the plugin re-draws it as a mark decoration and self-injects the
+  style). Every outcome — success or refusal — is mirrored to `.obsidian/agent-result.json`, and
+  every dispatch is `.catch()`-netted. **All** I/O goes through `app.vault.adapter` (vault-rooted;
+  no absolute filesystem paths, no `require('fs')`, no `child_process`, no network).
 - **`skills/obsidian-cli/scripts/obsidian_selection.py`** — mirrors the
   `obsidian_active_note.py` contract: stdlib-only, no network, **no `import anthropic`/`from
   anthropic`**, a single monkeypatched `_run_obsidian` seam for fixture tests, `--format
@@ -501,3 +541,58 @@ held; this proves the `command`-callback path too.
   `obsidian-selection read` from inside the TestVault → `ok:true` with the real Cyrillic selection.
 - **Final gate:** **`2964 passed, 14 skipped, 0 failed`** (+34 selection tests), `mypy --strict`
   clean, H-5 `25 passed` (one hash line), validators green.
+
+**SECOND live dogfood (2026-07-16) — the feature did not work in its own premise.** Running the
+agent in Obsidian's **integrated terminal** returned `no-editor`: `app.workspace.activeEditor` is
+**null** whenever the active leaf is not a markdown editor, and that terminal IS a leaf
+(live-verified `activeLeafType: "terminal:terminal"` with the selection still held by the note).
+★ **The OQ1 "proof" above was run in the WRONG CONTEXT** — from an EXTERNAL shell, where the note
+stays Obsidian's active leaf; it therefore never exercised the integrated-terminal case the whole
+task exists for. The project already knew this fact — `obsidian_active_note.py` carries a
+`recent-open` fallback for exactly it, and SKILL.md says so in as many words — the plugin just
+didn't apply the lesson. Fixed: remember the last markdown editor (`active-leaf-change` +
+`onLayoutReady`, invalidated when its leaf detaches) and resolve through it, tagging `source:
+"recent-editor"`. Also shipped from the same dogfood: the `copy-selection-ref` hotkey and the CM6
+persist-selection extension (a CSS snippet was tried first and **deleted** — CM6 removes the
+selection elements on blur, so there is nothing left to style).
+
+**/vdd-adversarial on the plugin (Sarcasmotron, fresh context) — verdict FAIL, and it was right.**
+The headline: `obsidian.d.ts` **fabricated `save()` on `MarkdownFileInfo`**. Verified against the
+real `obsidian@1.13.1` typings: `MarkdownFileInfo` is `{app, file, editor?}`; `save()` comes from
+`TextFileView` via `MarkdownView`, and `MarkdownEditView` (mobile) implements the interface
+**without** it. So `tsc` — the entire point of vendoring types — was validating `main.ts` against a
+**fiction**, and `ed.save()` could `TypeError` *after* `replaceRange` had already mutated the
+buffer ⇒ no result mirrored ⇒ the wrapper reports exit 4 "app-not-running" for an edit that
+LANDED. ★ **The lesson (worth more than the fix): when you hand-vendor an API's types and write
+code against them, the types stop being a gate and become a mirror — `tsc` will confirm whatever
+you assert. A precisely-typed fabrication defeats the gate HARDER than an `any` would, because it
+looks verified.** Fixed by vendoring the real shape + `instanceof MarkdownView` narrowing BEFORE
+mutating; **proven** by removing the narrowing and watching `tsc` fail with "Property 'save' does
+not exist on type 'MarkdownFileInfo'" — the gate is real again. Also fixed from the same critique:
+the unguarded mutate→save→mirror tail (typed `save-failed` + `.catch()` on every dispatch), a
+never-invalidated `lastEditor` (detached views still answer `.editor`/`.file` — now an identity
+check against the live leaf list), `bad-payload` mislabelled as `no-editor`, reasons unknown to the
+wrapper's `_REASON_EXIT` (they mapped to a lying exit 4), a header that claimed "needs no fallback
+path" 95 lines above the load-bearing fallback, a widened `getCursor(side?: string)`,
+`isDesktopOnly`, and an unvalidated nonce.
+
+**Then the two residuals the critique left open (2026-07-16):**
+- **Wrong-occurrence write** — the guard pinned CONTENT only, so an identical string re-selected
+  elsewhere in the same file passed it and the WRONG occurrence was replaced **silently**. The read
+  already exported `fromOffset`/`toOffset` — the data to close it existed and was thrown away. Now
+  GUARD 2 pins the POSITION (`position-mismatch`), the offsets are **REQUIRED** on `apply` (a
+  skippable guard is not a guard), and GUARD 3 still pins the content (offsets can survive while
+  the text changes).
+- **Exchange files at rest** — `.obsidian/agent-selection.json` held the note's selected text in
+  **plaintext** inside a directory Obsidian Sync/git/iCloud replicate, and was never removed. The
+  wrapper now cleans all four up (best-effort) after the nonce-matched read-back. Live-verified: a
+  672-byte plaintext selection file present before the run, gone after.
+
+- **Final gate (post-adversarial):** **`2968 passed, 14 skipped, 0 failed`** (+38 selection tests),
+  `mypy --strict` clean (96 files), `npx tsc --noEmit` exit 0 (+ negative control), `node
+  require(main.js)` OK, H-5 `25 passed` (one hash line), TS/JS mirror parity verified per-symbol.
+- **NOT converged — honest residuals:** the persist-selection `<style>` is main-window-only
+  (popouts have their own `document`); `export-selection` has no size cap while `apply` does;
+  concurrent dispatch is unguarded (nothing enforces single-agent use); and **the plugin's JS still
+  has no executable test runtime** — `tsc` + inspection remain its only gate, which is precisely
+  how the fabricated `save()` survived to the adversarial pass.

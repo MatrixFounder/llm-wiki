@@ -294,6 +294,40 @@ evals extend the harness (E-27 — an `eval`-injection refusal for the selection
 sibling; E-28 — a second-`code=`-argument attacker note, ground-truth fact #5); E-09/E-20/E-21
 stay green.
 
+**The editor-resolution correction (2026-07-16 dogfood) — the design's own premise was unmet.**
+`app.workspace.activeEditor` is **null** whenever the active leaf is not a markdown editor — and
+Obsidian's **integrated terminal is a leaf**, so it is null in exactly the scenario this component
+exists for (an agent typing in that terminal). Live-verified: `activeLeafType:
+"terminal:terminal"`, `activeEditor: null`, while the note's editor still held the selection. The
+original OQ1 verification was run from an EXTERNAL shell — where the note remains Obsidian's active
+leaf — and therefore never exercised the real case. §2.2.1's resolver has carried a `recent-open`
+fallback for precisely this reason; the plugin now mirrors it: remember the last active markdown
+editor (`active-leaf-change` + `onLayoutReady`, invalidated by an identity check against the live
+leaf list when its leaf detaches) and resolve through it, tagging the envelope `source:
+"active" | "recent-editor"` so a fallback resolve is visible, never silent (MEDIUM confidence,
+same discipline as §2.2.1).
+
+**Write-back guards, as shipped.** `somethingSelected` → **saveable-view** (`instanceof
+MarkdownView`, checked BEFORE mutating: `save()` is inherited from `TextFileView`, it is *not* on
+`MarkdownFileInfo`) → **GUARD 1** path → **GUARD 2** position (`posToOffset(live) ===` the offsets
+captured at read time; REQUIRED) → **GUARD 3** content (`getRange === expect`). GUARD 2 exists
+because content alone is not a guard: an identical string re-selected elsewhere in the same file
+satisfies GUARD 3, and the wrong occurrence would be replaced silently. GUARD 3 remains because
+offsets can survive while the text under them changes. Coordinates always come from the LIVE
+selection; the payload's offsets are used to *compare*, never as the replace coordinates. The
+mutate→save→mirror tail is wrapped so it can never leave the buffer edited with no result mirrored
+(typed `save-failed`), and the wrapper cleans up the `.obsidian/agent-*.json` exchange files —
+`agent-selection.json` holds note text in plaintext inside a directory Sync/git/iCloud replicate.
+
+★ **Architectural lesson, recorded because it outlives this component:** hand-vendored API types
+are a **mirror, not a gate** — `tsc` confirms whatever you assert. This plugin's `obsidian.d.ts`
+declared a `save()` that the real `MarkdownFileInfo` does not have, so the type-check "passed"
+against a fiction while the call could `TypeError` *after* the buffer was mutated. A precisely-typed
+fabrication defeats the gate harder than an `any` would, because it looks verified. Vendored
+declarations must be copied from the real package and the code narrowed to fit them — never the
+reverse. (Found by the /vdd-adversarial pass; the fix is proven by a negative control — removing
+the narrowing makes `tsc` fail.)
+
 **Delivery (the "built ≠ agent-usable" correction, 2026-07-15 dogfood).** A capability an agent
 must invoke on its own is only usable if it is *addressable* and *discoverable*, symmetric with
 §2.2.1's `obsidian-active-note` resolver. So the wrapper ships the same delivery trio: a `bin/`
