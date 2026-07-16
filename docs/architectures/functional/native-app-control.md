@@ -6,6 +6,7 @@
   - [Component contract — four invariants](#component-contract--four-invariants)
 - [2.2.1 Active-note resolution](#221-active-note-resolution-task-041--adr-008--amends-the-inv-3-f-4-footgun)
 - [2.2.2 Editor-selection bridge](#222-editor-selection-bridge-task-068--the-plugin-over-eval-decision)
+- [2.2.3 Mirror → gate](#223-mirror--gate-task-070--the-plugins-verification-architecture)
 
 The component is **skill text, not code**: `skills/obsidian-cli/` (SKILL.md +
 `references/{command-reference,recipes}.md` + `evals/`) symlinked into
@@ -308,7 +309,7 @@ the wrong thing — or past a real one:
 
 | Item | Status |
 |---|---|
-| Popout windows get no persist highlight | **Real, ordering-blocked.** `main.ts:198-200` appends the `<style>` to the bare `document.head` (main window); a popout owns its own `document`. The fix needs an `on("window-open", …)` overload, and the vendored d.ts declares exactly one event (`active-leaf-change`) — adding it by hand today writes one more belief into the file that fabricated `save()`. Cheap after TASK 070, reckless before. |
+| Popout windows get no persist highlight | **Real → scheduled in TASK 070 (R-070-6); see §2.2.3.** `main.ts:198-200` appends the `<style>` to the bare `document.head` (main window); a popout owns its own `document`. ⚠️ **This row's earlier "the fix needs an `on("window-open", …)` overload" is WRONG and is kept struck-through rather than deleted, because it did real damage:** it was reasoned from the vendored fiction, whose `EditorView` declared only `hasFocus` + `state` — **`baseTheme` was absent**. TASK 070's first draft duly prescribed ~30 lines of `window-open` plumbing (its C-2) by reading this row as a decision. The real fix is **one line**: `EditorView.baseTheme`, letting CM6 mount the CSS per view root (dedup structural, cleanup free). A ledger entry written from a fiction propagates the fiction — which is the whole thesis of §2.2.3. |
 | `export-selection` has no size cap while `apply` does | **Not a defect — the asymmetry is misread.** `apply`'s `_MAX_B64_LEN` (512 KiB) is an **ARG_MAX guard on inline argv**, deliberately bypassed by `--from-json`. `export` has no argv in its path (the plugin writes a file, the wrapper reads it), so there is nothing to mirror; copying the constant would cargo-cult a guard whose reason does not apply. |
 | Concurrent dispatch is unguarded | **Real on `read`; fail-safe on `apply`.** ⚠️ *This row's first draft claimed "diagnostics-only" — false, and caught in review. Split the paths.* **`apply` IS fail-safe:** GUARD 1/2/3 validate every payload against the *live* selection, so a clobbered `agent-edit.json` can only land its own author's intended edit (a cross-file clobber trips GUARD 1 `path-mismatch`), and a losing agent times out. **`read` is NOT:** the nonce is matched on `agent-result.json` (`_await_result`), but `agent-selection.json` is then read **unchecked** (`obsidian_selection.py:390`) — a second dispatch landing between those two steps hands agent A agent B's path and note text under `ok:true`, which then chains into a *guard-passing* write against a selection A was never given. The plugin already writes the nonce into that payload (`main.ts:302`, `main.js:246`); the wrapper reads 8 fields from it and compares none of them — **a guard field written and never read**. The fix is a one-line nonce comparison, **not** a lock file → **TASK 070**. Test gap that let this through: `tests/test_obsidian_selection.py` pins the *sequential* stale-nonce case only; the concurrent clobber is untested. |
 | **OQ3** — cross-machine plugin availability | Unchanged: depends on whether the vault syncs `.obsidian/plugins/` at all (many git/iCloud setups exclude `.obsidian/`) — a known rather than surprising failure mode. |
@@ -366,3 +367,135 @@ terminal targets *that* vault with no `--vault`; and a `SKILL.md` `description`/
 that names the selection use case (`"what text is selected"`, `"выделенный текст"`) so an agent
 routes to it. The initial ship had the working channel but none of the three — a weak agent could
 not find or address it (surfaced only by the live dogfood, not the unit gates).
+
+---
+
+## 2.2.3 Mirror → gate (TASK 070 — the plugin's verification architecture)
+
+**The structural defect §2.2.2 recorded is two canonical artifacts for one truth.** `main.ts`
+(reviewed, type-checked) and a hand-authored `main.js` (executed, checked by nothing), kept in
+agreement by discipline. A hand-maintained "mirror" of a canonical source is not a mirror — it is a
+**second canon that drifts**, and the drift is invisible precisely where it matters, because the
+checked file is not the run file.
+
+> **Not a Class A/B/C violation — the earlier draft of this paragraph said so and was wrong.**
+> ADR-002 §D8's classes are **vault-scoped by definition** ("Vault-only"; "Vault-canonical +
+> DB-mirrored"), and `main.js` satisfies no clause of Class B: no vault representation, no DB
+> mirror, no conflict rule, and `wiki-reindex --full` does not rebuild it — the plugin is outside
+> the index entirely (see the "does NOT change" paragraph below, which the frame contradicted).
+> Under the ADR's own TASK-012 amendment, repo-bundled code/config like `layouts/*.yaml` is
+> **Class C operational**; `main.ts`/`main.js` are Class C. Recorded rather than quietly deleted
+> because an appealing-but-unratified frame in a living doc gets cited as settled by the next
+> reader — this document's whole subject.
+
+What IS earned is the **analogy**, and ADR-002 names it directly: build-and-compare is to `main.js`
+what **`wiki-reindex --full`** is to the index, and the byte-identity anchor is the same one the
+**karpathy layout** already stands on — the ADR's *"standing §D8 rebuildability test"*. Generation
+plus that test is what makes discipline unnecessary: `main.ts` + the real pinned `obsidian` package
+are the source; `main.js` becomes a **build product** nobody is asked to maintain. Precisely: hand
+lockstep is no longer *asked for*, and **the suite goes RED when someone runs it** — with no CI and
+no hooks (see L2 below), the ladder still fires only when a human runs `pytest`. "Nobody can drift"
+would overclaim at the trigger layer; "drift is caught the moment anyone looks" is what is true.
+
+Three fictions sat on top of that:
+
+| Fiction | Reality |
+|---|---|
+| `obsidian.d.ts` — hand-written (204 lines) | the real package is 7,517 lines; the vendored file declared a `save()`, a `getMode?()`, and an entire `MarkdownLeaf` type **that do not exist**, invented so the code would compile |
+| `tsc` checks the plugin | `include: ["main.ts"]`, no `allowJs` ⇒ **structurally incapable** of reporting the executed file |
+| `node -e "require('./main.js')"` tests it | `main.js:19-29` substitutes inert stand-ins (`Plugin = class {}`) ⇒ proves the file **parses, with fakes** |
+
+**TASK 070 collapses all three into one real dependency and demotes `main.js` to Class B.**
+`main.ts` + the real pinned `obsidian` package are canonical; `main.js` becomes a **build product**;
+the drift gate is its rebuildability check — the same architectural role `wiki-reindex --full` plays
+for the index. Nothing is "kept in lockstep by hand" any more, because nothing *can* be.
+
+**The receipt is the repo's existing pin-and-receipt idiom, second instance — plus one strengthening.**
+`scripts/build_agent_bridge.py` + `config/agent-bridge-build.json` mirror `scripts/pin_skill_integrity.py`
++ `config/skill-integrity.sha256` (H-5): a repo-owned manifest of hashes, a `--write` that re-pins an
+APPROVED change, and a test that goes RED on any un-re-pinned edit. Reusing the idiom rather than
+inventing one is the point — the review surface is a manifest diff either way. The **strengthening**
+H-5 does not have: `--write` is **gated on `tsc`**. H-5's `--write` rewrites its manifest
+unconditionally and answers hand-editing with prose (*"Do NOT hand-edit a hash — the diff is meant to
+be reviewed, not authored"*). That matters for how strongly the L0 below may be stated.
+
+**The gate ladder, and why each rung exists** (a rung that cannot fail is not a rung):
+
+- **L0 — hash pin, zero toolchain.** Pins **both** `main.ts` and `main.js`. Runs anywhere, so a skip
+  cannot hide drift. *Cannot* catch a hand-edited `main.js` that was also re-pinned.
+- **L1 — byte compare, needs node.** Rebuilds and compares. Catches exactly L0's blind spot.
+- **L2 — `WIKI_STRICT_PLUGIN_BUILD=1`.** Skip becomes failure. The skip predicate is
+  **toolchain-absence only** and **per-tool** — never one shared `toolchain_present()`, or the tsc
+  gate falls silent when *esbuild* is missing. Never `except Exception: skip`, which would convert
+  the drift being hunted into a green.
+  > ⚠️ **L2 is LATENT, and saying otherwise would be this document's own failure mode.** The design
+  > it comes from says "CI sets it" — **there is no CI.** Verified 2026-07-16: no `.github/`, no
+  > Makefile/justfile/tox/nox, no `.pre-commit-config.yaml`, no active git hooks. (§10 Deployment's
+  > claim of a *"CI/CD pipeline (pytest + mypy --strict on PR)"* is **false** and predates this
+  > check — filed, not silently patched here.) The identical situation already exists for H-5:
+  > `WIKI_STRICT_SKILL_INTEGRITY` is set **only by its own tests' monkeypatch**, by nothing else.
+  > So L2 is a rung built for a CI that does not exist yet — real, but firing for nobody today.
+  > **L0 is therefore what actually carries the non-vacuity guarantee**, which is exactly what it
+  > was designed for; L2 is upside if a CI ever lands, not a layer to count today.
+
+**★ Byte-green ≠ type-correct — the gate needs both halves.** esbuild does not typecheck: it emits
+12,191 valid-looking bytes from a `main.ts` that `tsc` rejects with 3 errors. So generation alone
+would have produced a *new* vacuous green (edit → rebuild → re-pin → all green → type errors
+shipped). `tsc --noEmit` therefore runs **in pytest**, its compiler is pinned exact and receipted
+like esbuild's, and **`--write` refuses to re-pin on a type error** — which is also the only way the
+type gate gets an L0, since you cannot type-check without a type-checker: a receipt whose `main.ts`
+hash still matches means "the last re-pin passed `tsc`".
+
+> **Stated precisely, because the L0 claim is the load-bearing one.** That inference is
+> **mechanism + review**, not mechanism alone: the receipt is a text file, and `--write` is the
+> *sanctioned* path to it, not the *only* one — exactly the concession H-5 already makes in prose.
+> Two preconditions it silently needs, both of which Planning must land or the claim is false for
+> the shipped state: **(a) `--write` must HARD-FAIL when `tsc` is absent, never skip** — a skip
+> there is the same "gate silenced by a missing tool" death the pytest rung guards against,
+> relocated to the single site the whole L0 rests on; and **(b) the final pin must be minted under
+> the live gate** — a receipt written before `--write` was tsc-gated matches a `main.ts` that was
+> never type-checked. The tsc *version* is receipted too, so reverting `main.ts` without the
+> lockfile is detectable rather than silently green.
+
+**★ Determinism is a precondition, not a nicety.** A byte-identity anchor over non-deterministic
+output is theatre. esbuild is deterministic *given a fixed cwd* — it stamps the entry path into the
+output, so the build **must** run with `cwd=PLUGIN_DIR` and a relative entry (`// main.ts` →
+`05d906d4…`; an absolute entry from elsewhere → `3b3a3645…`). This is the same byte-identity
+discipline the karpathy layout already anchors on.
+
+**★ The design principle the fixes converge on: prefer unrepresentable over guarded.** The preview
+fail-open is not re-guarded — the resolution is *typed* as `MarkdownView`, so the fabricated
+`getMode?.()` call has nowhere to live, and all 3 type errors die with **zero casts**. (A fix needing
+a cast is fighting the API; a fix that deletes casts is agreeing with it.) Likewise the popout CSS is
+not chased across windows: `EditorView.baseTheme` makes CM6 mount it per view root, so
+double-injection is structurally impossible and cleanup is `registerEditorExtension`'s job — one line
+replacing thirty and their four failure modes. The one place a guard is irreducible (`--external`,
+whose omission silently ships a second CM6 instance and a ViewPlugin that never draws) keeps an
+explicit test, because there the catastrophe **is** representable.
+
+**What this does NOT change.** No DDL (`user_version` 7); no `import anthropic` (Decision-17); the DB,
+DAL and every `wiki-*` CLI are untouched — the plugin is outside the index entirely. The T2
+`command id=agent-bridge:…` channel and the T3 `eval` ban (§2.2.2) are unchanged, and
+`unsupported-view` is an **additive** refusal reason.
+
+**What it DOES change — the vault threat model is unchanged; the dev-side one is not.** Saying "the
+threat model is unchanged" would be the wrong sentence in a repo that hash-pins its own prose (H-5)
+and treats retrieved bytes as untrusted (H-6). This plugin's `package.json` is the repo's **only** npm
+manifest, so its tree *is* the repo's entire npm supply-chain surface, and TASK 070 grows it from 1
+direct dependency to 3 (14 dirs on disk). Concretely: **`esbuild` runs `postinstall: node install.js`**
+— install-time code execution — and pulls a **platform-native binary** (`@esbuild/darwin-arm64`), so
+the tree differs per machine. Mitigated, not eliminated: every dep is **exact-pinned**, `package-lock.json`
+carries integrity hashes, and nothing is installed on a user's machine — but the surface is now
+stated rather than assumed.
+
+**Vault-side, "dev-only" is a mechanism, not an assertion** — two real ones: `manifest.json` means
+Obsidian executes `main.js` alone and never `node_modules/`; `.gitignore` excludes `node_modules/`,
+so a clean checkout has no toolchain to copy. The weak link is **procedure**: the README's install
+step says "copy this whole folder". R-070-8 rewrites it to enumerate `manifest.json` + `main.js`,
+which is what turns the claim into a mechanism.
+
+**Carried honestly (see TASK 070 §4):** the read-path race is **narrowed, not closed** (OQ-070-1);
+`minAppVersion` enforcement is documented but **unobserved** (OQ-070-3); `instanceof` across window
+realms is **unverified** and closed by dogfood, not argument (OQ-070-4); the `omission-driven` audit
+lens **died and has already cost us once** — it hid `EditorView.baseTheme`, which is why the first
+draft of the popout requirement prescribed thirty lines of the wrong thing (OQ-070-5).
