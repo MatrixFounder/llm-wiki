@@ -268,28 +268,56 @@ replace re-confirms with character counts even under established trust, keyed to
 exactly like §2.2.1's folder-vs-file asymmetry. The selection **body** is untrusted content
 (H-6), exactly like a note body or search hit elsewhere in this skill.
 
-**The honest residual.** The plugin's guard logic itself (the `getRange(from,to)===expect`
-comparison, the live `getCursor` derivation, the `replaceRange`→`await save` ordering) has **no
-executable test runtime** in this repo — there is no headless Obsidian/CodeMirror-6 harness.
-The Python fixtures simulate the plugin's *output* (pre-seeded `agent-result.json` per
-degradation-ladder rung), not its internal logic; that JS is covered only by `npx tsc --noEmit`
-(types, against the vendored `obsidian.d.ts`) + manual code inspection + a one-time
-on-install live verification documented in the plugin's own README. This is an accepted,
-disclosed residual, not an oversight. (**OQ1 — the callback-under-focus question — is now
-LIVE-PROVEN, not inferred:** the 2026-07-15 dogfood on `ObsidianNotes-Test` showed the plugin
-`callback` fires while OS focus sits in the integrated terminal AND reads the real selection;
-what remains unverified is only the JS guard *logic* above, for lack of a headless CM6 runtime.)
-Two more design-brief residuals stand: **OQ3** (cross-machine plugin availability
-depends on whether the vault syncs `.obsidian/plugins/` at all — many git/iCloud setups exclude
-`.obsidian/`, a known rather than surprising future failure mode); and **OQ5** (the ARG_MAX
-ceiling — base64 inflates payload size ~33%, and nobody has measured where a realistic
-selection sits relative to macOS's ~1 MB whole-argument limit; the 512 KiB payload-too-large
-guard fails loud rather than truncating, but the temp-file/`require('fs')` escape hatch itself
-is deferred, out of scope for this task).
+**The honest residual (restated 2026-07-16 — the original wording claimed more than was proven).**
+The gate on the plugin's JS is weaker than "`tsc` + inspection" implies. Verified:
+
+- **`main.js` is not type-checked at all.** `tsconfig.json` is `noEmit: true` with `include:
+  ["main.ts", "obsidian.d.ts"]`. The committed `main.js` — a hand-authored CommonJS mirror (340
+  lines against `main.ts`'s 404) and **the only file Obsidian executes** — is outside it. The manual
+  inspection read `main.ts` too.
+- **Nothing runs `tsc` automatically** — no CI, no pytest, no script; it is a hand-typed `npx tsc
+  --noEmit` that no gate will ever repeat.
+- **The declarations it checks against are hand-written.** `package.json` carries `typescript` only;
+  there is **no `obsidian` package**. R-068-1's own verification reads *"`main.ts` type-checks
+  against **upstream** `obsidian.d.ts`"* — the requirement was closed against a hand-authored file,
+  which is exactly where the fabricated `save()` (★ below) lived.
+
+⇒ The shipped artifact's only real gate is a live dogfood. The Python fixtures simulate the plugin's
+*output* (pre-seeded `agent-result.json` per degradation rung), never its internal logic. Tracked as
+**OQ2** (plugin README §"Rebuild discipline"), scheduled for **TASK 070**: a real `obsidian`
+devDependency + an `esbuild`-generated `main.js` + a byte-identity drift gate — the same anchor trick
+the karpathy layout already uses.
+
+★ **A test runtime is not the cure, and would look like one.** A hand-written fake (`{file, editor,
+save: jest.fn()}`) would be authored from the *same wrong model of the API* that produced the
+fabricated type: the test passes, the bug survives, and now a green check stands behind it. **A fake
+mirrors your beliefs exactly as vendored types do** — the root cause is *no contact with the real
+API*, not *no tests*. Tests over the guard ladder are worth writing **after** TASK 070, not before.
+
+**OQ1 — what the dogfoods actually proved.** The `callback` **fires** while OS focus sits in the
+integrated terminal: proven 2026-07-15. It did **not** read the real selection then — that run was
+launched from an *external* shell, where the note stays Obsidian's active leaf, so it never
+exercised the real case; from the integrated terminal `activeEditor` is null and every command
+returned `no-editor`. The selection read is proven only **after** the `recent-editor` fallback
+(2026-07-16 dogfood) — see the editor-resolution correction below.
+
+**Residual ledger, as of 2026-07-16.** Of the carried-forward items, **one dissolved on inspection
+and one got worse** — the concurrency entry was recorded here as "fail-safe", which review proved
+false. Recording *why* in each direction, because a wrong ledger sends the next reader off to build
+the wrong thing — or past a real one:
+
+| Item | Status |
+|---|---|
+| Popout windows get no persist highlight | **Real, ordering-blocked.** `main.ts:198-200` appends the `<style>` to the bare `document.head` (main window); a popout owns its own `document`. The fix needs an `on("window-open", …)` overload, and the vendored d.ts declares exactly one event (`active-leaf-change`) — adding it by hand today writes one more belief into the file that fabricated `save()`. Cheap after TASK 070, reckless before. |
+| `export-selection` has no size cap while `apply` does | **Not a defect — the asymmetry is misread.** `apply`'s `_MAX_B64_LEN` (512 KiB) is an **ARG_MAX guard on inline argv**, deliberately bypassed by `--from-json`. `export` has no argv in its path (the plugin writes a file, the wrapper reads it), so there is nothing to mirror; copying the constant would cargo-cult a guard whose reason does not apply. |
+| Concurrent dispatch is unguarded | **Real on `read`; fail-safe on `apply`.** ⚠️ *This row's first draft claimed "diagnostics-only" — false, and caught in review. Split the paths.* **`apply` IS fail-safe:** GUARD 1/2/3 validate every payload against the *live* selection, so a clobbered `agent-edit.json` can only land its own author's intended edit (a cross-file clobber trips GUARD 1 `path-mismatch`), and a losing agent times out. **`read` is NOT:** the nonce is matched on `agent-result.json` (`_await_result`), but `agent-selection.json` is then read **unchecked** (`obsidian_selection.py:390`) — a second dispatch landing between those two steps hands agent A agent B's path and note text under `ok:true`, which then chains into a *guard-passing* write against a selection A was never given. The plugin already writes the nonce into that payload (`main.ts:302`, `main.js:246`); the wrapper reads 8 fields from it and compares none of them — **a guard field written and never read**. The fix is a one-line nonce comparison, **not** a lock file → **TASK 070**. Test gap that let this through: `tests/test_obsidian_selection.py` pins the *sequential* stale-nonce case only; the concurrent clobber is untested. |
+| **OQ3** — cross-machine plugin availability | Unchanged: depends on whether the vault syncs `.obsidian/plugins/` at all (many git/iCloud setups exclude `.obsidian/`) — a known rather than surprising failure mode. |
+| **OQ5** — the ARG_MAX ceiling | **Escape valve shipped**, contrary to the earlier "deferred" note: `--from-json` (`obsidian_selection.py:351`) takes a file and is not subject to the cap. What stays unmeasured is only where a realistic selection sits against macOS's ~1 MB whole-argument limit; the 512 KiB guard fails loud rather than truncating. |
 
 Zero impact on §4 Data Model (no DDL, no DAL change), §5 Interfaces (a new script contract, no
 new wiki CLI/JSON envelope), §6 Stack (stdlib Python + one dev-only TypeScript devDependency
-gated to the plugin's own type-check harness, never a runtime dependency of the vault). New
+scoped to the plugin's own type-check harness, never a runtime dependency of the vault — "scoped",
+not "gated": see the residual below for what that type-check does and does not prove). New
 evals extend the harness (E-27 — an `eval`-injection refusal for the selection use case, E-09
 sibling; E-28 — a second-`code=`-argument attacker note, ground-truth fact #5); E-09/E-20/E-21
 stay green.

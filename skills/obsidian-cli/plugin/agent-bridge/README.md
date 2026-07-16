@@ -116,7 +116,15 @@ supervision:
 **hand-authored CommonJS mirror** kept in lockstep by hand (no bundler, so an Obsidian
 vault never needs a Node/npm/tsc toolchain to *install* this plugin). There is currently
 **no automated check** that `main.js` was actually rebuilt from the `main.ts` in the same
-commit — this is an accepted residual (see TASK 068 §3.1/§14 OQ2). The discipline:
+commit — this is an accepted residual (see TASK 068 §3.1/§14 OQ2).
+
+> **Scope of OQ2 is wider than "no build-hash tie" (restated TASK 069).** `main.js` — the only
+> file Obsidian executes — is outside `tsconfig`'s `include` and is therefore **type-checked by
+> nothing**; no CI/pytest/script runs `tsc` at all; and `obsidian.d.ts` here is **hand-written,
+> not the upstream package** (`package.json` pulls `typescript` only). So the checks below are a
+> *discipline*, not a gate — follow them, but do not mistake a clean `tsc` for verification.
+> **TASK 070** closes this: real `obsidian` devDependency → delete the vendored d.ts →
+> `esbuild`-generate `main.js` → byte-identity drift gate in pytest. Until then:
 
 - Whenever you change `main.ts`, **manually re-transcribe the equivalent change into
   `main.js`** in the same commit (same method bodies, same guard order, same file
@@ -124,7 +132,10 @@ commit — this is an accepted residual (see TASK 068 §3.1/§14 OQ2). The disci
 - Before merging, run `npx tsc --noEmit` from this directory (dev-only; requires
   `npm install` first, which pulls the pinned `typescript` devDependency into a local
   `node_modules/` — never `npm install -g`) to confirm `main.ts` type-checks cleanly
-  against the vendored `obsidian.d.ts`.
+  against the vendored `obsidian.d.ts`. ⚠️ Remember what this proves: the d.ts is
+  **hand-written**, so `tsc` confirms `main.ts` agrees with *our declarations*, not with
+  Obsidian. A fabricated `save()` on `MarkdownFileInfo` passed this check for days. If you
+  touch a declaration, verify it against the real `obsidian` package before trusting green.
 - `node -e "require('./main.js')"` should load without throwing (a CommonJS shape smoke
   test) — see the comment at the top of `main.js` for why it tolerates being required
   outside the real Obsidian process.
