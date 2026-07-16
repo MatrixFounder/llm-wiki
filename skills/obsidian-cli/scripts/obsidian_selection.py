@@ -144,6 +144,25 @@ def _write_json(root: Path, name: str, payload: dict[str, Any]) -> None:
         raise SelectionError(EXIT_APP_NOT_RUNNING, f"could not write {name}: {exc}", reason="app-not-running") from exc
 
 
+def _cleanup_exchange(root: Path) -> None:
+    """Best-effort removal of the plugin↔wrapper exchange files once the turn is done.
+
+    They are transient IPC, but they sit in `.obsidian/` — a directory Obsidian Sync and many
+    git/iCloud setups replicate — and `agent-selection.json` holds the selected note text in
+    PLAINTEXT (`agent-edit.json` holds base64 of it, which is not protection). Leaving them at
+    rest means every selection the agent ever read lingers, and syncs. Nothing reads them after
+    the nonce-matched read-back, so remove them.
+
+    Best-effort by design: a failure here must never turn a completed operation into an error —
+    the envelope has already been decided by the time we clean up.
+    """
+    for name in (_REQUEST_FILE, _EDIT_FILE, _SELECTION_FILE, _RESULT_FILE):
+        try:
+            (_obsidian_dir(root) / name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _read_json(root: Path, name: str) -> dict[str, Any]:
     try:
         data = json.loads((_obsidian_dir(root) / name).read_text(encoding="utf-8"))
@@ -293,6 +312,10 @@ _REASON_EXIT: dict[str, int] = {
     # BEFORE mutating, so this is a no-selection-class refusal, not a failed write.
     "no-saveable-view": EXIT_NO_SELECTION,
     "path-mismatch": EXIT_GUARD_REFUSED,
+    # The live selection sits at different document offsets than the ones captured at read time
+    # (the caller moved/re-selected). Distinct from `stale-range` so the diagnosis is precise:
+    # the POSITION moved, rather than the text under an unchanged position having changed.
+    "position-mismatch": EXIT_GUARD_REFUSED,
     "stale-range": EXIT_GUARD_REFUSED,
     # A malformed/unreadable `agent-edit.json` — a payload/usage fault, NOT "the app is not
     # running" (which is what the fail-closed default below would have claimed).
@@ -321,6 +344,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--path", default=argparse.SUPPRESS, help="vault-relative path of the note being edited")
     ap.add_argument("--expect-b64", default=argparse.SUPPRESS, help="base64 of the exact baseline text captured at read time")
     ap.add_argument("--replacement-b64", default=argparse.SUPPRESS, help="base64 of the replacement text")
+    ap.add_argument("--expect-from-offset", type=int, default=argparse.SUPPRESS,
+                    help="document offset of the selection START captured at read time (REQUIRED — pins the position; see the position guard)")
+    ap.add_argument("--expect-to-offset", type=int, default=argparse.SUPPRESS,
+                    help="document offset of the selection END captured at read time (REQUIRED)")
     ap.add_argument("--from-json", default=argparse.SUPPRESS, help="a JSON file carrying path/expect-b64/replacement-b64 (ARG_MAX escape valve)")
     ap.add_argument("--wiki-vault", default=argparse.SUPPRESS, help="wiki vault_id for the post-apply coherence marker (omit -> self-disabling 'skipped' marker)")
     return p
@@ -334,6 +361,7 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     """
     vault = _resolve_vault(getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False))
     expect_vault = getattr(args, "expect_vault", None)
+    root: Optional[Path] = None
 
     try:
         _headless_guard()
@@ -347,15 +375,21 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         _dispatch_command(vault, "agent-bridge:export-selection")
         result = _await_result(nonce, root=root)
     except SelectionError as exc:
+        if root is not None:
+            _cleanup_exchange(root)
         return {"ok": False, "mode": "read", "reason": exc.reason}, exc.code
+
+    assert root is not None  # set by _vault_root above; narrows for the cleanup/read below
 
     if not result.get("ok"):
         reason = str(result.get("reason", "unknown"))
+        _cleanup_exchange(root)
         return {"ok": False, "mode": "read", "reason": reason}, _REASON_EXIT.get(reason, EXIT_APP_NOT_RUNNING)
 
     try:
         selection = _read_json(root, _SELECTION_FILE)
     except SelectionError as exc:
+        _cleanup_exchange(root)
         return {"ok": False, "mode": "read", "reason": exc.reason}, exc.code
 
     envelope: dict[str, Any] = {
@@ -376,15 +410,24 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         # treat it as a focused hit (same discipline as obsidian-active-note's `recent-open`).
         "source": selection.get("source"),
     }
+    # The selection text has been read into the envelope — do not leave a plaintext copy of the
+    # user's note at rest in a synced `.obsidian/`.
+    _cleanup_exchange(root)
     return envelope, EXIT_OK
 
 
-def _build_apply_payload(args: argparse.Namespace) -> dict[str, str]:
-    """Assemble the still-base64-encoded ``{path, expectB64, replacementB64}`` payload.
+def _build_apply_payload(args: argparse.Namespace) -> dict[str, Any]:
+    """Assemble the still-base64-encoded ``{path, expectB64, replacementB64, fromOffset, toOffset}``.
 
-    Accepts either ``--path``/``--expect-b64``/``--replacement-b64`` directly, or
-    ``--from-json FILE`` (the ARG_MAX escape valve) carrying the same three fields.
-    Enforces the 512 KiB payload-too-large guard (R-068-4/OQ5) — never truncates.
+    Accepts either the inline flags directly, or ``--from-json FILE`` (the ARG_MAX escape valve)
+    carrying the same fields. Enforces the 512 KiB payload-too-large guard (R-068-4/OQ5) — never
+    truncates.
+
+    The offsets are **REQUIRED**: they pin the selection's POSITION in the document, which the
+    plugin checks *in addition to* the baseline text. Content alone is not a sufficient guard —
+    an identical string re-selected elsewhere in the same file would satisfy it and the wrong
+    occurrence would be replaced silently. Echo `fromOffset`/`toOffset` straight from the `read`
+    envelope. Making them optional would make the guard skippable, i.e. not a guard.
     """
     from_json = getattr(args, "from_json", None)
     if from_json:
@@ -397,10 +440,14 @@ def _build_apply_payload(args: argparse.Namespace) -> dict[str, str]:
         path = data.get("path")
         expect_b64 = data.get("expectB64", data.get("expect_b64"))
         replacement_b64 = data.get("replacementB64", data.get("replacement_b64"))
+        from_offset = data.get("fromOffset", data.get("from_offset"))
+        to_offset = data.get("toOffset", data.get("to_offset"))
     else:
         path = getattr(args, "path", None)
         expect_b64 = getattr(args, "expect_b64", None)
         replacement_b64 = getattr(args, "replacement_b64", None)
+        from_offset = getattr(args, "expect_from_offset", None)
+        to_offset = getattr(args, "expect_to_offset", None)
 
     if not path or expect_b64 is None or replacement_b64 is None:
         raise SelectionError(
@@ -410,6 +457,14 @@ def _build_apply_payload(args: argparse.Namespace) -> dict[str, str]:
         )
     if not isinstance(path, str) or not isinstance(expect_b64, str) or not isinstance(replacement_b64, str):
         raise SelectionError(EXIT_USAGE, "apply payload fields must be strings", reason="usage")
+    if not isinstance(from_offset, int) or not isinstance(to_offset, int) or isinstance(from_offset, bool) or isinstance(to_offset, bool):
+        raise SelectionError(
+            EXIT_USAGE,
+            "apply requires integer --expect-from-offset/--expect-to-offset (echo them from the "
+            "`read` envelope) — they pin the selection POSITION; without them an identical "
+            "string re-selected elsewhere in the file could be replaced silently",
+            reason="usage",
+        )
 
     # The 512 KiB cap guards ARG_MAX on the INLINE flags only (the agent passes the base64
     # on this wrapper's own argv). A --from-json payload arrives via a FILE, which has no
@@ -430,7 +485,13 @@ def _build_apply_payload(args: argparse.Namespace) -> dict[str, str]:
         except ValueError as exc:
             raise SelectionError(EXIT_USAGE, f"{flag} is not valid base64: {exc}", reason="usage") from exc
 
-    return {"path": path, "expectB64": expect_b64, "replacementB64": replacement_b64}
+    return {
+        "path": path,
+        "expectB64": expect_b64,
+        "replacementB64": replacement_b64,
+        "fromOffset": from_offset,
+        "toOffset": to_offset,
+    }
 
 
 def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
@@ -449,6 +510,7 @@ def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     except SelectionError as exc:
         return {"ok": False, "mode": "apply", "reason": exc.reason}, exc.code
 
+    root: Optional[Path] = None
     try:
         _headless_guard()
         _require_cli()
@@ -461,7 +523,13 @@ def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         _dispatch_command(vault, "agent-bridge:apply-edit")
         result = _await_result(nonce, root=root)
     except SelectionError as exc:
+        if root is not None:
+            _cleanup_exchange(root)
         return {"ok": False, "mode": "apply", "reason": exc.reason}, exc.code
+
+    assert root is not None  # set by _vault_root above
+    # The payload (base64 of the note's text) has served its purpose — don't leave it at rest.
+    _cleanup_exchange(root)
 
     if not result.get("ok"):
         reason = str(result.get("reason", "unknown"))

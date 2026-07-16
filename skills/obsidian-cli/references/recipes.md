@@ -292,16 +292,23 @@ python3 skills/obsidian-cli/scripts/obsidian_selection.py read --format json
 # this session shows a preview and gets an explicit yes; a whole-document or large-delete replace
 # RE-CONFIRMS with character counts even under already-established trust.
 
-# 4 — APPLY (base64 both directions — never string-interpolate raw text into the payload):
+# 4 — APPLY (base64 both directions — never string-interpolate raw text into the payload;
+#     and echo fromOffset/toOffset from step 1's envelope — they are REQUIRED and pin the
+#     POSITION, so an identical string re-selected elsewhere can't be replaced by mistake):
 EXPECT_B64=$(printf '%s' "<selected text from step 1>" | base64)
 REPLACEMENT_B64=$(printf '%s' "<the computed replacement>" | base64)
 python3 skills/obsidian-cli/scripts/obsidian_selection.py apply --path "Areas/Health.md" \
-  --expect-b64 "$EXPECT_B64" --replacement-b64 "$REPLACEMENT_B64" --wiki-vault <vid> --format json
+  --expect-b64 "$EXPECT_B64" --replacement-b64 "$REPLACEMENT_B64" \
+  --expect-from-offset <fromOffset from step 1> --expect-to-offset <toOffset from step 1> \
+  --wiki-vault <vid> --format json
 #   exit 0 + ok:true → the edit landed on Obsidian's own undo stack; the envelope's `coherence`
 #     field names the wiki-index-upsert to run next (or {"skipped":"vault-not-registered"})
-#   exit 7 (path-mismatch / stale-range) → the selection moved since step 1 — go back to step 1
-#     and re-read; NEVER retry the same apply blindly against a stale baseline
-#   exit 9 (plugin-absent) → same rule as step 1, never fall back to eval
+#   exit 7 (path-mismatch / position-mismatch / stale-range / save-failed) → the selection moved,
+#     the text under it changed, or the save did not land — go back to step 1 and re-read;
+#     NEVER retry the same apply blindly against a stale baseline
+#   exit 3 (…/no-saveable-view) → the resolved view can't be saved deterministically; re-read
+#   exit 2 (usage) → offsets missing/non-integer, or bad-payload; exit 9 → plugin-absent
+#     (same rule as step 1, never fall back to eval)
 
 # 5 — WAIT for ok:true, THEN run the coherence step the envelope named:
 wiki-index-upsert --vault <vid> --source "$(obsidian vault=<v> vault info=path)/Areas/Health.md"

@@ -149,6 +149,7 @@ def test_apply_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytes
     assert osel.main([
         "apply", "--path", "Notes/Weekly Review.md",
         "--expect-b64", _b64("Hello world"), "--replacement-b64", _b64("Goodbye world"),
+        "--expect-from-offset", "42", "--expect-to-offset", "53",
     ]) == osel.EXIT_OK
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is True and out["mode"] == "apply" and out["newLen"] == 15
@@ -166,7 +167,7 @@ def test_cli_usage_missing_subcommand_is_argparse_exit_2() -> None:
 def test_apply_payload_too_large_is_exit_2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path))
     huge = "A" * (osel._MAX_B64_LEN + 10)
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", huge, "--replacement-b64", "eA=="]) == osel.EXIT_USAGE
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", huge, "--replacement-b64", "eA==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_USAGE
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "payload-too-large"
 
@@ -174,7 +175,7 @@ def test_apply_payload_too_large_is_exit_2(monkeypatch: pytest.MonkeyPatch, tmp_
 def test_apply_malformed_base64_is_exit_2_usage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     # wrapper-side fail-fast: never forward a non-base64 payload to the plugin.
     _patch(monkeypatch, _base_mapping(tmp_path))
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "not-valid-b64!!", "--replacement-b64", "eQ=="]) == osel.EXIT_USAGE
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "not-valid-b64!!", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_USAGE
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "usage"
 
@@ -188,6 +189,8 @@ def test_apply_from_json_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap
         "path": "Notes/Weekly Review.md",
         "expectB64": _b64("Hello world"),
         "replacementB64": _b64("Goodbye world"),
+        "fromOffset": 42,
+        "toOffset": 53,
     }), encoding="utf-8")
     assert osel.main(["apply", "--from-json", str(payload_file)]) == osel.EXIT_OK
     out = json.loads(capsys.readouterr().out)
@@ -204,6 +207,7 @@ def test_apply_from_json_bypasses_512kib_cap(monkeypatch: pytest.MonkeyPatch, tm
     payload_file = tmp_path / "payload.json"
     payload_file.write_text(json.dumps({
         "path": "Notes/Weekly Review.md", "expectB64": _b64("Hello world"), "replacementB64": big,
+        "fromOffset": 42, "toOffset": 53,
     }), encoding="utf-8")
     assert osel.main(["apply", "--from-json", str(payload_file)]) == osel.EXIT_OK
 
@@ -249,7 +253,7 @@ def test_apply_empty_selection_is_exit_3(monkeypatch: pytest.MonkeyPatch, tmp_pa
     # (068-04) — the wrapper-side reason->exit map is shared, exercised here via `apply`.
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "read-empty-selection.result.json")
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_NO_SELECTION
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_NO_SELECTION
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "empty-selection"
 
@@ -302,7 +306,7 @@ def test_read_vault_mismatch_is_exit_6(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_apply_path_mismatch_is_exit_7(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "apply-path-mismatch.result.json")
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_GUARD_REFUSED
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_GUARD_REFUSED
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "path-mismatch"
 
@@ -310,9 +314,60 @@ def test_apply_path_mismatch_is_exit_7(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_apply_stale_range_is_exit_7(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "apply-stale-range.result.json")
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_GUARD_REFUSED
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_GUARD_REFUSED
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "stale-range"
+
+
+def test_apply_position_mismatch_is_exit_7(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The wrong-occurrence guard: the plugin refuses when the LIVE selection sits at different
+    # document offsets than the ones captured at read time (e.g. the human re-selected an
+    # identical string elsewhere in the same file — content alone would have matched).
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    _seed(tmp_path, "agent-result.json", "apply-position-mismatch.result.json")
+    assert osel.main([
+        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==",
+        "--expect-from-offset", "42", "--expect-to-offset", "53",
+    ]) == osel.EXIT_GUARD_REFUSED
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "position-mismatch"
+
+
+def test_apply_requires_position_offsets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The position guard must not be skippable — omitting the offsets is a usage error, never a
+    # silent downgrade to the content-only check.
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    _seed(tmp_path, "agent-result.json", "apply-ok.result.json")
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_USAGE
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "usage"
+
+
+def test_apply_payload_carries_position_offsets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # The offsets must actually reach the plugin's payload — otherwise the guard has nothing
+    # to compare the live selection against.
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    monkeypatch.setattr(osel, "_cleanup_exchange", lambda root: None)
+    _seed(tmp_path, "agent-result.json", "apply-ok.result.json")
+    osel.main([
+        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==",
+        "--expect-from-offset", "387", "--expect-to-offset", "606",
+    ])
+    payload = json.loads((tmp_path / ".obsidian" / "agent-edit.json").read_text(encoding="utf-8"))
+    assert payload["fromOffset"] == 387 and payload["toOffset"] == 606
+
+
+def test_exchange_files_are_cleaned_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # `.obsidian/` is replicated by Obsidian Sync / git / iCloud in many setups, and
+    # agent-selection.json holds the note's selected text in PLAINTEXT. Nothing reads the
+    # exchange files after the nonce-matched read-back, so they must not linger at rest.
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    _seed(tmp_path, "agent-result.json", "read-ok.result.json")
+    _seed(tmp_path, "agent-selection.json", "read-ok.selection.json")
+    assert osel.main(["read"]) == osel.EXIT_OK
+    d = tmp_path / ".obsidian"
+    for name in ("agent-request.json", "agent-edit.json", "agent-selection.json", "agent-result.json"):
+        assert not (d / name).exists(), f"{name} left at rest after read"
 
 
 def test_read_headless_is_exit_8(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -334,7 +389,7 @@ def test_apply_plugin_absent_is_exit_9(monkeypatch: pytest.MonkeyPatch, tmp_path
     # plugin feature-detection is shared logic between read/apply — prove apply also
     # refuses (never a silent eval fallback) when the plugin isn't installed.
     _patch(monkeypatch, _base_mapping(tmp_path, commands_fixture="agent-commands-absent.txt"))
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_PLUGIN_ABSENT
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_PLUGIN_ABSENT
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["reason"] == "plugin-absent"
 
@@ -350,12 +405,18 @@ def test_b64_roundtrip() -> None:
 def test_no_unencoded_text_reaches_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
     _patch(monkeypatch, _base_mapping(tmp_path), calls=calls)
+    # This test inspects what the wrapper WROTE to agent-edit.json; the real run cleans that file
+    # up afterwards (no plaintext/base64 note text left at rest), so disable cleanup here — the
+    # assertion is about the write, not about disk residue. `test_exchange_files_are_cleaned_up`
+    # covers the removal itself.
+    monkeypatch.setattr(osel, "_cleanup_exchange", lambda root: None)
     _seed(tmp_path, "agent-result.json", "apply-ok.result.json")
     replacement = "Привет \"мир\"\nвторая строка"
     expect = "Hello world"
     osel.main([
         "apply", "--path", "Notes/Weekly Review.md",
         "--expect-b64", _b64(expect), "--replacement-b64", _b64(replacement),
+        "--expect-from-offset", "42", "--expect-to-offset", "53",
     ])
     for call in calls:
         joined = " ".join(call)
@@ -375,7 +436,7 @@ def test_wrapper_never_dispatches_eval(monkeypatch: pytest.MonkeyPatch, tmp_path
     _seed(tmp_path, "agent-result.json", "read-ok.result.json")
     _seed(tmp_path, "agent-selection.json", "read-ok.selection.json")
     osel.main(["read"])
-    osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="])
+    osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"])
     monkeypatch.setenv("WIKI_HEADLESS", "1")
     osel.main(["read"])
     monkeypatch.delenv("WIKI_HEADLESS", raising=False)
@@ -391,7 +452,7 @@ def test_wrapper_never_dispatches_eval_when_plugin_absent(monkeypatch: pytest.Mo
     calls: list[list[str]] = []
     _patch(monkeypatch, _base_mapping(tmp_path, commands_fixture="agent-commands-absent.txt"), calls=calls)
     assert osel.main(["read"]) == osel.EXIT_PLUGIN_ABSENT
-    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ=="]) == osel.EXIT_PLUGIN_ABSENT
+    assert osel.main(["apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53"]) == osel.EXIT_PLUGIN_ABSENT
     assert all("eval" not in call for call in calls if call)
 
 
@@ -409,6 +470,7 @@ def test_apply_coherence_marker_with_wiki_vault(monkeypatch: pytest.MonkeyPatch,
     assert osel.main([
         "apply", "--path", "Notes/Weekly Review.md",
         "--expect-b64", _b64("Hello world"), "--replacement-b64", _b64("Goodbye world"),
+        "--expect-from-offset", "42", "--expect-to-offset", "53",
         "--wiki-vault", "my-vault-id",
     ]) == osel.EXIT_OK
     out = json.loads(capsys.readouterr().out)
@@ -425,6 +487,7 @@ def test_apply_coherence_marker_without_wiki_vault_self_disables(monkeypatch: py
     assert osel.main([
         "apply", "--path", "Notes/Weekly Review.md",
         "--expect-b64", _b64("Hello world"), "--replacement-b64", _b64("Goodbye world"),
+        "--expect-from-offset", "42", "--expect-to-offset", "53",
     ]) == osel.EXIT_OK
     out = json.loads(capsys.readouterr().out)
     assert out["coherence"] == {"skipped": "vault-not-registered"}
@@ -434,7 +497,7 @@ def test_apply_refusal_omits_coherence_key(monkeypatch: pytest.MonkeyPatch, tmp_
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "apply-path-mismatch.result.json")
     assert osel.main([
-        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--wiki-vault", "my-vault-id",
+        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53", "--wiki-vault", "my-vault-id",
     ]) == osel.EXIT_GUARD_REFUSED
     out = json.loads(capsys.readouterr().out)
     assert "coherence" not in out
@@ -484,7 +547,7 @@ def test_apply_format_tsv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsy
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "apply-ok.result.json")
     assert osel.main([
-        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--format", "tsv",
+        "apply", "--path", "N.md", "--expect-b64", "eA==", "--replacement-b64", "eQ==", "--expect-from-offset", "42", "--expect-to-offset", "53", "--format", "tsv",
     ]) == osel.EXIT_OK
     row = capsys.readouterr().out.strip().split("\t")
     assert row[0] == "True" and row[1] == "apply" and row[3] == "N.md"

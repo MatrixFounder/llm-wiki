@@ -304,12 +304,19 @@ class AgentBridge extends Plugin {
     const from = editor.getCursor("from");
     const to = editor.getCursor("to");
 
-    // GUARD 1
+    // GUARD 1 — same file
     if (editPayload.path !== file.path) {
       await this.writeResult({ ok: false, reason: "path-mismatch", nonce });
       return;
     }
-    // GUARD 2
+    // GUARD 2 — same POSITION. Content alone is NOT sufficient: an identical string re-selected
+    // elsewhere in the same file would satisfy it and we'd replace the WRONG occurrence silently.
+    // A payload without offsets yields undefined !== number -> fail-closed. Mirrors main.ts.
+    if (editor.posToOffset(from) !== editPayload.fromOffset || editor.posToOffset(to) !== editPayload.toOffset) {
+      await this.writeResult({ ok: false, reason: "position-mismatch", nonce });
+      return;
+    }
+    // GUARD 3 — same content at that position (offsets can survive while the text changes).
     if (editor.getRange(from, to) !== expect) {
       await this.writeResult({ ok: false, reason: "stale-range", nonce });
       return;

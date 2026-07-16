@@ -376,15 +376,25 @@ resolution").
 anthropic`**, drives the `agent-bridge` plugin channel ONLY and
 **never emits `eval`** under any code path (plugin-absent ⇒ typed exit 9, no silent `eval`
 fallback). Modes `read [--vault N] [--expect-vault N]` and `apply --path P --expect-b64 B
---replacement-b64 B2 [--from-json FILE] [--wiki-vault V]`; `--format json|path|tsv`. The two
+--replacement-b64 B2 --expect-from-offset N --expect-to-offset N [--from-json FILE]
+[--wiki-vault V]`; `--format json|path|tsv`. The two
 untrusted TEXT payloads (expected-baseline text + replacement text) travel base64-encoded end to
 end — raw LLM/selection-derived text never reaches a subprocess argument; the `path` is a structural,
 app-sourced identifier (re-validated by the plugin's GUARD 1) written JSON-escaped into
-`agent-edit.json`, so it is not base64-encoded. `--from-json` is the ARG_MAX escape valve (a file,
-exempt from the 512 KiB inline-payload cap). Typed exit codes extend the
-resolver's scheme: `0 ok · 2 usage/payload-too-large · 3 no-selection (no-editor/preview/
-empty-selection) · 4 app-not-running (result timeout / stale nonce never matched) · 5 cli-absent ·
-6 vault-mismatch · 7 guard-refused (path-mismatch/stale-range) · 8 headless · 9 plugin-absent`.
+`agent-edit.json`, so it is not base64-encoded. **The position offsets are REQUIRED** — echo
+`fromOffset`/`toOffset` straight from the `read` envelope: they pin *where* the selection is, which
+the plugin checks in addition to the baseline text. Content alone is not a guard (an identical
+string re-selected elsewhere in the same file would match it and the WRONG occurrence would be
+replaced silently), and an optional guard is a skippable one. `--from-json` is the ARG_MAX escape
+valve (a file, exempt from the 512 KiB inline-payload cap; it must carry the offsets too).
+**Read is not a spectator:** the wrapper removes the `.obsidian/agent-*.json` exchange files once
+the nonce-matched read-back is done — they are transient IPC and `agent-selection.json` holds the
+note text in plaintext inside a directory Obsidian Sync/git/iCloud commonly replicate.
+Typed exit codes extend the
+resolver's scheme: `0 ok · 2 usage/payload-too-large/bad-payload · 3 no-selection (no-editor/
+preview/empty-selection/no-saveable-view) · 4 app-not-running (result timeout / stale nonce never
+matched) · 5 cli-absent · 6 vault-mismatch · 7 guard-refused (path-mismatch/position-mismatch/
+stale-range/save-failed) · 8 headless · 9 plugin-absent`.
 Every dispatch mints a fresh nonce and `_await_result` only accepts a matching-nonce result — a
 leftover result from a prior invocation is never mistaken for this one's outcome. A successful
 `apply` envelope carries a `coherence` dispatch marker (`{"action":"wiki-index-upsert",…}` when

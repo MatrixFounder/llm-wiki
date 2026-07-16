@@ -53,6 +53,11 @@ interface AgentEdit {
   path: string;
   expectB64: string;
   replacementB64: string;
+  // The document offsets the caller captured at READ time. Required: a payload missing them
+  // yields `undefined`, which can never equal a live offset, so the position guard below
+  // fail-CLOSES rather than silently degrading to the content-only check.
+  fromOffset: number;
+  toOffset: number;
   nonce: string;
 }
 
@@ -361,12 +366,21 @@ export default class AgentBridge extends Plugin {
     const from = editor.getCursor("from");
     const to = editor.getCursor("to");
 
-    // GUARD 1
+    // GUARD 1 — same file
     if (editPayload.path !== file.path) {
       await this.writeResult({ ok: false, reason: "path-mismatch", nonce });
       return;
     }
-    // GUARD 2
+    // GUARD 2 — same POSITION. Content alone (GUARD 3) is NOT sufficient: an identical string
+    // re-selected elsewhere in the same file satisfies it, and we would replace the WRONG
+    // occurrence silently. The read already exported these offsets; the caller echoes them back
+    // so the range is pinned in the document, not just matched by text.
+    if (editor.posToOffset(from) !== editPayload.fromOffset || editor.posToOffset(to) !== editPayload.toOffset) {
+      await this.writeResult({ ok: false, reason: "position-mismatch", nonce });
+      return;
+    }
+    // GUARD 3 — same content at that position (still required: the offsets can survive while the
+    // text under them changes, e.g. an in-place edit of the same length).
     if (editor.getRange(from, to) !== expect) {
       await this.writeResult({ ok: false, reason: "stale-range", nonce });
       return;
