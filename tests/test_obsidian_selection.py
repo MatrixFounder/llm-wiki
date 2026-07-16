@@ -240,6 +240,32 @@ def test_read_preview_is_exit_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     assert out["ok"] is False and out["reason"] == "preview"
 
 
+def test_read_unsupported_view_is_exit_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # TASK 070 / R-070-5. The plugin refuses a non-MarkdownView at RESOLUTION: its view mode is
+    # unknowable (getMode is a MarkdownView member, not a MarkdownFileInfo one), so the old
+    # `getMode?.()` probe could never fire on exactly the inputs it was written to catch.
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    _seed(tmp_path, "agent-result.json", "read-unsupported-view.result.json")
+    assert osel.main(["read"]) == osel.EXIT_NO_SELECTION
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "unsupported-view"
+
+
+def test_apply_legacy_no_saveable_view_still_maps_to_exit_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The pre-070 plugin's name for the same condition must keep mapping (version-skew pin).
+
+    The plugin installs by COPYING main.js into `<vault>/.obsidian/plugins/`, so a vault can run
+    an older main.js than this wrapper. Drop the legacy alias and that skew falls to the
+    fail-closed default: exit 4 "app-not-running" for a plugin that is running fine. This test
+    goes RED if someone "cleans up" the alias.
+    """
+    _patch(monkeypatch, _base_mapping(tmp_path))
+    _seed(tmp_path, "agent-result.json", "apply-no-saveable-view.result.json")
+    assert osel.main(["read"]) == osel.EXIT_NO_SELECTION
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "no-saveable-view"
+
+
 def test_read_empty_selection_is_exit_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path))
     _seed(tmp_path, "agent-result.json", "read-empty-selection.result.json")

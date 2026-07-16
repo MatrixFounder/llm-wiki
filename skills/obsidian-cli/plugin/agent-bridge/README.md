@@ -11,8 +11,19 @@ selection I/O plus a handful of `.obsidian/`-scoped JSON files, no process/netwo
 Two agent-driven commands, dispatched via `obsidian command id=agent-bridge:<id>` (never
 called directly by a human — the `obsidian_selection.py` wrapper drives them):
 
-- `export-selection` — reads `app.workspace.activeEditor`, writes the captured selection
-  to `.obsidian/agent-selection.json`, mirrors the outcome to `.obsidian/agent-result.json`.
+- `export-selection` — resolves the editor, writes the captured selection to
+  `.obsidian/agent-selection.json`, mirrors the outcome to `.obsidian/agent-result.json`.
+
+> **Resolution has TWO sources, and the second one is the whole point.** `app.workspace.activeEditor`
+> is **`null`** exactly in this plugin's reason for existing: **Obsidian's integrated terminal is
+> itself a leaf**, so when the agent types there, the terminal is the active leaf and no editor is
+> "active" — live-verified; every command returned `no-editor` before the fallback existed. So
+> resolution falls back to `lastEditor`, the most recently active `MarkdownView`, and the exported
+> envelope reports **which source answered** (`source: "active" | "recent-editor"`) so a fallback
+> resolve is visible rather than silent. A non-`MarkdownView` active editor is **refused** at
+> resolution (`unsupported-view`) and never falls through to `lastEditor` — that fall-through would
+> silently retarget a *different note* than the human is looking at, and every apply guard would then
+> pass against the wrong file. If you verify any of this, read the `source` field, not the text.
 - `apply-edit` — reads `.obsidian/agent-edit.json`, re-validates the selection is still
   exactly what the caller expects (the optimistic-concurrency guard), and only then
   replaces it via `editor.replaceRange` (undoable — lands on Obsidian's own Cmd+Z stack),
@@ -72,15 +83,38 @@ it** (there is no element left to style).
 This plugin therefore registers a **CM6 editor extension** that re-draws the selection as a mark
 decoration whenever the editor is unfocused (and yields to CM's native selection when focused). It
 is purely visual — it never changes the document — and needs **no CSS snippet**. The highlight
-colour is Obsidian's `--text-selection`; override `.agent-persist-selection` in a theme/snippet if
-you want a different colour.
+colour is Obsidian's `--text-selection`.
+
+**To override the colour**, a bare `.agent-persist-selection { … }` snippet is **not enough** — you
+need `!important`:
+
+```css
+/* an Obsidian CSS snippet */
+.agent-persist-selection { background-color: rgba(255, 0, 0, 0.4) !important; }
+```
+
+Since TASK 070 the rule is mounted by CodeMirror as a base theme (so it reaches popout windows),
+and CM6 compiles it to a **descendant** selector — `.ͼ1 .agent-persist-selection`, specificity
+`(0,2,0)`. A plain `.agent-persist-selection` snippet is `(0,1,0)` and loses on specificity no
+matter where it is loaded. (Before TASK 070 the plugin's own rule was `(0,1,0)`, so the two tied
+and a later-loaded snippet won — which is why the old wording was true then and silently false
+now. Do not target `.ͼ1` itself: that class name is **generated per StyleModule** and is not
+stable across versions.)
 
 ## Install (manual — this task ships source + instructions, not an auto-installer)
 
-1. Copy this whole folder to `<vault>/.obsidian/plugins/agent-bridge/` (i.e.
-   `manifest.json`, `main.js` — you do **not** need `main.ts`/`obsidian.d.ts`/
-   `tsconfig.json`/`package.json` inside the vault; those are the reviewable
-   source/type-check harness, not runtime files).
+1. Copy **exactly two files** to `<vault>/.obsidian/plugins/agent-bridge/`:
+
+   ```
+   manifest.json
+   main.js
+   ```
+
+   Nothing else. Not `main.ts`, not `tsconfig.json`, not `package.json`, and above all not
+   `node_modules/` — those are the reviewable source and the build/type-check harness, and
+   enumerating the two runtime files is what keeps "the toolchain never ships into a vault" a
+   mechanism rather than a hope. (`main.js` is self-contained: `obsidian` and CodeMirror are
+   `--external`, injected by the app at runtime.)
 2. In Obsidian: **Settings → Community plugins** → disable Restricted mode if needed →
    reload the plugin list → enable **Agent Bridge**.
 3. Do the **OQ1 one-time verification** below before relying on this for anything but a
@@ -93,63 +127,97 @@ you want a different colour.
 > `plugin-absent` (exit 9) until you install the plugin there too. This is a known,
 > not a surprising, failure mode — the wrapper never silently falls back to `eval`.
 
-## OQ1 — one-time verification (do this once, right after first install)
+## OQ1 — RESOLVED (kept, because what it got wrong is the useful part)
 
-The plugin's command `callback` firing while OS focus sits in the **integrated terminal**
-(not the editor pane) is **inferred** from Obsidian's documented command-dispatcher
-behaviour, not independently proven end-to-end (the `obsidian eval`-based
-`activeEditor` read path *is* independently verified under terminal focus — only the
-specific `callback`-registration code path here is unverified). So, once, under
-supervision:
+> ⚠️ **This section used to have it backwards, on both halves, and TASK 070 corrects it.** It said the
+> `callback` firing under terminal focus was *unverified*, while the `eval`-based `activeEditor` read
+> path *was* "independently verified under terminal focus". The dogfoods showed the exact opposite:
+>
+> - **The `callback` DOES fire** while OS focus sits in the integrated terminal — proven 2026-07-15.
+> - **`activeEditor` is `null` there**, so the "verified" read path is precisely what does *not* work:
+>   the earlier run that "verified" it was launched from an **external** shell, where the note stays
+>   Obsidian's active leaf, so it never exercised the real case. From the integrated terminal every
+>   command returned `no-editor`.
+>
+> That is why `main.ts` carries the `lastEditor` fallback: **Obsidian's integrated terminal is itself
+> a leaf**, so `activeEditor` is null exactly where the agent lives. The read is proven only *through*
+> that fallback, and the envelope reports which source answered (`source: "active" | "recent-editor"`)
+> so a fallback resolve is never silent.
 
-1. Open a note, select some text, then click into the **integrated terminal** (so OS
-   focus leaves the editor).
-2. From the terminal, run `obsidian command id=agent-bridge:export-selection`.
-3. Confirm `.obsidian/agent-selection.json` now contains the text you selected (not an
-   empty/stale capture). If it doesn't, the `callback` did not see the still-active
-   editor under terminal focus — stop and re-open this as a blocking issue before using
-   `apply-edit` for anything unsupervised.
+**What is proven now** (2026-07-16 dogfood, on the regenerated `main.js`):
 
-## Rebuild discipline (manual — no build-hash tie)
+| Claim | Evidence |
+|---|---|
+| `read` works from the integrated terminal | `ok:true`, `source: "recent-editor"` |
+| `instanceof MarkdownView` holds **across window realms** | a popout read returned `source: "active"` — so the `instanceof` ran against a view whose DOM lives in the popout's realm, and passed |
+| `getLeavesOfType("markdown")` **includes popout leaves** | from the integrated terminal, a note existing **only** in a popout resolved via `source: "recent-editor"`, identified by a unique sentinel. This is the plugin's core scenario end-to-end |
 
-`main.ts` is the reviewable, type-checked source of truth; the committed `main.js` is a
-**hand-authored CommonJS mirror** kept in lockstep by hand (no bundler, so an Obsidian
-vault never needs a Node/npm/tsc toolchain to *install* this plugin). There is currently
-**no automated check** that `main.js` was actually rebuilt from the `main.ts` in the same
-commit — this is an accepted residual (see TASK 068 §3.1/§14 OQ2).
+**Still unobserved** (do these if you care about them; none block a supervised trial): the popout
+**highlight** rendering (source-shape-tested only — whether `var(--text-selection)` resolves inside a
+popout document is runtime behaviour), `apply` write-back, `copy-selection-ref`, and whether Obsidian
+actually **enforces** `minAppVersion` (set it to `"99.0.0"`, reload, confirm refusal).
 
-> **Scope of OQ2 is wider than "no build-hash tie" (restated TASK 069).** `main.js` — the only
-> file Obsidian executes — is outside `tsconfig`'s `include` and is therefore **type-checked by
-> nothing**; no CI/pytest/script runs `tsc` at all; and `obsidian.d.ts` here is **hand-written,
-> not the upstream package** (`package.json` pulls `typescript` only). So the checks below are a
-> *discipline*, not a gate — follow them, but do not mistake a clean `tsc` for verification.
-> **TASK 070** closes this: real `obsidian` devDependency → delete the vendored d.ts →
-> `esbuild`-generate `main.js` → byte-identity drift gate in pytest. Until then:
+★ **The lesson worth keeping**: a run from an *external* shell looks identical to the real thing and
+proves something else entirely, because the note never stops being the active leaf. If you re-verify
+any of this, check the **`source`** field — not the text. The text is right either way.
 
-- Whenever you change `main.ts`, **manually re-transcribe the equivalent change into
-  `main.js`** in the same commit (same method bodies, same guard order, same file
-  constants) — do not let them drift.
-- Before merging, run `npx tsc --noEmit` from this directory (dev-only; requires
-  `npm install` first, which pulls the pinned `typescript` devDependency into a local
-  `node_modules/` — never `npm install -g`) to confirm `main.ts` type-checks cleanly
-  against the vendored `obsidian.d.ts`. ⚠️ Remember what this proves: the d.ts is
-  **hand-written**, so `tsc` confirms `main.ts` agrees with *our declarations*, not with
-  Obsidian. A fabricated `save()` on `MarkdownFileInfo` passed this check for days. If you
-  touch a declaration, verify it against the real `obsidian` package before trusting green.
-- `node -e "require('./main.js')"` should load without throwing (a CommonJS shape smoke
-  test) — see the comment at the top of `main.js` for why it tolerates being required
-  outside the real Obsidian process.
+## Rebuild discipline (TASK 070 — a gate, not a discipline)
+
+**`main.js` is GENERATED. Never hand-edit it.** Edit `main.ts`, then:
+
+```bash
+npm install          # once — pulls the exact-pinned obsidian/esbuild/typescript locally
+npm run build        # = python3 scripts/build_agent_bridge.py --write
+```
+
+`--write` runs `tsc --noEmit` **first and refuses to rebuild or re-pin on a type error**, then
+runs esbuild, then mints `config/agent-bridge-build.json` — a receipt carrying `sha256(main.ts)`,
+`sha256(main.js)`, and the toolchain versions that produced them. There is deliberately **no
+`--force`, no `--build-only`, no `--skip-typecheck`**: a receipt for un-type-checked code is the
+exact failure this gate exists to end.
+
+`tests/test_agent_bridge_build_drift.py` enforces it in three layers:
+
+| Layer | Needs | Catches |
+|---|---|---|
+| **L0** | nothing | either file edited without a rebuild — runs on any machine, toolchain or not |
+| **L1** | `esbuild` only | a hand-edited `main.js` that was *also* re-pinned (L0 structurally cannot see this) |
+| the tsc gate | `node` + `tsc` | `main.ts` disagreeing with Obsidian's real typings |
+| **L2** | `WIKI_STRICT_PLUGIN_BUILD=1` | makes the skips impossible. ⚠️ **Latent** — no CI sets it yet (`docs/issues/arch-10-*`), so L0 carries today's guarantee |
+
+⚠️ **Each tool gets its OWN presence check — never one shared `toolchain_present()`.** esbuild's
+postinstall replaces its JS shim with a platform-native binary, so **esbuild needs no node**
+(verified: `env -i PATH=/usr/bin:/bin ./node_modules/.bin/esbuild --version` → `0.28.1`), while
+`tsc` is a `#!/usr/bin/env node` script and does. One shared predicate is wrong in both directions:
+*esbuild absent + typescript present* would skip the **typecheck** although it could have run — a
+green meaning "not checked" — and pinning node onto esbuild would skip the byte-compare on a
+machine where it works fine. Two tests pin the split.
+
+**What this replaced, and why it matters.** `main.js` used to be a hand-authored "mirror" of
+`main.ts` kept in lockstep by memory, and `tsc` checked `main.ts` against a **hand-written**
+`obsidian.d.ts` vendored in this folder. That d.ts had invented `getMode?(): string` on
+`MarkdownFileInfo` — wrong owner *and* widened return — so a guard that could never fire passed a
+green type-check for days. Both are gone: the real `obsidian` package is pinned exact
+(`1.12.3 == manifest.minAppVersion`), and `main.js` is derived rather than remembered.
+
+- **Before merging**: `pytest tests/test_agent_bridge_build_drift.py tests/test_agent_bridge_pin.py`.
+  A clean `tsc` now means something — it is checking against Obsidian's own typings.
+- **`node --check main.js`** confirms the bundle parses. ⚠️ `node -e "require('./main.js')"` now
+  **throws** (`Cannot find module 'obsidian'`) and that is correct: the `obsidian` package is
+  types-only (`"main": ""`) and the bundle externalizes it for the app to inject. The old
+  "requires cleanly" smoke test only ever proved *the file parses with inert stand-ins in scope*
+  — it loaded fakes and reported success, which is why it is gone.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | Obsidian plugin manifest (`id`, `minAppVersion`, …). |
-| `main.js` | **Shipped** runtime plugin code (CommonJS, hand-authored). |
-| `main.ts` | Reviewable typed source of truth (not shipped into the vault). |
-| `obsidian.d.ts` | Vendored minimal ambient types for the symbols this plugin touches. |
+| `manifest.json` | **Shipped.** Obsidian plugin manifest (`id`, `minAppVersion`, …). |
+| `main.js` | **Shipped.** GENERATED by `npm run build` — never hand-edit; see *Rebuild discipline*. |
+| `main.ts` | Typed source of truth. Not shipped into the vault; `main.js` is built from it. |
 | `tsconfig.json` | `strict`/`noEmit` type-check config for `main.ts`. |
-| `package.json` | Dev-only `typescript` devDependency for the type-check harness. |
+| `package.json` | Exact-pinned dev toolchain (`obsidian`, `esbuild`, `typescript`) + `npm run build`. |
+| `package-lock.json` | **Committed, and load-bearing** — it is what makes `npm install` reproduce the *pinned* toolchain. `tests/test_agent_bridge_pin.py::test_lockfile_matches_pin` goes RED if it disagrees with `package.json`. Dev-only; never ships. |
 
 ## Security
 

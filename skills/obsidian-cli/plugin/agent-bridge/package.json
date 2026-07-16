@@ -1,9 +1,12 @@
 {
   "private": true,
-  "description": "Dev-only type-check harness for the agent-bridge Obsidian plugin (TASK 068 / R-068-1). Not published; the plugin itself ships as manifest.json + main.js (CommonJS, no bundler).",
+  "description": "Dev-only build + type-check harness for the agent-bridge Obsidian plugin (TASK 070). Not published. main.js is GENERATED from main.ts by esbuild via `npm run build` (= scripts/build_agent_bridge.py --write) and hash-pinned by tests/test_agent_bridge_build_drift.py — never hand-edit it. Only manifest.json + main.js ship into a vault; this toolchain never does.",
+  "scripts": {
+    "build": "python3 ../../../../scripts/build_agent_bridge.py --write"
+  },
   "devDependencies": {
     "esbuild": "0.28.1",
     "obsidian": "1.12.3",
-    "typescript": "^5"
+    "typescript": "5.9.3"
   }
 }

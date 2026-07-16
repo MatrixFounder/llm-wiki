@@ -161,7 +161,7 @@ it exists** and stays red until B-05 regenerates. Phase 1 does not fake a failur
 |---|---|
 | reintroduce a type error in `main.ts`, rebuild, re-pin | **RED** — *if green, the task has failed regardless of everything else* |
 | hand-edit `main.js` **and** re-pin | L0 green, **L1 RED** |
-| edit `main.ts`, don't rebuild, **no node** | **RED** at L0 (`3 skipped, 1 failed`) — the skip is non-vacuous |
+| edit `main.ts`, don't rebuild, **no toolchain** | **RED** at L0 — the skip is non-vacuous. *Executed: `1 failed, 14 passed, 3 skipped` with `node_modules` removed.* ⚠️ **This row said "no node ⇒ 3 skipped" and that was wrong twice over.** (a) **esbuild needs no node** — its postinstall installs a platform-native binary (verified: `env -i PATH=/usr/bin:/bin esbuild --version` → `0.28.1`), so removing node alone skips only the tsc gate; the no-toolchain state is *no `node_modules`*. (b) Worse, **`3 skipped` is the arithmetic fingerprint of the single shared `toolchain_present()` this very plan bans** — it is the count you get only if one predicate gates all three. A maintainer re-running the row as written would see the "wrong" number and could well "fix" it by collapsing the predicates, reintroducing the R-070-9(a) hazard. The expected-value column was itself computed from the rejected design. |
 | drop `--external:@codemirror/view`, rebuild, re-pin | **RED** at the externals test (only 1 of 12 fires — that is the point) |
 | remove `unsupported-view` from `_REASON_EXIT` | **RED** (else exit 4 = infinite retry on a deterministic refusal) |
 | `tsc` absent + `--write` | **HARD FAIL**, never skip |

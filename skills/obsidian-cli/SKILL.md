@@ -392,9 +392,10 @@ the nonce-matched read-back is done — they are transient IPC and `agent-select
 note text in plaintext inside a directory Obsidian Sync/git/iCloud commonly replicate.
 Typed exit codes extend the
 resolver's scheme: `0 ok · 2 usage/payload-too-large/bad-payload · 3 no-selection (no-editor/
-preview/empty-selection/no-saveable-view) · 4 app-not-running (result timeout / stale nonce never
-matched) · 5 cli-absent · 6 vault-mismatch · 7 guard-refused (path-mismatch/position-mismatch/
-stale-range/save-failed) · 8 headless · 9 plugin-absent`.
+preview/empty-selection/unsupported-view, legacy no-saveable-view) · 4 app-not-running (result
+timeout / stale nonce never matched / selection-nonce-mismatch) · 5 cli-absent · 6 vault-mismatch ·
+7 guard-refused (path-mismatch/position-mismatch/stale-range/save-failed) · 8 headless ·
+9 plugin-absent`.
 Every dispatch mints a fresh nonce and `_await_result` only accepts a matching-nonce result — a
 leftover result from a prior invocation is never mistaken for this one's outcome. A successful
 `apply` envelope carries a `coherence` dispatch marker (`{"action":"wiki-index-upsert",…}` when
@@ -426,10 +427,16 @@ Obsidian version bump.
 `obsidian_selection.py` is contract-tested in `tests/test_obsidian_selection.py` (deterministic —
 mocks the `_run_obsidian` seam against committed fixtures under `evals/fixtures/selection/`, no
 live app; one fixture per degradation-ladder rung + a base64 round-trip). The `agent-bridge`
-plugin's TypeScript source type-checks against the vendored `obsidian.d.ts` (`npx tsc --noEmit`
-from `skills/obsidian-cli/plugin/agent-bridge/`) — it has no executable test runtime, so its
-guard logic is covered by type-checking + manual inspection + the OQ1 one-time live check
-documented in the plugin's own README.
+plugin's `main.js` is **GENERATED** from `main.ts` — **never hand-edit it**; run `npm run build`
+(= `python3 scripts/build_agent_bridge.py --write`), which type-checks first and **refuses to
+rebuild or re-pin on a type error**, then commit the regenerated `main.js` with its receipt
+(`config/agent-bridge-build.json`). `tests/test_agent_bridge_build_drift.py` goes RED on an
+un-rebuilt or hand-edited `main.js`. `main.ts` type-checks against the **real** `obsidian`
+package, exact-pinned to `1.12.3 == manifest.minAppVersion` (TASK 070 deleted the hand-vendored
+`obsidian.d.ts`, which had **invented** `getMode?(): string` — so a green `tsc` used to prove only
+that the code agreed with our own fiction). ⚠️ It still has **no executable test runtime**: no test
+runs plugin logic, so a runtime fault is caught only by a live dogfood. Type-checking now has real
+contact with Obsidian's API; it is not behavioural coverage.
 
 ## References
 
@@ -453,7 +460,7 @@ documented in the plugin's own README.
   OQ1 one-time verification) that "Editor-selection bridge" drives via `command id=`.
 - [scripts/obsidian_selection.py](scripts/obsidian_selection.py) — the selection wrapper
   (stdlib, vendor-neutral, plugin-only/never-`eval`) used by "Editor-selection bridge":
-  modes `read` / `apply` (or `--from-json`); typed exit codes (0 ok · 2 usage/payload-too-large
+  modes `read` / `apply` (or `--from-json`); typed exit codes (0 ok · 2 usage/payload-too-large/bad-payload
   · 3 no-selection · 4 app-not-running · 5 cli-absent · 6 vault-mismatch · 7 guard-refused ·
   8 headless · 9 plugin-absent). Contract-tested in `tests/test_obsidian_selection.py` against
   committed fixtures under `evals/fixtures/selection/`.

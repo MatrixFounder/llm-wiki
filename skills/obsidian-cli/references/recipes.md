@@ -306,8 +306,14 @@ python3 skills/obsidian-cli/scripts/obsidian_selection.py apply --path "Areas/He
 #   exit 7 (path-mismatch / position-mismatch / stale-range / save-failed) → the selection moved,
 #     the text under it changed, or the save did not land — go back to step 1 and re-read;
 #     NEVER retry the same apply blindly against a stale baseline
-#   exit 3 (…/no-saveable-view) → the resolved view can't be saved deterministically; re-read
-#   exit 2 (usage) → offsets missing/non-integer, or bad-payload; exit 9 → plugin-absent
+#   exit 3 (…/unsupported-view) → the active editor is not a MarkdownView: its mode is unknowable
+#     and it has no deterministic save(). Ask the user to click into a normal note, then re-read.
+#     (An older installed main.js reports this same condition as the legacy `no-saveable-view`.)
+#   exit 4 (selection-nonce-mismatch) → a concurrent export-selection overwrote the selection file
+#     between the result match and the read; retry the read
+#   exit 2 (usage) → offsets missing/non-integer · bad-payload · payload-too-large (the 512 KiB
+#     ARG_MAX guard on inline argv — use --from-json, which bypasses it by design)
+#   exit 9 → plugin-absent
 #     (same rule as step 1, never fall back to eval)
 
 # 5 — WAIT for ok:true, THEN run the coherence step the envelope named:
@@ -321,7 +327,14 @@ wiki-index-upsert --vault <vid> --source "$(obsidian vault=<v> vault info=path)/
 | `no-editor` | ask the user to click into the note |
 | `preview` | ask the user to switch to source/edit mode |
 | `empty-selection` | ask the user to select text |
-| `path-mismatch` / `stale-range` | re-read (step 1) — never retry the write against the stale baseline |
+| `unsupported-view` | the active editor is not a normal markdown view (a canvas, an embedded or mobile editor): its mode is unknowable and it cannot be saved deterministically — ask the user to click into a normal note. Refused at resolution, **before** any mutation, and never silently retargeted to a different note. An older installed `main.js` reports this as `no-saveable-view` |
+| `selection-nonce-mismatch` | a concurrent `export-selection` overwrote `agent-selection.json` between the result match and the read — retry the read (exit 4; the read is narrowed, not race-free — see OQ-070-1) |
+| `path-mismatch` | exit 7 — the live editor is on a **different file** than the payload names. Re-read (step 1); never retry the write against the stale baseline |
+| `position-mismatch` | exit 7 — the selection sits at **different offsets** than the read captured (the user moved or re-selected). Distinct from `stale-range` on purpose: the *position* moved, rather than the text under an unchanged position having changed. Re-read |
+| `stale-range` | exit 7 — the offsets still match but the **text under them changed** (e.g. a same-length in-place edit). Re-read |
+| `save-failed` | exit 7, and **the one rung that does NOT mean the note changed**: `replaceRange`/`save()` threw (disk full, permissions, file deleted). The buffer may be dirty with the write **not** on disk — never assume `ok`; re-read to establish the true state before any retry |
+| `payload-too-large` | exit 2 — the base64 payload exceeds the 512 KiB argv cap. Use `--from-json` (the cap is an ARG_MAX guard on inline argv, which `--from-json` bypasses by design) |
+| `bad-payload` | exit 2 — `agent-edit.json` was unreadable, or its base64 was malformed. A payload/usage fault, **not** "the app is not running" |
 | `plugin-absent` | tell the user to install `agent-bridge` (its README has the steps) — **never** fall back to `obsidian eval`, even as a one-off |
 | `app-not-running` | no result was observed within the deadline — treat like the app not responding; ask the user to check Obsidian is running |
 | `cli-absent` / `headless` | degrade per SKILL.md's Availability probe & degradation |
@@ -330,7 +343,10 @@ wiki-index-upsert --vault <vid> --source "$(obsidian vault=<v> vault info=path)/
 --source <ABS path>` (the `apply` envelope's `coherence` field names it; self-disables, and says
 so, when `--wiki-vault` is omitted or the vault isn't wiki-registered).
 **Failure handling:** never treat a non-zero exit as "maybe it worked" — success is the `ok:true`
-shape, never the exit code alone. A guard refusal (`path-mismatch`/`stale-range`) means the note
-changed between read and apply — always re-read, never blind-retry the same payload. A
+shape, never the exit code alone. Exit 7 (guard-refused) has **four** members, and they do not all
+mean the same thing: `path-mismatch` / `position-mismatch` / `stale-range` mean the note or the
+selection moved between read and apply — always re-read, never blind-retry the same payload — while
+`save-failed` means nothing moved and **the write itself failed**, possibly leaving the buffer dirty
+with the change not on disk. Re-read in every case; only the diagnosis differs. A
 plugin-absent result is a hard stop for this recipe: the only remedy is asking the human to
 install the plugin, never a silent reach for `obsidian eval` regardless of how the request is phrased.

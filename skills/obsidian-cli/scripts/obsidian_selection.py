@@ -324,9 +324,17 @@ _REASON_EXIT: dict[str, int] = {
     "no-editor": EXIT_NO_SELECTION,
     "preview": EXIT_NO_SELECTION,
     "empty-selection": EXIT_NO_SELECTION,
-    # The resolved view cannot be saved deterministically (not a MarkdownView — e.g. the mobile
-    # MarkdownEditView, which implements MarkdownFileInfo WITHOUT save()). The plugin refuses
-    # BEFORE mutating, so this is a no-selection-class refusal, not a failed write.
+    # The active editor is not a MarkdownView (e.g. the mobile MarkdownEditView, a canvas or an
+    # embedded editor). Its view mode is UNKNOWABLE — `getMode()` is a MarkdownView member, not a
+    # MarkdownFileInfo one — and it has no deterministic `save()` (that is TextFileView's). Since
+    # TASK 070 the plugin refuses it at RESOLUTION, before any mutation and without falling back
+    # to a remembered view (which would silently retarget a different note), so this is a
+    # no-selection-class refusal rather than a failed write.
+    "unsupported-view": EXIT_NO_SELECTION,
+    # LEGACY alias — the pre-070 plugin's name for the same condition (apply path only). The
+    # plugin installs by COPYING main.js into <vault>/.obsidian/plugins/, so a vault can be
+    # running an OLDER main.js than this wrapper. Without this key that skew falls through to the
+    # fail-closed default and reports exit 4 "app-not-running" for a plugin that is running fine.
     "no-saveable-view": EXIT_NO_SELECTION,
     "path-mismatch": EXIT_GUARD_REFUSED,
     # The live selection sits at different document offsets than the ones captured at read time

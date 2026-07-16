@@ -2,7 +2,7 @@
   "id": "agent-bridge",
   "name": "Agent Bridge",
   "version": "0.1.0",
-  "minAppVersion": "1.4.0",
+  "minAppVersion": "1.12.3",
   "description": "Read/replace the live editor selection for an agent in the integrated terminal.",
   "isDesktopOnly": true,
   "author": "obsidian-llm-wiki"

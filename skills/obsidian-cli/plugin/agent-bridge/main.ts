@@ -1,4 +1,4 @@
-import { Editor, MarkdownFileInfo, MarkdownView, Notice, Plugin, TFile } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin, TFile } from "obsidian";
 import { Decoration, DecorationSet, EditorView, PluginValue, ViewPlugin, ViewUpdate } from "@codemirror/view";
 
 /**
@@ -84,6 +84,24 @@ const persistSelectionMark = Decoration.mark({ class: PERSIST_SELECTION_CLASS })
  * own selection layer on blur). The decoration is a non-destructive overlay — it does not
  * modify the document.
  */
+/**
+ * The highlight's CSS, mounted by CodeMirror itself rather than by us.
+ *
+ * This was a `<style>` appended to `document.head`, which stranded the highlight in the MAIN
+ * window: a popout ("Move to new window") is a SEPARATE document, and a stylesheet in one
+ * document does not style another. CM6 mounts style modules per EditorView ROOT — `mountStyles()`
+ * calls `StyleModule.mount(this.root, …)`, and `.root` resolves to the popout's own document —
+ * so every editor gets the rule wherever it lives, including editors dragged between windows
+ * (`setRoot()` re-mounts). Double-injection is structurally impossible (one StyleSet per root,
+ * identity-deduped), and unload cleanup becomes `registerEditorExtension`'s job.
+ *
+ * `baseTheme` rather than `theme`: `theme()` only applies via the generated prefix class, while
+ * `baseTheme`'s ID sits unconditionally on every editor wrapper. It is the one that cannot miss.
+ */
+const persistSelectionTheme = EditorView.baseTheme({
+  [`.${PERSIST_SELECTION_CLASS}`]: { backgroundColor: "var(--text-selection)" },
+});
+
 const persistSelectionExtension = ViewPlugin.fromClass(
   class implements PluginValue {
     decorations: DecorationSet;
@@ -107,9 +125,19 @@ const persistSelectionExtension = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations }
 );
 
+/**
+ * The outcome of resolving "which editor may we act on?" — either a `MarkdownView` we can
+ * safely read AND write, or a typed reason why not. A discriminated union rather than
+ * `T | null` because the caller must mirror the *specific* refusal to disk: `no-editor`,
+ * `unsupported-view`, and `preview` are three different things to whoever debugs this.
+ */
+type ResolvedEditor =
+  | { ok: true; view: MarkdownView; editor: Editor; file: TFile; source: string }
+  | { ok: false; reason: "no-editor" | "unsupported-view" | "preview" };
+
 export default class AgentBridge extends Plugin {
   /**
-   * The most-recently-ACTIVE markdown editor. Load-bearing, not a nicety: when the agent types
+   * The most-recently-ACTIVE markdown view. Load-bearing, not a nicety: when the agent types
    * in Obsidian's own INTEGRATED TERMINAL — the very scenario this plugin exists for — that
    * terminal is the active leaf, so `app.workspace.activeEditor` is **null** (live-verified:
    * `activeLeafType: "terminal:terminal"`, `activeEditor: null`, while the note's editor still
@@ -117,7 +145,7 @@ export default class AgentBridge extends Plugin {
    * mirroring the `recent-open` fallback in `obsidian_active_note.py` (TASK 041 / ADR-008),
    * which exists for exactly this reason.
    */
-  private lastEditor: MarkdownFileInfo | null = null;
+  private lastEditor: MarkdownView | null = null;
 
   /** Last-resort net for a command that threw outside its own typed-result handling. */
   private reportCrash(command: string, err: unknown): void {
@@ -125,40 +153,77 @@ export default class AgentBridge extends Plugin {
     console.error(`agent-bridge: ${command} threw`, err);
   }
 
-  /** Remember the active markdown editor; never overwrite it with a non-editor leaf. */
+  /**
+   * Remember the active markdown view. ONLY a `MarkdownView` is worth remembering: `isAttached`
+   * proves liveness by identity against the markdown leaf list, whose `view` IS the
+   * `MarkdownView` (`WorkspaceLeaf.view: View`), so any other `MarkdownFileInfo` could never
+   * pass it — it would be dead state that ALSO evicts a usable memory in `resolveEditor`.
+   */
   private rememberEditor(): void {
     const ae = this.app.workspace.activeEditor;
-    if (ae && ae.editor && ae.file) this.lastEditor = ae;
+    if (ae instanceof MarkdownView && ae.editor && ae.file) this.lastEditor = ae;
   }
 
   /**
-   * The editor to act on: the ACTIVE markdown editor, else the remembered one (when the active
-   * leaf is the integrated terminal / a Bases view / settings). `source` records which — the
-   * caller surfaces it so a fallback resolve is visible, never silent (MEDIUM confidence, same
-   * discipline as the resolver's `recent-open`).
+   * The view to act on, or a typed reason why not: the ACTIVE markdown view, else the remembered
+   * one (when the active leaf is the integrated terminal / a Bases view / settings). `source`
+   * records which — the caller surfaces it so a fallback resolve is visible, never silent.
+   *
+   * Resolution and the mode gate live together because "an editor we may safely act on" is ONE
+   * question: mode is knowable only on a `MarkdownView` (`getMode()` is a `MarkdownView` member,
+   * NOT a `MarkdownFileInfo` one), so a resolver handing back a bare `MarkdownFileInfo` forces
+   * every caller into the `getMode?.()` fail-open this bead exists to delete.
    */
-  private resolveEditor(): { ed: MarkdownFileInfo; editor: Editor; file: TFile; source: string } | null {
+  private resolveEditor(): ResolvedEditor {
+    let view: MarkdownView;
+    let source: string;
     const active = this.app.workspace.activeEditor;
-    if (active && active.editor && active.file) {
-      return { ed: active, editor: active.editor, file: active.file, source: "active" };
+    if (active) {
+      // ★ The `instanceof` test gates on `active` ALONE — deliberately NOT on
+      // `active && active.editor && active.file`. Getting this wrong reintroduces the exact bug
+      // this whole bead exists to delete: `MarkdownFileInfo.editor` is OPTIONAL (real
+      // obsidian.d.ts), and `MarkdownEditView` — the canonical non-MarkdownView implementer —
+      // declares NO `editor` member at all. So an `active.editor &&` pre-condition makes the
+      // refusal UNREACHABLE for precisely the class it was written to catch: control falls to the
+      // `else` branch and silently resolves `lastEditor`, i.e. a DIFFERENT note from the one the
+      // human is looking at, and every apply guard below then passes against the wrong file.
+      //
+      // The rule is: if there IS an active editor, we resolve to IT or we refuse. We never fall
+      // through. The `lastEditor` fallback is legitimate only when `activeEditor` is genuinely
+      // NULL — the integrated-terminal case this plugin exists for (live-verified).
+      if (!(active instanceof MarkdownView)) return { ok: false, reason: "unsupported-view" };
+      view = active;
+      source = "active";
+    } else {
+      const last = this.lastEditor;
+      if (!last || !last.editor || !last.file || !this.isAttached(last)) {
+        if (last && !this.isAttached(last)) this.lastEditor = null; // drop a dangling reference
+        return { ok: false, reason: "no-editor" };
+      }
+      view = last;
+      source = "recent-editor";
     }
-    const last = this.lastEditor;
-    if (last && last.editor && last.file && this.isAttached(last)) {
-      return { ed: last, editor: last.editor, file: last.file, source: "recent-editor" };
-    }
-    if (last && !this.isAttached(last)) this.lastEditor = null; // drop a dangling reference
-    return null;
+    const editor = view.editor;
+    const file = view.file; // FileView.file is TFile | null
+    if (!editor || !file) return { ok: false, reason: "no-editor" };
+    // Direct call, no `?.`: `view` IS a MarkdownView, so this guard can never evaluate to
+    // undefined. `getMode()` returns `MarkdownViewModeType` ('source' | 'preview'), so a typo'd
+    // literal here is a COMPILE error, not a silent fail-open. (The retired vendored d.ts
+    // declared `getMode?(): string` — a double fabrication: the optional marker defeated the
+    // guard at runtime, the widened `string` defeated it at compile time.)
+    if (view.getMode() === "preview") return { ok: false, reason: "preview" };
+    return { ok: true, view, editor, file, source };
   }
 
   /**
-   * Is the remembered editor still attached to a live markdown leaf? Load-bearing: closing the
+   * Is the remembered view still attached to a live markdown leaf? Load-bearing: closing the
    * note leaves a DETACHED view that still answers `.editor` and `.file` and still holds its old
    * selection — so both apply guards would pass and we could write into a note the human closed
    * (or mirror `ok:true` for a save that silently no-ops, defeating the wrapper's
    * success-is-shape contract). Identity against the live leaf list is the only honest check.
    */
-  private isAttached(info: MarkdownFileInfo): boolean {
-    return this.app.workspace.getLeavesOfType("markdown").some((leaf) => leaf.view === info);
+  private isAttached(view: MarkdownView): boolean {
+    return this.app.workspace.getLeavesOfType("markdown").some((leaf) => leaf.view === view);
   }
 
   async onload(): Promise<void> {
@@ -193,12 +258,10 @@ export default class AgentBridge extends Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.rememberEditor()));
     this.app.workspace.onLayoutReady(() => this.rememberEditor()); // a note may already be active
 
-    // Keep the selection visible when the editor is unfocused (see the header comment).
-    this.registerEditorExtension(persistSelectionExtension);
-    const style = document.createElement("style");
-    style.textContent = `.${PERSIST_SELECTION_CLASS} { background-color: var(--text-selection); }`;
-    document.head.appendChild(style);
-    this.register(() => style.remove());
+    // Keep the selection visible when the editor is unfocused (see the header comment). The
+    // theme rides along as an extension so CM6 mounts it into EVERY editor's own document root
+    // — popouts included. See `persistSelectionTheme`.
+    this.registerEditorExtension([persistSelectionExtension, persistSelectionTheme]);
   }
 
   /**
@@ -220,8 +283,10 @@ export default class AgentBridge extends Plugin {
    */
   private async copySelectionRef(): Promise<void> {
     const resolved = this.resolveEditor();
-    if (!resolved) {
-      new Notice("agent-bridge: no active editor");
+    if (!resolved.ok) {
+      // Includes `preview`, which this path did NOT guard before TASK 070: it used to copy the
+      // stale source-mode selection under a confident `@path#L12-14` label.
+      new Notice(`agent-bridge: cannot capture the selection (${resolved.reason})`);
       return;
     }
     const { editor, file } = resolved;
@@ -269,15 +334,11 @@ export default class AgentBridge extends Plugin {
   private async exportSelection(): Promise<void> {
     const nonce = await this.readNonce(REQUEST_FILE);
     const resolved = this.resolveEditor();
-    if (!resolved) {
-      await this.writeResult({ ok: false, reason: "no-editor", nonce });
+    if (!resolved.ok) {
+      await this.writeResult({ ok: false, reason: resolved.reason, nonce });
       return;
     }
-    const { ed, editor, file, source } = resolved;
-    if (ed.getMode?.() === "preview") {
-      await this.writeResult({ ok: false, reason: "preview", nonce });
-      return;
-    }
+    const { editor, file, source } = resolved;
     if (!editor.somethingSelected()) {
       await this.writeResult({ ok: false, reason: "empty-selection", nonce });
       return;
@@ -335,28 +396,20 @@ export default class AgentBridge extends Plugin {
       return;
     }
 
+    // `save()` is NOT on MarkdownFileInfo — it is inherited from TextFileView by MarkdownView.
+    // `resolveEditor` now hands back a MarkdownView or a typed refusal, so the old post-hoc
+    // `instanceof` check here is GONE: an unsaveable editor can no longer reach this code at
+    // all, rather than being caught by a guard someone must remember to write. That keeps the
+    // contract honest — `ok:true` promises the edit reached DISK, and without a deterministic
+    // save() we could not promise that.
     const resolved = this.resolveEditor();
-    if (!resolved) {
-      await this.writeResult({ ok: false, reason: "no-editor", nonce });
+    if (!resolved.ok) {
+      await this.writeResult({ ok: false, reason: resolved.reason, nonce });
       return;
     }
-    const { ed, editor, file } = resolved;
-    if (ed.getMode?.() === "preview") {
-      await this.writeResult({ ok: false, reason: "preview", nonce });
-      return;
-    }
+    const { view, editor, file } = resolved;
     if (!editor.somethingSelected()) {
       await this.writeResult({ ok: false, reason: "empty-selection", nonce });
-      return;
-    }
-    // `save()` is NOT on MarkdownFileInfo — it is inherited from TextFileView by MarkdownView
-    // (verified against the real obsidian typings; MarkdownEditView implements MarkdownFileInfo
-    // WITHOUT save). Narrow BEFORE mutating so an unsaveable editor is a typed refusal, never a
-    // TypeError raised *after* replaceRange has already changed the buffer. Refusing up front
-    // also keeps the contract honest: `ok:true` promises the edit reached DISK, and without a
-    // deterministic save() we cannot promise that.
-    if (!(ed instanceof MarkdownView)) {
-      await this.writeResult({ ok: false, reason: "no-saveable-view", nonce });
       return;
     }
 
@@ -394,7 +447,7 @@ export default class AgentBridge extends Plugin {
     // its own typed reason instead.
     try {
       editor.replaceRange(replacement, from, to);
-      await ed.save();
+      await view.save();
     } catch (_err) {
       await this.writeResult({ ok: false, reason: "save-failed", nonce });
       return;
