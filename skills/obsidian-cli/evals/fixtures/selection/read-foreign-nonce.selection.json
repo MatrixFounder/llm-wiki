@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "vault": "obsidian-llm-wiki",
+  "path": "Secrets/Private Journal.md",
+  "from": {
+    "line": 9,
+    "ch": 0
+  },
+  "to": {
+    "line": 9,
+    "ch": 24
+  },
+  "fromOffset": 900,
+  "toOffset": 924,
+  "text": "ANOTHER-AGENTS-NOTE-TEXT",
+  "mtime": 1752500009000,
+  "exportedAt": 1752500009000,
+  "nonce": "fedcba9876543210fedcba9876543210",
+  "source": "active"
+}

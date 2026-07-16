@@ -26,7 +26,9 @@ Subcommands:
 
 Exit codes (see ``EXIT_*``):
   0 ok · 2 usage/payload-too-large · 3 no-selection (no-editor/preview/empty-selection) ·
-  4 app-not-running (result timeout / stale nonce never matched) · 5 cli-absent ·
+  4 no attributable result — RETRY (result timeout / stale nonce never matched /
+    selection-nonce-mismatch; the `app-not-running` reason is only ONE of its rungs) ·
+  5 cli-absent ·
   6 vault-mismatch · 7 guard-refused (path-mismatch/stale-range) · 8 headless ·
   9 plugin-absent (install the agent-bridge plugin — never a silent eval fallback)
 
@@ -38,6 +40,21 @@ nonce (``_mint_nonce``), writes it into the payload file the plugin reads
 ``_await_result`` bounded-polls ``agent-result.json`` until it observes a result whose
 ``nonce`` field MATCHES — a leftover result (even ``ok:true``) carrying the WRONG nonce is
 rejected, never accepted as a false success. No match within the deadline → exit 4.
+
+The match covers the RESULT envelope; ``read`` then re-checks the nonce on the ``agent-selection.json``
+PAYLOAD, which is a separate file read afterwards and can be overwritten by a dispatch landing in
+between (→ ``selection-nonce-mismatch``, exit 4). Both files are nonce-stamped by the plugin; a
+wrapper that checked only the first would accept another dispatch's note text under ``ok:true``.
+Concurrency remains fail-CLOSED, not serialised: the exchange files have fixed names and no lock,
+so two concurrent invocations on one vault may make each other RETRY — never silently accept another
+dispatch's payload as their own. This NARROWS the race; it does not close it. The nonce attributes a
+payload to a request-FILE CONTENT, not to a dispatch: if B overwrites ``agent-request.json`` before
+the plugin reads it, the plugin stamps B's nonce onto BOTH dispatches' outputs, so A fails closed
+(exit 4) but B may match a payload captured by A's dispatch. Bounded, not eliminated: there is only
+ONE live selection per vault, so B still gets a genuine app selection rather than A's private data,
+and any ``apply`` built on it is re-guarded against the live editor (path + offsets + baseline text),
+so a stale capture REFUSES rather than mis-edits. Closing it properly needs per-dispatch request
+files or a lock — deliberately out of scope, not overlooked.
 
 BASE64 FOR THE UNTRUSTED TEXT (R-068-5): the two TEXT payloads — the expected-baseline
 text (selection-derived, H-6-untrusted) and the replacement text (LLM-authored) — are
@@ -388,6 +405,26 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
     try:
         selection = _read_json(root, _SELECTION_FILE)
+        # Nonce-check the PAYLOAD too, not just the result envelope. `_await_result` above proved
+        # `agent-result.json` belongs to THIS dispatch, but `agent-selection.json` is a SEPARATE
+        # file read afterwards, and the plugin stamps the same nonce into it (main.js:246 /
+        # main.ts:302). The plugin writes selection-then-result, so a matched result guarantees
+        # OUR selection was written — but not that it is still the one on disk: a dispatch landing
+        # in the window between the match and this read overwrites it, handing us another
+        # request's `path` + note text under `ok:true`. That text would then become the baseline
+        # for an `apply` the plugin's guards PASS — they check the live editor, which genuinely
+        # holds it — so the wrong note gets edited with no refusal anywhere. A guard field the
+        # plugin writes and the wrapper never reads is not a guard.
+        #
+        # Fail-closed on a MISSING nonce too (`.get` -> None never equals a uuid4 hex), mirroring
+        # the plugin's own non-string -> "" normalization: an unstampable payload is unattributable.
+        if selection.get("nonce") != nonce:
+            raise SelectionError(
+                EXIT_APP_NOT_RUNNING,
+                f"{_SELECTION_FILE} does not carry this dispatch's nonce — a concurrent "
+                "export-selection overwrote it between the result match and this read; retry",
+                reason="selection-nonce-mismatch",
+            )
     except SelectionError as exc:
         _cleanup_exchange(root)
         return {"ok": False, "mode": "read", "reason": exc.reason}, exc.code

@@ -289,6 +289,45 @@ def test_read_rejects_stale_result_is_exit_4(monkeypatch: pytest.MonkeyPatch, tm
     assert out["ok"] is False and out["reason"] == "app-not-running"
 
 
+def test_read_rejects_foreign_selection_payload_is_exit_4(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # THE CONCURRENT-DISPATCH GUARD, and the one the result-envelope check above does NOT cover.
+    # `agent-result.json` carries OUR nonce (so `_await_result` matches and we proceed) but
+    # `agent-selection.json` — read afterwards, as a separate file — carries a DIFFERENT one:
+    # exactly what a second dispatch landing in that window leaves behind. The wrapper must not
+    # hand us that other request's note under ok:true.
+    #
+    # MUTATION-PINNED (same discipline as the stale-result test above): the seeded foreign
+    # selection is well-formed and complete, so a wrapper WITHOUT the payload nonce check reads it
+    # happily and returns EXIT_OK — this test cannot pass for the wrong reason (a missing/corrupt
+    # file would exit 4 regardless and prove nothing). Verified by mutation: deleting the check
+    # flips this to exit 0 and leaks the foreign path + text into stdout.
+    _patch(monkeypatch, _base_mapping(tmp_path), mint=NONCE)
+    _seed(tmp_path, "agent-result.json", "read-ok.result.json")          # OUR nonce -> result matches
+    _seed(tmp_path, "agent-selection.json", "read-foreign-nonce.selection.json")  # someone else's
+    assert osel.main(["read"]) == osel.EXIT_APP_NOT_RUNNING
+    out_raw = capsys.readouterr().out
+    out = json.loads(out_raw)
+    assert out["ok"] is False and out["reason"] == "selection-nonce-mismatch"
+    # Pin the HARM, not just the exit code: none of the other dispatch's data may reach the caller
+    # (it would otherwise become the baseline for an apply the plugin's guards would PASS).
+    assert "Secrets/Private Journal.md" not in out_raw
+    assert "ANOTHER-AGENTS-NOTE-TEXT" not in out_raw
+
+
+def test_read_rejects_unstamped_selection_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Fail-CLOSED on an absent nonce: an unattributable payload is refused, never accepted because
+    # "there was nothing to compare". Pins the check against a fail-OPEN rewrite of the form
+    # `if "nonce" in selection and selection["nonce"] != nonce`, which this test turns RED.
+    _patch(monkeypatch, _base_mapping(tmp_path), mint=NONCE)
+    _seed(tmp_path, "agent-result.json", "read-ok.result.json")
+    unstamped = _fix_json("read-ok.selection.json")
+    del unstamped["nonce"]
+    (tmp_path / ".obsidian" / "agent-selection.json").write_text(json.dumps(unstamped), encoding="utf-8")
+    assert osel.main(["read"]) == osel.EXIT_APP_NOT_RUNNING
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "selection-nonce-mismatch"
+
+
 def test_read_cli_absent_is_exit_5(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path), cli_present=False)
     assert osel.main(["read"]) == osel.EXIT_CLI_ABSENT

@@ -6,7 +6,9 @@
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2018", "DOM"]
   },
-  "include": ["main.ts", "obsidian.d.ts"]
+  "include": ["main.ts"]
 }
