@@ -76,6 +76,44 @@ The mechanics of the SEARCH-FIRST rule above — for **every** vault-domain ques
 
 This is what makes the wiki *compounding*: searches return your distilled notes.
 
+### Import an external source (URL / PDF / thread / transcript)
+
+**Default on-ramp: `/wiki-import`.** It fetches + converts the original into `_raw/`
+(reader-clean, images included), the orchestrator summarises it, and the **summary** note +
+concept pages are filed into the target folder *in the vault's language* — raw→`_raw/` +
+summary→folder + concepts + index in one shot. It is the default, **not the only** sanctioned
+path.
+
+```bash
+/wiki-import <url-or-file> --folder "<target folder>"
+```
+
+> **Two sanctioned paths — pick by INTENT, and say which one you're taking.**
+> - **A wiki page** — you want the knowledge *distilled*, cross-referenced, compounding →
+>   **`/wiki-import`**. The default. Raw→`_raw/` + summary→folder + concepts + index.
+> - **A full-text archival clip** — you want the *article itself*, verbatim: the target folder's
+>   existing convention IS whole articles, or the source may rot and you want the bytes →
+>   **`/html`**, filed by hand. Also legitimate; a summary is not always the artifact wanted.
+>
+> The clip path is only correct done **properly** — recipe:
+> 1. `/html` → `python3 scripts/html <url> <out> --reader-only`. **`--reader-only` is the
+>    load-bearing flag**: ONE `<slug>.md`, no `.reader.md` duplicate.
+> 2. Frontmatter → **the target folder's** convention (match a sibling note), not the skill's
+>    raw `source:`/`engine:`/`tags: []` block. An `http(s)` `URL:`/`source:` is what the trust
+>    tier reads (→ `external`).
+> 3. Images → the vault's attachment folder (Obsidian `app.json` `attachmentFolderPath`;
+>    `./_attachments` = beside the note). Copy only what the final body still references.
+> 4. Strip the site chrome (avatar / logo / byline / "N replies"). It carries **site-relative**
+>    hrefs (`/section`) that are dead inside the vault: `_absolutize_links` fires only on a page
+>    declaring `<base href>` (Parsoid/arXiv — **by design**), so most pages keep theirs.
+> 5. `wiki-index-upsert` **in the same turn** — an unindexed clip is invisible to SEARCH-FIRST,
+>    which defeats the point of filing it.
+>
+> **Still banned:** `curl`/`fetch` + hand-rolled tag-stripping (no SSRF guard, no attachments,
+> regresses on tables/encodings/images), and dumping the skill's **dual output** (`<slug>.md` +
+> `<slug>.reader.md`, skill frontmatter, chrome intact, unindexed) straight into a topic folder.
+> *That* mess is what this rule guards against — never the deliberate clip.
+
 ### Index a change (notes indexed in place — no `_sources` scaffold)
 
 ```bash
@@ -230,8 +268,9 @@ wiki-reindex --full --vault ${vault_id}
 - **obsidian-llm-wiki** — the index layer (18 CLIs). Search/RAG: `wiki-search`
   (incl. `--tag <class>` + temporal `--as-of <date>`), `wiki-query`, `wiki-verify-multi`.
   Event graph: `wiki-graph` (typed page-to-page edges). Construction: **`wiki-import`**
-  (the unified construct path — URL/PDF/office/thread/transcript/local file, any layout via
-  config, ADR-007), `wiki-sync` (mixed-zone driver), `wiki-index-upsert`, `wiki-extract-concepts`.
+  (the **default** construct path — URL/PDF/office/thread/transcript/local file, any layout via
+  config, ADR-007; a verbatim full-text clip goes through `/html` instead — see *Two sanctioned
+  paths*), `wiki-sync` (mixed-zone driver), `wiki-index-upsert`, `wiki-extract-concepts`.
   **Target folder unknown? Do NOT guess — omit `--folder`** (TASK 057): `wiki-import prepare`
   infers it from a same-series sibling in the index (`folder_proposed` + evidence + an
   out-of-vault `staged_path`; re-run `--folder "<F>" --source <staged_path>` = fetch-free),
@@ -244,6 +283,11 @@ wiki-reindex --full --vault ${vault_id}
   ontology-violation, both gate `--strict`), `wiki-health` (`coverage` R-15 + `ontology`
   R-19; always exit 0), `wiki-index-render`. Install per its `README.md`; ensure its
   `bin/` is on `PATH`.
+- **`/html`** — the web-clipper / HTML→Markdown step behind the **full-text clip** path
+  (URL or saved `.html`/`.mhtml`/`.webarchive` → clean Markdown + `_attachments/`, SSRF-guarded,
+  `--engine chrome` for JS/SPA + login-gated pages). Use with `--reader-only`, then file per the
+  recipe in *Two sanctioned paths* and `wiki-index-upsert`. For a *summary* note, `wiki-import`
+  already calls this internally — don't hand-roll that.
 - **obsidian-cli** — drives the *running* Obsidian app via its official CLI (Obsidian
   1.12+): link-safe `rename`/`move` (the app rewrites backlinks; a plain `mv` orphans
   them), typed properties, tasks, daily notes, Bases queries, history restore.
