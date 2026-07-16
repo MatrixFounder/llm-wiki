@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Thin launcher for the obsidian-cli note-context reader (TASK 070).
+# The wrapper is stdlib-only + vendor-neutral, so it runs under any python3 — no repo
+# venv required (unlike the wiki-* CLIs). NO `cd` — preserves the caller's CWD so the
+# wrapper's CWD->vault auto-detection targets the vault the terminal is in.
+set -euo pipefail
+REPO="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+exec python3 "$REPO/skills/obsidian-cli/scripts/obsidian_context.py" "$@"

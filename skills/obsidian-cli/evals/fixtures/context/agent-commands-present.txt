@@ -1,0 +1,10 @@
+app:reload
+editor:toggle-bold
+editor:toggle-italics
+workspace:save
+sync:force-push-all
+terminal:open-terminal.integrated
+agent-bridge:export-selection
+agent-bridge:apply-edit
+agent-bridge:export-context
+agent-bridge:copy-selection-ref

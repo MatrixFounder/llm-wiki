@@ -29,6 +29,7 @@ var AGENT_DIR = ".obsidian";
 var REQUEST_FILE = `${AGENT_DIR}/agent-request.json`;
 var EDIT_FILE = `${AGENT_DIR}/agent-edit.json`;
 var SELECTION_FILE = `${AGENT_DIR}/agent-selection.json`;
+var CONTEXT_FILE = `${AGENT_DIR}/agent-context.json`;
 var RESULT_FILE = `${AGENT_DIR}/agent-result.json`;
 function decodeB64Utf8(b64) {
   const binary = atob(b64);
@@ -100,7 +101,13 @@ var AgentBridge = class extends import_obsidian.Plugin {
    * NOT a `MarkdownFileInfo` one), so a resolver handing back a bare `MarkdownFileInfo` forces
    * every caller into the `getMode?.()` fail-open this bead exists to delete.
    */
-  resolveEditor() {
+  /**
+   * The view to act on, or a typed reason why not — WITHOUT the preview mode-gate. This is the
+   * shared core of `resolveEditor`: the active markdown view, else the remembered one. Callers
+   * that must reject preview (the apply write-path) go through `resolveEditor`; callers that
+   * tolerate it (read-only `export-context`) use this directly and branch on `getMode()`.
+   */
+  resolveView() {
     let view;
     let source;
     const active = this.app.workspace.activeEditor;
@@ -120,8 +127,13 @@ var AgentBridge = class extends import_obsidian.Plugin {
     const editor = view.editor;
     const file = view.file;
     if (!editor || !file) return { ok: false, reason: "no-editor" };
-    if (view.getMode() === "preview") return { ok: false, reason: "preview" };
     return { ok: true, view, editor, file, source };
+  }
+  resolveEditor() {
+    const resolved = this.resolveView();
+    if (!resolved.ok) return resolved;
+    if (resolved.view.getMode() === "preview") return { ok: false, reason: "preview" };
+    return resolved;
   }
   /**
    * Is the remembered view still attached to a live markdown leaf? Load-bearing: closing the
@@ -153,6 +165,13 @@ var AgentBridge = class extends import_obsidian.Plugin {
       name: "Copy selection reference (for the shell agent)",
       callback: () => {
         this.copySelectionRef().catch((e) => this.reportCrash("copy-selection-ref", e));
+      }
+    });
+    this.addCommand({
+      id: "export-context",
+      name: "Export note context",
+      callback: () => {
+        this.exportContext().catch((e) => this.reportCrash("export-context", e));
       }
     });
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.rememberEditor()));
@@ -301,5 +320,96 @@ ${selection}`;
       return;
     }
     await this.writeResult({ ok: true, mode: "apply", newLen: replacement.length, nonce });
+  }
+  async exportContext() {
+    var _a, _b;
+    const req = await this.readRequest(REQUEST_FILE);
+    const nonce = typeof req.nonce === "string" ? req.nonce : "";
+    const includeOutline = !!req.includeOutline;
+    const includeFrontmatter = !!req.includeFrontmatter;
+    const includeSelection = !!req.includeSelection;
+    const resolved = this.resolveView();
+    if (!resolved.ok) {
+      await this.writeResult({ ok: false, reason: resolved.reason, nonce });
+      return;
+    }
+    const { view, editor, file, source } = resolved;
+    const fileCache = this.app.metadataCache.getFileCache(file);
+    const isSource = view.getMode() === "source";
+    const parentPath = (_b = (_a = file.parent) == null ? void 0 : _a.path) != null ? _b : "";
+    const folder = parentPath === "/" ? "" : parentPath;
+    const context = {
+      vault: this.app.vault.getName(),
+      path: file.path,
+      folder,
+      mtime: file.stat.mtime,
+      exportedAt: Date.now(),
+      // The editor's view mode. Named `editorMode`, NOT `mode`, to avoid colliding with the
+      // wrapper envelope's operation `mode` ("context") when the wrapper carries these fields
+      // through. "source" = an editable editor; "preview" = the note is being READ (cursor/
+      // selection absent).
+      editorMode: isSource ? "source" : "preview",
+      // "active" = the focused editor; "recent-editor" = the fallback (the active leaf was not a
+      // markdown editor — typically the agent's integrated terminal). Surfaced so a fallback
+      // resolve is visible, never silent.
+      source,
+      nonce
+    };
+    if (isSource) {
+      const cursor = editor.getCursor();
+      context.cursor = { line: cursor.line, ch: cursor.ch };
+      context.cursorOffset = editor.posToOffset(cursor);
+      let currentHeading = "";
+      let currentLevel = 0;
+      if (fileCache == null ? void 0 : fileCache.headings) {
+        for (const h of fileCache.headings) {
+          if (h.position.start.line <= cursor.line) {
+            currentHeading = h.heading;
+            currentLevel = h.level;
+          } else {
+            break;
+          }
+        }
+      }
+      context.heading = currentHeading;
+      context.headingLevel = currentLevel;
+      if (includeSelection && editor.somethingSelected()) {
+        const from = editor.getCursor("from");
+        const to = editor.getCursor("to");
+        context.selection = {
+          from,
+          to,
+          fromOffset: editor.posToOffset(from),
+          toOffset: editor.posToOffset(to),
+          text: editor.getRange(from, to)
+        };
+      }
+    }
+    if (includeOutline && (fileCache == null ? void 0 : fileCache.headings)) {
+      context.outline = fileCache.headings.map((h) => ({
+        level: h.level,
+        heading: h.heading,
+        line: h.position.start.line
+      }));
+    }
+    if (fileCache) {
+      const allTags = (0, import_obsidian.getAllTags)(fileCache);
+      if (allTags && allTags.length) {
+        context.tags = allTags.map((t) => t.startsWith("#") ? t.slice(1) : t);
+      }
+    }
+    if (includeFrontmatter && (fileCache == null ? void 0 : fileCache.frontmatter)) {
+      context.frontmatter = fileCache.frontmatter;
+    }
+    await this.app.vault.adapter.write(CONTEXT_FILE, JSON.stringify(context));
+    await this.writeResult({ ok: true, mode: "context", nonce });
+  }
+  async readRequest(file) {
+    try {
+      const raw = await this.app.vault.adapter.read(file);
+      return JSON.parse(raw);
+    } catch (_err) {
+      return { nonce: "" };
+    }
   }
 };

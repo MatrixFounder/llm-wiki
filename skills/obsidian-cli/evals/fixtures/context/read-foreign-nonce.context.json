@@ -1,0 +1,18 @@
+{
+  "vault": "obsidian-llm-wiki",
+  "path": "Secrets/Private Journal.md",
+  "folder": "Secrets",
+  "source": "active",
+  "heading": "ANOTHER-AGENTS-NOTE-HEADING",
+  "headingLevel": 1,
+  "cursor": {
+    "line": 0,
+    "ch": 0
+  },
+  "cursorOffset": 0,
+  "tags": [
+    "private"
+  ],
+  "nonce": "fedcba9876543210fedcba9876543210",
+  "editorMode": "source"
+}

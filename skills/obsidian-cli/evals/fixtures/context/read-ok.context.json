@@ -1,0 +1,38 @@
+{
+  "vault": "obsidian-llm-wiki",
+  "path": "Areas/Health.md",
+  "folder": "Areas",
+  "mtime": 1752500000000,
+  "exportedAt": 1752500001000,
+  "source": "active",
+  "heading": "Exercise",
+  "headingLevel": 2,
+  "cursor": {
+    "line": 12,
+    "ch": 5
+  },
+  "cursorOffset": 234,
+  "outline": [
+    {
+      "level": 1,
+      "heading": "Health",
+      "line": 0
+    },
+    {
+      "level": 2,
+      "heading": "Exercise",
+      "line": 8
+    },
+    {
+      "level": 2,
+      "heading": "Diet",
+      "line": 20
+    }
+  ],
+  "tags": [
+    "health",
+    "habit"
+  ],
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "editorMode": "source"
+}

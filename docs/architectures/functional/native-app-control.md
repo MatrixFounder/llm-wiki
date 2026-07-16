@@ -557,3 +557,64 @@ which is what turns the claim into a mechanism.
 > `--external` guard: the check must be able to *see* the thing it certifies, or it certifies nothing. the `omission-driven` audit
 lens **died and has already cost us once** — it hid `EditorView.baseTheme`, which is why the first
 draft of the popout requirement prescribed thirty lines of the wrong thing (OQ-070-5).
+
+---
+
+## 2.2.4 Note-context export (TASK 071 — the third channel, and the reuse-not-re-port rule)
+
+**The gap.** §2.2.1 resolves *which file* is open; §2.2.2 reads *what is selected inside* it.
+Neither answers the question a weak-model agent actually gets stuck on — *"перезагрузи заметку"*
+(which URL? it's in the frontmatter), *"продолжи отсюда"* (which section is the cursor in?). The
+missing capability is the note's **working context** in one call: path, folder, current heading +
+cursor (source mode), tags, and — opt-in — outline / frontmatter / selection.
+
+**Decision 1 — a third plugin command, `agent-bridge:export-context`, pulled EXPLICITLY; the
+ambient-hook design is rejected.** A hook injecting the active note's context every turn would
+erase the H-6 boundary: frontmatter is author-supplied text, and ambient injection removes the
+"human explicitly handed it over" property that fences prompt injection. Corollary: the untrusted
+fields are **opt-in per call** (`--frontmatter`, `--selection`) and OFF by default — the selection
+body is the highest-blast-radius field, so it gets the same opt-in gate as frontmatter, never a
+free ride alongside `--outline`. The command is **T2-read, enrolled by name** in SKILL.md's
+proven-effect carve-out — a `.obsidian/`-scoped JSON write carrying untrusted note content can
+never sit at T1 below its own twin (`export-selection`), and per R-068-8 an unenumerated
+`command id=` stays default-T3.
+
+**Decision 2 — the wrapper (`obsidian_context.py`) IMPORTS the sibling's guards; re-porting is
+banned.** The first implementation (a Haiku-session pass) re-ported `obsidian_selection.py` by
+hand and dropped every guard the sibling's comments call load-bearing — no headless gate, no CLI
+check, no cleanup on error paths, no payload nonce re-check, a JSON parse of `vaults` output that
+is actually TSV (the CLI has no `format=` there), dispatch without `vault=`, and an H-5-pinned
+SKILL.md citing a test file that did not exist. A 3-critic `/vdd-multi` (logic/security/
+performance) returned **FAIL**; the rebuild's structural remedy is `import obsidian_selection as
+_sel` — one source of truth for the guards, so the sibling's hardening cannot be silently dropped
+again. ★ Same unenumerated-surface failure as ever, now with the canonical fix: **reuse the guard,
+never transcribe it.** (Second instance in the same task: `install-globally.sh`'s hardcoded
+single-bin line — two lines above the repo's own "ENUMERATE THE POPULATION" banner — had silently
+never shipped `obsidian-selection` either; the fix is a `bin/obsidian-*` glob.)
+
+**Decision 3 — preview mode is a supported state, not a refusal.** `export-context` is read-only
+metadata (the metadata cache needs no live source-mode editor), so the plugin resolves through
+`resolveView()` — the shared active/`lastEditor`/attached core **without** §2.2.2's preview gate,
+which exists for `apply`'s deterministic-`save()` requirement, not for reads. The envelope says
+which state it captured: `editorMode: "source" | "preview"` (a field deliberately NOT named `mode`,
+which is the envelope's operation discriminator), with cursor/heading/selection present only in
+source mode. Two smaller normalizations close weak-model traps: `heading` is RAW text + a separate
+`headingLevel` (no `##` prefix to mis-strip), tags ride `getAllTags` (inline **and** frontmatter,
+`#`-stripped), and a vault-root note's `folder` is `""`, not `"/"`.
+
+**The payload nonce rule generalizes (from §2.2.2's read-back race).** `_await_result` attributes
+the RESULT envelope; `agent-context.json` is a separate file read afterwards, so the wrapper
+re-checks the nonce ON THE PAYLOAD (`context-nonce-mismatch`, exit 4, fail-closed on absent) —
+otherwise a concurrent export lands another note's frontmatter/selection under `ok:true`. And
+`_cleanup` (the sibling's sweep + `agent-context.json`) runs on **every** path, success or refusal:
+the context file holds note content in plaintext inside a `.obsidian/` that Sync/git/iCloud
+replicate, and the first pass left it at rest on all error paths. Both guards are mutation-pinned
+in `tests/test_obsidian_context.py` (20 contract tests, the sibling's `_run_obsidian`-seam pattern;
+the foreign-nonce test flips to exit 0 + a cross-note leak if the payload check is deleted).
+
+**Consumption shape (recipes 12–15).** The channel's value is compositional — get-context →
+refactor / continue-writing / research-assistant — and the recipes are constrained to primitives
+that exist: there is **no insert-at-cursor** in the surface (`selection:apply` REPLACES a live
+selection; `append` is EOF-only), so "continue from here" is honestly either an EOF append or a
+file-edit splice, stated as such. Per Decision-17, `wiki-query prepare` retrieves — the
+orchestrator synthesizes; a recipe that says "prepare synthesizes" is mis-teaching the contract.

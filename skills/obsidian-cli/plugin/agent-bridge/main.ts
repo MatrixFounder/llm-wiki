@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin, TFile, getAllTags } from "obsidian";
 import { Decoration, DecorationSet, EditorView, PluginValue, ViewPlugin, ViewUpdate } from "@codemirror/view";
 
 /**
@@ -43,10 +43,17 @@ const AGENT_DIR = ".obsidian";
 const REQUEST_FILE = `${AGENT_DIR}/agent-request.json`;
 const EDIT_FILE = `${AGENT_DIR}/agent-edit.json`;
 const SELECTION_FILE = `${AGENT_DIR}/agent-selection.json`;
+const CONTEXT_FILE = `${AGENT_DIR}/agent-context.json`;
 const RESULT_FILE = `${AGENT_DIR}/agent-result.json`;
 
 interface AgentRequest {
   nonce: string;
+  includeOutline?: boolean;
+  includeFrontmatter?: boolean;
+  // The selection body is the MOST sensitive field (verbatim, untrusted note text, H-6), so it
+  // is opt-in exactly like frontmatter — never exported unless the caller asks for it. A caller
+  // requesting only `--outline` must not silently also ingest whatever the human highlighted.
+  includeSelection?: boolean;
 }
 
 interface AgentEdit {
@@ -135,6 +142,17 @@ type ResolvedEditor =
   | { ok: true; view: MarkdownView; editor: Editor; file: TFile; source: string }
   | { ok: false; reason: "no-editor" | "unsupported-view" | "preview" };
 
+/**
+ * Like `ResolvedEditor` but WITHOUT the preview mode-gate. `export-context` is a read-only
+ * metadata op (path/folder/heading/outline/tags all come from `metadataCache`, which needs no
+ * live source-mode editor), so it must succeed while the human is READING the note in preview —
+ * unlike `apply-edit`, which needs source mode + a deterministic `save()`. Sharing the active/
+ * lastEditor/attached resolution keeps the two paths from drifting; only the mode gate differs.
+ */
+type ResolvedView =
+  | { ok: true; view: MarkdownView; editor: Editor; file: TFile; source: string }
+  | { ok: false; reason: "no-editor" | "unsupported-view" };
+
 export default class AgentBridge extends Plugin {
   /**
    * The most-recently-ACTIVE markdown view. Load-bearing, not a nicety: when the agent types
@@ -174,7 +192,13 @@ export default class AgentBridge extends Plugin {
    * NOT a `MarkdownFileInfo` one), so a resolver handing back a bare `MarkdownFileInfo` forces
    * every caller into the `getMode?.()` fail-open this bead exists to delete.
    */
-  private resolveEditor(): ResolvedEditor {
+  /**
+   * The view to act on, or a typed reason why not — WITHOUT the preview mode-gate. This is the
+   * shared core of `resolveEditor`: the active markdown view, else the remembered one. Callers
+   * that must reject preview (the apply write-path) go through `resolveEditor`; callers that
+   * tolerate it (read-only `export-context`) use this directly and branch on `getMode()`.
+   */
+  private resolveView(): ResolvedView {
     let view: MarkdownView;
     let source: string;
     const active = this.app.workspace.activeEditor;
@@ -206,13 +230,19 @@ export default class AgentBridge extends Plugin {
     const editor = view.editor;
     const file = view.file; // FileView.file is TFile | null
     if (!editor || !file) return { ok: false, reason: "no-editor" };
+    return { ok: true, view, editor, file, source };
+  }
+
+  private resolveEditor(): ResolvedEditor {
+    const resolved = this.resolveView();
+    if (!resolved.ok) return resolved;
     // Direct call, no `?.`: `view` IS a MarkdownView, so this guard can never evaluate to
     // undefined. `getMode()` returns `MarkdownViewModeType` ('source' | 'preview'), so a typo'd
     // literal here is a COMPILE error, not a silent fail-open. (The retired vendored d.ts
     // declared `getMode?(): string` — a double fabrication: the optional marker defeated the
     // guard at runtime, the widened `string` defeated it at compile time.)
-    if (view.getMode() === "preview") return { ok: false, reason: "preview" };
-    return { ok: true, view, editor, file, source };
+    if (resolved.view.getMode() === "preview") return { ok: false, reason: "preview" };
+    return resolved;
   }
 
   /**
@@ -250,6 +280,13 @@ export default class AgentBridge extends Plugin {
       name: "Copy selection reference (for the shell agent)",
       callback: () => {
         this.copySelectionRef().catch((e) => this.reportCrash("copy-selection-ref", e));
+      },
+    });
+    this.addCommand({
+      id: "export-context",
+      name: "Export note context",
+      callback: () => {
+        this.exportContext().catch((e) => this.reportCrash("export-context", e));
       },
     });
 
@@ -453,5 +490,127 @@ export default class AgentBridge extends Plugin {
       return;
     }
     await this.writeResult({ ok: true, mode: "apply", newLen: replacement.length, nonce });
+  }
+
+  private async exportContext(): Promise<void> {
+    // Read the request file ONCE — nonce and the export flags come from a single snapshot. Reading
+    // it three times (as an earlier version did) is a torn-read TOCTOU: a concurrent dispatch
+    // between reads could flip `includeFrontmatter` against the matched caller's intent, defeating
+    // the default-off posture of the untrusted fields. `nonce` is normalized to "" (never string)
+    // exactly like `readNonce`, so it simply never matches the wrapper's uuid — fail-closed.
+    const req = await this.readRequest(REQUEST_FILE);
+    const nonce = typeof req.nonce === "string" ? req.nonce : "";
+    const includeOutline = !!req.includeOutline;
+    const includeFrontmatter = !!req.includeFrontmatter;
+    const includeSelection = !!req.includeSelection;
+
+    // Read-only metadata op → tolerate PREVIEW (the human is reading the note). Metadata comes
+    // from `metadataCache`, which needs no live source-mode editor; only cursor/selection do.
+    const resolved = this.resolveView();
+    if (!resolved.ok) {
+      await this.writeResult({ ok: false, reason: resolved.reason, nonce });
+      return;
+    }
+
+    const { view, editor, file, source } = resolved;
+    const fileCache = this.app.metadataCache.getFileCache(file);
+    const isSource = view.getMode() === "source";
+
+    // `file.parent?.path` is "/" for a vault-root note; normalize to "" so a downstream path
+    // join yields "<vault>/<name>", not "<vault>//<name>" (recipe-10 convention).
+    const parentPath = file.parent?.path ?? "";
+    const folder = parentPath === "/" ? "" : parentPath;
+
+    const context: Record<string, unknown> = {
+      vault: this.app.vault.getName(),
+      path: file.path,
+      folder,
+      mtime: file.stat.mtime,
+      exportedAt: Date.now(),
+      // The editor's view mode. Named `editorMode`, NOT `mode`, to avoid colliding with the
+      // wrapper envelope's operation `mode` ("context") when the wrapper carries these fields
+      // through. "source" = an editable editor; "preview" = the note is being READ (cursor/
+      // selection absent).
+      editorMode: isSource ? "source" : "preview",
+      // "active" = the focused editor; "recent-editor" = the fallback (the active leaf was not a
+      // markdown editor — typically the agent's integrated terminal). Surfaced so a fallback
+      // resolve is visible, never silent.
+      source,
+      nonce,
+    };
+
+    // Cursor + current-heading are meaningful ONLY in source mode (preview has no live cursor).
+    if (isSource) {
+      const cursor = editor.getCursor();
+      context.cursor = { line: cursor.line, ch: cursor.ch };
+      context.cursorOffset = editor.posToOffset(cursor);
+
+      // The section the cursor sits in: the last heading whose start line is <= the cursor line
+      // (headings are document-ordered). `heading` is the RAW heading text — no leading `#`s, as
+      // Obsidian's `HeadingCache.heading` provides it. `level` disambiguates nesting.
+      let currentHeading = "";
+      let currentLevel = 0;
+      if (fileCache?.headings) {
+        for (const h of fileCache.headings) {
+          if (h.position.start.line <= cursor.line) {
+            currentHeading = h.heading;
+            currentLevel = h.level;
+          } else {
+            break;
+          }
+        }
+      }
+      context.heading = currentHeading;
+      context.headingLevel = currentLevel;
+
+      // Selection: opt-in (untrusted, H-6 — see AgentRequest.includeSelection) AND source-mode only.
+      if (includeSelection && editor.somethingSelected()) {
+        const from = editor.getCursor("from");
+        const to = editor.getCursor("to");
+        context.selection = {
+          from,
+          to,
+          fromOffset: editor.posToOffset(from),
+          toOffset: editor.posToOffset(to),
+          text: editor.getRange(from, to),
+        };
+      }
+    }
+
+    // Outline (opt-in): every heading, RAW text + level + line. Cache-resident — no file read.
+    if (includeOutline && fileCache?.headings) {
+      context.outline = fileCache.headings.map((h) => ({
+        level: h.level,
+        heading: h.heading,
+        line: h.position.start.line,
+      }));
+    }
+
+    // Tags: `getAllTags` unifies INLINE (`#tag`) and FRONTMATTER (`tags:`) tags — the raw
+    // `fileCache.tags` array is inline-only and would drop every frontmatter tag. Strip the
+    // leading `#` so callers get `["health"]`, not `["#health"]`.
+    if (fileCache) {
+      const allTags = getAllTags(fileCache);
+      if (allTags && allTags.length) {
+        context.tags = allTags.map((t) => (t.startsWith("#") ? t.slice(1) : t));
+      }
+    }
+
+    // Frontmatter (opt-in, untrusted H-6): author-supplied YAML — data, never instructions.
+    if (includeFrontmatter && fileCache?.frontmatter) {
+      context.frontmatter = fileCache.frontmatter;
+    }
+
+    await this.app.vault.adapter.write(CONTEXT_FILE, JSON.stringify(context));
+    await this.writeResult({ ok: true, mode: "context", nonce });
+  }
+
+  private async readRequest(file: string): Promise<AgentRequest> {
+    try {
+      const raw = await this.app.vault.adapter.read(file);
+      return JSON.parse(raw) as AgentRequest;
+    } catch (_err) {
+      return { nonce: "" };
+    }
   }
 }

@@ -59,8 +59,16 @@ for wrapper in "$REPO"/bin/wiki-*; do                 # executable wrappers only
   [[ -f "$wrapper" && -x "$wrapper" ]] || continue
   safe_link "$wrapper" "$BIN_DIR/$(basename "$wrapper")"
 done
-# obsidian-active-note: the obsidian-cli skill's active-note resolver (TASK 041) — not a wiki-* CLI.
-[[ -x "$REPO/bin/obsidian-active-note" ]] && safe_link "$REPO/bin/obsidian-active-note" "$BIN_DIR/obsidian-active-note"
+# obsidian-* launchers: the obsidian-cli skill's helpers (active-note resolver TASK 041,
+# selection bridge TASK 068, context reader TASK 070) — not wiki-* CLIs, so the wiki-* glob
+# above skips them. ENUMERATE the population (glob obsidian-*), NEVER hardcode one name: the
+# prior `obsidian-active-note`-only line silently shipped without obsidian-selection /
+# obsidian-context, so a freshly-added launcher was invisible on PATH — the exact
+# guess-from-a-name failure the banner below warns against, one line above the banner.
+for wrapper in "$REPO"/bin/obsidian-*; do
+  [[ -f "$wrapper" && -x "$wrapper" ]] || continue
+  safe_link "$wrapper" "$BIN_DIR/$(basename "$wrapper")"
+done
 # ★ ENUMERATE THE POPULATION — NEVER GUESS IT FROM A NAME PREFIX.
 #
 # This globbed `skills/wiki-*/ + obsidian-cli/`, and that filter SILENTLY EXCLUDED the two

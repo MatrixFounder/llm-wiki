@@ -1,0 +1,33 @@
+{
+  "vault": "obsidian-llm-wiki",
+  "path": "Areas/Health.md",
+  "folder": "Areas",
+  "mtime": 1752500000000,
+  "exportedAt": 1752500001000,
+  "source": "active",
+  "heading": "Exercise",
+  "headingLevel": 2,
+  "cursor": {
+    "line": 12,
+    "ch": 5
+  },
+  "cursorOffset": 234,
+  "selection": {
+    "from": {
+      "line": 12,
+      "ch": 0
+    },
+    "to": {
+      "line": 12,
+      "ch": 11
+    },
+    "fromOffset": 229,
+    "toOffset": 240,
+    "text": "run 5km"
+  },
+  "tags": [
+    "health"
+  ],
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "editorMode": "source"
+}
