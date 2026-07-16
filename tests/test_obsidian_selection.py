@@ -138,6 +138,9 @@ def test_read_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest
     assert out["text"] == "Hello world"
     assert out["fromOffset"] == 42 and out["toOffset"] == 53
     assert out["from"] == {"line": 3, "ch": 0} and out["to"] == {"line": 3, "ch": 11}
+    # How the plugin resolved the editor is surfaced, so a `recent-editor` fallback (the active
+    # leaf was the agent's integrated terminal, where activeEditor is null) is never silent.
+    assert out["source"] == "active"
 
 
 def test_apply_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

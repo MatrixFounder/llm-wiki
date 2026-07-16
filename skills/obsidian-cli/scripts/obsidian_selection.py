@@ -288,8 +288,18 @@ _REASON_EXIT: dict[str, int] = {
     "no-editor": EXIT_NO_SELECTION,
     "preview": EXIT_NO_SELECTION,
     "empty-selection": EXIT_NO_SELECTION,
+    # The resolved view cannot be saved deterministically (not a MarkdownView — e.g. the mobile
+    # MarkdownEditView, which implements MarkdownFileInfo WITHOUT save()). The plugin refuses
+    # BEFORE mutating, so this is a no-selection-class refusal, not a failed write.
+    "no-saveable-view": EXIT_NO_SELECTION,
     "path-mismatch": EXIT_GUARD_REFUSED,
     "stale-range": EXIT_GUARD_REFUSED,
+    # A malformed/unreadable `agent-edit.json` — a payload/usage fault, NOT "the app is not
+    # running" (which is what the fail-closed default below would have claimed).
+    "bad-payload": EXIT_USAGE,
+    # `replaceRange` or `save()` threw: the buffer may be dirty but the write did not reach
+    # disk deterministically. Guard-refused class — the caller must re-read, never assume ok.
+    "save-failed": EXIT_GUARD_REFUSED,
 }
 
 
@@ -359,6 +369,12 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "toOffset": selection.get("toOffset"),
         "text": selection.get("text", ""),
         "mtime": selection.get("mtime"),
+        # How the plugin resolved the editor: "active" = the focused editor; "recent-editor" =
+        # the active leaf was NOT a markdown editor (typically Obsidian's integrated terminal,
+        # where the agent runs — `activeEditor` is null there) so it fell back to the last
+        # markdown editor. A fallback resolve is MEDIUM confidence — surface the path, don't
+        # treat it as a focused hit (same discipline as obsidian-active-note's `recent-open`).
+        "source": selection.get("source"),
     }
     return envelope, EXIT_OK
 

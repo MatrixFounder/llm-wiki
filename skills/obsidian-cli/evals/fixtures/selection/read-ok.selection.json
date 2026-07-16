@@ -2,12 +2,19 @@
   "ok": true,
   "vault": "obsidian-llm-wiki",
   "path": "Notes/Weekly Review.md",
-  "from": {"line": 3, "ch": 0},
-  "to": {"line": 3, "ch": 11},
+  "from": {
+    "line": 3,
+    "ch": 0
+  },
+  "to": {
+    "line": 3,
+    "ch": 11
+  },
   "fromOffset": 42,
   "toOffset": 53,
   "text": "Hello world",
   "mtime": 1752500000000,
   "exportedAt": 1752500001000,
-  "nonce": "0123456789abcdef0123456789abcdef"
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "source": "active"
 }
