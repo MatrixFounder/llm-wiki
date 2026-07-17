@@ -25,6 +25,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 var import_view = require("@codemirror/view");
+var import_state = require("@codemirror/state");
 var AGENT_DIR = ".obsidian";
 var REQUEST_FILE = `${AGENT_DIR}/agent-request.json`;
 var EDIT_FILE = `${AGENT_DIR}/agent-edit.json`;
@@ -62,6 +63,55 @@ var persistSelectionExtension = import_view.ViewPlugin.fromClass(
   },
   { decorations: (v) => v.decorations }
 );
+var SELECTION_TOOLTIP_CLASS = "agent-bridge-selection-tooltip";
+function selectionTooltipField(onCopy) {
+  const compute = (state) => {
+    const r = state.selection.main;
+    if (r.empty) return [];
+    return [{
+      pos: r.head,
+      above: true,
+      strictSide: false,
+      create: () => {
+        const dom = document.createElement("div");
+        dom.className = SELECTION_TOOLTIP_CLASS;
+        const btn = dom.appendChild(document.createElement("button"));
+        btn.type = "button";
+        btn.textContent = "@ ref";
+        btn.setAttribute("aria-label", "Copy selection reference (for the shell agent)");
+        btn.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          onCopy();
+        });
+        return { dom };
+      }
+    }];
+  };
+  return import_state.StateField.define({
+    create: compute,
+    update(tooltips, tr) {
+      if (!tr.docChanged && !tr.selection) return tooltips;
+      return compute(tr.state);
+    },
+    provide: (f) => import_view.showTooltip.computeN([f], (state) => state.field(f))
+  });
+}
+var selectionTooltipTheme = import_view.EditorView.baseTheme({
+  [`.${SELECTION_TOOLTIP_CLASS}`]: {
+    backgroundColor: "var(--background-secondary)",
+    border: "1px solid var(--background-modifier-border)",
+    borderRadius: "var(--radius-s, 4px)",
+    padding: "0"
+  },
+  [`.${SELECTION_TOOLTIP_CLASS} button`]: {
+    background: "none",
+    border: "none",
+    padding: "2px 6px",
+    cursor: "pointer",
+    fontSize: "var(--font-ui-smaller, 12px)",
+    color: "var(--text-muted)"
+  }
+});
 var AgentBridge = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
@@ -177,6 +227,12 @@ var AgentBridge = class extends import_obsidian.Plugin {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.rememberEditor()));
     this.app.workspace.onLayoutReady(() => this.rememberEditor());
     this.registerEditorExtension([persistSelectionExtension, persistSelectionTheme]);
+    this.registerEditorExtension([
+      selectionTooltipField(() => {
+        this.copySelectionRef().catch((e) => this.reportCrash("copy-selection-ref", e));
+      }),
+      selectionTooltipTheme
+    ]);
   }
   /**
    * Put a selection capture on the clipboard for the human to paste into an agent's shell:

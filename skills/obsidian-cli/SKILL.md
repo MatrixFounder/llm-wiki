@@ -257,7 +257,10 @@ as "Active-note resolution").
 **Human hotkey capture (the MORE robust path).** The plugin also registers
 `copy-selection-ref`, a **human-triggered** command (bind it to a hotkey in Obsidian) that puts a
 two-part **selection capture** on the clipboard — a `@<vault-relative-path>#L<from>-<to>` location
-line, then the **exact selected text** verbatim below it:
+line, then the **exact selected text** verbatim below it. Since plugin v0.2.0 the same capture
+also has a **mouse path**: selecting text floats a small `@ ref` button at the selection (a CM6
+tooltip; works in popout windows too) — clicking it IS `copy-selection-ref`, same clipboard-only
+T1-UX effect, no new agent-reachable surface:
 
 ```
 @<path>#L<from>-<to>

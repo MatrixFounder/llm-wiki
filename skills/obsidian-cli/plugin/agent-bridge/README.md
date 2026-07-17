@@ -58,7 +58,11 @@ Plus one **human-driven** command:
   nothing an agent can trigger, only the clipboard is overwritten. **Bind it to a hotkey**
   (see below) — it is the most robust capture path: the *human* fixes the selection at the
   exact moment, no dependency on `activeEditor` being live at agent-call time (the `no-editor`
-  race the read/apply channel can hit).
+  race the read/apply channel can hit). **v0.2.0 adds the mouse path:** selecting text floats
+  a small `@ ref` button at the selection (CM6 `showTooltip`; rides `registerEditorExtension`,
+  so popouts get it too) — clicking it runs this same command. `mousedown`+`preventDefault`,
+  so the click never steals editor focus (the selection stays live for the capture). Same
+  clipboard-only class; still nothing an agent can trigger.
 
 ## Hotkey — the robust "hand the agent this selection" flow
 

@@ -1,5 +1,6 @@
 import { Editor, MarkdownView, Notice, Plugin, TFile, getAllTags } from "obsidian";
-import { Decoration, DecorationSet, EditorView, PluginValue, ViewPlugin, ViewUpdate } from "@codemirror/view";
+import { Decoration, DecorationSet, EditorView, PluginValue, ViewPlugin, ViewUpdate, showTooltip, Tooltip } from "@codemirror/view";
+import { EditorState, StateField } from "@codemirror/state";
 
 /**
  * agent-bridge — read/replace the live editor selection for an agent running in the
@@ -131,6 +132,74 @@ const persistSelectionExtension = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.decorations }
 );
+
+// ── selection tooltip: a floating "copy ref" button at the selection ──────────────
+const SELECTION_TOOLTIP_CLASS = "agent-bridge-selection-tooltip";
+
+/**
+ * The Highlightr-style mouse path to `copy-selection-ref`: a small floating button above the
+ * selection head; clicking it puts the same `@path#L…` + exact-text capture on the clipboard
+ * as the hotkey. Human-triggered UI only (same T1-UX/clipboard-only class as the hotkey — no
+ * new agent-reachable surface, no vault I/O). Built on CM6's native tooltip system
+ * (`showTooltip`) so positioning/viewport handling is CM's, not ours, and — like the persist
+ * extension — it rides `registerEditorExtension`, so popout windows get it too.
+ *
+ * `mousedown` + `preventDefault`, NOT `click`: a click's default mousedown would move focus
+ * (and with it the selection state we are capturing) out of the editor before the handler
+ * runs; preventing the default keeps the editor focused and the selection live, so
+ * `copySelectionRef`'s own `resolveEditor()` sees exactly what the button hovered over.
+ */
+function selectionTooltipField(onCopy: () => void): StateField<readonly Tooltip[]> {
+  const compute = (state: EditorState): readonly Tooltip[] => {
+    const r = state.selection.main;
+    if (r.empty) return [];
+    return [{
+      pos: r.head,
+      above: true,
+      strictSide: false,
+      create: () => {
+        const dom = document.createElement("div");
+        dom.className = SELECTION_TOOLTIP_CLASS;
+        const btn = dom.appendChild(document.createElement("button"));
+        btn.type = "button";
+        btn.textContent = "@ ref";
+        btn.setAttribute("aria-label", "Copy selection reference (for the shell agent)");
+        btn.addEventListener("mousedown", (e) => {
+          e.preventDefault(); // keep editor focus + the live selection (see doc comment)
+          onCopy();
+        });
+        return { dom };
+      },
+    }];
+  };
+  return StateField.define<readonly Tooltip[]>({
+    create: compute,
+    update(tooltips, tr) {
+      if (!tr.docChanged && !tr.selection) return tooltips;
+      return compute(tr.state);
+    },
+    provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
+  });
+}
+
+/** Styled via `baseTheme` for the same reason as the persist highlight: CM mounts it into
+ * every editor's own document root, popouts included (see `persistSelectionTheme`). */
+const selectionTooltipTheme = EditorView.baseTheme({
+  [`.${SELECTION_TOOLTIP_CLASS}`]: {
+    backgroundColor: "var(--background-secondary)",
+    border: "1px solid var(--background-modifier-border)",
+    borderRadius: "var(--radius-s, 4px)",
+    padding: "0",
+  },
+  [`.${SELECTION_TOOLTIP_CLASS} button`]: {
+    background: "none",
+    border: "none",
+    padding: "2px 6px",
+    cursor: "pointer",
+    fontSize: "var(--font-ui-smaller, 12px)",
+    color: "var(--text-muted)",
+  },
+});
 
 /**
  * The outcome of resolving "which editor may we act on?" — either a `MarkdownView` we can
@@ -304,6 +373,15 @@ export default class AgentBridge extends Plugin {
     // theme rides along as an extension so CM6 mounts it into EVERY editor's own document root
     // — popouts included. See `persistSelectionTheme`.
     this.registerEditorExtension([persistSelectionExtension, persistSelectionTheme]);
+
+    // The mouse path to copy-selection-ref: a floating button at the selection (see
+    // `selectionTooltipField`). Same crash net as the command dispatches.
+    this.registerEditorExtension([
+      selectionTooltipField(() => {
+        this.copySelectionRef().catch((e) => this.reportCrash("copy-selection-ref", e));
+      }),
+      selectionTooltipTheme,
+    ]);
   }
 
   /**
