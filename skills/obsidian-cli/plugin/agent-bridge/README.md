@@ -132,6 +132,14 @@ stable across versions.)
 3. Do the **OQ1 one-time verification** below before relying on this for anything but a
    supervised trial.
 
+**Updating an already-installed vault** (after any plugin change): rebuild in the repo
+(`npm run build` — see *Rebuild discipline*), then re-copy the **same two files** over the
+installed ones, then make Obsidian reload the plugin — toggle it off/on in Community plugins
+(or reload the app). Obsidian keeps executing the `main.js` it loaded at enable-time, so a
+copied-but-not-reloaded update silently runs the OLD code; a vault that was installed before a
+new command shipped (e.g. `export-context`) will time out on it (exit 4) until this re-copy +
+reload happens — a known version-skew mode, not a bug.
+
 > ⚠️ **Cross-machine caveat (TASK 068 §14 OQ3).** This plugin lives under
 > `<vault>/.obsidian/plugins/`. It travels to another machine **only if that vault actually
 > syncs its `.obsidian/plugins/` directory** — many git and iCloud setups deliberately
