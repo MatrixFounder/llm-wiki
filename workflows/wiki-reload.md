@@ -82,24 +82,17 @@ through `Write` or a heredoc is the known 13-minute failure mode. Concretely:
 - chrome LINE RANGES → one `sed` in-place delete on the scratch file, ranges in DESCENDING
   order so the numbers stay valid, e.g. `sed -i '' '283d;281d;16,20d' "<SCRATCH>/<article>.md"`
   (`sed` is pre-allowed in the vault settings);
-- redirect-unwrap and caption-HTML fixes → run THIS command on the scratch file (generic —
-  unwraps any `…redirect?to=<encoded>` wrapper and strips raw `<a>` tags from captions in one
-  deterministic pass; do not re-derive it):
+- redirect-unwrap and caption-HTML fixes → **the html skill's tidy pass does these at
+  convert time** (its `md_clean` unwraps `…redirect?to=<encoded>` wrappers and strips tags
+  from image alt text — universal, class-based). Your job is to VERIFY, not to redo:
 
   ```bash
-  python3 -c '
-import re, sys, urllib.parse
-p = sys.argv[1]; s = open(p).read()
-s = re.sub(r"https?://[^\s)\"'"'"']*redirect\?to=([^&\s)\"'"'"']+)[^\s)\"'"'"']*",
-           lambda m: urllib.parse.unquote(m.group(1)), s)
-s = re.sub(r"<a\s[^>]*>([^<]*)</a>", r"\1", s)
-open(p, "w").write(s)
-' "<SCRATCH>/<article>.md"
+  grep -c "redirect?to=" "<SCRATCH>/<article>.md"
   ```
 
-  ONLY if `python3` is unavailable or denied in this vault: leave the tracked links (they
-  work, they're just tracked) and say so in the report. "Leaving avoids work" is NOT a reason
-  — the command above is the work, already done for you.
+  `0` → done. Non-zero → the installed html skill predates the tidy-pass upgrade: leave the
+  tracked links (they work, they're just tracked), report the count and that updating the
+  html skill fixes it — do NOT hand-rewrite links one by one.
 
 **5. Rebuild the SAME file — three hard rules, assembled WITHOUT retyping:**
 
