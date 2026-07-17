@@ -11,7 +11,16 @@ fetch+convert, H-6 fencing, REASON, and concept filing — or `wiki-index-upsert
 a ready note), recording a per-file `source_state` commit-marker so a re-run is a
 no-op.
 
-Execute the workflow at [`workflows/wiki-sync.md`](../workflows/wiki-sync.md).
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-sync.md)")")/workflows/wiki-sync.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-sync.md` — do NOT improvise the procedure from memory.)
 Do **not** hand-run the convert/summarise steps — follow the recipe (per-vault
 `flock`, per-file isolation, idempotency).
 

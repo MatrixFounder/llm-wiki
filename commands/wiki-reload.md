@@ -10,8 +10,17 @@ preserved verbatim → `wiki-index-upsert`.
 **NOT `/wiki-import`** (that creates a NEW summarized note + concept pages) and **not** a
 whole-page dump (reader mode + chrome sweep are mandatory).
 
-Execute the workflow at [`workflows/wiki-reload.md`](../workflows/wiki-reload.md) — follow its
-steps exactly, in order.
+**Execute the workflow file.** It lives in the obsidian-llm-wiki REPO, not in the current
+vault — from a vault CWD a relative `workflows/…` path resolves to NOTHING. Resolve it through
+this command's own symlink (works from any CWD):
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-reload.md)")")/workflows/wiki-reload.md"
+```
+
+Read `$WF` and follow its steps exactly, in order. (If the symlink is absent, ask the user for
+the obsidian-llm-wiki repo path and use `<repo>/workflows/wiki-reload.md` — do NOT improvise
+the procedure from memory.)
 
 User's task context:
 $ARGUMENTS

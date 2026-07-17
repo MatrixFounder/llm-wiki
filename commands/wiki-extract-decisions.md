@@ -3,8 +3,16 @@ description: Typed-knowledge extraction (RFC-004) — prepare (recon + the ontol
 ---
 
 Two-pass orchestrator workflow (TASK 063 / RFC-004, Decision-17).
-Read and execute the workflow defined in
-`workflows/wiki-extract-decisions.md`.
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-extract-decisions.md)")")/workflows/wiki-extract-decisions.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-extract-decisions.md` — do NOT improvise the procedure from memory.).
 
 The CLI is deterministic and **never calls an LLM** — the orchestrator owns
 the REASON step. The prompt/contract lives in

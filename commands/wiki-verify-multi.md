@@ -9,7 +9,16 @@ for *high-stakes* answers: the orchestrator runs `prepare` (assemble the answer
 self-index). It is layered **after** a `wiki-query apply`; `wiki-query` never
 calls it. Do **not** call `apply` without first running `prepare` and the critics.
 
-Execute the workflow at [`workflows/wiki-verify-multi.md`](../workflows/wiki-verify-multi.md).
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-verify-multi.md)")")/workflows/wiki-verify-multi.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-verify-multi.md` — do NOT improvise the procedure from memory.)
 
 Quick reference (wrappers at `bin/wiki-verify-multi` handle cd + venv):
 

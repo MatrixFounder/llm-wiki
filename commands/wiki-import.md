@@ -2,7 +2,16 @@
 description: Import an external source (article / paper / X-thread / meeting transcript / finished summary) into the vault — fetch+convert, detect content-type, REASON (summarizing-meetings), file the note + concept pages per the vault's layout, index. Works for any layout (Karpathy or PARA).
 ---
 
-Read and execute the workflow defined in `workflows/wiki-import.md`.
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-import.md)")")/workflows/wiki-import.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-import.md` — do NOT improvise the procedure from memory.)
 
 Follow all steps sequentially. Apply all Global Protocols
 (skill-archive-task, skill-session-state) where relevant.

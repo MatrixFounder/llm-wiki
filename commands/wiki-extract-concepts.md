@@ -3,8 +3,16 @@ description: Two-pass concept extraction — prepare (recon) → orchestrator sy
 ---
 
 Two-pass orchestrator workflow (TASK 003 v3.1, Decision-17).
-Read and execute the workflow defined in
-`workflows/wiki-extract-concepts.md`.
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-extract-concepts.md)")")/workflows/wiki-extract-concepts.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-extract-concepts.md` — do NOT improvise the procedure from memory.).
 
 The skill is now deterministic: the orchestrator owns the synthesis step.
 The Python skill provides two subcommands (`prepare` + `apply`) and the

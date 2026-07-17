@@ -8,7 +8,16 @@ context via the `wiki-query-synthesis` skill, then runs `apply` (grounding-
 checked write-back + self-index). Do **not** call `apply` without first running
 `prepare` and synthesising — follow the recipe.
 
-Execute the workflow at [`workflows/wiki-query.md`](../workflows/wiki-query.md).
+**Workflow location (works from any CWD, incl. a vault):** the workflow file lives in the
+obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
+symlink:
+
+```bash
+WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-query.md)")")/workflows/wiki-query.md"
+```
+
+Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+`<repo>/workflows/wiki-query.md` — do NOT improvise the procedure from memory.)
 
 Quick reference (wrappers at `bin/wiki-query` handle cd + venv):
 
