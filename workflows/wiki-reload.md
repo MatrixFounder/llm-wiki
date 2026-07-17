@@ -56,13 +56,38 @@ pass, this sweep is the second, and it is YOUR step, not the user's. The junk is
   into the source site, not the article; an absolute link that is part of the article's own
   text stays);
 - **trailing tails** — "related posts", comment sections, newsletter/subscribe blocks;
-- **converter provenance comments** (e.g. `<!-- html-source-id: … -->`).
+- **converter provenance comments** (e.g. `<!-- html-source-id: … -->`);
+- **tracking-redirect link wrappers** — `https://api.<site>/…/redirect?to=<url-encoded
+  target>&…` → unwrap to the DECODED target URL (the real link is right there in `to=`);
+- **raw HTML fragments in captions/alt text** — `<a href="…" rel="nofollow…">SVG</a>` inside
+  an image's `![…]` — reduce to plain text or a clean markdown link.
 
 Keep every link/image that is part of the article's own text. When unsure about a line — keep
-it. (Provenance: live-verified on a Habr article, where the byline/counters/hubs all sit inside
-the extracted main-content root — but the classes above are what to sweep on ANY site.)
+it. (Provenance: live-verified on Habr and vc.ru — byline/counters/rubrics sit inside the
+extracted main-content root, and vc.ru additionally launders every external link through its
+redirect tracker — but the classes above are what to sweep on ANY site.)
 
-**5. Rebuild the SAME file — three hard rules:**
+**⚠️ Do the sweep with FILE OPERATIONS on the scratch copy — never by retyping the article.**
+Your own token output must scale with the CHROME, not with the article; emitting the whole body
+through `Write` or a heredoc is the known 13-minute failure mode. Concretely:
+
+- chrome LINE RANGES → one `sed` in-place delete on the scratch file, ranges in DESCENDING
+  order so the numbers stay valid, e.g. `sed -i '' '283d;281d;16,20d' "<SCRATCH>/<article>.md"`
+  (`sed` is pre-allowed in the vault settings);
+- redirect-unwrap and caption-HTML fixes → targeted `Edit`/`replace_all` calls on the scratch
+  file, one per unique link — never a full-file rewrite. If a mechanical route is unavailable,
+  LEAVE the tracked links (they work, they're just tracked) and say so in the report — that
+  beats retyping the article.
+
+**5. Rebuild the SAME file — three hard rules, assembled WITHOUT retyping:**
+
+Extract the original frontmatter block into the scratch dir, then concatenate it with the
+swept body — one `cat`, zero model transcription of the article:
+
+```bash
+sed -n '1,<N>p' "<ABS note path>" > "<SCRATCH>/fm.md"   # N = the closing --- line of the ORIGINAL frontmatter
+cat "<SCRATCH>/fm.md" "<SCRATCH>/<swept article>.md" > "<ABS note path>"
+```
 
 - **Same path.** Write to the resolved `path`. NEVER create a sibling file (no
   `<tweet-id>.md`, no new slug). If the converter emitted a differently-named `.md`, its
