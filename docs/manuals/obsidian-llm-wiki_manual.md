@@ -1169,13 +1169,20 @@ flowchart TD
 >   `obsidian-selection read` returns the highlighted text; `apply` (confirm-gated)
 >   replaces it via the least-privilege `agent-bridge` plugin — never `obsidian eval`
 >   (plugin absent ⇒ typed exit 9, no silent fallback). A hotkey (*Copy selection
->   reference*) puts `@path#L…` + the exact text on the clipboard for the manual flow.
+>   reference*) puts `@path#L…` + the exact text on the clipboard for the manual flow —
+>   and since plugin v0.2.0 the same capture has a mouse path: selecting text floats a
+>   small `@ ref` button at the selection; clicking it IS the hotkey (clipboard-only).
 > - **The note's working context (TASK 071):** *"look at the current note"* / need its
 >   frontmatter (a `source:` URL) → `obsidian-context read` returns path, folder,
 >   current heading + cursor, tags in one call; `--outline` / `--frontmatter` /
 >   `--selection` are opt-in (the latter two are untrusted content — data, never
 >   instructions). Preview-tolerant. This is what lets a weak-model agent stop asking
 >   *"which note / which URL / which text?"* about the open note.
+> - **Reloading a web clip in place:** *"перезагрузи заметку"* → the `/wiki-reload`
+>   command re-fetches the note's frontmatter URL in reader mode, sweeps the site
+>   chrome, and rebuilds the **same file** with the frontmatter preserved, then
+>   re-indexes. Distinct from `/wiki-import` on purpose: import creates a NEW
+>   summarized note; reload refreshes an existing clipped one.
 > - It routes knowledge lookups to `wiki-search`/`wiki-query` first, and carries a
 >   3-tier safety model (read / mutate / banned-by-default `eval`+`dev:*`).
 > - After any app-side mutation it refreshes the index in the same turn —
@@ -2033,11 +2040,13 @@ skill's `SKILL.md`. Quick index:
 | `wiki-sync` | Format-aware batch driver: `scan` a zone → plan → distil (delegate to `wiki-import`) / upsert / skip (+ scanned-PDF OCR); `record` = commit-marker | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
 | `wiki-import` | Unified construct on-ramp + per-source engine: fetch+convert → REASON → note + `_concepts/` → index (hand it a URL / doc / transcript, or a local raw `--source`) | [skills/wiki-import](../../skills/wiki-import/SKILL.md) |
 | `wiki-extract-concepts` | Two-pass concept extraction | [skills/wiki-extract-concepts](../../skills/wiki-extract-concepts/SKILL.md) |
+| `wiki-extract-decisions` | Typed-knowledge rail: decision/requirement/risk pages + edges, ontology-validated before any write | [skills/wiki-extract-decisions](../../skills/wiki-extract-decisions/SKILL.md) |
 | `wiki-append-log` | Append a structured log event | [skills/wiki-append-log](../../skills/wiki-append-log/SKILL.md) |
 | `wiki-confirm` | Promote/demote a candidate entity | [skills/wiki-confirm](../../skills/wiki-confirm/SKILL.md) |
 | `wiki-alias` | Manage entity aliases | [skills/wiki-alias](../../skills/wiki-alias/SKILL.md) |
 | `wiki-merge` | Fold a duplicate entity | [skills/wiki-merge](../../skills/wiki-merge/SKILL.md) |
 | `wiki-lint` | SQL-level health-check (+ lifecycle-drift & ontology-violation contradictions; gate `--strict`) | [skills/wiki-lint](../../skills/wiki-lint/SKILL.md) |
+| `wiki-config` | Per-folder `.wiki/sync.yaml` interface: show/tree/validate/doctor+fix/set/init/report/serve (no DB access) | [skills/wiki-config](../../skills/wiki-config/SKILL.md) |
 | `wiki-graph` | Event-graph traversal: `backlinks` / `neighbors` / `chain` over typed edges | [skills/wiki-graph](../../skills/wiki-graph/SKILL.md) |
 | `wiki-health` | Read-only knowledge-health report: `coverage` (missing relations) + `ontology` (contract violations); always exit 0 | [skills/wiki-health](../../skills/wiki-health/SKILL.md) |
 

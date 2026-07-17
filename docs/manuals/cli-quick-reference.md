@@ -185,9 +185,12 @@ Then, for example:
 Slash commands also exist for the common verbs: `/wiki-search`, `/wiki-query`,
 `/wiki-sync`, `/wiki-reindex`, `/wiki-lint`, `/wiki-health`, `/wiki-import` (unified
 external-source on-ramp and per-source engine — URL/PDF/thread/transcript or a local raw
-file, any layout), and the two-pass extractors `/wiki-extract-concepts` (densify an
+file, any layout), the two-pass extractors `/wiki-extract-concepts` (densify an
 indexed source into `_concepts/` pages) and `/wiki-extract-decisions` (typed knowledge —
-decision/requirement/risk pages + edges, on layouts that map them). The agent keeps you in
+decision/requirement/risk pages + edges, on layouts that map them), and `/wiki-reload`
+(*"перезагрузи заметку"* — refresh a broken/stale **web-clipped note in place** from its
+frontmatter URL: reader-mode fetch, site-chrome sweep, same file, frontmatter preserved,
+re-index; NOT `/wiki-import`, which creates a NEW summarized note). The agent keeps you in
 the loop on anything that writes (summaries, new notes) and is safe to re-run
 (per-file idempotency).
 

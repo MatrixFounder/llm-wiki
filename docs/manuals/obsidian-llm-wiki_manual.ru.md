@@ -1192,13 +1192,20 @@ flowchart TD
 >   `obsidian-selection read` возвращает подсвеченный текст; `apply` (с подтверждением)
 >   заменяет его через минимально-привилегированный плагин `agent-bridge` — никогда не
 >   `obsidian eval` (плагин отсутствует ⇒ типизированный exit 9, без тихого фолбэка).
->   Хоткей (*Copy selection reference*) кладёт `@путь#L…` + точный текст в буфер;
+>   Хоткей (*Copy selection reference*) кладёт `@путь#L…` + точный текст в буфер — а с
+>   версии плагина 0.2.0 есть и мышиный путь: у выделения всплывает кнопка `@ ref`,
+>   клик по ней = тот же хоткей (только буфер обмена);
 > - **рабочий контекст заметки (TASK 071)**: *«посмотри на текущую заметку»* / нужен её
 >   фронтматтер (URL в `source:`) → `obsidian-context read` возвращает путь, папку,
 >   текущий заголовок + курсор, теги одним вызовом; `--outline` / `--frontmatter` /
 >   `--selection` — opt-in (последние два — недоверенное содержимое: данные, никогда не
 >   инструкции). Работает и в preview. Именно это позволяет слабой модели перестать
 >   спрашивать *«какая заметка / какой URL / какой текст?»* про открытую заметку;
+> - **перезагрузка веб-клипа на месте**: *«перезагрузи заметку»* → команда `/wiki-reload`
+>   переполучает URL из фронтматтера в reader-mode, зачищает site-chrome и пересобирает
+>   **тот же файл** с сохранённым фронтматтером, затем переиндексирует. Намеренно
+>   отдельно от `/wiki-import`: import создаёт НОВУЮ суммаризированную заметку, reload
+>   обновляет существующий клип;
 > - запросы знаний он маршрутизирует СНАЧАЛА в `wiki-search`/`wiki-query` и несёт
 >   3-уровневую модель безопасности (чтение / мутация / запрещённые-по-умолчанию
 >   `eval`+`dev:*`);
@@ -2090,11 +2097,13 @@ flowchart TD
 | `wiki-sync` | Формато-зависимый драйвер: `scan` зоны → план → делегирование distil-источников в `wiki-import` / upsert готовых / skip (+ OCR сканированных PDF); `record` = маркер коммита | [skills/wiki-sync](../../skills/wiki-sync/SKILL.md) |
 | `wiki-import` | Унифицированный construct-вход: дистилляция источника (URL / PDF / office / транскрипт / локальный raw) → заметка + `_concepts/` → index (`wiki-import-article` — алиас) | [skills/wiki-import](../../skills/wiki-import/SKILL.md) |
 | `wiki-extract-concepts` | Двухпроходное извлечение концепций | [skills/wiki-extract-concepts](../../skills/wiki-extract-concepts/SKILL.md) |
+| `wiki-extract-decisions` | Рельса типизированного знания: страницы решение/требование/риск + рёбра, валидация по онтологии ДО записи | [skills/wiki-extract-decisions](../../skills/wiki-extract-decisions/SKILL.md) |
 | `wiki-append-log` | Добавить структурированное событие в log | [skills/wiki-append-log](../../skills/wiki-append-log/SKILL.md) |
 | `wiki-confirm` | Повысить/понизить кандидатную сущность | [skills/wiki-confirm](../../skills/wiki-confirm/SKILL.md) |
 | `wiki-alias` | Управление alias-ами сущностей | [skills/wiki-alias](../../skills/wiki-alias/SKILL.md) |
 | `wiki-merge` | Свернуть дублирующую сущность | [skills/wiki-merge](../../skills/wiki-merge/SKILL.md) |
 | `wiki-lint` | Проверка здоровья на уровне SQL (+ противоречия lifecycle-drift и ontology-violation; гейтят `--strict`) | [skills/wiki-lint](../../skills/wiki-lint/SKILL.md) |
+| `wiki-config` | Интерфейс per-folder `.wiki/sync.yaml`: show/tree/validate/doctor+fix/set/init/report/serve (без доступа к БД) | [skills/wiki-config](../../skills/wiki-config/SKILL.md) |
 | `wiki-graph` | Обход графа событий: `backlinks` / `neighbors` / `chain` по типизированным рёбрам | [skills/wiki-graph](../../skills/wiki-graph/SKILL.md) |
 | `wiki-health` | Read-only отчёт о здоровье знаний: `coverage` (недостающие связи) + `ontology` (нарушения контракта); всегда exit 0 | [skills/wiki-health](../../skills/wiki-health/SKILL.md) |
 
