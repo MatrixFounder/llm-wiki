@@ -513,11 +513,12 @@ obsidian-context read --frontmatter --format json
 source ~/.config/obsidian-llm-wiki/skills.env 2>/dev/null
 OUT=$(mktemp -d) && python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only
 
-# 4 — SWEEP the site chrome from the fetched body (reader mode extracts <article>, and sites
-#     like Habr keep meta-junk INSIDE it): avatar/user/byline lines, reading-time/view counters,
-#     hub/tag lists + site-relative links (/ru/hubs/…), trailing related/comments blocks,
-#     <!-- html-source-id --> comments. Keep everything that is the article's own text;
-#     when unsure — keep.
+# 4 — SWEEP the site chrome from the fetched body. Reader mode extracts the main-content root,
+#     and many sites keep meta-junk INSIDE it — sweep by CLASS (universal), not by site:
+#     author/byline/avatar blocks · engagement counters (reading time, views/likes) ·
+#     taxonomy link lists (categories/tags/rubrics) · site-relative links (target starts
+#     with "/") · trailing related/comments/subscribe tails · converter provenance comments
+#     (<!-- html-source-id -->). Keep everything that is the article's own text; unsure — keep.
 
 # 5 — rebuild the SAME file: original frontmatter block VERBATIM (exactly one copy) + the swept
 #     body. NEVER create a sibling file (no <tweet-id>.md, no new slug). Copy ONLY the images
@@ -531,5 +532,7 @@ OUT=$(mktemp -d) && python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only
 instead of the same path, and a DUPLICATED frontmatter block — both are hard rules in step 5.
 Reader mode is never optional (a whole-page dump re-imports the navigation junk the reload
 exists to remove) — and it is only the FIRST pass: the chrome sweep (step 4) is part of the
-recipe, not a user-prompted afterthought (live-verified on Habr: the avatar/hubs/tags junk sits
-inside `<article>` and survives `--reader-only`).
+recipe, not a user-prompted afterthought. The sweep list is by CLASS, deliberately not by site
+(provenance: live-verified on a Habr article, whose byline/counters/rubrics sit inside the
+extracted main-content root and survive `--reader-only` — but the same classes appear on any
+publishing platform).
