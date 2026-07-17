@@ -229,6 +229,11 @@ export default class AgentBridge extends Plugin {
     }
     const editor = view.editor;
     const file = view.file; // FileView.file is TFile | null
+    // RUNTIME ASSUMPTION (unverifiable by the deterministic tests — they simulate this plugin's
+    // output): `MarkdownView.editor` stays non-null in PREVIEW mode (Obsidian keeps the editor
+    // instance alive across mode switches). export-context's preview tolerance rests on it — if
+    // an Obsidian release ever nulls the editor in reading view, preview reads regress to
+    // `no-editor` (fail-closed, not wrong-data). Re-verify on a live preview smoke after app bumps.
     if (!editor || !file) return { ok: false, reason: "no-editor" };
     return { ok: true, view, editor, file, source };
   }

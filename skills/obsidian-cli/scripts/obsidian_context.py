@@ -33,6 +33,15 @@ Exit codes (shared scheme with the selection wrapper):
   6 vault-mismatch · 8 headless · 9 plugin-absent
 
 Success is the result envelope's SHAPE (``ok===true``), never the exit code alone.
+
+KNOWN RESIDUAL (same class as the sibling's documented nonce-attribution bound): the request
+file is UNSIGNED and the nonce attributes outputs to file CONTENT, not to a dispatch — a local
+writer who reads the freshly-minted nonce during the poll window can rewrite
+``agent-request.json`` with ``includeFrontmatter/includeSelection: true`` before the plugin
+reads it, flipping the opt-in flags for that one dispatch. The default-off posture is therefore
+DATA MINIMIZATION against a well-behaved plugin, not a boundary against a local attacker (who
+can already read the note file directly). Closing it needs per-dispatch request files or a lock
+— deliberately out of scope, exactly as in ``obsidian_selection.py``'s header.
 """
 from __future__ import annotations
 
@@ -116,15 +125,19 @@ def _read_context(root: Path, nonce: str) -> dict[str, Any]:
 
 def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     """Dispatch ``export-context``, nonce-match the result AND the payload, emit the envelope."""
-    vault = _sel._resolve_vault(
-        getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False)
-    )
     expect_vault = getattr(args, "expect_vault", None)
     root: Optional[Path] = None
 
     try:
         _sel._headless_guard()
         _sel._require_cli()
+        # AFTER the guards, not before: with --vault omitted, _resolve_vault spawns
+        # `obsidian vaults verbose` (CWD auto-detect) — a subprocess the headless guard exists
+        # to forbid, and one that maps a genuinely-absent CLI to exit 4 instead of 5 if it runs
+        # first. Cheapest guards gate the first spawn.
+        vault = _sel._resolve_vault(
+            getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False)
+        )
         root = _sel._vault_root(vault)
         vault_name = _sel._vault_name(vault)
         _sel._check_vault(vault_name, expect_vault)
@@ -163,12 +176,23 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         _cleanup(root)
         return {"ok": False, "mode": "context", "reason": exc.reason}, exc.code
 
+    # ALLOWLIST, not a strip-the-nonce denylist (sibling parity — `do_read` in
+    # obsidian_selection.py builds its envelope from named keys only). The wrapper is the trust
+    # boundary between the UNSIGNED agent-context.json and the agent: a denylist would let a
+    # nonce-matching payload inject arbitrary keys (e.g. a forged `coherence` dispatch marker)
+    # or override the wrapper-owned fields — and it DID override one in normal operation: the
+    # plugin writes its own `vault` self-report, which silently replaced the CLI-validated
+    # `vault_name` (the value `--expect-vault` actually checked). Reserved keys (`ok`, `mode`,
+    # `vault`) are wrapper-owned; unknown payload keys are dropped, never carried.
+    _CONTEXT_KEYS = (
+        "path", "folder", "editorMode", "source", "mtime", "exportedAt",
+        "heading", "headingLevel", "cursor", "cursorOffset",
+        "outline", "tags", "frontmatter", "selection",
+    )
     envelope: dict[str, Any] = {"ok": True, "mode": "context", "vault": vault_name}
-    # Carry through every field the plugin exported (path/folder/heading/cursor/outline/tags/
-    # frontmatter/selection/editorMode/source/mtime/...), minus the internal nonce.
-    for key, value in context.items():
-        if key not in ("nonce",):
-            envelope[key] = value
+    for key in _CONTEXT_KEYS:
+        if key in context:
+            envelope[key] = context[key]
 
     # The context (incl. any selection text / frontmatter) has been read into the envelope — do
     # not leave a plaintext copy of the user's note at rest in a synced `.obsidian/`.

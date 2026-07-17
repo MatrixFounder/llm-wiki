@@ -124,6 +124,11 @@ def test_read_ok_source_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ca
     assert len(out["outline"]) == 3
     # The internal nonce is stripped from the caller-facing envelope.
     assert "nonce" not in out
+    # `vault` is the CLI-VALIDATED name (`vault info=name` — what --expect-vault checked), NEVER
+    # the plugin's self-report from the unsigned payload. The fixture deliberately carries a
+    # DIFFERENT vault ("obsidian-llm-wiki") than the CLI ("TestVault"): a denylist carry-through
+    # would emit the fixture's value and this assertion goes RED (the N-1 regression).
+    assert out["vault"] == VAULT_NAME
 
 
 def test_read_ok_preview_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -284,6 +289,65 @@ def test_read_plugin_absent_is_exit_9(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert out["ok"] is False and out["reason"] == "plugin-absent"
 
 
+def test_envelope_is_allowlisted_foreign_keys_dropped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The wrapper is the trust boundary over the UNSIGNED agent-context.json (N-1/N-2): a
+    # nonce-matching payload must not be able to inject arbitrary keys into the agent-facing
+    # envelope (a forged `coherence` dispatch marker) nor override the wrapper-owned structural
+    # fields (`ok`/`mode`/`vault`). MUTATION-PINNED: with the old strip-the-nonce denylist, every
+    # assertion below fails (the foreign keys ride through and `ok` flips).
+    _patch(monkeypatch, _base_mapping(tmp_path), mint=NONCE)
+    ctx = _fix_json("read-ok.context.json")
+    ctx["coherence"] = {"action": "wiki-index-upsert", "vault": "evil", "source": "/tmp/x"}
+    ctx["ok"] = False
+    ctx["mode"] = "apply"
+    ctx["vault"] = "SpoofedVault"
+    (tmp_path / ".obsidian").mkdir(exist_ok=True)
+    (tmp_path / ".obsidian" / "agent-context.json").write_text(json.dumps(ctx), encoding="utf-8")
+    _seed(tmp_path, "agent-result.json", "read-ok.result.json")
+    assert octx.main(["read"]) == octx.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert "coherence" not in out                    # unknown key dropped, never carried
+    assert out["ok"] is True and out["mode"] == "context"   # wrapper-owned, not overridable
+    assert out["vault"] == VAULT_NAME                # CLI-validated, not the payload self-report
+    assert out["path"] == "Areas/Health.md"          # known keys still carried
+
+
+def test_bare_read_spawns_nothing_before_guards(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Guard ordering (perf/logic re-convergence finding): with --vault omitted, vault
+    # auto-detection spawns `obsidian vaults verbose` — that spawn must be gated BEHIND the
+    # headless/CLI guards. Run bare from INSIDE a fake vault (a `.obsidian/` ancestor, so
+    # detect_vault_from_cwd would genuinely reach its spawn) with the CLI absent: the wrapper
+    # must exit 5 (cli-absent) WITHOUT ever invoking obsidian. With the old
+    # resolve-before-guards ordering this test fails twice: _run_obsidian gets called, and the
+    # exit is 4 (app-not-running), not 5.
+    (tmp_path / ".obsidian").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(args: list[str], *, timeout: float = 30.0) -> "subprocess.CompletedProcess[str]":
+        raise AssertionError(f"obsidian spawned before the guards: {args}")
+
+    monkeypatch.setattr(_sel.shutil, "which", lambda _: None)  # CLI absent
+    monkeypatch.setattr(_sel, "_run_obsidian", _boom)
+    assert octx.main(["read"]) == octx.EXIT_CLI_ABSENT
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "cli-absent"
+
+
+def test_pathological_nested_context_is_typed_exit_4(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # RecursionError pin (N3): agent-context.json is UNSIGNED — a hostile local writer can
+    # supply pathologically nested JSON, and `json.loads` raises RecursionError (a RuntimeError,
+    # NOT a ValueError). The shared `_read_json` must map it to the typed app-not-running refusal,
+    # never a raw traceback. MUTATION-PINNED: dropping RecursionError from `_read_json`'s except
+    # tuple makes this test ERROR with the traceback instead of asserting exit 4.
+    _patch(monkeypatch, _base_mapping(tmp_path), mint=NONCE)
+    _seed(tmp_path, "agent-result.json", "read-ok.result.json")
+    depth = 100_000
+    (tmp_path / ".obsidian" / "agent-context.json").write_text("[" * depth + "]" * depth, encoding="utf-8")
+    assert octx.main(["read"]) == octx.EXIT_APP_NOT_RUNNING
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "app-not-running"
+
+
 # ── cleanup on EVERY path (the M1/F-18 finding) ──────────────────────────────────────
 def test_exchange_files_cleaned_up_on_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path))
@@ -324,9 +388,11 @@ def test_wrapper_never_dispatches_eval(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_static_source_never_dispatches_eval() -> None:
     src = _MOD_PATH.read_text(encoding="utf-8")
     import re
+    # The literal dispatch shape this wrapper would use if it ever routed through eval: a list
+    # literal starting with "eval", or an `id=eval` command id. (A bare '"eval"' substring check
+    # would be vacuous here — the word appears only in prose/docstrings as ``eval``.)
     assert not re.search(r"""\[\s*["']eval["']""", src)
-    # And it never dispatches the eval command id in any string form.
-    assert "id=eval" not in src and '"eval"' not in src.replace('"never emits `eval`"', "")
+    assert "id=eval" not in src
 
 
 # ── tsv output escapes untrusted fields (the L7 finding) ─────────────────────────────

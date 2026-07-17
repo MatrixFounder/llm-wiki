@@ -183,7 +183,11 @@ def _cleanup_exchange(root: Path) -> None:
 def _read_json(root: Path, name: str) -> dict[str, Any]:
     try:
         data = json.loads((_obsidian_dir(root) / name).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    # RecursionError included (TASK 071 re-convergence): these files are UNSIGNED — a hostile
+    # local writer can supply pathologically nested JSON, and `json.loads` then raises
+    # RecursionError, which is NOT a ValueError/JSONDecodeError. Without this clause the wrapper
+    # dies with a raw traceback, violating the "every exit is a typed reason" contract.
+    except (OSError, json.JSONDecodeError, RecursionError) as exc:
         raise SelectionError(EXIT_APP_NOT_RUNNING, f"could not read {name}: {exc}", reason="app-not-running") from exc
     if not isinstance(data, dict):
         raise SelectionError(EXIT_APP_NOT_RUNNING, f"{name} did not contain a JSON object", reason="app-not-running")
@@ -205,7 +209,10 @@ def _await_result(nonce: str, *, root: Path) -> dict[str, Any]:
         if result_path.exists():
             try:
                 data = json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            # RecursionError too — same rationale as _read_json: this is the same UNSIGNED
+            # exchange file, and a pathologically nested payload must degrade to "no match yet"
+            # (→ the typed deadline refusal below), never a raw traceback.
+            except (OSError, json.JSONDecodeError, RecursionError):
                 data = None
             if isinstance(data, dict) and data.get("nonce") == nonce:
                 return data
@@ -384,13 +391,17 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     ``text`` in the returned envelope is the RAW selected UTF-8 text — untrusted content
     (H-6): the caller must treat it as data, never as instructions.
     """
-    vault = _resolve_vault(getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False))
     expect_vault = getattr(args, "expect_vault", None)
     root: Optional[Path] = None
 
     try:
         _headless_guard()
         _require_cli()
+        # AFTER the guards (TASK 071 re-convergence): with --vault omitted, _resolve_vault
+        # spawns `obsidian vaults verbose` (CWD auto-detect) — a subprocess the headless guard
+        # exists to forbid, and one that maps a genuinely-absent CLI to exit 4 instead of 5 if
+        # it runs first. Cheapest guards gate the first spawn.
+        vault = _resolve_vault(getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False))
         root = _vault_root(vault)
         vault_name = _vault_name(vault)
         _check_vault(vault_name, expect_vault)
@@ -478,7 +489,9 @@ def _build_apply_payload(args: argparse.Namespace) -> dict[str, Any]:
     if from_json:
         try:
             data = json.loads(Path(from_json).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        # RecursionError too (same class as _read_json/_await_result): a pathologically nested
+        # file must be a typed usage refusal, never a raw traceback.
+        except (OSError, json.JSONDecodeError, RecursionError) as exc:
             raise SelectionError(EXIT_USAGE, f"--from-json unreadable: {exc}", reason="usage") from exc
         if not isinstance(data, dict):
             raise SelectionError(EXIT_USAGE, "--from-json did not contain a JSON object", reason="usage")
@@ -546,7 +559,6 @@ def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     alone. The ``coherence`` dispatch marker is added ONLY on ``ok:true`` — refusals omit
     the key entirely (Decision-17 "omitted, not false").
     """
-    vault = _resolve_vault(getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False))
     expect_vault = getattr(args, "expect_vault", None)
     wiki_vault = getattr(args, "wiki_vault", None)
 
@@ -559,6 +571,8 @@ def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     try:
         _headless_guard()
         _require_cli()
+        # AFTER the guards — same rationale as do_read (TASK 071 re-convergence).
+        vault = _resolve_vault(getattr(args, "vault", None), no_detect=getattr(args, "no_detect_vault", False))
         root = _vault_root(vault)
         vault_name = _vault_name(vault)
         _check_vault(vault_name, expect_vault)

@@ -361,6 +361,26 @@ def test_read_cli_absent_is_exit_5(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert out["ok"] is False and out["reason"] == "cli-absent"
 
 
+def test_bare_read_spawns_nothing_before_guards(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Guard-ordering pin (TASK 071 re-convergence — parity with the context wrapper's test):
+    # with --vault omitted, CWD auto-detect spawns `obsidian vaults verbose`; that spawn must be
+    # gated BEHIND _headless_guard/_require_cli. From INSIDE a fake vault (a `.obsidian/`
+    # ancestor, so detect_vault_from_cwd would genuinely reach its spawn) with the CLI absent,
+    # the wrapper must exit 5 (cli-absent) WITHOUT invoking obsidian. With the old
+    # resolve-before-guards ordering this fails twice: _run_obsidian fires, and the exit is 4.
+    (tmp_path / ".obsidian").mkdir(exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(args: list[str], *, timeout: float = 30.0) -> "subprocess.CompletedProcess[str]":
+        raise AssertionError(f"obsidian spawned before the guards: {args}")
+
+    monkeypatch.setattr(osel.shutil, "which", lambda _: None)  # CLI absent
+    monkeypatch.setattr(osel, "_run_obsidian", _boom)
+    assert osel.main(["read"]) == osel.EXIT_CLI_ABSENT
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["reason"] == "cli-absent"
+
+
 def test_read_vault_mismatch_is_exit_6(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _patch(monkeypatch, _base_mapping(tmp_path, vault_name=VAULT_NAME))
     assert osel.main(["--expect-vault", "some-other-vault", "read"]) == osel.EXIT_VAULT_MISMATCH
