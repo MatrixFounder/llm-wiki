@@ -30,14 +30,17 @@ obsidian-context read --frontmatter --format json
 **2. Confirm once (T2 mutation):** "Reload `<path>` from `<URL>`? The body is replaced; the
 frontmatter is preserved." Wait for a yes.
 
-**3. Fetch in READER mode** into a scratch dir (never into the vault):
+**3. Fetch in READER mode** into a scratch dir (never into the vault). ⚠️ Shell variables do
+**NOT** survive between commands — run the fetch as ONE command that also PRINTS the scratch
+path, then reference that path **literally** in every later step (image copy included). Losing
+it forces a wasteful re-fetch (live-observed failure mode):
 
 ```bash
-source ~/.config/obsidian-llm-wiki/skills.env 2>/dev/null   # pins WIKI_HTML_BIN (vendor-agnostic)
-OUT=$(mktemp -d)
-python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only
+source ~/.config/obsidian-llm-wiki/skills.env 2>/dev/null && OUT=$(mktemp -d) && \
+  python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only && echo "SCRATCH: $OUT" && ls "$OUT"
 ```
 
+Note the printed `SCRATCH:` path — it is your handle for steps 4–5.
 (If `WIKI_HTML_BIN` is unset, load the `html` skill and use its documented invocation with
 `--reader-only`. Never omit `--reader-only`.)
 
@@ -68,7 +71,9 @@ the extracted main-content root — but the classes above are what to sweep on A
   (one copy — duplicating it is the known failure mode). Replace only the body below it.
 - **Images:** copy into the note's own folder (or the vault's attachment convention, e.g.
   `_attachments/`) ONLY the images the swept body still references, links relative — chrome
-  images (avatars, logos) were removed in step 4 and must not be copied.
+  images (avatars, logos) were removed in step 4 and must not be copied. Copy FROM the literal
+  `SCRATCH:` path printed in step 3 — never hunt for the temp dir and never re-fetch to
+  recover it.
 
 **6. Coherence** (wiki-registered vault only — `vault_id` from `WIKI_SCHEMA.md`; skip and say
 so if unregistered):
