@@ -100,17 +100,30 @@ Extract the original frontmatter block into the scratch dir, then concatenate it
 swept body — one `cat`, zero model transcription of the article:
 
 ```bash
-sed -n '1,<N>p' "<ABS note path>" > "<SCRATCH>/fm.md"   # N = the closing --- line of the ORIGINAL frontmatter
+sed -n '1,/^---$/p' "<ABS note path>" > "<SCRATCH>/fm.md"   # line 1 through the CLOSING --- inclusive — NO line number to derive
 cat "<SCRATCH>/fm.md" "<SCRATCH>/<swept article>.md" > "<ABS note path>"
-head -12 "<ABS note path>"                               # VERIFY before indexing — see below
 ```
 
-**Assembly verification (MANDATORY, before step 6):** the `head` output must show exactly ONE
-frontmatter block — line 1 is `---`, exactly one more `---` closes it, and article content
-follows. A second `---` block right after the first (the converter's `source:/title:/engine:`
-frontmatter) means step 4 missed it — delete the second block NOW, before indexing. Never
-report "frontmatter preserved" without this check: the assembly is mechanical, so the check is
-what makes the claim true.
+(The `1,/^---$/` range is the load-bearing part: sed matches the end pattern starting AFTER
+line 1, so it prints the opening `---` through the closing `---` inclusive. Do NOT replace it
+with a hand-derived line number — the off-by-one that drops the closing `---` is a
+live-observed failure mode.)
+
+**Assembly verification (MANDATORY, before step 6) — run EXACTLY this and read the number:**
+
+```bash
+head -12 "<ABS note path>" | grep -c '^---$'
+```
+
+- **`2`** → correct (opening + closing delimiter). Proceed.
+- **`1`** → the closing `---` is MISSING (unclosed frontmatter — Obsidian will not parse it).
+  Add the `---` line after the last frontmatter field NOW, before indexing.
+- **`3` or more** → the converter's own frontmatter survived step 4 — delete the second block
+  NOW, before indexing.
+
+"One block" is NOT the passing answer — **the number `2` is**. Never report "frontmatter
+preserved" without this check printing 2: the assembly is mechanical, so the check is what
+makes the claim true.
 
 - **Same path.** Write to the resolved `path`. NEVER create a sibling file (no
   `<tweet-id>.md`, no new slug). If the converter emitted a differently-named `.md`, its
