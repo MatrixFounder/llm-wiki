@@ -36,9 +36,13 @@ path, then reference that path **literally** in every later step (image copy inc
 it forces a wasteful re-fetch (live-observed failure mode):
 
 ```bash
-source ~/.config/obsidian-llm-wiki/skills.env 2>/dev/null && OUT=$(mktemp -d) && \
+source ~/.config/obsidian-llm-wiki/skills.env 2>/dev/null && OUT=$(mktemp -d /tmp/wiki-reload.XXXXXX) && \
   python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only && echo "SCRATCH: $OUT" && ls "$OUT"
 ```
+
+(The `/tmp/wiki-reload.*` template is deliberate: `/tmp` is in the vault's permitted
+directories, so Read/Edit on the scratch files won't prompt — a bare `mktemp -d` lands in
+`/var/folders/…`, which prompts on every read.)
 
 Note the printed `SCRATCH:` path — it is your handle for steps 4–5.
 (If `WIKI_HTML_BIN` is unset, load the `html` skill and use its documented invocation with
@@ -49,6 +53,10 @@ page's main-content root, and many sites keep meta-junk INSIDE it — reader-onl
 pass, this sweep is the second, and it is YOUR step, not the user's. The junk is
 **site-specific in shape but universal in class** — sweep by CLASS, top and bottom of the body:
 
+- **the CONVERTER'S OWN frontmatter** — the fetched `.md` usually STARTS with its own `---`
+  block (`source:/title:/author:/engine:` …). It must be deleted (line 1 through its closing
+  `---`, inclusive) — step 5 prepends the note's ORIGINAL frontmatter, so a surviving converter
+  block produces the double-frontmatter corruption (live-observed twice);
 - **author/byline blocks** — avatar images, user-profile links, author + publish-date lines;
 - **engagement counters** — reading time, view/like/comment counts, share widgets;
 - **taxonomy link lists** — category/tag/hub/rubric link blocks appended around the article;
@@ -87,7 +95,15 @@ swept body — one `cat`, zero model transcription of the article:
 ```bash
 sed -n '1,<N>p' "<ABS note path>" > "<SCRATCH>/fm.md"   # N = the closing --- line of the ORIGINAL frontmatter
 cat "<SCRATCH>/fm.md" "<SCRATCH>/<swept article>.md" > "<ABS note path>"
+head -12 "<ABS note path>"                               # VERIFY before indexing — see below
 ```
+
+**Assembly verification (MANDATORY, before step 6):** the `head` output must show exactly ONE
+frontmatter block — line 1 is `---`, exactly one more `---` closes it, and article content
+follows. A second `---` block right after the first (the converter's `source:/title:/engine:`
+frontmatter) means step 4 missed it — delete the second block NOW, before indexing. Never
+report "frontmatter preserved" without this check: the assembly is mechanical, so the check is
+what makes the claim true.
 
 - **Same path.** Write to the resolved `path`. NEVER create a sibling file (no
   `<tweet-id>.md`, no new slug). If the converter emitted a differently-named `.md`, its
