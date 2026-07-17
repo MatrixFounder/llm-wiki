@@ -7,25 +7,31 @@ pattern. **Markdown is the canonical source of truth; SQLite (FTS5 + WAL) is a
 entity/concept graph, RAG-with-citations, and a verification layer — all driven
 from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
 
-> **Status**: Phase 3a complete (2026-05-26); Phase 3b through **TASK 047**
-> (typed knowledge classes + event graph [`wiki-graph`, graph-aware RAG], the
-> list-membership `--where`/`--tag` filter + temporal `wiki-search --as-of`, derived
-> knowledge-health [`wiki-health`], and the **config-driven write-grammar** [ADR-007]
-> that unifies the Karpathy/PARA construct path; **TASK 046** *converged* it —
-> `wiki-import` is the per-source **engine** [+ office/`.vtt` acquire, grammar by
-> `--kind` (meeting/lesson → pyramid), `--diagrams`/`--no-concepts`] and `wiki-sync` a
-> batch **driver** that delegates to it; **TASK 047** retired the legacy `wiki-enrich`
-> + vendored `wiki_ingest` on-ramp — concept-page compounding is now a **derived
-> Class-B "Mentions across sources" render** [`wiki-index-render --concept-mentions`]).
-> The external acquire skills (html/pdf/office/transcript) resolve **vendor-agnostically**
-> across any harness (Claude Code / pi / codex / …) — no hardcoded paths. The unified
-> on-ramp **`wiki-import`** is hardened across **all four built-in layouts** and
-> **language-agnostic** (output follows the vault's `language`; English fallback) —
-> validated by adversarial `/vdd-multi`. Schema **v7** (`user_version = 7`).
-> **pytest suite green / 5 skipped, `mypy --strict` clean on 60 source files.** The repo's own `docs/` is
-> registered as a live `dev-project` vault and dogfoods the toolchain. See
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture and
-> [CLAUDE.md](CLAUDE.md) for the full per-task ship log.
+> **Status**: Phase 3a complete (2026-05-26); Phase 3b is the ongoing incremental
+> feature/hardening train (one task per `docs/tasks/*`). Highlights:
+>
+> - **Typed knowledge + event graph** (through TASK 047): typed page classes,
+>   `wiki-graph`, graph-aware RAG, the list-membership `--where`/`--tag` filter,
+>   temporal `wiki-search --as-of`, derived knowledge-health (`wiki-health`), and the
+>   **config-driven write-grammar** (ADR-007) unifying the Karpathy/PARA construct path.
+> - **The converged construct path** (TASK 046/047): `wiki-import` is the per-source
+>   **engine** (office/`.vtt` acquire, grammar by `--kind`, `--diagrams`/`--no-concepts`)
+>   and `wiki-sync` a batch **driver** that delegates to it; the legacy `wiki-enrich` +
+>   vendored `wiki_ingest` are retired — concept-page compounding is a **derived Class-B
+>   render** (`wiki-index-render --concept-mentions`).
+> - **Vendor-agnostic everywhere**: the acquire skills (html/pdf/office/transcript)
+>   resolve across any harness (Claude Code / pi / codex / …) — no hardcoded paths;
+>   `wiki-import` is hardened across all built-in layouts and **language-agnostic**
+>   (output follows the vault's `language`).
+> - **The live-app bridge** (TASK 041→071): active-note resolution, the editor-selection
+>   bridge, and note-context export via the `agent-bridge` plugin — see
+>   [Native Obsidian app](#native-obsidian-app-obsidian-cli-skill).
+> - **Gates**: schema **v7** (`user_version = 7`); pytest suite **green** (3000+ tests),
+>   `mypy --strict` clean across `scripts/`; the repo's own `docs/` is registered as a
+>   live `dev-project` vault and dogfoods the toolchain.
+>
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the living architecture; the
+> per-task ship log lives in [docs/tasks/](docs/tasks/) + git history.
 
 ---
 
@@ -40,7 +46,7 @@ from the shell or from inside a Claude Code session as `/wiki-*` slash commands.
   - [B. Install for development of this repo](#b-install-for-development-of-this-repo)
 - [Quick start: put a vault under the index](#quick-start-put-a-vault-under-the-index)
 - [The `prepare` / `apply` pattern (agent-driven skills)](#the-prepare--apply-pattern-agent-driven-skills)
-- [CLI reference — all 17 commands](#cli-reference--all-17-commands)
+- [CLI reference — all 19 commands](#cli-reference--all-19-commands)
 - [Repo layout](#repo-layout)
 - [Development](#development)
 - [Pointers](#pointers)
@@ -126,7 +132,7 @@ The code is split into clean layers under `scripts/`:
 |---|---|---|
 | **DAL** | `scripts/wiki_index/` | `IndexRepository` ABC + `SQLiteRepository`; FTS5, WAL, atomic upserts (M-4: `ON CONFLICT … DO UPDATE`, never `INSERT OR REPLACE`), drift detection, `log.md ↔ log_events` bi-directional sync, rendering, lint, reindex, security helpers. |
 | **Layout engine** | `scripts/wiki_index/layout_config.py` + `layouts/*.yaml` | YAML-config-driven "what files exist / what page-type are they" — replaces ~15 previously-hardcoded surfaces (TASK 012). |
-| **CLIs** | `scripts/wiki_skills/` | 18 thin entry points (15 `wiki_*.py` modules incl. `wiki_graph.py`/`wiki_health.py` + the `wiki_extract_concepts/`, `wiki_import_article/` and `wiki_config/` packages — `wiki_import_article/` is the `wiki-import` CLI, `wiki-import-article` a back-compat alias; `wiki_config/` is the TASK 058 per-folder config interface) over the DAL + shared helpers (`_common`, `_retrieval`, `_sync`, `_resummarize`, `_manifest_consumer`, `_active_note`). |
+| **CLIs** | `scripts/wiki_skills/` | 19 thin entry points (15 `wiki_*.py` modules + the `wiki_extract_concepts/`, `wiki_extract_decisions/`, `wiki_import_article/` and `wiki_config/` packages — `wiki_import_article/` is the `wiki-import` CLI, `wiki-import-article` a back-compat alias) over the DAL + shared helpers (`_common`, `_retrieval`, `_sync`, `_resummarize`, `_manifest_consumer`, `_active_note`). |
 | **External acquire skills** | installed per-harness (not vendored) | Composed by `wiki-import` for deterministic fetch+convert — `html` (URL/HTML), `pdf`, `pptx`/office, `transcript-fetcher` (video/`.vtt`). Resolved **vendor-agnostically** (`$WIKI_<BIN>` → dynamic `~/.<harness>/skills` discovery → PATH), so Claude Code / pi / codex / … all work; the one LLM step is the `summarizing-meetings` REASON harness. |
 | **Source adapters** | `scripts/wiki_source/` | Pluggable raw-source parsing (`manual` today; transcript/email/… reserved). |
 | **Shell wrappers** | `bin/wiki-*` | Make every CLI runnable from any CWD (handle `cd` + venv activation + `exec`). |
@@ -257,7 +263,7 @@ pip install -r requirements.txt
 # 3. Symlink wrappers, skills, and commands into user-global Claude Code dirs
 bash bin/install-globally.sh
 
-# Done — all 18 wiki-* CLIs are on PATH + linked as /wiki-* slash commands.
+# Done — all 19 wiki-* CLIs are on PATH + linked as /wiki-* slash commands.
 ```
 
 `bin/install-globally.sh` is **safe + idempotent** — it creates what's missing, repairs its own
@@ -417,7 +423,7 @@ inside Claude Code, the agent drives all three steps for you.
 
 ---
 
-## CLI reference — all 17 commands
+## CLI reference — all 19 commands
 
 Each command has a `SKILL.md` under [`skills/`](skills/) with the full contract,
 exit codes, and JSON-envelope schema, plus a slash-command wrapper under
@@ -464,19 +470,104 @@ binaries.
 
 | Command | What it does |
 |---|---|
-| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed dispatcher: walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file; `#wiki/raw\|skip\|keep` tags; generated-view sidecars auto-skipped). The orchestrator ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it as a pure **batch DRIVER** (TASK 046): each distil entry carries a `delegate` and is handed to **`wiki-import`** (which owns convert + de-timestamp + REASON + file + index + concepts) — there is no inline summarise/enrich/extract/convert; ready notes → `wiki-index-upsert`. A per-folder `.wiki/sync.yaml` `summarize:` block (profile/diagrams/extract_concepts/target_subdir) drives the delegate knobs; per-file idempotency via a dual `wiki-sync record` commit-marker. A **re-summarization policy** (TASK 019, opt-in `resummarize:` in `.wiki/sync.yaml`, per-folder overridable) skips a raw source whose summary already exists (`source_state` ∪ provenance ∪ filesystem mirror) unless `--force` — or, under **`mode: if-changed`** (TASK 051 / R-18, the *freshness* mode for a connector zone), skips only while the recorded content hash still matches, re-summarising a *changed* source in place; a new raw sharing an already-summarised N:1 key is skipped + a **merge/split WARN** (TASK 021) names the levers (`--force` to merge / finer key to split). The MVP front of the *Mixed vault* pattern — see the [Manual](docs/manuals/obsidian-llm-wiki_manual.md). |
-| `wiki-import prepare/apply … [--kind auto]` | The **unified external-source on-ramp** (any layout) and the per-source **engine**: deterministic fetch+convert of a URL/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/X-thread/transcript → hand the orchestrator the cleaned text + the vault's `known_concepts` for a REASON step (the `summarizing-meetings` harness) → file a note + its `_concepts/` per the resolved layout's **write-grammar** (config-driven, [ADR-007](docs/adr/ADR-007-config-driven-write-grammar.md)). **Grammar by `--kind`** (meeting/lesson → a pyramid digest; article/paper/thread → the article wrapper); modifiers `--diagrams` (selective mermaid) + `--no-concepts` (defer concept filing). Content-type (`--kind`) and layout (config) are orthogonal. `wiki-import-article` is a back-compat alias. |
+| `wiki-sync scan <zone> --vault <vid>` | Format-aware, tag-routed **batch driver** (TASK 046): walk a zone → deterministic **plan JSON** (convert / ingest / upsert / skip per file), then delegate each distil entry to `wiki-import` — no inline summarise/convert. Details below. |
+| `wiki-import prepare/apply … [--kind auto]` | The **unified external-source on-ramp** and per-source **engine**: fetch+convert → REASON (orchestrator) → file per the layout's write-grammar ([ADR-007](docs/adr/ADR-007-config-driven-write-grammar.md)). Details below. |
 | `wiki-extract-concepts prepare/apply …` | Two-pass LLM concept extraction from an indexed source page → candidate pages + entities + manifest (`--ingest` auto-dispatches in-process). |
+| `wiki-extract-decisions prepare/apply …` | (TASK 063 / RFC-004) The **typed-knowledge extraction rail**: a summarised note → `decision`/`requirement`/`risk` pages + forward edges. `prepare` emits the ontology contract and preflights the layout; `apply` validates every candidate against it **before** any write (violation ⇒ exit 4, zero files). Anti-fabrication by mechanism: an empty extraction is SUCCESS, `source_quote` must be verbatim. Config-driven via `extract_decisions:` in `.wiki/sync.yaml`; `wiki-sync`/`wiki-import` emit a dispatch marker, never an inline call. |
 | `wiki-append-log --vault <vid> …` | Append a structured event to `log.md` *and* mirror it to `log_events` (atomic, flock + fsync). |
+
+**`wiki-sync` in detail** — the MVP front of the *Mixed vault* pattern (see the
+[Manual](docs/manuals/obsidian-llm-wiki_manual.md)):
+
+- **Plan, don't act.** `scan` classifies every file (`#wiki/raw|skip|keep` tags;
+  generated-view sidecars auto-skipped) and emits a plan; the orchestrator
+  ([`workflows/wiki-sync.md`](workflows/wiki-sync.md)) executes it as a pure **batch DRIVER**:
+  each distil entry carries a `delegate` and is handed to `wiki-import` (which owns convert +
+  de-timestamp + REASON + file + index + concepts); ready notes → `wiki-index-upsert`.
+- **Config per folder.** A `.wiki/sync.yaml` `summarize:` block
+  (profile/diagrams/extract_concepts/target_subdir) drives the delegate knobs; per-file
+  idempotency via a dual `wiki-sync record` commit-marker.
+- **Re-summarization policy** (TASK 019, opt-in `resummarize:`, per-folder overridable): a raw
+  source whose summary already exists is skipped (`source_state` ∪ provenance ∪ filesystem
+  mirror) unless `--force`.
+- **Freshness mode** (`mode: if-changed`, TASK 051 / R-18 — for connector zones): skip only
+  while the recorded content hash still matches; a *changed* source re-summarises in place.
+- **Merge/split guard** (TASK 021): a new raw sharing an already-summarised N:1 key is skipped
+  with a WARN naming the levers — `--force` to merge, a finer key to split.
+
+**`wiki-import` in detail:**
+
+- **Acquire** (deterministic): URL / PDF / office (docx/pptx/xlsx) / `.vtt`-`.srt` /
+  X-thread / transcript → cleaned text, via the vendor-agnostic external acquire skills.
+- **REASON** (orchestrator-owned): the cleaned text + the vault's `known_concepts` go through
+  the `summarizing-meetings` harness — no `import anthropic` in the Python (Decision-17).
+- **File** per the resolved layout's write-grammar: the note + its `_concepts/`.
+- **Grammar by `--kind`** (meeting/lesson → a pyramid digest; article/paper/thread → the
+  article wrapper); modifiers `--diagrams` (selective mermaid) + `--no-concepts` (defer concept
+  filing). Content-type (`--kind`) and layout (config) are **orthogonal**.
+  `wiki-import-article` is a back-compat alias.
 
 ### Native Obsidian app (`obsidian-cli` skill)
 
 *Drive the **running** Obsidian desktop app (Obsidian 1.12+ official CLI) for the things
 files+SQLite can't reach — and keep the index coherent after.*
 
-| Skill | What it does |
-|---|---|
-| [`obsidian-cli`](skills/obsidian-cli/SKILL.md) | A **prompt-layer, vendor-agnostic** skill teaching any LLM agent to route between the `wiki-*` toolchain (knowledge/RAG/bulk — still first for lookups) and the native `obsidian` CLI (link-safe rename/move, typed properties, tasks, daily notes, Bases queries, history restore, open-in-app). **Active-note resolution (ADR-008):** when you say *"edit the note"* / *"the note about X"* with **no path**, it resolves your active/open tab to an explicit path (descriptor → unique open tab + vault-unique basename = no ask; bare "the note" = confirm once per session; not-found/ambiguous = ask), via the stdlib helper [`obsidian-active-note`](bin/obsidian-active-note). **Editor-selection bridge (TASK 068):** READ or safely EDIT the *live editor selection* (the highlighted text in the open note) from the shell — a bare [`obsidian-selection`](bin/obsidian-selection) `read`/`apply` via a least-privilege `agent-bridge` [plugin](skills/obsidian-cli/plugin/agent-bridge/) (T2 `command id=`, **not** the T3 `eval` RCE channel). **TASK 070 turned that plugin from a discipline into a gate:** its `main.js` — the only file Obsidian executes — used to be a hand-authored "mirror" of `main.ts` kept in lockstep by memory, type-checked against a **hand-vendored** `obsidian.d.ts` that had *invented* `getMode?(): string`, so a green `tsc` proved only that the code agreed with our own fiction. Now `main.ts` type-checks against the **real** `obsidian` package (exact-pinned `1.12.3 == manifest.minAppVersion`, so types can never promise more than the oldest runtime allowed to load the plugin), `main.js` is **generated** by [`build_agent_bridge.py`](scripts/build_agent_bridge.py) whose `--write` refuses to rebuild or re-pin on a type error (no `--force` exists), and a 3-layer drift gate goes RED on any hand-edit. Wiring the real types surfaced the fabrication immediately — **exactly 3 errors**. Write-back is guarded three ways — **path → position → content** (the position pin is what stops an identical string re-selected elsewhere from being replaced silently; the content pin catches a same-length in-place edit) — with base64 for the untrusted text and the exchange files cleaned up after use. Because Obsidian's **integrated terminal is itself a leaf**, `activeEditor` is null exactly where the agent lives, so the plugin resolves through the last markdown editor and says which (`source: active|recent-editor`) — the same `recent-open` discipline as the resolver. Plus a **hotkey** (`copy-selection-ref` → clipboard `@path#L…` + the exact text) and a CM6 extension that keeps your selection highlighted after you switch to the terminal. CWD→vault auto-detection. **Note-context export (TASK 071):** a third channel, [`obsidian-context`](bin/obsidian-context) `read` — the active note's working context in one call (path, folder, current heading + cursor in source mode, tags; **opt-in** `--outline`/`--frontmatter`/`--selection`, the untrusted fields per H-6) so a weak-model agent stops asking *"which note / which URL / which text?"*; preview mode is a supported state (`editorMode`), context is **pulled explicitly per call** (the ambient-hook design was rejected on H-6 grounds), T2-read in the same proven-effect carve-out, and its wrapper **imports** the selection wrapper's guards (headless/CLI gates, nonce race guard incl. a payload re-check, cleanup on every path) rather than re-porting them — the rebuilt-after-a-3-critic-VDD-FAIL lesson: reuse the guard, never transcribe it. Recipes 12–15 compose it (get-context / refactor / continue-writing / research-assistant). Carries a **total 3-tier safety model** (T1 read / T2 mutate / T3 banned-by-default incl. `eval`), a **mutation→index coherence protocol** (`wiki-index-upsert` after a content edit; **`wiki-reindex --delta` after a rename/move** — rename-aware since TASK 030: the moved file's new path is ingested despite the preserved mtime, closing DF-029-1; `--full` = universal fallback + swap-class remedy), and graceful degradation when the CLI is absent/headless. Full 102-command reference + recipes + behaviour evals under [`skills/obsidian-cli/`](skills/obsidian-cli/). **One small stdlib helper (the resolver), no DDL, no `import anthropic`** — otherwise pure orchestration of existing CLIs. |
+[`obsidian-cli`](skills/obsidian-cli/SKILL.md) is a **prompt-layer, vendor-agnostic** skill
+teaching any LLM agent to route between the `wiki-*` toolchain (knowledge/RAG/bulk — still
+first for lookups) and the native `obsidian` CLI (link-safe rename/move, typed properties,
+tasks, daily notes, Bases queries, history restore, open-in-app). Its live-editor surface is
+**three helpers**, each answering one question:
+
+- **"Which note?" — Active-note resolution (ADR-008).** Say *"edit the note"* / *"the note
+  about X"* with **no path** and the stdlib helper
+  [`obsidian-active-note`](bin/obsidian-active-note) resolves your active/open tab to an
+  explicit path: descriptor → unique open tab + vault-unique basename = no ask; bare "the
+  note" = confirm once per session; not-found/ambiguous = ask.
+- **"What is selected?" — Editor-selection bridge (TASK 068).** READ or safely EDIT the *live
+  editor selection* from the shell: a bare [`obsidian-selection`](bin/obsidian-selection)
+  `read`/`apply` via the least-privilege `agent-bridge`
+  [plugin](skills/obsidian-cli/plugin/agent-bridge/) (T2 `command id=`, **not** the T3 `eval`
+  RCE channel). Write-back is guarded three ways — **path → position → content** (the
+  position pin stops an identical string re-selected elsewhere from being replaced silently;
+  the content pin catches a same-length in-place edit) — with base64 for the untrusted text
+  and the exchange files cleaned up after use. Plus a **hotkey** (`copy-selection-ref` →
+  clipboard `@path#L…` + the exact text) and a CM6 extension that keeps your selection
+  highlighted after you switch to the terminal.
+- **"What's the working context?" — Note-context export (TASK 071).** One call,
+  [`obsidian-context`](bin/obsidian-context) `read`, returns the active note's path, folder,
+  current heading + cursor (source mode), and tags — so a weak-model agent stops asking
+  *"which note / which URL / which text?"*. `--outline` / `--frontmatter` / `--selection` are
+  **opt-in** (the untrusted fields per H-6); preview mode is a supported state (`editorMode`);
+  context is **pulled explicitly per call** (an ambient hook was rejected on H-6 grounds);
+  T2-read in the same proven-effect carve-out. Its wrapper **imports** the selection wrapper's
+  guards (headless/CLI gates, nonce race guard incl. a payload re-check, cleanup on every
+  path) rather than re-porting them — the rebuilt-after-a-3-critic-VDD-FAIL lesson: *reuse the
+  guard, never transcribe it*. Recipes 12–15 compose it (get-context / refactor /
+  continue-writing / research-assistant).
+
+Cross-cutting properties:
+
+- **The plugin is a build product, not a discipline (TASK 070).** `main.js` — the only file
+  Obsidian executes — used to be a hand-authored "mirror" of `main.ts`, type-checked against a
+  **hand-vendored** `obsidian.d.ts` that had *invented* `getMode?(): string`, so a green `tsc`
+  proved only that the code agreed with our own fiction. Now `main.ts` type-checks against the
+  **real** `obsidian` package (exact-pinned `1.12.3 == manifest.minAppVersion`), `main.js` is
+  **generated** by [`build_agent_bridge.py`](scripts/build_agent_bridge.py) whose `--write`
+  refuses to rebuild or re-pin on a type error (no `--force` exists), and a 3-layer drift gate
+  goes RED on any hand-edit. Wiring the real types surfaced the fabrication immediately —
+  **exactly 3 errors**.
+- **The integrated-terminal fallback.** Obsidian's terminal is itself a leaf, so
+  `activeEditor` is null exactly where the agent lives; the plugin resolves through the last
+  markdown editor and says which (`source: active|recent-editor`) — the same `recent-open`
+  discipline as the resolver. All three helpers auto-detect the vault from the CWD.
+- **Safety + coherence.** A **total 3-tier safety model** (T1 read / T2 mutate / T3
+  banned-by-default incl. `eval`); a **mutation→index coherence protocol**
+  (`wiki-index-upsert` after a content edit; **`wiki-reindex --delta` after a rename/move** —
+  rename-aware since TASK 030, closing DF-029-1; `--full` = universal fallback + swap-class
+  remedy); graceful degradation when the CLI is absent/headless.
+- **Footprint.** Full 102-command reference + recipes + behaviour evals under
+  [`skills/obsidian-cli/`](skills/obsidian-cli/). Stdlib helpers only, no DDL, no
+  `import anthropic` — otherwise pure orchestration of existing CLIs.
 
 ### Entity resolution (Epic 7)
 
@@ -495,7 +586,19 @@ files+SQLite can't reach — and keep the index coherent after.*
 | Command | What it does |
 |---|---|
 | `wiki-lint --vault <vid>` (or `--all`) | SQL-level health-check: orphan links, dangling refs, missing-on-disk pages, hash drift, type mismatches, cross-vault concept duplicates. `--mtime-skip` for a faster integrity-relaxed pass. |
-| `wiki-config <subcommand> --vault-root <path>` | (TASK 058) The **per-folder `.wiki/sync.yaml` interface** — `show [<folder>]` (per-key inheritance provenance; folder defaults to the **active Obsidian note's folder** → CWD → vault root) / `tree` / `validate` (40-code taxonomy over all 3 config systems) / tiered `doctor`+`fix` (comment-preserving, backed up to `.wiki/backups/`, `restore` undoes) / `set`+`unset` / `init --template` (`templates/sync-profiles/`) / `report --open` (self-contained HTML inheritance report) / `serve` (local 127.0.0.1 token-auth web editor: schema-driven form + full vault tree with override/delete-config, pending edits + Save all, template quick-setup, restore-from-backup). 100% schema-driven (`x-wiki-*`) — a new config field needs zero UI-code changes. **No DB access** — works while the index is broken. |
+| `wiki-config <subcommand> --vault-root <path>` | (TASK 058) The **per-folder `.wiki/sync.yaml` interface**: inspect, validate, repair, and edit the config cascade. 100% schema-driven (`x-wiki-*`) — a new config field needs zero UI-code changes; **no DB access** — works while the index is broken. Subcommands below. |
+
+`wiki-config` subcommands:
+
+- `show [<folder>]` — per-key inheritance provenance (folder defaults to the **active Obsidian
+  note's folder** → CWD → vault root); `tree` — the whole cascade at a glance.
+- `validate` — a 40-code taxonomy over all 3 config systems.
+- `doctor` + `fix` (tiered, comment-preserving; backed up to `.wiki/backups/`, `restore` undoes).
+- `set` / `unset` — comment-preserving single-key edits.
+- `init --template` — scaffold from [`templates/sync-profiles/`](templates/sync-profiles/).
+- `report --open` — self-contained HTML inheritance report.
+- `serve` — local 127.0.0.1 token-auth web editor: schema-driven form + full vault tree with
+  override/delete-config, pending edits + Save all, template quick-setup, restore-from-backup.
 
 ---
 
