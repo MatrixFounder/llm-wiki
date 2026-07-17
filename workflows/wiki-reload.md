@@ -82,10 +82,24 @@ through `Write` or a heredoc is the known 13-minute failure mode. Concretely:
 - chrome LINE RANGES → one `sed` in-place delete on the scratch file, ranges in DESCENDING
   order so the numbers stay valid, e.g. `sed -i '' '283d;281d;16,20d' "<SCRATCH>/<article>.md"`
   (`sed` is pre-allowed in the vault settings);
-- redirect-unwrap and caption-HTML fixes → targeted `Edit`/`replace_all` calls on the scratch
-  file, one per unique link — never a full-file rewrite. If a mechanical route is unavailable,
-  LEAVE the tracked links (they work, they're just tracked) and say so in the report — that
-  beats retyping the article.
+- redirect-unwrap and caption-HTML fixes → run THIS command on the scratch file (generic —
+  unwraps any `…redirect?to=<encoded>` wrapper and strips raw `<a>` tags from captions in one
+  deterministic pass; do not re-derive it):
+
+  ```bash
+  python3 -c '
+import re, sys, urllib.parse
+p = sys.argv[1]; s = open(p).read()
+s = re.sub(r"https?://[^\s)\"'"'"']*redirect\?to=([^&\s)\"'"'"']+)[^\s)\"'"'"']*",
+           lambda m: urllib.parse.unquote(m.group(1)), s)
+s = re.sub(r"<a\s[^>]*>([^<]*)</a>", r"\1", s)
+open(p, "w").write(s)
+' "<SCRATCH>/<article>.md"
+  ```
+
+  ONLY if `python3` is unavailable or denied in this vault: leave the tracked links (they
+  work, they're just tracked) and say so in the report. "Leaving avoids work" is NOT a reason
+  — the command above is the work, already done for you.
 
 **5. Rebuild the SAME file — three hard rules, assembled WITHOUT retyping:**
 
