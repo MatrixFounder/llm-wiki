@@ -12,11 +12,17 @@ checked write-back + self-index). Do **not** call `apply` without first running
 obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
 symlink:
 
-```bash
-WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-query.md)")")/workflows/wiki-query.md"
-```
+1. Run (plain command — pre-allowed, no shell constructs, so no permission prompt):
 
-Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+   ```bash
+   readlink -f ~/.claude/commands/wiki-query.md
+   ```
+
+2. The output is `<repo>/commands/wiki-query.md`. Derive the workflow path YOURSELF (no shell):
+   replace `commands/wiki-query.md` with `workflows/wiki-query.md`.
+3. Open that file with the **Read tool** (not cat) and follow its steps.
+
+Follow the workflow's steps. (Symlink absent → ask the user for the repo path and use
 `<repo>/workflows/wiki-query.md` — do NOT improvise the procedure from memory.)
 
 Quick reference (wrappers at `bin/wiki-query` handle cd + venv):

@@ -7,11 +7,17 @@ Two-pass orchestrator workflow (TASK 003 v3.1, Decision-17).
 obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
 symlink:
 
-```bash
-WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-extract-concepts.md)")")/workflows/wiki-extract-concepts.md"
-```
+1. Run (plain command — pre-allowed, no shell constructs, so no permission prompt):
 
-Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+   ```bash
+   readlink -f ~/.claude/commands/wiki-extract-concepts.md
+   ```
+
+2. The output is `<repo>/commands/wiki-extract-concepts.md`. Derive the workflow path YOURSELF (no shell):
+   replace `commands/wiki-extract-concepts.md` with `workflows/wiki-extract-concepts.md`.
+3. Open that file with the **Read tool** (not cat) and follow its steps.
+
+Follow the workflow's steps. (Symlink absent → ask the user for the repo path and use
 `<repo>/workflows/wiki-extract-concepts.md` — do NOT improvise the procedure from memory.).
 
 The skill is now deterministic: the orchestrator owns the synthesis step.

@@ -15,11 +15,17 @@ no-op.
 obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
 symlink:
 
-```bash
-WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-sync.md)")")/workflows/wiki-sync.md"
-```
+1. Run (plain command — pre-allowed, no shell constructs, so no permission prompt):
 
-Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+   ```bash
+   readlink -f ~/.claude/commands/wiki-sync.md
+   ```
+
+2. The output is `<repo>/commands/wiki-sync.md`. Derive the workflow path YOURSELF (no shell):
+   replace `commands/wiki-sync.md` with `workflows/wiki-sync.md`.
+3. Open that file with the **Read tool** (not cat) and follow its steps.
+
+Follow the workflow's steps. (Symlink absent → ask the user for the repo path and use
 `<repo>/workflows/wiki-sync.md` — do NOT improvise the procedure from memory.)
 Do **not** hand-run the convert/summarise steps — follow the recipe (per-vault
 `flock`, per-file isolation, idempotency).

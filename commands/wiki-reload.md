@@ -14,11 +14,17 @@ whole-page dump (reader mode + chrome sweep are mandatory).
 vault — from a vault CWD a relative `workflows/…` path resolves to NOTHING. Resolve it through
 this command's own symlink (works from any CWD):
 
-```bash
-WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-reload.md)")")/workflows/wiki-reload.md"
-```
+1. Run (plain command — pre-allowed, no shell constructs, so no permission prompt):
 
-Read `$WF` and follow its steps exactly, in order. (If the symlink is absent, ask the user for
+   ```bash
+   readlink -f ~/.claude/commands/wiki-reload.md
+   ```
+
+2. The output is `<repo>/commands/wiki-reload.md`. Derive the workflow path YOURSELF (no shell):
+   replace `commands/wiki-reload.md` with `workflows/wiki-reload.md`.
+3. Open that file with the **Read tool** (not cat) and follow its steps.
+
+Follow the workflow's steps exactly, in order. (If the symlink is absent, ask the user for
 the obsidian-llm-wiki repo path and use `<repo>/workflows/wiki-reload.md` — do NOT improvise
 the procedure from memory.)
 

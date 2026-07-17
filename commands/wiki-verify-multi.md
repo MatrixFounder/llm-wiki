@@ -13,11 +13,17 @@ calls it. Do **not** call `apply` without first running `prepare` and the critic
 obsidian-llm-wiki REPO, not in the current directory — resolve it through this command's own
 symlink:
 
-```bash
-WF="$(dirname "$(dirname "$(readlink -f ~/.claude/commands/wiki-verify-multi.md)")")/workflows/wiki-verify-multi.md"
-```
+1. Run (plain command — pre-allowed, no shell constructs, so no permission prompt):
 
-Read `$WF` and follow its steps. (Symlink absent → ask the user for the repo path and use
+   ```bash
+   readlink -f ~/.claude/commands/wiki-verify-multi.md
+   ```
+
+2. The output is `<repo>/commands/wiki-verify-multi.md`. Derive the workflow path YOURSELF (no shell):
+   replace `commands/wiki-verify-multi.md` with `workflows/wiki-verify-multi.md`.
+3. Open that file with the **Read tool** (not cat) and follow its steps.
+
+Follow the workflow's steps. (Symlink absent → ask the user for the repo path and use
 `<repo>/workflows/wiki-verify-multi.md` — do NOT improvise the procedure from memory.)
 
 Quick reference (wrappers at `bin/wiki-verify-multi` handle cd + venv):
