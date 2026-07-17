@@ -44,21 +44,35 @@ python3 "$WIKI_HTML_BIN" "<URL>" "$OUT" --reader-only
 (If `WIKI_HTML_BIN` is unset, load the `html` skill and use its documented invocation with
 `--reader-only`. Never omit `--reader-only`.)
 
-**4. Rebuild the SAME file — three hard rules:**
+**4. Sweep the site chrome from the fetched body BEFORE writing.** Reader mode extracts the
+`<article>` root, and many sites (Habr included) keep meta-junk INSIDE it — reader-only is the
+first pass, this sweep is the second, and it is YOUR step, not the user's. Remove, top and
+bottom of the body:
+
+- avatar/user/byline lines (`[![](…avatar…)](/users/…)`, author + date lines);
+- reading-time / view-counter lines ("7 мин", "235K");
+- hub/tag/category link lists and any **site-relative** links (`/ru/hubs/…`, `/ru/search/…`);
+- trailing "related posts"/comments blocks and `<!-- html-source-id: … -->` comments.
+
+Keep every link/image that is part of the article's own text. When unsure about a line — keep it.
+
+**5. Rebuild the SAME file — three hard rules:**
 
 - **Same path.** Write to the resolved `path`. NEVER create a sibling file (no
   `<tweet-id>.md`, no new slug). If the converter emitted a differently-named `.md`, its
   *content* moves into the existing note; the emitted file itself stays in the scratch dir.
 - **Frontmatter preserved VERBATIM.** Keep the note's original `---` block exactly as it was
   (one copy — duplicating it is the known failure mode). Replace only the body below it.
-- **Images:** if the fetch produced images the new body references, copy them into the note's
-  own folder and keep the links relative. No images → nothing to copy.
+- **Images:** copy into the note's own folder (or the vault's attachment convention, e.g.
+  `_attachments/`) ONLY the images the swept body still references, links relative — chrome
+  images (avatars, logos) were removed in step 4 and must not be copied.
 
-**5. Coherence** (wiki-registered vault only — `vault_id` from `WIKI_SCHEMA.md`; skip and say
+**6. Coherence** (wiki-registered vault only — `vault_id` from `WIKI_SCHEMA.md`; skip and say
 so if unregistered):
 
 ```bash
 wiki-index-upsert --vault <vault_id> --source "<ABSOLUTE path to the note>"
 ```
 
-**6. Report:** the path (unchanged), what was replaced, image count, index status. Done.
+**7. Report:** the path (unchanged), what was replaced, what chrome was swept, image count,
+index status. Done.
