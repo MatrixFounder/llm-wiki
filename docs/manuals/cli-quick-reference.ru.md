@@ -33,8 +33,10 @@
 > **Какое значение `--vault <id>`? (два РАЗНЫХ «vault» — не путайте)**
 > - `wiki-* --vault`/`--vaults <id>` принимают **вики `vault_id`** — он объявлен в
 >   `WIKI_SCHEMA.md` (`vault_id:`), например `personal`. Его выбираете **вы**.
-> - `obsidian …` и `obsidian-active-note --vault <NAME>` принимают **имя вокса в Obsidian**
->   (имя папки в приложении, например `ObsidianNotes`; см. `obsidian vaults verbose`).
+> - `obsidian …` и три помощника (`obsidian-active-note` / `obsidian-selection` /
+>   `obsidian-context`) принимают **имя вокса в Obsidian** в `--vault <NAME>`
+>   (имя папки в приложении, например `ObsidianNotes`; см. `obsidian vaults verbose`) —
+>   запускайте их **без флага** из встроенного терминала вокса, имя определится само.
 > - Они **могут отличаться** (например `personal` vs `ObsidianNotes`). Узнать `vault_id`:
 >   ```bash
 >   grep '^vault_id:' WIKI_SCHEMA.md                                   # изнутри вокса (источник истины)

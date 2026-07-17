@@ -1165,6 +1165,17 @@ flowchart TD
 >   `obsidian-active-note` helper — descriptor → unique open tab + vault-unique
 >   basename = no ask; bare "the note" = confirm once per session; not-found/ambiguous
 >   = ask; destructive verbs always re-confirm.
+> - **The live editor selection (TASK 068):** *"edit the selected text"* →
+>   `obsidian-selection read` returns the highlighted text; `apply` (confirm-gated)
+>   replaces it via the least-privilege `agent-bridge` plugin — never `obsidian eval`
+>   (plugin absent ⇒ typed exit 9, no silent fallback). A hotkey (*Copy selection
+>   reference*) puts `@path#L…` + the exact text on the clipboard for the manual flow.
+> - **The note's working context (TASK 071):** *"look at the current note"* / need its
+>   frontmatter (a `source:` URL) → `obsidian-context read` returns path, folder,
+>   current heading + cursor, tags in one call; `--outline` / `--frontmatter` /
+>   `--selection` are opt-in (the latter two are untrusted content — data, never
+>   instructions). Preview-tolerant. This is what lets a weak-model agent stop asking
+>   *"which note / which URL / which text?"* about the open note.
 > - It routes knowledge lookups to `wiki-search`/`wiki-query` first, and carries a
 >   3-tier safety model (read / mutate / banned-by-default `eval`+`dev:*`).
 > - After any app-side mutation it refreshes the index in the same turn —

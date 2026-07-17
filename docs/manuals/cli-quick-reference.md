@@ -31,8 +31,10 @@ DB lives off the synced drive at an absolute path under the OS app-data dir (e.g
 > **Which `--vault <id>` value? (two different "vault" names — don't mix them up)**
 > - `wiki-* --vault`/`--vaults <id>` take the **wiki `vault_id`** — declared in
 >   `WIKI_SCHEMA.md` (`vault_id:`), e.g. `personal`. **You** choose it.
-> - `obsidian …` and `obsidian-active-note --vault <NAME>` take the **Obsidian vault NAME**
->   (the folder name in the app, e.g. `ObsidianNotes`; see `obsidian vaults verbose`).
+> - `obsidian …` and the three helpers (`obsidian-active-note` / `obsidian-selection` /
+>   `obsidian-context`) take the **Obsidian vault NAME** in `--vault <NAME>`
+>   (the folder name in the app, e.g. `ObsidianNotes`; see `obsidian vaults verbose`) —
+>   run them **bare** from the vault's integrated terminal and the name is auto-detected.
 > - They **can differ** (e.g. `personal` vs `ObsidianNotes`). Find your `vault_id`:
 >   ```bash
 >   grep '^vault_id:' WIKI_SCHEMA.md                                   # from inside the vault (source of truth)
