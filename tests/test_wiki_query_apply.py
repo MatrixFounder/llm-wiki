@@ -126,6 +126,81 @@ def test_cross_project_slug_not_grounded(tmp_path: Path) -> None:
     assert code == 4 and out["error"] == "CITATION_NOT_RETRIEVED"
 
 
+def _query_page_rows(db: Path) -> int:
+    repo = SQLiteRepository(db)
+    try:
+        with repo._connect() as conn:  # test-only introspection
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM pages WHERE type='query'").fetchone()[0])
+    finally:
+        repo.close()
+
+
+def test_empty_citations_refused(tmp_path: Path) -> None:
+    """TASK 072 P1a — an EMPTY citations array must be refused, not filed.
+
+    ★ THE GATE USED TO PASS VACUOUSLY. The shape check bounds citations ABOVE only
+    (`len(citations) > _MAX_CITATIONS`) and never below, so `[]` satisfies
+    `isinstance(..., list)`, satisfies `all(isinstance(c, str) ...)` vacuously, satisfies the
+    per-entry `"/" in c` check vacuously, and makes the grounding gate
+    `any(c not in retrieved_keys for c in citations)` **False** — so
+    `CITATION_NOT_RETRIEVED`, the anti-hallucination mechanism itself, passed on nothing.
+    `_render_query_page`'s `if citations:` guard then skipped `## Sources` and a `cites: []`
+    page was filed AND self-indexed at exit 0.
+
+    Measured on `main` before the fix: exit 0, envelope
+    `{"query_slug": "hermes-routing", "cites": [], "page_indexed": true, "action": "filed"}`.
+    """
+    vault, db = _seed(tmp_path)
+    env = _prepare(vault, db, "Hermes routing")
+    # NON-VACUITY CONTROL (TASK 061): exercise the floor over a corpus where the grounding
+    # gate CAN fire. A retrieval that returned nothing would make this test pass for the
+    # wrong reason — see the sibling test for that case, deliberately kept separate.
+    assert env["retrieved_count"] >= 1
+
+    code, out = _apply(
+        vault, db, env["query_slug"], "Hermes routing", env["question_hash"], "ans", [])
+
+    # Assert the ENVELOPE, not merely the exit code: exit 4 is shared with
+    # CITATION_NOT_RETRIEVED / INVALID_CITATIONS / ANSWER_TOO_LARGE, so a bare `code == 4`
+    # could not tell this refusal from any other and would survive the wrong fix.
+    assert code == 4
+    assert out["error"] == "NO_CITATIONS"
+    assert out["field"] == "citations"
+    assert not (vault / "_queries" / f"{env['query_slug']}.md").exists()
+    assert _query_page_rows(db) == 0
+
+
+def test_min_hits_zero_cannot_file_an_ungrounded_page(tmp_path: Path) -> None:
+    """The composite path: `--min-hits 0` is accepted on `prepare` (`len(hits) < 0` is never
+    true), so `NO_CONTEXT` never fires and `apply` — which has no `--min-hits` at all —
+    reproduces `_question_hash(question, [])` identically, so `QUESTION_CHANGED` does not
+    catch it either. Together with the missing floor that was a complete exit-0 path to a
+    filed, indexed, zero-grounding answer page.
+
+    BOTH branches must now refuse: with an empty retrieval the key set is empty, so a
+    non-empty citation list fails `CITATION_NOT_RETRIEVED` and an empty one fails
+    `NO_CITATIONS`. One condition closes both."""
+    vault, db = _seed(tmp_path)
+    question = "zzz nothing whatsoever matches this qqq"
+    code, env = _run(["prepare", question, "--vault", "test-vault",
+                      "--vault-root", str(vault), "--db-path", str(db), "--min-hits", "0"])
+    assert code == 0
+    assert env["retrieved_count"] == 0  # the vacuous-retrieval precondition, asserted
+
+    empty_code, empty_out = _apply(
+        vault, db, env["query_slug"], question, env["question_hash"], "ans", [])
+    assert empty_code == 4 and empty_out["error"] == "NO_CITATIONS"
+
+    cited_code, cited_out = _apply(
+        vault, db, env["query_slug"], question, env["question_hash"], "ans",
+        ["_vault_/routing-note"])
+    assert cited_code == 4 and cited_out["error"] == "CITATION_NOT_RETRIEVED"
+
+    assert not (vault / "_queries" / f"{env['query_slug']}.md").exists()
+    assert _query_page_rows(db) == 0
+
+
 def test_invalid_citations_shape(tmp_path: Path) -> None:
     vault, db = _seed(tmp_path)
     env = _prepare(vault, db, "Hermes routing")

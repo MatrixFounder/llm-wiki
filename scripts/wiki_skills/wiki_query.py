@@ -681,6 +681,21 @@ def apply(args: argparse.Namespace) -> int:
                 or len(citations) > _MAX_CITATIONS):
             return emit({"error": "INVALID_CITATIONS", "field": "citations",
                          "reason": "must be a JSON list of <=50 'project/slug' strings"}, 4)
+        # 3b. Grounding FLOOR (TASK 072 P1a). The shape gate above bounds citations ABOVE
+        # only, so an empty list satisfied every check in this block VACUOUSLY — including
+        # the grounding gate below, whose `any(...)` over `[]` is False. The result was a
+        # complete exit-0 path to a filed, self-indexed `cites: []` answer page: the
+        # anti-hallucination mechanism passing because it examined nothing. This is the
+        # population-of-zero failure the project names elsewhere, inside the gate itself.
+        # Placed AFTER the shape checks (so a non-list still yields the more specific
+        # INVALID_CITATIONS) and BEFORE any `all()`/`any()` that would pass on an empty set.
+        # There is deliberately NO env bypass and NO --allow-uncited: per the
+        # FIELD_QUOTE_NOT_IN_BODY doctrine, the ABSENCE of an escape hatch is what makes
+        # this a mechanism rather than a suggestion. (`--force` is not an override — it is
+        # consumed downstream, at the content-hash skip.)
+        if not citations:
+            return emit({"error": "NO_CITATIONS", "field": "citations",
+                         "reason": "at least one citation is required"}, 4)
         if not all(("/" in c and c.rpartition("/")[0] and c.rpartition("/")[2])
                    for c in citations):
             return emit({"error": "INVALID_CITATIONS", "field": "citations",
