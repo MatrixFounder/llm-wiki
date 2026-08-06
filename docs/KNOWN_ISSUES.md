@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-07-15T15:17:07.573630 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-07T01:01:13.235500 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -8,6 +8,7 @@
 ## class-b-integrity
 
 - **DF-046-2** [[df-046-2-wiki-sync-can-upsert-a-nested-raw-capture|wiki-sync can \`upsert\` a nested \`_raw/\` capture (Class-B drift if the 4d marker is skipped)]] — status `open`, opened 2026-06-30
+- **ARCH-10-PHANTOM-CI** [[arch-10-claims-a-ci-pipeline-that-does-not-exist|arch-10-claims-a-ci-pipeline-that-does-not-exist]] — status `open`, opened 2026-07-16
 - **DF-7** [[df-7-resummarize-gate-trusts-source-state-without-disk-check|\`wiki-sync\`'s resummarize gate (\`source_state\`/\`provenance_ref\`/\`mirror\`) never checks that the output it claims exists is still on disk]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **DF-064-1** [[df-064-1-entities-definition-never-populated|\`entities.definition\` is never populated — so a concept's definition is invisible to every automated check, while \`wiki-query\` cites it as knowledge]] — severity `SEV-2`, status `fixed`, opened 2026-07-14
 
@@ -15,6 +16,7 @@
 
 - **DF-049-1** [[df-049-1-queries-dir-not-walked-off-karpathy|filed \`_queries/\`/\`_verifications/\` pages don't survive reindex on non-karpathy layouts]] — severity `SEV-2`, status `fixed`, opened 2026-07-07
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
+- **DF-072-1** [[df-072-1-verify-multi-apply-files-a-vacuous-pass|\`wiki-verify-multi apply\` files a **PASS verdict over ZERO examined sources** — the two floors its own \`prepare\` carries are absent from \`apply\`]] — severity `SEV-2`, status `open`, opened 2026-08-07
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 - **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
 - **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `fixed`, opened 2026-07-14
