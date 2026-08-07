@@ -77,7 +77,7 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | 072-08 | ✅ **[STUB]** `forbid_values`: schema + dataclass + build + load gate (finder still ignores it) | P2 | — |
 | 072-09 | ✅ **[LOGIC]** the SQL OFF/ON split + per-row `field-value` kind + off-equivalence goldens | P2 | 072-08 |
 | 072-10 | ✅ P2 docs + the `cybos.yaml` **comment-only** `forbid_values` note + `wiki-config validate` finding | P2 | 072-09 |
-| 072-10b | ★ **[BUG]** `cybos.yaml` half-support: repo glob fix + two-conjunct regression test + operator override | OQ-4 | — |
+| 072-10b | ✅ ★ **[BUG]** `cybos.yaml` **+ `dev-project.yaml`** half-support: repo glob fix + two-conjunct regression test + operator override | OQ-4 | — |
 | 072-11 | ★ **The doc census** (entirely ungated) + final gates | all | all |
 
 **16 beads.** ★ 072-03d was **added 2026-08-07**, after 072-03c shipped and three adversarial roast rounds
@@ -614,7 +614,18 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   rather than merely unreached" doctrine is `scripts/wiki_index/lint.py:660`; the neighbouring test is
   `tests/test_wiki_config_validate.py:367-377`.
 
-- [ ] **072-10b · ★ [BUG — its own issue] The `cybos.yaml` half-support.**
+- [x] **072-10b · ★ [BUG — its own issue] The `cybos.yaml` half-support.**
+  ✅ **SHIPPED**. ⚠️ **The plan's scope was an UNDER-COUNT on both axes, found by census, not
+  by eye**: `dev-project.yaml` carries the IDENTICAL defect from the same TASK-046 change (both
+  fixed), and the orphaned classes are **10 of 28**, not 4 (the 4 summaries + the 6
+  concept/entity classes). Measured E2E: two valid files indexed by NEITHER `indexed` NOR
+  `skipped[]`. ★ The FIRST cut of the regression test **passed on the bug** — `decisions/` is
+  walker-visible, so "is there a visible folder?" answered YES; the property had to become
+  type-aware. Post-fix the module is 6-of-7 RED against the pre-fix tree. Issue **DF-072-7**
+  filed + ledger regenerated. Operator override GENERATED from the fixed built-in (not
+  transcribed) but not committed — `paths:` REPLACES, making it a drift hazard, and the
+  `elma-kb` vault is not on this machine. Residual recorded, not silently fixed:
+  `wiki-import` still has no G4 gate on the NOTE itself (own task).
   **RULED — OQ-4 = both** (operator, 2026-08-06): fix the repository **and** ship the operator
   override, because the trap is someone else's future pain and the dogfood needs to run now.
   **The defect, verified programmatically (not by eye)**: `cybos.yaml` declares **`summary`,

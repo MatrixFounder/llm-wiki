@@ -56,6 +56,22 @@ paths:
   - {glob: "capabilities/**/*.md", type: capability,  project: "_vault_"}
   - {glob: "executions/**/*.md",   type: execution,   project: "_vault_"}
   - {glob: "patterns/**/*.md",     type: pattern,     project: "_vault_"}
+  # --- TASK 072 / bead 072-10b: THE IMPORTED-SOURCE HOME (the missing conjunct) ---
+  # `type_mapping` below declares `summary` / `article-summary` / `meeting-summary` /
+  # `lesson-summary` (TASK 046) and the 6 concept/entity classes — but until this glob
+  # NO path could see an imported note. Measured, not eyeballed: the only walker-visible
+  # folders were the 18 typed-knowledge class dirs, so `wiki-import --folder Articles`
+  # wrote a well-formed note that `wiki-reindex --full` never indexed — and `skipped[]`
+  # stayed EMPTY, because that channel only reports files the walker DID see. Half a
+  # feature: the layout mapped the class, its read globs could not see the write dir
+  # (the TASK-063 conjunction trap, live on `main`).
+  #
+  # `**` also covers the sibling `<folder>/_concepts/` pages the construct path files,
+  # which carry the same 6 orphaned classes — one glob closes both halves. `type:
+  # summary` is only the fallback for an untyped capture: a note's own frontmatter
+  # `type:` WINS (normalization.py PW-C/F precedence), so an `article-summary` filed
+  # here still indexes as `article-summary`.
+  - {glob: "sources/**/*.md",      type: summary,      project: "_vault_"}
   # --- DF-049-1: the RAG write surfaces. `wiki-query apply` / `wiki-verify-multi
   # apply` file to <root>/_queries/ + <root>/_verifications/ on EVERY layout (the
   # karpathy constants), and self-index with project `_vault_` (derive_slug).
@@ -102,8 +118,13 @@ type_mapping:
   lesson-summary:  {db_type: summary, tag: lesson}    # TASK 046: --kind lesson (else → generic summary)
   # wiki-import concept/entity pages (TASK 037 pattern, mirror obsidian-personal): the
   # construct path files `<folder>/_concepts/<slug>.md` with `type: concept` (or person/…).
-  # cybos's recursive per-folder globs DISCOVER them; these mappings let them INDEX (else
-  # `type: concept` → UnmappedTypeError → silently dropped, breaking Class A/B rebuildability).
+  # These mappings let them INDEX (else `type: concept` → UnmappedTypeError → silently
+  # dropped, breaking Class A/B rebuildability). ⚠️ CORRECTED 2026-08-07 (DF-072-7): this
+  # comment used to claim "cybos's recursive per-folder globs DISCOVER them" full stop.
+  # That was only ever true for a note already sitting inside a typed CLASS dir — for an
+  # imported source note, which is the case the comment is about, NO glob reached the
+  # `_concepts/` page until the `sources/**/*.md` glob above was added. Mapping a class
+  # without a glob that can see its write dir is HALF a feature, and it fails silently.
   concept:  {db_type: concept, tag: null}
   external: {db_type: concept, tag: external}
   person:   {db_type: concept, tag: person}

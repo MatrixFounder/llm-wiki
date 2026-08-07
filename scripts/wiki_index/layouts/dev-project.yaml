@@ -45,6 +45,18 @@ paths:
   - {glob: "PLAN.md",              type: plan,         project: "_vault_"}
   - {glob: "ARCHITECTURE.md",      type: architecture, project: "_vault_"}
   - {glob: "ROADMAP.md",           type: roadmap,      project: "_vault_"}
+  # --- TASK 072 / bead 072-10b: THE IMPORTED-SOURCE HOME (the missing conjunct) ---
+  # The SAME defect the cybos layout carried, found by the same census and fixed in the
+  # same commit: `type_mapping` declares `summary` / `article-summary` /
+  # `meeting-summary` / `lesson-summary` (TASK 046) with NO glob able to see an imported
+  # note. It is the third recurrence of the lesson the two comment blocks below already
+  # spell out (DF-049-1, then TASK 063 G4) — which is why the property is now a
+  # REGRESSION TEST over the glob-discovered layout population
+  # (`tests/test_layout_write_home.py`) instead of a comment asking the next author to
+  # remember. `**` also gives the sibling `_concepts/` pages a home: dev-project's other
+  # globs are SINGLE-level (`tasks/*.md`), so before this only 5 of its 15 visible
+  # folders could hold a `_concepts/` page.
+  - {glob: "sources/**/*.md",        type: summary,      project: "_vault_"}
   # --- DF-049-1: the RAG write surfaces. `wiki-query apply` / `wiki-verify-multi
   # apply` file to <root>/_queries/ + <root>/_verifications/ on EVERY layout (the
   # karpathy constants), and self-index with project `_vault_` (derive_slug).
