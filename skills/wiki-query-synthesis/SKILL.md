@@ -173,6 +173,11 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
 
 ## Out of scope
 
-- Web enrichment of the answer (ROADMAP **R-7 `wiki-research`** — deferred).
-- Multi-critic verification of the answer (ROADMAP **R-8 `wiki-verify-multi`** —
-  deferred). Both layer on top of this loop.
+- Web retrieval of any kind. ROADMAP **R-7 `wiki-research`** was **re-scoped
+  2026-08-06** (TASK 072) to *external corroboration of open typed questions*
+  and layers on top of this loop; its original *"web enrichment"* scope is
+  **refuted and non-reopenable**. Either way it is **not your job here**: you
+  synthesise from the retrieved vault hits and nothing else.
+- Multi-critic verification of the answer — ROADMAP **R-8 `wiki-verify-multi`**,
+  **shipped 2026-05-29** (TASK 008). It audits an answer *after* you file it;
+  it is off by default and never runs inline.

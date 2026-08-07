@@ -211,4 +211,9 @@ carry additional keys, and neither leaks a value: `SKILL_INTEGRITY_DRIFT` carrie
 - [`skills/wiki-query-synthesis/SKILL.md`](../wiki-query-synthesis/SKILL.md) — the synthesis prompt + answer/citations contract.
 - `wiki-search` — shares the alias-expanded FTS retrieval (`scripts/wiki_skills/_retrieval.py`); finds filed query pages (compounding).
 - `docs/ARCHITECTURE.md` §2 RAG Query Layer + §4 Data Model (query page, `cited` refs, R-6.5e).
-- ROADMAP **R-7 `wiki-research`** / **R-8 `wiki-verify-multi`** — deferred, layer on this loop.
+- ROADMAP **R-8 `wiki-verify-multi`** — **SHIPPED 2026-05-29** (TASK 008); the off-by-default
+  verification layer over an answer this CLI filed.
+- ROADMAP **R-7 `wiki-research`** — **RE-SCOPED 2026-08-06** (TASK 072) to *external corroboration
+  of open typed questions*: it layers on this loop for the one case retrieval alone cannot serve —
+  a page whose own frontmatter declares it unresolved, so vault retrieval returns `NO_CONTEXT` by
+  construction. Its original *"web enrichment of concept pages"* scope is **refuted, non-reopenable**.
