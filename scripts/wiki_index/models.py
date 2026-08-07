@@ -448,7 +448,13 @@ class DriftHit:
 class CoverageGap:
     """One coverage-gap finding (Slice A2): a page missing an expected relation —
     an edge of ref_type ``detail`` when ``kind == 'edge'``, or a non-empty
-    frontmatter field ``detail`` when ``kind == 'field'``."""
+    frontmatter field ``detail`` when ``kind == 'field'``.
+
+    ``kind == 'field-value'`` (TASK 072 / P2) is the third shape: the field
+    ``detail`` IS present, but carries a value the rule's ``forbid_values`` declares
+    to mean "no answer". ``detail`` is the FIELD NAME for all three kinds — the
+    offending value is untrusted frontmatter (H-6) and is deliberately not carried
+    here; ``kind`` already distinguishes *absent* from *present-but-a-non-answer*."""
 
     vault_id: str
     page_slug: str

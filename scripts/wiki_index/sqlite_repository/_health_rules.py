@@ -38,10 +38,13 @@ further in — a number that is reported without the population it was measured 
     while its class still counted in `property_pages_examined` — a declared rule missing
     from `by_rule`. It now emits its stat first, in verbatim parity with drift.
 
-**TASK 072 / P2 — `forbid_values`.** `CoverageRule` gained an optional `forbid_values`
-modifier on `requires_field` (gap = absent/empty **OR** value ∈ the sentinel list).
-⚠️ **STUB STATE (bead 072-08): `find_coverage_gaps_report` below still IGNORES it** —
-the key parses and is load-gated, nothing more. Bead 072-09 adds the third disjunct.
+**TASK 072 / P2 — `forbid_values`.** `CoverageRule` carries an optional `forbid_values`
+modifier on `requires_field`: the gap condition is *absent/empty* **OR** *value ∈ the
+sentinel list* ("present, and a non-answer"). `find_coverage_gaps_report` composes it as
+a THIRD DISJUNCT of the same parenthesised condition — sentinels BOUND, only the
+placeholder count composed — and reports it as a per-ROW kind `field-value` (vs `field`
+for the pre-072 absent/empty shape). ABSENT key ⇒ a separate branch whose SQL and
+envelope are BYTE-IDENTICAL to pre-072 (goldens: tests/test_coverage_forbid_values.py).
 
 dialect: SQLite-leaning — heavy `json_extract`/`json_type` over
 `frontmatter_json` (Postgres: `jsonb` `->`/`->>`/`jsonb_typeof`); the
@@ -400,6 +403,14 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
         for rule in rules:
             matched = class_hist.get(rule.page_class, 0)
             params: list[Any] = [vault_id, rule.page_class]
+            # TASK 072 / P2 — ONE source of truth for "this is a forbid rule". It picks
+            # the branch that adds the `val` column AND guards the per-row access to that
+            # column below. Deriving the two from separate expressions is how a later edit
+            # gets an IndexError instead of an answer — found by mutation-testing this very
+            # bead (`elif not rule.forbid_values:` → `elif True:` crashed rather than
+            # returning the pre-072 verdict). Empty iff `rule.forbid_values` is empty, so
+            # the branch condition is unchanged.
+            forbidden = set(rule.forbid_values)
             if rule.requires_edge is not None:
                 sql = (
                     "SELECT p.slug, p.project FROM pages p "
@@ -414,13 +425,20 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 )
                 params.append(rule.requires_edge)
                 kind, detail = "edge", rule.requires_edge
-            else:
+            elif not forbidden:
                 field = validate_filter_field(rule.requires_field or "")
                 json_path = f"$.{field}"
                 # Gap = the scalar is absent (NULL), an empty string, or an EMPTY container
                 # (`source: []` / `{}` — "no value", json_extract's to the text '[]'/'{}';
                 # vdd-multi critic-logic MED). A non-empty scalar OR a non-empty list/object
                 # counts as covered. The IN-list is a fixed literal (no params).
+                #
+                # TASK 072 / P2 — OFF-EQUIVALENCE (ADR-005-D2 style). This branch is
+                # reached whenever `forbid_values` is absent, and its SQL is BYTE-IDENTICAL
+                # to pre-072. That is why the modifier gets its own branch instead of one
+                # conditionally-extended statement: an unconditional extra SELECT column
+                # would move the OFF path for every vault on earth to serve a key almost
+                # none of them set. Pinned: test_off_path_sql_is_byte_identical_to_pre_072.
                 sql = (
                     "SELECT p.slug, p.project FROM pages p "
                     "WHERE p.vault_id = ? "
@@ -431,16 +449,70 @@ class _HealthRulesMixin(SQLiteRepositoryBase):
                 )
                 params.extend([json_path, json_path])
                 kind, detail = "field", field
+            else:
+                # TASK 072 / P2 — the same parenthesised gap condition plus a THIRD
+                # disjunct: the scalar is PRESENT and carries a value MEANING "no answer"
+                # (`verified_on: "not verified"`). Inexpressible before P2 as neither
+                # absent/empty nor a missing edge, which is how 20 elma-kb hypothesis
+                # pages read as healthy.
+                #
+                # The identical idiom the drift `forbid_status` predicate already uses
+                # (see find_lifecycle_drift_report above): every sentinel is BOUND via
+                # `params`, only the placeholder COUNT is string-composed. `$.<field>` is
+                # `validate_filter_field`-checked and then BOUND — never interpolated.
+                #
+                # The value is SELECTed so the per-ROW kind can be decided in Python
+                # rather than by a second query. The three disjuncts are mutually
+                # exclusive for classification purposes: the load gate rejects a blank
+                # sentinel, so a value in `forbid_values` can never also be ''/'[]'/'{}'.
+                field = validate_filter_field(rule.requires_field or "")
+                json_path = f"$.{field}"
+                placeholders = ",".join("?" * len(rule.forbid_values))
+                sql = (
+                    "SELECT p.slug, p.project, "
+                    "CAST(json_extract(p.frontmatter_json, ?) AS TEXT) AS val "
+                    "FROM pages p "
+                    "WHERE p.vault_id = ? "
+                    "AND json_extract(p.frontmatter_json, '$.type') = ? "
+                    "AND (json_extract(p.frontmatter_json, ?) IS NULL "
+                    "     OR CAST(json_extract(p.frontmatter_json, ?) AS TEXT) IN ('', '[]', '{}') "
+                    f"     OR CAST(json_extract(p.frontmatter_json, ?) AS TEXT) IN ({placeholders})) "
+                    "ORDER BY p.project, p.slug"
+                )
+                # Param ORDER follows SQL TEXT order: the SELECT-list `?` precedes the
+                # WHERE-clause `?`s (the `_property_scalar_histogram` precedent).
+                params = [json_path, vault_id, rule.page_class,
+                          json_path, json_path, json_path, *rule.forbid_values]
+                kind, detail = "field", field
             # TASK 061: count off the SAME fetchall() that builds the CoverageGap
             # objects below — never a second scan of the result (bead-01 spec).
             rows = conn.execute(sql, params).fetchall()
+            # TASK 072 / P2 — the per-ROW kind says WHY THIS page is a gap (`field` =
+            # absent/empty, the pre-072 meaning, unchanged; `field-value` = present but a
+            # non-answer). `forbidden` is the SAME local that selected the branch above, so
+            # it is non-empty exactly when the SELECT carries a `val` column: the check
+            # guards the column access, it is not merely an optimisation.
+            #
+            # `detail` stays the FIELD NAME for both kinds, deliberately: it is rendered
+            # under the envelope key `missing`, and the offending VALUE is untrusted
+            # frontmatter (H-6). The kind already says "present but forbidden" and the
+            # rule already declares the vocabulary, so surfacing the value would add a new
+            # untrusted-content sink for no diagnostic that the (page, field, rule) triple
+            # does not already give.
             for r in rows:
                 out.append(CoverageGap(
                     vault_id=vault_id, page_slug=r["slug"], page_project=r["project"],
-                    page_class=rule.page_class, kind=kind, detail=detail,
+                    page_class=rule.page_class,
+                    kind=("field-value" if forbidden and r["val"] in forbidden else kind),
+                    detail=detail,
                 ))
             rule_stats.append(RuleStat(
-                page_class=rule.page_class, kind=kind, ref=detail,
+                # The RULE-level kind reports what this rule can EXPRESS (per-row kinds
+                # vary within one forbid rule), so a reader of `by_rule` can tell a
+                # forbid-carrying rule from a plain one without re-reading the layout.
+                # OFF ⇒ `field` ⇒ the envelope is byte-identical to pre-072.
+                page_class=rule.page_class,
+                kind=("field-value" if forbidden else kind), ref=detail,
                 matched=matched, matched_by_kind={"gaps": matched},
                 findings={"gaps": len(rows)},
             ))

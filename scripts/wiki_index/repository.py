@@ -404,10 +404,12 @@ class IndexRepository(abc.ABC):
         empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
         coverage`` (a gap is data, not a failure → always exit 0).
 
-        ⚠️ **STUB STATE (bead 072-08).** ``CoverageRule.forbid_values`` parses and is
-        load-gated, but **this finder still ignores it** — a rule declaring it behaves
-        exactly like the same rule without it. Bead 072-09 widens the predicate; until
-        then this docstring is the whole contract."""
+        TASK 072 / P2 — a ``requires_field`` rule may also carry ``forbid_values``,
+        which WIDENS its gap condition to *present, and a non-answer*
+        (``verified_on: "not verified"``). Reported per ROW as kind ``field-value``
+        (vs ``field`` for absent/empty); the offending value is deliberately NOT
+        surfaced (``detail`` stays the field name — H-6). Absent key ⇒ byte-identical
+        SQL and envelope."""
         ...
 
     @abc.abstractmethod
