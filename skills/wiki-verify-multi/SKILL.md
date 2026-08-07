@@ -105,7 +105,8 @@ frontmatter (R-8.5e).
 | Code | `error` | Cause |
 |---|---|---|
 | 0 | — (envelope / `is_unchanged` / `unchanged` / PASS / `--fail-on=none`) | success / short-circuit |
-| 1 | — (argparse) | missing flag / no subcommand |
+| 1 | — (**no envelope**) | unhandled exception — raw traceback, NOT a contract error |
+| 2 | — (argparse) | missing flag / no subcommand / unrecognized argument (argparse's own status is **2**, always) |
 | 2 | `QUERY_NOT_FOUND` / `NO_SOURCES` | no `type=query` page / it cites nothing |
 | 2 | `ANSWER_CHANGED` / `INVALID_ANSWER_HASH` / `INVALID_SLUG` / `INVALID_VAULT_ROOT` | answer moved mid-pipeline / bad hash / bad slug / bad root |
 | 2 | `VERIFY_CONTEXT_CHANGED` / `INVALID_AUDIENCE` / `INVALID_POLICY` | TASK 049: examined set / audience drifted since prepare / bad level / malformed vault policy block |

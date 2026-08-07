@@ -92,8 +92,10 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 ### Phase 0 — P0 · re-scope and correct (no code; one new gate)
 
 - [ ] **072-00 · Re-scope R-7 in place (OQ-1) and correct the false architecture claims.**
-  **Files**: `docs/ROADMAP.md` (:293-297 body rewrite · the Epic-6 row :1194 + the wrapped sentence
-  :1199-1200 · **:284** the grounding-triple enumeration), `docs/architectures/verification-map.md`
+  **Files**: `docs/ROADMAP.md` — addressed BY ANCHOR, never by line number (see (g) below for why):
+  the `### R-7. \`wiki-research\` (R-20)` heading's body · the Epic-6 table row whose first cell is
+  `\`wiki-source-web\`` · the two-line paragraph ending in the bare token `\`wiki-research\`.`
+  — plus `docs/architectures/verification-map.md`
   (:105), `docs/architectures/security.md` (:17, :18, :54), `docs/architectures/system-architecture.md`
   (:275-285).
   **What**: (a) `ROADMAP:293` heading → `### R-7. \`wiki-research\` (R-20) — ★ RE-SCOPED 2026-08-06
@@ -130,14 +132,20 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   (f) `system-architecture.md:275-285` still presents `wiki-source-light` as implemented, with an
   `anthropic` SDK dependency that **would violate Decision-17**. Prefix the heading:
   **DESIGNED PHASE-1, NEVER SHIPPED**.
-  (g) ~~`ROADMAP:284` states the grounding contract as two of three — add `NO_CITATIONS`.~~
+  (g) ~~the R-6 entry's grounding contract states two of three — add `NO_CITATIONS`.~~
   ✅ **DONE in 072-03c** (pulled forward deliberately: leaving a known-stale enumeration behind
-  while shipping the census that found it would be the drift this bead exists to stop). Different
-  LINES from this bead's R-7 rewrite (:293-297) and Epic-6 row (:1194-1200), so no collision —
-  but re-read :284 before editing, do not re-add.
+  while shipping the census that found it would be the drift this bead exists to stop). It is a
+  DIFFERENT block from this bead's two targets, so there is no collision — but re-read it before
+  editing and do not re-add.
+  ★ **ADDRESS ROADMAP BY ANCHOR TEXT, NEVER BY LINE NUMBER.** This bead's own predecessor cited
+  `:293-297` / `:1194-1200` / `:284`, then inserted two lines and falsified all three in the same
+  commit. Anchors, which cannot drift:
+  · the R-7 entry — the heading line beginning `### R-7. \`wiki-research\` (R-20)`;
+  · the Epic-6 row — the table row whose first cell is `\`wiki-source-web\``;
+  · the deep-research overlap — the paragraph ending with the bare token `\`wiki-research\`.`
   **RED-first**: n/a (no code). Verification is the **run** census, pasted into the bead's notes.
-  ⚠️ `ROADMAP:1200` holds the bare token `wiki-research` **alone on its line** (the sentence wraps
-  from :1199) — a single-line `sed` produces a broken sentence.
+  ⚠️ That last one holds the bare token **alone on its line**, with the sentence wrapping from the
+  line above — a single-line `sed` produces a broken sentence. Match the two lines, not one.
   **Do NOT touch** the TASK-local `R-7` requirement IDs (`config/layout-config.schema.yaml:18`,
   `docs/architectures/open-questions.md:610,:852`, `functional/construct-path.md:536`,
   `tests/test_import_prepare_acquire.py`, `tests/test_import_article_apply.py`,

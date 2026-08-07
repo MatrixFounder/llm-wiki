@@ -170,7 +170,7 @@ including the ones this CLI inherits rather than raises itself.
 | 4 | `ANSWER_TOO_LARGE` | answer payload over the size cap |
 | 4 | `INVALID_ANSWER_PATH` | `--answer-file` is not a vault-inside regular file |
 | 4 | **`NO_CITATIONS`** | the citations array is well-formed but **EMPTY** — an answer must cite ≥1 retrieved source |
-| 4 | `INVALID_CITATIONS` | citations payload malformed **or** `--citations-file` is not a vault-inside regular file |
+| 4 | `INVALID_CITATIONS` | citations payload malformed, **or** over the 64 KiB cap, **or** `--citations-file` is not a vault-inside regular file. Branch on `field`: `citations` = re-synthesise, `citations-file` = fix the call. |
 | 4 | `CITATION_NOT_RETRIEVED` | a citation is not in the recomputed hit set |
 | 4 | `INVALID_QUERY_PAGE` | target `_queries/<slug>.md` is a symlink (refused) |
 | **6** | `INVALID_INDEX_DB` | **inherited from `build_repo_config`**, raised by *both* subcommands before any work: the vault's `index_db:` escapes the vault / is a symlink / is an unsafe absolute path. ⚠️ envelope carries an extra `hint` key. |

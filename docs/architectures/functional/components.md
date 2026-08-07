@@ -498,7 +498,7 @@ The orchestrator-facing prompt skill defines: the answer must **cite only retrie
 | 4 | `CITATION_NOT_RETRIEVED` | a `--citations` `project/slug` not in `prepare`'s hit set (grounding gate) |
 | 4 | `INVALID_CITATIONS` | citations payload not a JSON list of `project/slug` strings |
 
-Inherits the **universal envelope invariant** (CWE-117/209): `{error, field?, reason}` only — never echoes the question/answer/citation content. (Exit maps illustrative; finalised in Planning against the `wiki-extract-concepts` code space.)
+Inherits the **universal envelope invariant** (CWE-117/209): an error envelope **never echoes** the offending question/answer/citation content. The usual shape is `{error, field?, reason}`; two of this CLI's codes carry more, and neither leaks a value — `SKILL_INTEGRITY_DRIFT` is `{error, integrity}` (no `field`/`reason`; the block is value-free hashes + status) and `INVALID_INDEX_DB` adds a `hint`. (Exit maps illustrative; finalised in Planning against the `wiki-extract-concepts` code space.)
 
 > **Ruling (TASK 072 072-03c), recorded so it is a decision and not an omission.** This table is
 > **illustrative by its own declaration** (the sentence above) and is missing eight further shipped
@@ -620,7 +620,8 @@ A quality hardening on top of the shipped R-8 (R-8 stays DONE). The 2026-05-29 r
 | Code | `error` | Cause |
 |---|---|---|
 | 0 | — (recon envelope / filed verdict / `is_unchanged` / `--fail-on=none`) | Success / idempotency short-circuit / report-only |
-| 1 | — (argparse) | Missing flag / no subcommand |
+| 1 | — (**no envelope**) | unhandled exception — raw traceback, NOT a contract error |
+| 2 | — (argparse) | Missing flag / no subcommand / unrecognized argument (argparse's own status is **2**) |
 | 2 | `QUERY_NOT_FOUND` | `<query-slug>` absent or not a `type=query` page |
 | 2 | `NO_SOURCES` | the query page's `cites:` is empty (nothing to verify against — R-8.8a) |
 | 2 | `ANSWER_CHANGED` | `apply` recomputed `answer_hash` ≠ `--answer-hash` (answer edited mid-pipeline) |
