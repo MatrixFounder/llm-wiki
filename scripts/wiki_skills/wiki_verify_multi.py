@@ -614,7 +614,10 @@ def apply(args: argparse.Namespace) -> int:
         # The verdict is the machine signal: exit 6 on FAIL (the page IS still
         # filed — a SUCCESS envelope, no `error` key). Deliberate divergence from
         # the family's `6 = error` convention (SEC-4); callers branch on stdout
-        # (`verdict`), not `$?`. `--fail-on=none` → always exit 0.
+        # (`verdict`), not `$?`. `--fail-on=none` removes THIS path to 6.
+        # ⚠️ It does NOT make the process "always exit 0": build_repo_config
+        # (called before any of this) emits INVALID_INDEX_DB with exit 6 too, so
+        # code 6 is ambiguous for the caller. Branch on the `error` key, not `$?`.
         return emit(env, 6 if derived == "fail" else 0)
     finally:
         repo.close()

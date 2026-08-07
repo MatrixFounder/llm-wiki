@@ -39,7 +39,7 @@ wiki-merge <from-slug> <into-slug> --vault <id> --dry-run  # report only
 | Exit | Code | Meaning |
 |---|---|---|
 | 0 | — | success (incl. `--dry-run`) |
-| 2 | `INVALID_ARG` | bad slug |
+| 2 | — (argparse) | missing/unrecognized flag. ⚠️ Unlike its siblings `wiki-alias` / `wiki-confirm`, **`wiki-merge` never emits an `INVALID_ARG` envelope** — a bad slug simply fails to resolve and comes back as `ENTITY_NOT_FOUND` (3). This row said `INVALID_ARG` for months, copied from the sibling docstring. |
 | 3 | `ENTITY_NOT_FOUND` | `from` or `into` not in the vault (names which side) |
 | 4 | `ENTITY_FILE_MISSING` | an entity file missing → run `wiki-reindex --delta` |
 | 5 | `INVALID_MERGE` | self-merge (`from == into`) |

@@ -271,7 +271,7 @@ note. Skipped candidates are reported in the manifest, never silently dropped.
 | Code | Meaning |
 |---|---|
 | 0 | ok (`action:"prepared"` / `"imported"` / `"unchanged"`; TASK 057: `"folder_proposed"` — folder inferred, capture staged, nothing filed yet; `"announcement_only"` — announcement tweet, nothing filed, re-route to `broadcast_url`) |
-| 2 | bad argument (bad note JSON, invalid slug, folder escapes vault); TASK 057: `FOLDER_UNRESOLVED` — no `--folder` and inference couldn't resolve one (the `NO_CONTEXT`-family "input effectively missing"; envelope carries ranked `candidates` + `staged_path`) |
+| 2 | bad argument (bad note JSON, invalid slug, folder escapes vault); TASK 057: `FOLDER_UNRESOLVED` — no `--folder` and inference couldn't resolve one (the *input effectively missing* class; envelope carries ranked `candidates` + `staged_path`) |
 | 6 | a dependency missing (`html`/`pdf`/`transcript` bin absent; or no ffmpeg/ASR backend for caption-less video — `transcript-fetcher` exit 7); or partial (index/concept-file failed) |
 | 10 | `FETCH_FAILED` (source unreachable/empty; or transcript no-media on an unambiguous-video URL / source-auth / rate-limit — propagated from html/pdf/transcript; no raw written) |
 

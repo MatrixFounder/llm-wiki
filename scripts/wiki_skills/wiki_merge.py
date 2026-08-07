@@ -10,8 +10,11 @@ Write order is **Class A first** (C-8): append `into.aliases`, delete the
 mirror fails after the file ops, the state is recoverable via
 `wiki-reindex --delta` (Class A is canonical) → MERGE_MIRROR_FAILED.
 
-Exit codes: 0 ok (incl. --dry-run) · 2 INVALID_ARG · 3 ENTITY_NOT_FOUND ·
-4 ENTITY_FILE_MISSING · 5 INVALID_MERGE · 6 MERGE_MIRROR_FAILED.
+Exit codes: 0 ok (incl. --dry-run) · 2 argparse only (this CLI emits NO
+``INVALID_ARG`` envelope — that token was copied from ``wiki_alias`` /
+``wiki_confirm``; an unresolvable slug surfaces as ENTITY_NOT_FOUND) ·
+3 ENTITY_NOT_FOUND · 4 ENTITY_FILE_MISSING · 5 INVALID_MERGE ·
+6 MERGE_MIRROR_FAILED or INVALID_INDEX_DB (inherited from build_repo_config).
 """
 
 from __future__ import annotations

@@ -38,9 +38,12 @@ wiki-verify-multi apply --vault <id> --vault-root <path> \
     --answer-hash <hash-from-prepare> --verdict-file <verdict.json>
 ```
 
-**Exit-code caveat:** a FAIL verdict returns **exit 6** but the verdict page IS
-filed — this is a SUCCESS envelope (no `error` key), a deliberate divergence
-from the family's `6 = error` convention. Branch on the stdout `verdict` field,
-not on `$?`. `--fail-on=none` → always exit 0.
+**Exit-code caveat — exit 6 is AMBIGUOUS:** a FAIL verdict returns **exit 6** but the
+verdict page IS filed — a SUCCESS envelope (no `error` key), a deliberate divergence
+from the family's `6 = error` convention. **The same code 6 also carries
+`INVALID_INDEX_DB`** (an *error* envelope, inherited from `build_repo_config`, raised by
+both subcommands before any work — nothing examined, nothing filed). So branch on the
+presence of an `error` key in the stdout envelope, **never** on `$? == 6`.
+`--fail-on=none` removes the *verdict* path to 6 — it does **not** guarantee exit 0.
 
 See `skills/wiki-verify-multi/SKILL.md` for the full flag + exit-code reference.

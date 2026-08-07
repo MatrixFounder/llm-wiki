@@ -257,7 +257,8 @@ Index Layer (DAL — `repo.upsert_entity`, `repo.replace_refs`, raw `source_stat
 | Code | `error` field | Cause |
 |---|---|---|
 | 0 | — (manifest emitted, or `action="unchanged"`) | Success or idempotency short-circuit |
-| 1 | — (argparse stderr) | Missing required flag, or invocation without subcommand |
+| **1** | — (**no envelope at all**) | An **unhandled exception**: stdout EMPTY, raw traceback on stderr. Not a contract error. |
+| **2** | — (argparse stderr) | Missing required flag, or invocation without subcommand, or an unrecognized argument. **argparse's own status is 2, always** — measured: `wiki-extract-concepts`, bare and with a bogus flag, both exit 2. |
 | 2 | `SOURCE_NOT_FOUND` | Page slug does not resolve inside vault |
 | 2 | `INVALID_SOURCE_PATH` | `--source-page` is absolute, or resolves outside `_sources/` |
 | 2 | `INVALID_SOURCE_SLUG` | Source filename doesn't yield a kebab-case slug |
@@ -629,9 +630,12 @@ A quality hardening on top of the shipped R-8 (R-8 stays DONE). The 2026-05-29 r
 | 4 | `INVALID_VERDICT` / `VERDICT_PARSE_ERROR` / `VERDICT_TOO_LARGE` | verdict JSON malformed / `verdict ∉ {pass,fail}` / over-cap |
 | 4 | `FINDING_SOURCE_NOT_EXAMINED` | a `findings[].source` `project/slug` not in `prepare`'s examined set (grounding gate) |
 | 4 | `INVALID_VERIFICATION_PAGE` | target `_verifications/<slug>.md` is a symlink (refused) |
-| **6** | **`VERDICT_FAIL`** | a verdict of `fail` at/above `--fail-on` — **the verdict page IS still filed**; the non-zero code is the machine signal (R-8.7). Cleanly distinct from error codes 1/2/4. |
+| **6** | — (**success** envelope, no `error` key) | **VERDICT_FAIL** — a verdict of `fail` at/above `--fail-on`; **the verdict page IS still filed** and the non-zero code is the machine signal (R-8.7). There is no `"error": "VERDICT_FAIL"` value; the token names the condition. |
+| **6** | `INVALID_INDEX_DB` | **inherited from `build_repo_config`**, both subcommands, before any work — nothing examined, nothing filed. Envelope adds a `hint`. |
 
-Inherits the **universal envelope invariant** (CWE-117/209): `{error, field?, reason}` only — never echoes the question/answer/source/finding content. (Exit maps illustrative; finalised in Planning against the `wiki-query` code space.)
+⚠️ **Exit 6 is AMBIGUOUS here** — negative verdict (success envelope, page filed) *or* vault-config refusal (error envelope, nothing filed). It is **not** "cleanly distinct from error codes 1/2/4": the collision is with 6 itself. Callers MUST branch on the presence of an `error` key, never on `$? == 6`; `--fail-on=none` removes only the verdict path. The normative roster is [`skills/wiki-verify-multi/SKILL.md`](../../../skills/wiki-verify-multi/SKILL.md); this table is illustrative and omits `SKILL_INTEGRITY_DRIFT` (2, prepare-only) and the `INVALID_AUDIENCE`/`INVALID_POLICY` pair.
+
+Inherits the **no-echo guarantee** (CWE-117/209): an error envelope carries `{error, field?, reason}` and never echoes the question/answer/source/finding content. Two envelopes carry extra keys without leaking a value — `SKILL_INTEGRITY_DRIFT` is `{error, integrity}` (no `field`/`reason`) and `INVALID_INDEX_DB` adds a `hint`.
 
 ### Operational invariants
 

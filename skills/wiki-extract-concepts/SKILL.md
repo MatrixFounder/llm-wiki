@@ -136,7 +136,8 @@ wiki-extract-concepts apply \
 | Code | Meaning | Sub-envelopes |
 |---|---|---|
 | 0 | Success (manifest or `{extraction, index}`) or `is_unchanged=true` | — |
-| 1 | argparse / usage error | — |
+| **1** | **unhandled exception — no envelope at all.** stdout is EMPTY; a raw traceback goes to stderr. **Not a contract error** — a bug or environment fault, never "you passed a bad flag". | — |
+| **2** | **argparse: missing flag / no subcommand / unrecognized argument.** argparse's own exit status is **2**, always — it is never 1. | — |
 | 2 | Input-validation failure | `SOURCE_NOT_FOUND`, `INVALID_SOURCE_PATH`, `INVALID_SOURCE_SLUG`, `SOURCE_TOO_LARGE`, `SOURCE_CHANGED_DURING_EXTRACTION`, `INVALID_CANDIDATES_PATH` |
 | 4 | Candidates payload error | `EXTRACTION_PARSE_ERROR`, `CANDIDATES_TOO_LARGE`, `CANDIDATE_COUNT_OUT_OF_BOUNDS`, `FIELD_TOO_LONG`, `UNKNOWN_FIELD`, `FIELD_QUOTE_NOT_IN_BODY`, `INVALID_NAME_FORMAT`, `INVALID_SOURCE_SPAN` |
 | 5 | Partial / retry-safe failure | `PARTIAL_INDEX_FAILURE` (`--ingest`), `IDEMPOTENCY_UPDATE_FAILED`, `DB_WRITE_FAILED` (a `sqlite3.Error` — e.g. a FOREIGN KEY failure when the source page isn't indexed yet; **run `wiki-reindex` first**) — all leave `source_state` NOT updated (C-1 invariant); safe to retry |

@@ -113,10 +113,25 @@ frontmatter (R-8.5e).
 | 4 | `INVALID_VERDICT` / `VERDICT_PARSE_ERROR` / `VERDICT_TOO_LARGE` | verdict JSON malformed / not JSON / over-cap |
 | 4 | `FINDING_SOURCE_NOT_EXAMINED` | a finding cites a source not in the examined set (grounding gate) |
 | 4 | `INVALID_VERIFICATION_PAGE` | target `_verifications/<slug>.md` is a symlink (refused) |
-| **6** | **`VERDICT_FAIL`** | a `fail` verdict at/above `--fail-on`. **The verdict page IS still filed** — a SUCCESS envelope (no `error` key). **Deliberate divergence** from the family's `6 = error` convention: callers MUST branch on the **stdout envelope** (`verdict:"fail"`), not `$? == 6`. |
+| 2 | `SKILL_INTEGRITY_DRIFT` | **prepare only**, and only under `WIKI_STRICT_SKILL_INTEGRITY=1`: the pinned `wiki-verify` REASON contract's integrity status is not `ok` — `drift` (bytes changed), `unpinned` (absent from the manifest) or `manifest_unavailable`. ⚠️ envelope shape exception — see below. |
+| **6** | — (a **SUCCESS** envelope: `verdict:"fail"`, **no `error` key**) | **VERDICT_FAIL** — a `fail` verdict at/above `--fail-on`. **The verdict page IS still filed.** **Deliberate divergence** from the family's `6 = error` convention. ⚠️ There is no `"error": "VERDICT_FAIL"` — that token is a *name for this condition*, never an envelope value. |
+| **6** | `INVALID_INDEX_DB` | **inherited from `build_repo_config`**, raised by **both** subcommands before any work: the vault's `index_db:` escapes the vault / is a symlink / is an unsafe absolute path. **Nothing is examined and nothing is filed.** ⚠️ envelope carries an extra `hint` key. |
 
-**Universal envelope invariant** (CWE-117/209): error envelopes carry `{error,
-field?, reason}` only — never the offending answer/source/finding/verdict value.
+> ⚠️ **EXIT 6 IS AMBIGUOUS IN THIS CLI — never branch on `$? == 6`.** It means *either* a
+> negative verdict (success envelope, page filed) *or* a vault-config refusal (error envelope,
+> nothing filed). **Branch on the presence of an `error` key in the stdout envelope.** A caller
+> doing `[ $? -eq 6 ] && treat_as_fail_verdict` reports "verification FAILED" when in fact
+> nothing was ever examined. ⚠️ `--fail-on=none` removes the *verdict* path to 6, **not** the
+> `INVALID_INDEX_DB` path — it is not "always exit 0".
+>
+> This table is the **normative roster** for this CLI: every reachable code is listed, including
+> the two it inherits rather than raises.
+
+**Envelope invariant — the operative guarantee is NO-ECHO** (CWE-117/209): an error envelope
+carries `{error, field?, reason}` and **never** the offending answer/source/finding/verdict value.
+Two envelopes carry additional keys, and neither leaks a value: `SKILL_INTEGRITY_DRIFT` carries
+`{error, integrity}` (**no `field`/`reason`** — the block is value-free hashes/status) and
+`INVALID_INDEX_DB` adds a `hint`. The no-echo guarantee holds for all of them.
 
 ## Related
 

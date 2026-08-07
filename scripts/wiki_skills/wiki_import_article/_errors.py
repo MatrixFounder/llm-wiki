@@ -9,7 +9,12 @@ from typing import Any
 
 # Exit codes (contract — see SKILL.md §exit codes).
 EXIT_OK = 0
-EXIT_USAGE = 1          # argparse / internal usage error
+# NOT argparse. argparse's own status is 2, always (`wiki-import --bogus` → 2), and it exits
+# before this constant is ever reached. This is the INTERNAL usage error only — the default
+# exit_code of an ImportArticleError raised with no explicit code. (TASK 072 / 072-03d: the
+# "argparse" half of this comment was false, and being source rather than markdown it was
+# invisible to every doc census that grepped *.md.)
+EXIT_USAGE = 1          # internal usage error (ImportArticleError default)
 EXIT_BAD_ARG = 2        # malformed argument value (bad JSON, missing field)
 EXIT_DEP_MISSING = 6    # a required external skill binary (html/pdf) is absent
 EXIT_FETCH_FAILED = 10  # deterministic fetch/convert failed (propagated from html/pdf)

@@ -158,7 +158,7 @@ including the ones this CLI inherits rather than raises itself.
 
 | Code | `error` | Cause |
 |---|---|---|
-| 0 | — (envelope / manifest / `is_unchanged` / `unchanged`) | success / short-circuit |
+| 0 | — (envelope; `is_unchanged` on prepare, `action:"unchanged"` on apply) | success / short-circuit. ⚠️ **no manifest mode** — this CLI files exactly one page, so the manifest machinery is deliberately bypassed (`wiki_query.py:556-558`). |
 | **1** | — (**no envelope at all**) | an **unhandled exception**: corrupt `--db-path`, unwritable `_queries/`, … stdout is EMPTY and a raw traceback goes to stderr. **Not a contract error** — treat as a bug/environment fault, never as "bad flag". |
 | **2** | — (argparse, **no envelope** unless the flag parsed) | missing flag / no subcommand / unrecognized argument. argparse's own exit status is **2**, always. |
 | 2 | `INVALID_QUESTION` / `INVALID_SLUG` / `INVALID_QUERY` | bad question / slug / FTS expression |
