@@ -48,6 +48,9 @@ invoked automatically.
        [--fail-on high] [--orchestrator-id <id>]
    ```
    - `apply` re-checks `--answer-hash` (`ANSWER_CHANGED` if the answer moved),
+     **re-checks both grounding floors** (`NO_SOURCES`, exit 2 — an empty `cites:`
+     or a `cites:` nothing resolves; the refusal does not live only in `prepare`,
+     because `--verify-hash` is optional and `apply` is reachable without it),
      validates the verdict + grounding gate, derives the authoritative PASS/FAIL,
      files `_verifications/verify-<query-slug>.md`, self-indexes it, and fires a
      `verify` log event. **The `_queries/<slug>.md` answer is never mutated.**

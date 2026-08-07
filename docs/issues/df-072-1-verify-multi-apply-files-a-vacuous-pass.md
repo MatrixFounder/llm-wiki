@@ -1,8 +1,9 @@
 ---
 id: DF-072-1
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-08-07
+resolved_at: 2026-08-08
 category: correctness
 severity: SEV-2
 slug: df-072-1-verify-multi-apply-files-a-vacuous-pass
@@ -66,3 +67,58 @@ slug: df-072-1-verify-multi-apply-files-a-vacuous-pass
   back-compat default of `None` is what lets `apply` run without the `prepare` that would have
   refused — the TOCTOU guard and the grounding floor are load-bearing for different reasons, but
   both are skipped by the same flag default.
+
+## Resolution (2026-08-08)
+
+Both `prepare` floors lifted into `apply`, verbatim, in `scripts/wiki_skills/wiki_verify_multi.py`:
+floor #1 (`if not cites`) after the `ANSWER_CHANGED` TOCTOU check, floor #2 (`if not examined`)
+immediately after `_gather_examined` and **before** the `--verify-hash` compare — so a correctly
+self-computed hash over the empty examined set cannot reach the write either. No escape hatch.
+
+**Exit 2, not 4** — the issue flagged this as a deliberate choice, and it lands opposite to the
+`f0f6b71` sibling. There, the empty list was in the LLM-**supplied verdict payload**, so exit 4
+("re-synthesise") was the actionable class. Here `cites:` is read from the query page **on disk**:
+re-synthesising the verdict cannot fix it, so the correct action is STOP. That is the class
+`prepare` uses and the class its own block-mates (`ANSWER_CHANGED`, `VERIFY_CONTEXT_CHANGED`)
+already use, and it keeps the one documented instruction — `workflows/wiki-verify-multi.md`'s
+"`NO_SOURCES` (exit 2) → surface and STOP" — true for both subcommands instead of forking it.
+
+**`--verify-hash` stays optional.** It was never the mechanism: the floors now hold whether or not
+it is passed, which is what makes them floors. Making it required would break back-compat callers
+to re-close a hole that is already closed, and would re-locate the guarantee back into a flag.
+
+### The test-side trap this fix walked into
+
+Floor #1 is **subsumed** by floor #2 — `_gather_examined([])` returns an empty examined set — so
+with only `error` + exit asserted, **deleting floor #1 left the suite fully green**. The two floors
+differ solely in their operator-facing `reason` ("you cited nothing" vs "your cites are all
+broken" — different fixes), so that string is the only observable that separates them, and it is
+what the test now asserts. `tests/test_wiki_verify_prepare.py` has the identical blind spot on
+prepare's pair (`test_no_sources` asserts code + `error` only); left as-is, noted here.
+
+Verified by mutation, each run from a clean tree (a first batch was contaminated because
+`str.replace(..., 1)` hit `prepare`'s **byte-identical** copy — the floors are duplicated, so a
+mutation must target the **last** occurrence):
+
+| mutation (in `apply`) | tests killed |
+|---|---|
+| delete floor #1 | `test_apply_refuses_empty_cites` |
+| delete floor #2 | `test_apply_refuses_when_every_cite_is_unresolvable` |
+| floor #1 `NO_SOURCES` → `INVALID_CITATIONS` | the 2 empty-`cites:` tests |
+| floor #1 exit 2 → 4 | the 2 empty-`cites:` tests |
+| floor #2 exit 2 → 4 | `test_apply_refuses_when_every_cite_is_unresolvable` |
+| floor #2 `NO_SOURCES` → `INVALID_CITATIONS` | `test_apply_refuses_when_every_cite_is_unresolvable` |
+
+Four tests in `tests/test_wiki_verify_apply.py`, all reproducing the reported invocation (a
+self-computed `answer_hash`, no `prepare` run): the three scenarios from the table above plus a
+**non-vacuity control** — the same un-prepared `apply` with one resolvable cite still files at
+exit 0, so the floors refuse zero sources, not all sources. Each asserts the envelope and that
+no `_verifications/` page exists (scenario 1 also asserts no `pages` row), never a bare exit code.
+
+### Related
+
+- [[df-072-9-query-answer-markdown-escaped-into-literal-text]] — the other TASK 072 dogfood finding.
+- `f0f6b71` — the `NO_CITATIONS` floor in `wiki-query apply`; same defect class, opposite exit
+  class, and the review of *that* change is what found *this*.
+- [[the-unenumerated-surface-lens]] — and its test-side twin: a green suite over a branch nothing
+  can reach.

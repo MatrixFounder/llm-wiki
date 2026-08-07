@@ -458,11 +458,39 @@ def apply(args: argparse.Namespace) -> int:
             return emit({"error": "ANSWER_CHANGED", "field": "answer-hash",
                          "reason": "the answer changed since prepare; re-run "
                                    "wiki-verify-multi (no auto-retry)"}, 2)
+        # 1b. Grounding FLOOR #1 (DF-072-1). `prepare` refuses this at :250, but
+        # `--verify-hash` is optional for back-compat, so `apply` is reachable
+        # WITHOUT the `prepare` that would have refused — and without this floor
+        # it filed a self-indexed `verdict: pass` at exit 0 over a query page
+        # citing NOTHING. The verification layer certifying an answer against an
+        # empty population is the population-of-zero failure this rail exists to
+        # prevent. Exit 2 (not the exit-4 payload class): `cites:` comes from the
+        # query page on disk, not from the supplied verdict, so re-synthesising
+        # the verdict cannot fix it — STOP, as `prepare` and the sibling
+        # ANSWER_CHANGED / VERIFY_CONTEXT_CHANGED refusals in this block do.
+        # Deliberately no escape hatch (`--force` is consumed downstream, at the
+        # content-hash skip).
+        if not cites:
+            return emit({"error": "NO_SOURCES", "field": "cites",
+                         "reason": "the query page cites nothing; refusing to "
+                                   "verify an answer with no sources"}, 2)
 
         # 2. Re-derive the examined set (Q-008-c — from cites:, as prepare did;
         # same profile → same gate → symmetric set).
         examined, _missing, restricted = _gather_examined(
             repo, args.vault, vault_root, cites, profile)
+        # 2a. Grounding FLOOR #2 (DF-072-1) — prepare's :257 twin. `cites:` was
+        # non-empty but EVERY entry is malformed / unindexed / unreadable (or
+        # policy-excluded), so the examined set is empty and every downstream
+        # grounding check passes VACUOUSLY: `examined_keys` is empty, so a
+        # finding-free verdict trips nothing. Placed BEFORE the verify-hash
+        # compare so a correctly self-computed hash over the empty set cannot
+        # reach the write either.
+        if not examined:
+            return emit({"error": "NO_SOURCES", "field": "cites",
+                         "reason": f"the query cites {len(cites)} source(s) but none "
+                                   "are indexed/readable; nothing to verify against",
+                         }, 2)
         examined_keys = {f"{e['project']}/{e['slug']}" for e in examined}
         # 2b. TASK 049 (vdd-multi logic-MED): --verify-hash is the loud
         # prepare/apply symmetry gate (mirrors wiki-query's QUESTION_CHANGED).

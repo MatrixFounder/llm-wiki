@@ -226,3 +226,113 @@ def test_mkdir_on_migrated_vault_no_predir(tmp_path: Path) -> None:
     code, _env = _apply(vault, db, _prepare(vault, db), _PASS)
     assert code == 0
     assert (vault / "_verifications" / f"verify-{QSLUG}.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# DF-072-1 — the two grounding FLOORS `prepare` carries must also hold in
+# `apply`. `--verify-hash` is optional (back-compat), so `apply` is reachable
+# WITHOUT the `prepare` that would have refused: without these floors a query
+# page citing nothing (or citing only unresolvable slugs) yielded a filed,
+# self-indexed `verdict: pass` at exit 0 — a PASS certified over ZERO examined
+# sources. Exit 2, matching `prepare` and the sibling context-class refusals
+# (ANSWER_CHANGED / VERIFY_CONTEXT_CHANGED) in this same block: `cites:` comes
+# from the query page on disk, not from the supplied verdict payload, so
+# re-synthesising the verdict (the exit-4 class) cannot fix it — STOP is the
+# only correct action.
+# ---------------------------------------------------------------------------
+
+def _seed_cites(tmp_path: Path, cites: str) -> tuple[Path, Path]:
+    """`_seed` with an operator-chosen `cites:` — `prepare` refuses these, so the
+    answer_hash is computed here directly (exactly the un-prepared invocation
+    that DF-072-1 reported)."""
+    vault, db = tmp_path / "vault", tmp_path / "g.db"
+    _write(vault, "_sources/foo.md",
+           "type: summary\ntitle: Foo\ndate: 2026-05-29\ntags: [t]",
+           "# Foo\n\nHermes routes via the bus.")
+    _write(vault, f"_queries/{QSLUG}.md",
+           "type: query\ntitle: Q\ndate: 2026-05-29\ntags: [query]\n"
+           f"question: How does Hermes route?\ncites: {cites}",
+           "# Answer\n\nHermes routes via the bus.")
+    repo = SQLiteRepository(db)
+    repo.apply_schema()
+    repo.register_vault(Vault(vault_id=VAULT_ID, name="v", root_path=vault,
+                              schema_version="5.0",
+                              registered_at=datetime(2026, 5, 29)))
+    reindex_full(repo, VAULT_ID)
+    repo.close()
+    return vault, db
+
+
+def _self_answer_hash(vault: Path) -> str:
+    """The answer_hash `prepare` would have emitted, computed without it."""
+    import frontmatter  # local: only these helpers need the body split
+    page = wiki_verify_multi._read_page_text(  # noqa: SLF001 — the same read apply does
+        vault, str(vault / "_queries" / f"{QSLUG}.md"))
+    return wiki_verify_multi._answer_hash(frontmatter.loads(page).content.strip())
+
+
+def _apply_unprepared(vault: Path, db: Path, verdict: dict,
+                      *extra: str) -> tuple[int, dict]:
+    """Invoke `apply` with a self-computed answer_hash — no `prepare` run."""
+    (vault / "verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+    return _run(["apply", "--vault", VAULT_ID, "--vault-root", str(vault),
+                 "--db-path", str(db), "--verification-slug", f"verify-{QSLUG}",
+                 "--query-slug", QSLUG,
+                 "--answer-hash", _self_answer_hash(vault),
+                 "--verdict-file", str(vault / "verdict.json"), *extra])
+
+
+_VACUOUS_PASS = {"verdict": "pass", "critics": ["factual"], "findings": []}
+
+
+def test_apply_refuses_empty_cites(tmp_path: Path) -> None:
+    """DF-072-1 scenario 1: `cites: []` → NO_SOURCES, nothing filed, nothing indexed."""
+    vault, db = _seed_cites(tmp_path, "[]")
+    code, env = _apply_unprepared(vault, db, _VACUOUS_PASS)
+    assert code == 2, "a PASS was filed over zero cited sources"
+    assert env["error"] == "NO_SOURCES" and env["field"] == "cites"
+    # Pin FLOOR #1 specifically. Floor #2 (empty examined set) SUBSUMES this case
+    # — `_gather_examined([])` is empty — so `error`/exit alone cannot tell the
+    # two apart and would stay green with floor #1 deleted. The operator-facing
+    # `reason` is the only observable that distinguishes "you cited nothing" from
+    # "your cites are all broken", which are different fixes.
+    assert "cites nothing" in env["reason"]
+    assert not (vault / "_verifications" / f"verify-{QSLUG}.md").exists()
+    repo = SQLiteRepository(db)
+    assert repo.get_page(VAULT_ID, f"verify-{QSLUG}", "_vault_") is None
+    repo.close()
+
+
+def test_apply_refuses_when_every_cite_is_unresolvable(tmp_path: Path) -> None:
+    """DF-072-1 scenario 3: `cites:` non-empty but NO entry resolves → the examined
+    set is empty → NO_SOURCES. The control that this is not vacuous: the same seed
+    with a resolvable cite reaches exit 0 (`test_apply_floors_do_not_fire_on_a_grounded_verdict`)."""
+    vault, db = _seed_cites(tmp_path, '["_vault_/ghost1", "_vault_/ghost2"]')
+    code, env = _apply_unprepared(vault, db, _VACUOUS_PASS)
+    assert code == 2, "a PASS was filed over an empty examined set"
+    assert env["error"] == "NO_SOURCES" and env["field"] == "cites"
+    assert "none are indexed/readable" in env["reason"]  # floor #2, not floor #1
+    assert "ghost" not in json.dumps(env)  # CWE-209: never echo the offending cites
+    assert not (vault / "_verifications" / f"verify-{QSLUG}.md").exists()
+
+
+def test_apply_refuses_empty_cites_even_with_a_self_computed_verify_hash(
+        tmp_path: Path) -> None:
+    """DF-072-1 scenario 2: passing a CORRECTLY self-computed `--verify-hash` (over
+    the empty examined set, so VERIFY_CONTEXT_CHANGED genuinely does not fire) must
+    not buy a pass — the floor, not the symmetry gate, is what refuses here."""
+    vault, db = _seed_cites(tmp_path, "[]")
+    v_hash = wiki_verify_multi._verify_hash(
+        _self_answer_hash(vault), [], audience=None)
+    code, env = _apply_unprepared(vault, db, _VACUOUS_PASS, "--verify-hash", v_hash)
+    assert code == 2 and env["error"] == "NO_SOURCES"
+    assert not (vault / "_verifications" / f"verify-{QSLUG}.md").exists()
+
+
+def test_apply_floors_do_not_fire_on_a_grounded_verdict(tmp_path: Path) -> None:
+    """Non-vacuity control: the SAME un-prepared invocation with one resolvable
+    cite still files at exit 0 — the floors refuse zero sources, not all sources."""
+    vault, db = _seed_cites(tmp_path, "['_vault_/foo']")
+    code, env = _apply_unprepared(vault, db, _VACUOUS_PASS)
+    assert code == 0 and env["action"] == "filed"
+    assert (vault / "_verifications" / f"verify-{QSLUG}.md").exists()

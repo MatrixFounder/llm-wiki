@@ -48,9 +48,12 @@ is_unchanged, verification_slug, examined[], examined_count, missing_cites[]}`.
 | `--slug` | override the derived verification slug. **Default: `verify-<query-slug>`** — a *distinct* slug so the verdict page does not collide with the audited query page on the `pages` PK `(vault_id, slug, project)`. |
 | `is_unchanged` | true → a prior identical verdict exists; the orchestrator short-circuits. |
 
-`NO_SOURCES` (exit 2) if the query page cites nothing (refuse to verify an answer
-with no sources). A cited slug with no indexed `pages` row is excluded from
-`examined` and reported in `missing_cites`.
+`NO_SOURCES` (exit 2) if the query page cites nothing — **or** if it cites only
+slugs that resolve to nothing (refuse to verify an answer with no sources). A
+cited slug with no indexed `pages` row is excluded from `examined` and reported
+in `missing_cites`. **Both floors also hold in `apply`** (DF-072-1): `--verify-hash`
+is optional, so `apply` is reachable without `prepare`, and a grounding floor that
+lives only upstream is not a floor.
 
 **Policy scope (TASK 049 / ADR-009)** — `--audience <level>` runs the critics
 least-privilege: a cited source classified ABOVE the level is excluded from
@@ -86,6 +89,13 @@ Grounding-checked verdict write-back + self-index. No LLM call.
 - `--answer-hash HEX` — **required**; the value `prepare` emitted (64 hex). `apply`
   re-reads the query page + recomputes it; mismatch → `ANSWER_CHANGED` (exit 2 —
   the answer changed mid-pipeline; re-run).
+- **Grounding floors (exit 2 `NO_SOURCES`)** — re-checked here, not merely upstream:
+  an empty `cites:`, or a `cites:` whose every entry is unresolvable/policy-excluded,
+  is refused **before** the verdict payload is read. Without them a `verdict: pass`
+  was filed + self-indexed at exit 0 over **zero** examined sources — the grounding
+  gate passing because its population was empty. Exit 2, not the exit-4 payload class:
+  `cites:` comes from the query page on disk, so re-synthesising the verdict cannot
+  fix it. No escape hatch (`--force` is consumed later, at the content-hash skip).
 - `--verdict-stdin | --verdict-file` (mutex) — the orchestrator's verdict JSON
   (≤256 KiB; file form vault-inside + `O_NOFOLLOW`). See `wiki-verify` for the schema.
 - `--fail-on` — verdict severity threshold (default **`high`**, Q-008-e): FAIL iff
@@ -107,7 +117,7 @@ frontmatter (R-8.5e).
 | 0 | — (envelope / `is_unchanged` / `unchanged` / PASS / `--fail-on=none`) | success / short-circuit |
 | 1 | — (**no envelope**) | unhandled exception — raw traceback, NOT a contract error |
 | 2 | — (argparse) | missing flag / no subcommand / unrecognized argument (argparse's own status is **2**, always) |
-| 2 | `QUERY_NOT_FOUND` / `NO_SOURCES` | no `type=query` page / it cites nothing |
+| 2 | `QUERY_NOT_FOUND` / `NO_SOURCES` | no `type=query` page / it cites nothing, or every cite is unresolvable (**both subcommands** — DF-072-1; the two `reason` strings distinguish them) |
 | 2 | `ANSWER_CHANGED` / `INVALID_ANSWER_HASH` / `INVALID_SLUG` / `INVALID_VAULT_ROOT` | answer moved mid-pipeline / bad hash / bad slug / bad root |
 | 2 | `VERIFY_CONTEXT_CHANGED` / `INVALID_AUDIENCE` / `INVALID_POLICY` | TASK 049: examined set / audience drifted since prepare / bad level / malformed vault policy block |
 | 4 | `INVALID_VERDICT` / `VERDICT_PARSE_ERROR` / `VERDICT_TOO_LARGE` | verdict JSON malformed / not JSON / over-cap |
