@@ -109,9 +109,29 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
 
 ### 1. Answer (markdown → `apply --answer-stdin` or `--answer-file`)
 
-- Plain markdown prose. `apply` **sanitises** it on egress (HTML/wikilink/
-  code-span/markdown-active escaping — `_common.sanitize_markdown_text`), so
-  HTML or `[[wikilinks]]` you emit render as literal text, not active markup.
+- Markdown prose. `apply` **sanitises** it on egress
+  (`_common.sanitize_answer_markdown`). **Exactly two structural forms survive** —
+  everything else you write renders as literal text with a visible backslash:
+
+  | you write | lands as | note |
+  |---|---|---|
+  | `## Heading` (1-6 `#` + **space** + text) | a heading | `#tag` (no space) → `\#tag` |
+  | `- item` (`-` + **space** + text) | a bullet | `---` → `\---`; `* item` → `\* item` |
+  | `1. item` | an ordered list | digits were never escaped |
+  | everything else | **literal text** | see below |
+
+  Escaped, always: HTML (`<`/`>`/`&` → entities) · `[[wikilinks]]` and `[links](…)` ·
+  **every** backtick (no code spans, no fences) · `~~~` (an alternative code fence) ·
+  `>` blockquotes · `|` table rows · `*`/`+` bullets.
+  So: **use `##` headings and `-` bullets freely; do not reach for tables, blockquotes,
+  code spans or inline links** — they will not render, and padding the answer with them
+  only makes it uglier. Cite sources by naming the `slug` in prose, in parentheses.
+
+  > This is DF-072-9. The guard previously escaped headings and bullets too, so an answer
+  > written to this contract landed as a wall of `\##` and `\-`. The escape set above is
+  > unchanged — only the line-leading rule was narrowed, and only for this answer body.
+  > Field-level values elsewhere (concept definitions, decision titles) keep the strict
+  > `sanitize_markdown_text`.
 - ≤ **256 KiB** (`ANSWER_TOO_LARGE`, exit 4 otherwise).
 - Do NOT hand-write a `## Sources` section — `apply` appends one
   (Obsidian-native `[[slug]]` backlinks built from your citations).

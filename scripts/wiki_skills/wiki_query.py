@@ -49,7 +49,7 @@ from scripts.wiki_skills._common import (
     emit,
     emit_prepare_with_integrity,
     resolve_vault_root_for_cli,
-    sanitize_markdown_text,
+    sanitize_answer_markdown,
 )
 from scripts.wiki_index.query_normalizer import fold_yo, normalize_term
 from scripts.wiki_skills._retrieval import fts_quote
@@ -709,9 +709,19 @@ def apply(args: argparse.Namespace) -> int:
                          "reason": "a citation is not in the retrieved hit set"}, 4)
 
         # 5. Render Class A page (answer body sanitised — egress injection guard).
+        #
+        # DF-072-9: `sanitize_ANSWER_markdown`, not `sanitize_markdown_text`. Same escape
+        # set (HTML entities · every backtick · every bracket); the ONE difference is that
+        # an ATX heading or a `- ` bullet keeps its leading character instead of becoming
+        # a visible `\##` / `\-`. Found by the first end-to-end dogfood: apply exited 0,
+        # the page indexed, citations validated, the whole suite was green — and the filed
+        # answer rendered in Obsidian as a wall of backslashes. The synthesis contract asks
+        # the orchestrator for "a concise markdown answer"; escaping structure made that
+        # instruction impossible to satisfy. The strict function stays exactly as it is for
+        # every FIELD-level value built from untrusted extracted text.
         today = _date.today().isoformat()
         content = _render_query_page(
-            question, today, citations, sanitize_markdown_text(answer))
+            question, today, citations, sanitize_answer_markdown(answer))
 
         # 6. Atomic write to _queries/<slug>.md (symlink-refuse + content-hash
         # skip). The slug is kebab-validated (no '/' or '..'), so the filename

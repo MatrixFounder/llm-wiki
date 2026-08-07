@@ -1,8 +1,9 @@
 ---
 id: DF-072-9
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-08-07
+resolved_at: 2026-08-07
 category: quality
 severity: SEV-3
 slug: df-072-9-query-answer-markdown-escaped-into-literal-text
@@ -62,23 +63,53 @@ bodies get the same treatment. It matters less there — a concept definition is
 sentences of prose — and much more for a `_queries/` answer, which is the one artifact
 this system asks an LLM to *structure*.
 
-## Not fixed here — it is a design decision, not a bug fix
+## ✅ FIXED 2026-08-07 — option (b), scoped so it relaxes nothing that did not ask
 
-Two directions, and they are not equivalent:
+**`_common.sanitize_answer_markdown`**, a SECOND function used only by `wiki-query
+apply`'s answer body. `sanitize_markdown_text` is byte-for-byte unchanged, so the
+concept/decision/verify rails keep the strict guard.
+
+The escape set is IDENTICAL — HTML entities, every backtick, every bracket. Only the
+line-leading rule narrowed: a line whose stripped form is `#{1,6}` + space + text, or `-`
++ space + text, keeps its leading character. Still escaped: `#tag` (an Obsidian tag —
+pollutes the vault tag index), `---`, `~~~` (**the alternative code fence — the one
+leading character here that is genuinely dangerous**), `>`, `|`, `*`, `+`.
+
+★ **The relaxation makes the guard COHERENT rather than weaker in kind.** Measured, not
+argued: ordered lists (`1. item`) have ALWAYS passed through untouched, because digits
+were never in `_LINE_LEADING_MD_ACTIVES`. The shipped behaviour rendered a numbered list
+and mangled a bulleted one — an asymmetry nobody chose.
+
+`tests/test_answer_sanitizer.py` (36 tests): the H-4 attack list re-run through the NEW
+function; a lookalike table where each entry differs from an allowed form by ONE
+character; the composition case the relaxation actually creates (a wikilink riding inside
+an allowed bullet); and a blast-radius control asserting the STRICT function still
+escapes structure. Mutation-verified — heading rule without the space requirement → 3
+RED; structural rule widened to any leading char → **11 RED**, including `~~~mermaid`.
+
+`skills/wiki-query-synthesis/SKILL.md` now states exactly what survives, in a table, and
+tells the orchestrator not to reach for tables/blockquotes/code spans. H-5 re-pinned.
+
+### Considered and rejected
+
+Two other directions, recorded because rejecting them is part of the decision:
 
 - **(a) Change the contract, not the code.** State in `wiki-query-synthesis/SKILL.md`
   that the answer must be **plain prose without markdown structure**, and say why. Costs
   nothing in security, costs readability. ⚠️ The file is **H-5 hash-pinned** — an approved
   edit must be re-pinned with `scripts/pin_skill_integrity.py --write`.
-- **(b) Allow a safe structural subset** on egress (ATX headings, `- ` bullets) while
+- **(c) Widen the SHARED function** — allow a safe structural subset on egress (ATX headings, `- ` bullets) while
   still escaping wikilinks, HTML, links and code spans. Better artifact, but it **weakens
   a security control that exists because of the H-4 hardening**, and every relaxation
   needs an injection audit — a `- ` bullet is harmless, a `|` table row that reaches a
   dataview context may not be.
 
-Picking between them is the operator's/architect's call. This issue exists so the choice
-is made deliberately rather than discovered again by the next person who reads a filed
-answer.
+**(a) was rejected on a mechanism argument, not a taste one**: the rule "write plain
+prose" is enforced by a *sanitizer*, so a violation is not caught — it is silently
+mangled. A contract that fights a strong model prior (every model writes headings for a
+structured answer) and whose enforcement is invisible is a contract that degrades in the
+dark. **(c) was rejected on blast radius**: it would relax H-4 for a rail built from
+untrusted extracted text to solve a problem in a different rail.
 
 ## Related
 

@@ -102,6 +102,67 @@ def sanitize_markdown_text(text: str) -> str:
     return "\n".join(out_lines)
 
 
+# A line that is STRUCTURE, not content. Both require whitespace THEN a non-space, which
+# is what separates the structural form from its dangerous lookalike:
+#   `## Heading` is a heading · `#tag` is an OBSIDIAN TAG (pollutes the vault tag index)
+#   `- item`    is a bullet  · `---`  is a thematic break / frontmatter delimiter
+# `#{1,6}` also rejects `####### x` (7 hashes is not a heading in any renderer).
+_ANSWER_STRUCTURE_RES = (
+    re.compile(r"#{1,6}[ \t]+\S"),      # ATX heading
+    re.compile(r"-[ \t]+\S"),           # unordered list item
+)
+
+
+def sanitize_answer_markdown(text: str) -> str:
+    """Escape every markdown/HTML-active sequence EXCEPT ATX headings and ``-`` bullets,
+    for the ONE artifact this system asks an LLM to structure: the ``wiki-query`` answer
+    body filed into ``_queries/<slug>.md``.
+
+    **Why this is a second function and not a relaxation of the first (DF-072-9).**
+    ``sanitize_markdown_text`` guards FIELD-level values built from UNTRUSTED extracted
+    text — a concept definition, a decision title, a critic's claim. Prose is the whole
+    of its contract, so escaping structure costs it nothing. The query answer is a
+    different artifact with a different author: the orchestrator's own synthesis, which
+    ``skills/wiki-query-synthesis/SKILL.md`` explicitly asks to be structured. The two
+    shared one function by HISTORICAL ACCIDENT — Decision-16 forbids a skill importing a
+    sibling skill, the helper was lifted to this neutral module, and reuse followed from
+    convenience, not from the contracts matching. They do not match.
+    The concept/decision/verify rails keep calling the strict function, UNCHANGED.
+
+    **The escape set is unchanged; only the line-leading rule is narrowed.** ``&``/``<``/
+    ``>`` → entities; every backtick escaped (dataview/mermaid fences); every ``[``/``]``
+    escaped (Obsidian wikilink + markdown-link injection). What relaxes: a line whose
+    stripped form is an ATX heading or a ``-`` bullet keeps its leading character. Still
+    escaped: ``>`` blockquote, ``|`` table row, ``*``/``+`` bullets, ``~`` (``~~~`` is an
+    ALTERNATIVE CODE FENCE — the one leading char here that is genuinely dangerous),
+    ``---``, and ``#tag``.
+
+    ★ This makes the guard COHERENT rather than weaker in kind: ordered lists
+    (``1. item``) have ALWAYS passed through untouched, because digits were never in
+    ``_LINE_LEADING_MD_ACTIVES``. The old behaviour rendered a numbered list and mangled
+    a bulleted one — an asymmetry nobody chose. Pinned by
+    ``tests/test_answer_sanitizer.py``, which asserts the full H-4 attack list still
+    escapes here."""
+    s = (text
+         .replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;"))
+    s = s.replace("`", "\\`")
+    s = s.replace("[", "\\[").replace("]", "\\]")
+    out_lines: list[str] = []
+    for line in s.split("\n"):
+        stripped = line.lstrip()
+        if not stripped or stripped[0] not in _LINE_LEADING_MD_ACTIVES:
+            out_lines.append(line)
+            continue
+        if any(r.match(stripped) for r in _ANSWER_STRUCTURE_RES):
+            out_lines.append(line)          # structure — keep verbatim
+            continue
+        ws_len = len(line) - len(stripped)
+        out_lines.append(f"{line[:ws_len]}\\{stripped[0]}{stripped[1:]}")
+    return "\n".join(out_lines)
+
+
 # --- H-6 (LLM01 indirect prompt injection) — THE CANARY MATRIX -----------------
 #
 # `scan_injection_canaries` is fix-plan item (c) for issue H-6. It is the shared

@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-07T22:31:21.143453 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-07T23:04:38.325865 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -96,7 +96,7 @@
 - **Q-007-2** [[q-007-2-self-index-re-reads-the-just-written-query-page|self-index re-reads the just-written query page]] — severity `SEV-3`, status `open`, opened 2026-05-29
 - **DF-017-1** [[df-017-1-check-drift-type-mismatch-not-layout-mapping-aware|check_drift type-mismatch is not layout-type-mapping-aware (false positives on non-karpathy layouts)]] — severity `SEV-3`, status `fixed`, opened 2026-06-02
 - **DF-064-4** [[df-064-4-weak-model-extraction-recall-gap|\`concept-extraction\` under-extracts on a weak model — RECALL, not junk (span defect FIXED; residual is model-breadth, not code)]] — severity `SEV-3`, status `partially-fixed`, opened 2026-07-14
-- **DF-072-9** [[df-072-9-query-answer-markdown-escaped-into-literal-text|\`wiki-query apply\` escapes the synthesised answer's **structural** markdown, so a filed answer renders as literal text — while \`wiki-query-synthesis/SKILL.md\` instructs the orchestrator to produce *"a concise markdown answer"*]] — severity `SEV-3`, status `open`, opened 2026-08-07
+- **DF-072-9** [[df-072-9-query-answer-markdown-escaped-into-literal-text|\`wiki-query apply\` escapes the synthesised answer's **structural** markdown, so a filed answer renders as literal text — while \`wiki-query-synthesis/SKILL.md\` instructs the orchestrator to produce *"a concise markdown answer"*]] — severity `SEV-3`, status `fixed`, opened 2026-08-07
 
 ## robustness
 
