@@ -6,7 +6,7 @@
 ### 5.1. External APIs
 
 **No exposed APIs.** Вся система — local CLI (Claude Code skills). Внешние API только потребляются:
-- **Anthropic API** (Claude Haiku/Sonnet) — для `wiki-source-light`. HTTPS, JSON, key-auth via `ANTHROPIC_API_KEY` env.
+- ~~**Anthropic API** (Claude Haiku/Sonnet) — для `wiki-source-light`~~ ⚠️ **НЕТ ТАКОЙ ЗАВИСИМОСТИ (исправлено 2026-08-06, TASK 072).** Под **Decision-17** `scripts/` не делает ни одного вызова LLM-провайдера (`grep -rnE '^\s*(import anthropic|from anthropic)' scripts/` → **0**, загейчено по всей популяции), а `wiki-source-light` **никогда не отгружался** (см. `system-architecture.md` §«DESIGNED PHASE-1, NEVER SHIPPED»). Реально потребляемые внешние процессы — `html` / `pdf` / `transcript-fetcher` (ходят в сеть сами) плюс два прямых `urllib` egress-сайта в `_fetch.py` (`security.md` A10).
 - **Future** (Epic 6): Gmail-MCP (OAuth), Telegram MTProto (session keys via GramJS), Exa/Perplexity/Firecrawl MCPs.
 
 ### 5.2. Internal Interfaces
@@ -48,7 +48,7 @@
 | System | Purpose | Protocol | Error Handling |
 |---|---|---|---|
 | `summarizing-meetings` skill | Generate full pyramid transcript summary | Subprocess, JSON via stdout | Exit code != 0 → fail-fast с user-friendly message |
-| Anthropic API (Claude) | LLM call для `wiki-light-summary` | HTTPS POST `/v1/messages` | Rate-limit → exponential backoff (3 retries); auth error → fail-fast |
+| ~~Anthropic API (Claude)~~ | ⚠️ **НЕТ ТАКОЙ ИНТЕГРАЦИИ (2026-08-06, TASK 072)** — `wiki-light-summary` не существует (нет ни `commands/`, ни `bin/`-launcher'а), а под Decision-17 `scripts/` не вызывает LLM-провайдера. Описанного backoff'а тоже нет. | — | — |
 | Filesystem (markdown vault) | Source-of-truth для контента | POSIX | Atomic writes (`tempfile + os.replace`); read-only on `_raw/` |
 | SQLite | Index storage | Library API | WAL retry on `database is locked`; corruption → `PRAGMA integrity_check` + restore from markdown |
 

@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-07T13:35:57.678597 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-07T14:20:33.790327 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression

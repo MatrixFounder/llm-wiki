@@ -292,11 +292,154 @@ read-side. **Shipped**: TASK 007 (10 beads, Stub-First green-throughout; 3 VDD
 gates APPROVED). See archived spec/plan at [tasks/task-007-*.md](tasks/) +
 [plans/plan-007-*.md](plans/).
 
-### R-7. `wiki-research` (R-20) — UNBLOCKED (gated on R-6, now shipped)
-Web enrichment of concept pages. Off by default; opt-in per concept. Layers on
-the `wiki-query` retrieval/synthesis loop (R-6) — now shipped, so R-7 is
-unblocked. Needs a web-access design (overlaps `deep-research`); still
-**off-by-default** + a separate TASK.
+### R-7. `wiki-research` (R-20) — ★ RE-SCOPED 2026-08-06 (TASK 072): external corroboration of OPEN TYPED QUESTIONS
+
+**Scope.** Take a vault page whose **own frontmatter declares it unresolved** — an open
+`hypothesis`/`risk`/`decision`, or a page whose `verified_on:` carries a *"no answer in the chat"*
+sentinel — search the open web, ingest each result as an ordinary `_sources/` note, and file a cited
+`wiki-query` answer against it. **Off by default. One page at a time.**
+
+This is the one case `wiki-query` alone **cannot** serve: retrieval over the vault returns
+`NO_CONTEXT` *by construction*, because the source material contains the question and explicitly
+records that no answer was given.
+
+**It is a COMPOSITION, not a mechanism** — every primitive is already shipped:
+
+| step | primitive | status |
+|---|---|---|
+| SEARCH | external `html` skill `--search QUERY [OUT] --max-results N` — vendor-neutral provider fallback, per-result fetch through its **own SSRF-guarded ladder**, `query:`+`source:` frontmatter per result | SHIPPED, **unwired** |
+| INGEST | `wiki-import prepare --source <local .md>` — the `local-md` branch ingests a search-result note verbatim | SHIPPED |
+| TRUST | the note's `URL:`/`sources:` scalar makes `trust_tier` derive `external` for free — no new authored field | SHIPPED |
+| SYNTHESIS | `wiki-query prepare`/`apply`, grounding enforced in Python (`NO_CITATIONS` · `CITATION_NOT_RETRIEVED`) | SHIPPED |
+
+> ⚠️ **The `--source-url` step is load-bearing and easy to miss.** The `local-md` branch lifts
+> title/author/date but **not `source:`**. Omit `--source-url` and the imported page carries no
+> http(s) provenance scalar, `trust_tier` derives `internal` instead of `external`, and
+> `--min-trust internal` **silently fails to floor a web-sourced page.** Nobody gets that right by
+> hand twice — which is why this needs a written contract, not a wiki page.
+
+**Measured population — RE-RUN THESE; do not trust the figures.** Corpus named by **ROOT PATH**,
+never by `vault_id` (see the refutation sub-section below for why that rule exists). Read-only,
+re-run 2026-08-07 on `/Users/sergey/dev-projects/elma-knowledge-base` (136 pages):
+
+```bash
+DB=/Users/sergey/dev-projects/elma-knowledge-base/.wiki/index.db
+# SIGNAL — open hypotheses with no external corroboration yet
+sqlite3 "$DB" "SELECT COUNT(*) FROM pages p
+  WHERE json_extract(p.frontmatter_json,'\$.type')='hypothesis'
+    AND json_extract(p.frontmatter_json,'\$.status')='proposed'
+    AND NOT EXISTS (SELECT 1 FROM page_entity_refs r WHERE r.vault_id=p.vault_id
+                      AND r.entity_slug=p.slug AND r.ref_type IN ('cited','verifies'));"   # 20
+sqlite3 "$DB" "SELECT COUNT(*) FROM pages
+  WHERE json_extract(frontmatter_json,'\$.type')='hypothesis';"                            # 20  → 100 %
+# CONTROL — the same rule KIND on a different class, same corpus
+sqlite3 "$DB" "SELECT COUNT(*) FROM pages
+  WHERE json_extract(frontmatter_json,'\$.type')='fact'
+    AND TRIM(COALESCE(json_extract(frontmatter_json,'\$.source'),''))='';"                 # 0
+sqlite3 "$DB" "SELECT COUNT(*) FROM pages
+  WHERE json_extract(frontmatter_json,'\$.type')='fact';"                                  # 54  → 0 %
+```
+
+⚠️ Query **`frontmatter_json`, not `pages.type`.** Under the zero-DDL posture `pages.type` holds the
+**schema enum**, and the `cybos` layout maps the authored class onto it (`hypothesis`→`research`,
+`fact`→`concept`) carrying the real class as a tag. A census written against `pages.type='hypothesis'`
+returns **0** and looks like proof the population is empty. *(That mistake was made and caught while
+writing this entry — recorded because it will be made again.)*
+
+> **★ THE DISCRIMINATION CONTROL — the exact control whose absence killed R-23 Phase B — PASSES.**
+> **SIGNAL** `hypothesis`+`proposed`, no inbound corroboration = **20 / 20 (100 %)** ·
+> **CONTROL** `fact` pages with an absent/empty `source:` = **0 / 54 (0 %)**.
+> A rule that flags 100 % of one class and 0 % of another **over the same corpus** is measuring the
+> **schema**, not the corpus. Signal alone would be a vacuous RED — the refuted `<200` cut wearing
+> the other colour. **Both halves are the merge gate.**
+
+> **★ A TRAP FOUND AND CLIMBED OUT OF — recorded so nobody re-digs it.** The obvious rule
+> `{class: hypothesis, requires_field: source}` also measures 20/20 and looks superb. It is a
+> **TEMPLATE ARTIFACT**: `templates/page-types/hypothesis.md` has no `source:` key at all while
+> `fact.md` declares one. It would measure *"the template lacks the field"* — structurally identical
+> to the IDF sum measuring length. **Discarded.** Prefer a **structural** selector (authored type +
+> status + a frontmatter value in a forbidden set + absence of a corroborating ref) over any scalar
+> threshold: a structural selector cannot repeat the IDF failure by construction.
+
+> **★ D-9 — STANDING RULE, wherever this is documented: a web-origin page may NEVER mint a
+> `verifies` ref.** Such a page derives `trust_tier = external` for free; if it minted `verifies`
+> onto a vault page, that page would satisfy `--min-trust verified`'s `EXISTS(… ref_type='verifies')`
+> clause — **laundering open-web evidence into the highest trust tier.** Use `related` (self-inverse,
+> already in the CHECK enum and in `_INVERSE_REF_TYPE`, needs no reindex change) and accept that it
+> is semantically weaker than the relation deserves. Stated, not hidden.
+
+**Build order — OQ-2: WORKFLOW NOW, RAIL LATER ON A NAMED TRIGGER.** Ship the composition as
+markdown (workflow + command + skill), **zero new Python**. Build the Python rail **only if BOTH**
+conjuncts hold: the workflow has been used **≥ 10 times** **AND** an actual egress mistake is
+observed in the recorded `query:` history. *A trigger without a number is an intention.*
+
+> ⚠️ **Stated limit — do not let a reviewer read the workflow as stronger than it is.** Its egress
+> control is a durable, greppable `query:` **receipt, not a gate**: under Decision-17 Python cannot
+> observe the outbound string. The rail's stronger mechanism (Python refuses before the subprocess;
+> fetched bytes persisted so a quote is re-verifiable) is **deferred, not discarded**.
+
+**Not coupled to R-8.** R-7's input population (`cited` refs) measures **0** everywhere, so any
+coupling would be untested by construction.
+
+> ### ★ THE ORIGINAL SCOPE — *"web enrichment of concept pages"* — IS REFUTED. NON-REOPENABLE.
+>
+> Not postponed — **refuted**, by two independent kills. Both are recorded here rather than deleted,
+> because keeping the number R-7 risks the old framing leaking back. *(On the wording "not
+> postponed", see the STATED LIMITATION in `tests/test_r7_promise_sites_are_current.py`.)*
+>
+> **KILL 1 — MECHANISM: there is nowhere legal to write.** A concept page already on disk classifies
+> as a `mention` and the candidate's name/definition are **discarded**; a differing rewrite is
+> refused outright (`CONCEPT_PAGE_EXISTS`, exit 4, zero files —
+> `scripts/wiki_skills/wiki_extract_concepts/_pages.py:219`). The only auto-maintained region is a
+> `BEGIN-AUTO:` block, which by contract is a **pure function of Class-A/DB state** and must be
+> reproducible by `wiki-reindex --full` from markdown alone — externally fetched web prose is not, so
+> putting research there **breaks §D8 rebuildability**. Every shipped precedent (`_queries/`,
+> `_verifications/`) files a **NEW page and links**; none mutates the page it enriches.
+> ⇒ In-place enrichment is not a gap in the roadmap; it is a thing the architecture **forbids**.
+>
+> **KILL 2 — MEASUREMENT: the selection trigger belongs to an already-refuted family.** R-7's trigger
+> was `mentions_count == 1 AND len(definition) < 200`. Re-measured read-only 2026-08-06 against the
+> LIVE personal vault — root `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/ObsidianNotes`,
+> DB `~/Library/Application Support/obsidian-llm-wiki/personal.db`, 3359 pages / **747** entities:
+>
+> | | |
+> |---|---|
+> | entities with an EMPTY/NULL definition | **0 / 747** |
+> | mean definition length | **164.9 chars** |
+> | `len(definition) < 200` alone | 611 / 747 (81.8 %) |
+> | **the conjunction R-7 specifies** | **310 / 747 = 41.5 %** |
+>
+> The 200-char cut sits **below the corpus mean by construction**, so it measures **LENGTH** —
+> precisely the artifact that killed the IDF sum (see the blockquote headed
+> `### The IDF-SUM FAMILY is refuted.`). A predicate that flags 41.5 % of a corpus containing **zero**
+> measured garbage is a constant, not a filter. **The family is CLOSED** by the paragraph beginning
+> `**Phase B is CLOSED as REFUTED.**`, and its reopening bar — **≥ 30 measured examples per class,
+> INCLUDING short-but-good definitions** — is untouched by a raw length cut.
+>
+> **★ A CORPUS ERROR, CAUGHT AND CORRECTED — the most transferable lesson here.** All three rival
+> designs independently cited *"515 entities … 369/515 = 71.7 % … mean 174"* as the load-bearing
+> statistic. **That is a TestVault snapshot, not the live vault.** Two databases both register
+> `vault_id = 'personal'`, which is how one wrong corpus propagated through three independent
+> analyses undetected. The *direction* of every refusal survives, **but the number was wrong.**
+> ⇒ **Standing correction: name a vault by ROOT PATH, never by `vault_id`, and ship any census as a
+> re-runnable command rather than a figure in prose.**
+>
+> **The other two original triggers.** *Orphan-link stub minting* is measurable and enormous (**6512**
+> distinct orphan targets in the live personal vault) but **entirely the wrong class**: ~90 % are
+> attachment/image/media slugs, and a hand-classified sample of the filtered remainder was still
+> ~80 % noise. Applied as specified it mints **thousands of pages named after image files**.
+> *Manual `/wiki-research --question`* decomposes exactly into the shipped parts above.
+>
+> **★ AND THE SUBSTRATE HAS NEVER BEEN USED.** `SELECT COUNT(*) FROM pages WHERE type='query'` and
+> `SELECT COUNT(*) FROM page_entity_refs WHERE ref_type='cited'` both return **0** on **every** live
+> index DB (re-verified 2026-08-07: personal.db 3359 pages · global.db 610 · elma-kb 136), and
+> `_queries/` does not exist on disk in the live vault at all. R-6 shipped 2026-05-29 and has filed
+> **zero organic pages in fourteen months.** The original R-7 premise — *"layers on the `wiki-query`
+> retrieval/synthesis loop"* — layered on an **unexercised** loop, and would have inherited its live
+> holes into something that can reach the open web.
+>
+> **Reopening requires**: a measured population of BOTH classes under a *structural* selector, with a
+> passing discrimination control — not a scalar threshold, and not a hand-typed figure.
 
 ### R-8. `wiki-verify-multi` (R-21) ✅ DONE 2026-05-29 (TASK 008)
 Off-by-default multi-critic verification of a filed `wiki-query` answer against
@@ -1193,13 +1336,16 @@ when a real source pipeline appears.
 |---|---|---|
 | `wiki-source-email` | IMAP / MS Graph | spec only |
 | `wiki-source-telegram` | TS GramJS (`scripts/wiki_telegram/`) | spec only |
-| `wiki-source-web` | Article extraction + research mode | spec only |
+| `wiki-source-web` | ~~Article extraction~~ + research mode | ★ **SUPERSEDED 2026-08-06 (TASK 072).** *Article extraction* shipped as **`wiki-import`** (URL/HTML/PDF/office/transcript → `_raw` + note, ADR-007) — this adapter is not the path to it. *Research mode* is **R-7**, re-scoped to external corroboration of open typed questions and to be built as a **composition of shipped primitives**, not as a new adapter. |
 | `wiki-brief` | Cross-source daily digest | spec only |
 
 Picking the first depends on what stream of knowledge actually flows
 through. For most operators: **telegram** (channels with curated lessons)
-or **email** (newsletters). Web is a different beast — overlaps with
-`wiki-research`.
+or **email** (newsletters). ★ **Web is no longer open here (2026-08-06, TASK 072):** one-off
+article/PDF/office capture is **shipped** as `wiki-import`, and question-driven web retrieval is
+**R-7 re-scoped** — a composition over `html --search` + `wiki-import` + `wiki-query`, not a
+`wiki-source-*` adapter. What remains genuinely unbuilt on this row is a **standing subscription**
+to a web stream (feeds/watchlists), which is a different problem from either.
 
 ---
 

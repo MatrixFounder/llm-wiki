@@ -24,7 +24,7 @@
 | R-14 (benchmark) | §10.2 CI bench target, §8.3 + §28 Performance budget | I-5.3 benchmark suite output (CI-fail если > target) |
 | R-15.1-15.2 (provenance v1.1 in DDL + extracted_items) | §4.1 PageEntityRef + extracted_items entities | SCHEMA CHECK constraint enforcement |
 | R-15.3 (per-adapter trust_level) | §3.2 wiki-source-manual=high, transcript/light=medium | UC-02 AC |
-| R-24 (wiki-light-summary) | §3.2 wiki-source-light, §5.3 Anthropic API integration | UC-06 entire |
+| ~~R-24 (wiki-light-summary)~~ | ⚠️ **NEVER SHIPPED** (annotated 2026-08-06, TASK 072) — no command, no launcher, and its Anthropic call would violate Decision-17. Retained as a TASK-scoped HISTORY row, not a coverage claim. | ~~UC-06~~ (unexercised) |
 | R-25 (vault_metadata) | §4.1 VaultMetadata entity, §4.4 Migrations | UC-01 AC `vault_metadata seeded` |
 | R-26.1 (sentinel-PK fix) | §4.1 Page (sentinel '_vault_'), SCHEMA L106 | UC-02 AC idempotency test |
 | R-26.2 (path-traversal validation) | §3.2 wiki-source-manual + §7.3 A01 + SourceAdapter contract `PATH_OUTSIDE_VAULT` error code | UC-02 AC path-traversal test |
@@ -102,7 +102,9 @@
 > Epic 7 RAG layer entry-point. Decision-17 `prepare`/`apply` split (no LLM in
 > Python). Query page = first-class compounding artifact. **Zero schema DDL**
 > (`user_version` stays 4); two code-only structural changes (`layout.py` +
-> R-6.5e reindex read-side). Scope = R-6 only (R-7/R-8 deferred + gated).
+> R-6.5e reindex read-side). Scope = **R-6 only** — R-8 `wiki-verify-multi` **shipped 2026-05-29**
+> (TASK 008) and R-7 `wiki-research` was **re-scoped 2026-08-06** (TASK 072); neither is "deferred"
+> any more. This record is scoped to TASK 007 and is HISTORY, not a forward promise.
 
 | Requirement | Architecture coverage | Test / AC reference |
 |---|---|---|

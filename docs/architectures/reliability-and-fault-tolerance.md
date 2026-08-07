@@ -13,7 +13,7 @@
 - **Atomic writes** для всех state-mutation: `tempfile.NamedTemporaryFile + os.replace` (POSIX-atomic).
 - **SQLite locked** retry: 3 attempts с 50ms backoff. На 4-й — fail-fast.
 - **Subprocess errors** (`wiki-source-transcript` → `summarizing-meetings`): non-zero exit code → log + fail-fast workflow.
-- **API rate-limits** (`wiki-source-light` → Anthropic): exponential backoff (1s, 2s, 4s) up to 3 retries.
+- ~~**API rate-limits** (`wiki-source-light` → Anthropic): exponential backoff (1s, 2s, 4s) up to 3 retries.~~ ⚠️ **МЕХАНИЗМА НЕТ (исправлено 2026-08-06, TASK 072)** — `wiki-source-light` никогда не отгружался, и под Decision-17 `scripts/` не вызывает LLM-провайдера. Никакого backoff'а по этому пути не существует. Retry-поведение внешних `html`/`pdf` subprocess'ов принадлежит им, а не этому дереву.
 
 ### 9.2. Backup
 

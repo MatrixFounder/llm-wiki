@@ -76,7 +76,7 @@
 **MVP adapters:**
 1. **`wiki-source-manual`** — для уже-существующих markdown-файлов. Не модифицирует body. Validates path внутри vault_root. Ставит `trust_level='high'` для refs.
 2. **`wiki-source-transcript`** — wraps **`/generate-detailed-meeting-summary` workflow** (educational overlay поверх `summarizing-meetings` skill) через subprocess. Multi-pass LLM workflow генерирует pyramid summary с расширенным frontmatter (`type: lesson-summary`, `content_type`, `course`, `module`, `speaker`, `concepts[]`, `prerequisites[]`), Mermaid-диаграммами, `<!-- SECTION:* -->` anchors, `Content Fingerprint` блоком. Применяет §6.1 type-mapping (`lesson-summary` → DB `summary` + tag) при upsert. Ставит `trust_level='medium'`. См. TASK.md R-06.3 + R-07.4 + R-07.5 + I-3.3 + UC-07.
-3. **`wiki-source-light`** (R-24) — single-call LLM для arbitrary md-куска. Не делает full pyramid. Ставит `trust_level='medium'`. Frontmatter `type: summary` (схема CHECK constraint), tag `summary-light` для filtering.
+3. ⚠️ **`wiki-source-light`** (R-24) — **DESIGNED PHASE-1, NEVER SHIPPED (аннотировано 2026-08-06, TASK 072).** Проектная запись: single-call LLM для arbitrary md-куска, не делает full pyramid, `trust_level='medium'`, frontmatter `type: summary` + tag `summary-light`. **Ничего из этого не существует**: в `scripts/wiki_source/` только `__init__/base/manual/parsing.py`, launcher'а в `bin/` нет, `light` присутствует лишь как член `Literal` в `base.py:21`. Его LLM-вызов **нарушил бы Decision-17** в текущей формулировке. Не удалено, чтобы не потерять design rationale — но это не «MVP adapter».
 
 **Functions per adapter:**
 - `authenticate(config) → None` — first-run setup (manual/light/transcript: no-op; future email: OAuth).
@@ -668,7 +668,7 @@ Index Layer (`get_page`, `upsert_page`, `replace_refs`, `check_verify_state`/`re
 **Functions:**
 - Resolve config + open repo.
 - Detect `--kind` (если не указан — по path/extension/protocol).
-- Dispatch: `transcript` → `wiki-source-transcript`; `manual` → `wiki-source-manual`; `light` → `wiki-source-light`.
+- Dispatch: `transcript` → `wiki-source-transcript`; `manual` → `wiki-source-manual`; ~~`light` → `wiki-source-light`~~ ⚠️ **этой ветки не существует** (2026-08-06, TASK 072): `light` — только член `Literal` в `wiki_source/base.py:21`, обработчика нет.
 - Index upsert.
 - Append log.
 - (Опц.) Quick-pass lint на новые pages.
@@ -702,7 +702,7 @@ graph TB
         SS[wiki-search]
         SL[wiki-lint]
         SR[wiki-index-render]
-        SLS[wiki-light-summary]
+        SLS["wiki-light-summary<br/>⚠ NEVER SHIPPED"]
         SU[wiki-index-upsert]
         WAL[wiki-append-log]
         EC[wiki-confirm]
@@ -719,7 +719,7 @@ graph TB
     subgraph "Source Adapters"
         SAM[wiki-source-manual]
         SAT[wiki-source-transcript]
-        SLT[wiki-source-light]
+        SLT["wiki-source-light<br/>⚠ NEVER SHIPPED"]
     end
 
     subgraph "Configuration"

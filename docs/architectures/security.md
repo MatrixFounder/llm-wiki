@@ -14,8 +14,8 @@
 ### 7.2. Data Protection
 
 - **At rest**: Markdown в iCloud Obsidian — encrypted iCloud sync. SQLite — local FS, **не** в iCloud (R-03). No additional encryption (vault уже под user permissions).
-- **In transit**: HTTPS для всех external API calls (Anthropic).
-- **PII**: `wiki.research.private_concepts` + `private_tags: [confidential]` — fail-fast в research/external-share. MVP не имеет research/external-share, но schema готова.
+- **In transit**: ⚠️ **исправлено 2026-08-06 (TASK 072)** — прежняя формулировка «HTTPS для всех external API calls (**Anthropic**)» устарела. Под **Decision-17** `scripts/` **не делает ни одного вызова LLM-провайдера**: `grep -rnE '^\s*(import anthropic|from anthropic)' scripts/` → **0**, и это загейчено по всей популяции (`tests/test_extract_decisions_dispatch.py`). Реальная in-transit-поверхность — **внешние subprocess'ы** (`html` / `pdf` / `transcript-fetcher`), которые ходят в сеть сами, плюс два прямых `urllib` egress-сайта в `_fetch.py` (см. A10 ниже).
+- **PII**: ⚠️ **исправлено 2026-08-06 (TASK 072)** — прежняя формулировка утверждала, что `wiki.research.private_concepts` + `private_tags: [confidential]` «schema готова». **Это ЛОЖЬ**: `grep -rn 'private_concepts\|private_tags\|wiki\.research' config/` → **0 попаданий по всем 7 файлам**. Такой схемы нет и не было. Реально отгруженная поверхность — `classification:` + `--audience` (**ADR-009 / TASK 049**), SQL-предикат ДО попадания контента в model-context. ⚠️ И он **измеренно срабатывает на 0 страницах** во всех живых вольтах: механизм **ДОСТУПЕН, но НЕ ИСПОЛЬЗУЕТСЯ**. Записано так, а не «готово», потому что «готово» здесь читается как «работает».
 - **Policy-before-model**: [ADR-009](../adr/ADR-009-policy-before-model.md) / ROADMAP R-16 / TASK 049 — опциональный `classification:` + `--audience` retrieval-scope гейт (SQL-предикат ДО попадания контента в model-context/envelope). Least-privilege для model-инвокаций и subagent'ов, НЕ multi-user authZ (см. Out-of-scope ниже + §7.6).
 - **Backups**: Vault уже git-versionable (рекомендация); SQLite — derivative, всегда rebuildable. **Скиллы не делают бэкапы** (per TASK §22 v2).
 
@@ -51,7 +51,12 @@
   - `vault_metadata.schema_version` для migration tracking.
 - **A09 Logging Failures**:
   - `log.md` append-only с monthly rotation. Не редактируется автоматически.
-- **A10 SSRF**: `wiki-source-light` отправляет только в Anthropic API (hard-coded host). Не принимает user-supplied URL.
+- **A10 SSRF**: ⚠️ **ПОЛНОСТЬЮ ПЕРЕПИСАНО 2026-08-06 (TASK 072) — прежний текст был ложен дважды.** Он ссылался на `wiki-source-light` — **никогда не отгруженную** поверхность (`scripts/wiki_source/` содержит только `__init__/base/manual/parsing.py`; **ни одного** launcher'а в `bin/`; единственное упоминание — docstring *плана* Phase-3b в `base.py:8`) — и утверждал «не принимает user-supplied URL».
+  **Сегодняшняя правда:**
+  - Egress-поверхность — **ровно два сайта**, оба в `scripts/wiki_skills/wiki_import_article/_fetch.py` (`:490`, `:898`), оба через `urllib.request.urlopen`, **оба без SSRF-гарда**. Перечислено, а не «в основном».
+  - Оправдание `# noqa: S310 (operator URL)` на обоих сайтах **фальсифицировано**: (1) `/wiki-reload` перезагружает URL, взятый **из frontmatter самой заметки** — то есть H-6 **ДАННЫЕ**, а не ввод оператора; (2) `urllib` молча следует 30x, поэтому **каждый хоп после нулевого выбран атакующим** независимо от того, кто напечатал нулевой.
+  - Внешние `html`/`pdf`-скиллы ходят в сеть через **собственную** SSRF-защищённую лестницу (resolve→pin, `trust_env=False`); эта защита к двум сайтам выше **не относится** — она в другом процессе.
+  ⚠️ Это описание **текущего** состояния. Контроль ещё **не построен**; его финальную формулировку владеет бид 072-07. Архитектурная запись, описывающая непостроенный фикс, — ровно тот дефект, ради которого эта задача существует.
 
 **Out-of-scope для MVP** (per TASK):
 - Multi-user RBAC. _(Единственный запланированный шаг в эту сторону —

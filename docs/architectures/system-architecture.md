@@ -11,7 +11,7 @@
 |---|---|---|
 | **L1: Skill Layer** | User-facing entry points. Argument parsing, output formatting, JSON envelopes. | `wiki-init`, `wiki-search`, `wiki-lint`, etc. |
 | **L2: Workflow Layer** | Multi-step orchestration, dispatch, error-handling chains. | `ingest-source` workflow |
-| **L3: Source Adapter Layer** | Pluggable input normalizers. Common contract. | `wiki-source-manual / -transcript / -light` |
+| **L3: Source Adapter Layer** | Pluggable input normalizers. Common contract. | `wiki-source-manual` · `wiki-source-transcript` · ~~`-light`~~ ⚠️ **never shipped** (2026-08-06, TASK 072) |
 | **L4: Index Layer (DAL)** | Storage abstraction. Repository pattern. Single-place SQL. | `IndexRepository` + `SQLiteRepository` |
 | **L5: Storage** | Persistence: filesystem + SQLite. | Markdown vault + SQLite DB |
 
@@ -232,9 +232,7 @@ with non-zero exit code. Common codes (defined в `scripts/wiki_source/base.py`)
 - `INVALID_FRONTMATTER` — YAML parse error.
 - `MISSING_REQUIRED_FIELD` — config-driven required field missing.
 - `PATH_OUTSIDE_VAULT` — path-traversal attempt detected (R-26.2).
-- `INPUT_TOO_LARGE` — wiki-source-light > 10K chars (per UC-06 §A1).
-- `EMPTY_INPUT` — wiki-source-light empty text.
-- `LLM_RATE_LIMIT` — Anthropic API throttling после max retries.
+- ~~`INPUT_TOO_LARGE`~~ / ~~`EMPTY_INPUT`~~ / ~~`LLM_RATE_LIMIT`~~ — ⚠️ **НЕ СУЩЕСТВУЮТ (аннотировано 2026-08-06, TASK 072).** Все три принадлежали `wiki-source-light` / Anthropic-пути, который никогда не отгружался; `grep -rn 'INPUT_TOO_LARGE\|LLM_RATE_LIMIT' scripts/` → **0**. Оставлены как проектная запись, но ни один CLI их не эмитит — не пишите обработчик под них. Нормативные роестры кодов — в `skills/*/SKILL.md`, и с 2026-08-07 они машинно сверяются с реально достижимыми (`tests/test_exit_code_doc_truth.py`).
 - `LLM_AUTH_FAILED` — invalid API key.
 - `WORKFLOW_NOT_FOUND` — `/generate-detailed-meeting-summary` workflow или `claude` CLI отсутствует (TASK I-3.3 step a). Error JSON: `{missing: [...], expected_paths: [...]}`.
 - `WORKFLOW_TIMEOUT` — subprocess exceeded `wiki.transcript.timeout_seconds` (default 600s). Partial output moved to `_raw/failed/` (TASK I-3.3 step c.1).
@@ -272,7 +270,16 @@ with non-zero exit code. Common codes (defined в `scripts/wiki_source/base.py`)
   - **Outbound**: New markdown summary in `<output-dir>/summary.md` (file frontmatter retains `type: lesson-summary`); `pages` DB row с `type='summary'` + tags `[lesson-summary, ...slugified-concepts]`; `source_state` row для idempotency.
 - **Dependencies**: External workflow, Index Layer, Configuration Resolver, `wiki-source-manual` (delegated final upsert).
 
-#### Component: **wiki-source-light** (Source Adapter — R-24)
+#### Component: **wiki-source-light** (Source Adapter — R-24) — ⚠️ **DESIGNED PHASE-1, NEVER SHIPPED**
+
+> ⚠️ **Annotated 2026-08-06 (TASK 072). Everything below is a Phase-1 DESIGN record, not a
+> description of the system.** `scripts/wiki_source/` contains only `__init__/base/manual/
+> parsing.py`; there is **no `bin/` launcher** and the only reference to this component in the tree
+> is a plan docstring at `base.py:8`. ★ Note in particular that the `anthropic` SDK dependency below
+> **would violate Decision-17** as it now stands (`scripts/` makes no LLM-provider call:
+> `grep -rnE '^\s*(import anthropic|from anthropic)' scripts/` → **0**, gated over the whole
+> population). If this component is ever revived, the LLM call must move to the orchestrator via a
+> `prepare`/`apply` split. Kept, not deleted, so the design rationale is not lost.
 
 - **Type**: Python class implementing `SourceAdapter`.
 - **Purpose**: Single-call LLM summary для arbitrary md-куска. Не делает full pyramid.
@@ -307,14 +314,14 @@ graph LR
         WI[wiki-init]
         WS[wiki-search]
         WL[wiki-lint]
-        WLS[wiki-light-summary]
+        WLS["wiki-light-summary<br/>⚠ NEVER SHIPPED"]
         WIS[ingest-source.md]
     end
 
     subgraph "L3: Source Adapters"
         SAM[wiki-source-manual]
         SAT[wiki-source-transcript]
-        SLT[wiki-source-light]
+        SLT["wiki-source-light<br/>⚠ NEVER SHIPPED"]
     end
 
     subgraph "L4: DAL"

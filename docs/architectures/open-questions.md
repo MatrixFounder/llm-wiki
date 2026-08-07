@@ -264,7 +264,7 @@
 - **Q-2: light-summary LLM model** — Haiku (default, $) vs Sonnet (quality).
 - **Q-3: Cron / launchd для daily automation** — Epic 6 detail.
 - **Q-4: Plugin packaging format** — после MVP стабилизации.
-- **Q-5: `wiki-source-light` text input limit** — спека `≤ 10K chars` стоит ли расширить? Решается в Dev по UX feedback'у.
+- ~~**Q-5: `wiki-source-light` text input limit**~~ — ⚠️ **MOOT, закрыт 2026-08-06 (TASK 072).** Вопрос о лимите ввода компонента, который **никогда не отгружался** и чей LLM-вызов нарушил бы Decision-17. «Решается в Dev по UX feedback'у» не может произойти: пользователей нет. Возобновляется только вместе с самим компонентом.
 
 ### 11c. Architecture-specific Open Questions
 
