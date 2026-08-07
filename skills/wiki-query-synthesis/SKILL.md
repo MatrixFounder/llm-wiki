@@ -139,10 +139,11 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
 > The floor above is **not** a formality you satisfy by padding the array. If the
 > retrieved context does not support an answer, the honest response is to **STOP and
 > report that to the operator** — not to file an uncited page. There is no flag that
-> permits an uncited answer: `--force` does not override this, and `--min-hits 0` on
-> `prepare` cannot reach a filed page either (it produces an empty retrieval, after
-> which an empty array fails `NO_CITATIONS` and any non-empty one fails
-> `CITATION_NOT_RETRIEVED`).
+> permits an uncited answer: `--force` does not override this. Nor does `--min-hits 0`
+> on `prepare` — that flag only disables the `NO_CONTEXT` refusal, it does **not** empty
+> the retrieval (a matching question still retrieves and still files normally). What it
+> cannot do is turn an *empty* retrieval into a filed page: an empty array then fails
+> `NO_CITATIONS`, and any non-empty one fails `CITATION_NOT_RETRIEVED`.
 >
 > **Why the floor exists**: without it an empty array satisfied every check in the
 > block *vacuously* — including the grounding gate itself, whose `any(…)` over `[]` is

@@ -281,7 +281,9 @@ owned** LLM synthesis with citations (Decision-17 `prepare`/`apply` split; no
 `import anthropic`) → output filed back as `_queries/<slug>.md`, a **first-class
 compounding page** (indexed `type=query`, FTS-searchable, `cited` backlinks,
 §D8-durable via the R-6.5e reindex read-side). Grounding enforced in Python
-(`NO_CONTEXT` refusal + `CITATION_NOT_RETRIEVED` keyed on `project/slug`).
+(the grounding triple: `NO_CONTEXT` refusal + `NO_CITATIONS` floor + `CITATION_NOT_RETRIEVED`,
+keyed on `project/slug`; the floor was added by TASK 072 — before it, an empty citations
+array passed the gate vacuously).
 **Zero schema DDL** (`pages.type='query'`, `ref_type='cited'`,
 `event_type='query'`, generic `source_state` all pre-existed; `user_version`
 stays 4); two code-only changes — `layout.py` `_queries` (R-X1-forward role split

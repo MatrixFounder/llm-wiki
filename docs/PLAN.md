@@ -130,7 +130,11 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   (f) `system-architecture.md:275-285` still presents `wiki-source-light` as implemented, with an
   `anthropic` SDK dependency that **would violate Decision-17**. Prefix the heading:
   **DESIGNED PHASE-1, NEVER SHIPPED**.
-  (g) `ROADMAP:284` states the grounding contract as two of three — add `NO_CITATIONS`.
+  (g) ~~`ROADMAP:284` states the grounding contract as two of three — add `NO_CITATIONS`.~~
+  ✅ **DONE in 072-03c** (pulled forward deliberately: leaving a known-stale enumeration behind
+  while shipping the census that found it would be the drift this bead exists to stop). Different
+  LINES from this bead's R-7 rewrite (:293-297) and Epic-6 row (:1194-1200), so no collision —
+  but re-read :284 before editing, do not re-add.
   **RED-first**: n/a (no code). Verification is the **run** census, pasted into the bead's notes.
   ⚠️ `ROADMAP:1200` holds the bare token `wiki-research` **alone on its line** (the sentence wraps
   from :1199) — a single-line `sed` produces a broken sentence.

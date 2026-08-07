@@ -450,7 +450,7 @@ Deterministic retrieval. No LLM call. Alias-expands the question (default on; `-
 }
 ```
 
-`is_unchanged=true` → orchestrator emits an "unchanged" envelope and stops (UC-17). `retrieved_count < --min-hits` (default **1**) → exit 2 `NO_CONTEXT` — the orchestrator does **not** synthesise from nothing (UC-18, anti-hallucination). Hit `slug`/`project`/`snippet` are vault-relative (no absolute-path disclosure).
+`is_unchanged=true` → orchestrator emits an "unchanged" envelope and stops (UC-17). `retrieved_count < --min-hits` (default **1**) → exit 2 `NO_CONTEXT` — the orchestrator does **not** synthesise from nothing (UC-18, anti-hallucination). `--min-hits 0` is **prepare-only and diagnostic-only**: `apply` declares no such flag, and since TASK 072 an empty retrieval cannot reach a filed page (empty citations → `NO_CITATIONS`; non-empty → `CITATION_NOT_RETRIEVED`). Hit `slug`/`project`/`snippet` are vault-relative (no absolute-path disclosure).
 
 **`wiki-query apply --vault V --vault-root P --query-slug S --question "<q>" --question-hash HEX (--answer-stdin | --answer-file PATH) --citations-stdin|--citations-file PATH [--orchestrator-id ID] [--force] [--db-path PATH]`**
 
@@ -458,7 +458,7 @@ Deterministic write-back. No LLM call. Re-runs retrieval to recompute `question_
 
 - `--question-hash HEX` — required; 64-lowercase-hex argparse `type=` validator (`INVALID_QUESTION_HASH` library-caller defense).
 - `--answer-stdin` / `--answer-file PATH` (mutex) — the synthesised answer markdown (bounded, `validate_inside_vault` + `O_NOFOLLOW` for the file form, same primitives as `wiki-extract-concepts apply`).
-- `--citations-stdin` / `--citations-file PATH` (mutex) — a JSON list of cited `project/slug` identifiers; every entry MUST be in `prepare`'s hit set (R-6.7d). A citation absent from the set → exit 4 `CITATION_NOT_RETRIEVED` (the anti-hallucination contract enforced **in Python**, not trusted to the LLM).
+- `--citations-stdin` / `--citations-file PATH` (mutex) — a JSON list of cited `project/slug` identifiers; the payload must carry **at least one** entry (empty → exit 4 `NO_CITATIONS`) and every entry MUST be in `prepare`'s hit set (R-6.7d). A citation absent from the set → exit 4 `CITATION_NOT_RETRIEVED` (the anti-hallucination contract enforced **in Python**, not trusted to the LLM). No flag overrides either: `--force` is consumed downstream at the content-hash skip.
 - `--orchestrator-id ID` — regex `^[a-z0-9._:@-]{1,64}$`; recorded in the page frontmatter / log event for provenance; default `"orchestrator"` with a `logger.warning`.
 
 ### Answer + citations contract (the `wiki-query-synthesis` skill)
@@ -485,22 +485,36 @@ The orchestrator-facing prompt skill defines: the answer must **cite only retrie
 | Code | `error` | Cause |
 |---|---|---|
 | 0 | — (recon envelope / filed manifest / `is_unchanged`) | Success or idempotency short-circuit |
-| 1 | — (argparse) | Missing flag / no subcommand |
+| 1 | — (**no envelope**) | unhandled exception (corrupt DB, unwritable dir) — raw traceback, NOT a contract error |
+| 2 | — (argparse) | Missing flag / no subcommand / unrecognized argument (argparse's own status is **2**, not 1) |
 | 2 | `INVALID_QUESTION` | empty / over-cap question |
 | 2 | `INVALID_QUERY` | not a valid FTS5 expression after the quoted-phrase fallback |
 | 2 | `INVALID_SLUG` | `--slug` not kebab-case |
 | 2 | `NO_CONTEXT` | `retrieved_count < --min-hits` (default 1) — refuse to synthesise from nothing |
 | 2 | `QUESTION_CHANGED` | `apply` recomputed hash ≠ `--question-hash` (retrieval set changed mid-pipeline) |
 | 2 | `INVALID_QUESTION_HASH` | `--question-hash` not 64-lowercase-hex (library-caller defense) |
-| 4 | `ANSWER_PARSE_ERROR` / `ANSWER_TOO_LARGE` | answer payload malformed / over-cap |
+| 4 | `ANSWER_TOO_LARGE` | answer payload over-cap |
+| 4 | `NO_CITATIONS` | the citations payload is well-formed but EMPTY (the grounding floor) |
 | 4 | `CITATION_NOT_RETRIEVED` | a `--citations` `project/slug` not in `prepare`'s hit set (grounding gate) |
 | 4 | `INVALID_CITATIONS` | citations payload not a JSON list of `project/slug` strings |
 
 Inherits the **universal envelope invariant** (CWE-117/209): `{error, field?, reason}` only — never echoes the question/answer/citation content. (Exit maps illustrative; finalised in Planning against the `wiki-extract-concepts` code space.)
 
+> **Ruling (TASK 072 072-03c), recorded so it is a decision and not an omission.** This table is
+> **illustrative by its own declaration** (the sentence above) and is missing eight further shipped
+> codes — `INVALID_ARGS`, `INVALID_VAULT_ROOT`, `INVALID_ANSWER_PATH`, `INVALID_QUERY_PAGE`,
+> `INVALID_AUDIENCE`, `INVALID_POLICY`, `SKILL_INTEGRITY_DRIFT`, and `INVALID_INDEX_DB`
+> (exit **6**, inherited from `build_repo_config` and raised by BOTH subcommands — the one this
+> audit itself first missed, which is why the normative roster now states that it covers
+> INHERITED codes too, not just the ones `wiki_query.py` raises directly). They are deliberately NOT added
+> here: **`skills/wiki-query/SKILL.md` is the single NORMATIVE roster** (that is the surface an
+> agent parses), and duplicating a full enumeration into a document that declares itself
+> illustrative would create a second home for a fact that then drifts. Only the two codes this
+> section's own prose reasons about — the grounding triple and the phantom removal — land here.
+
 ### Operational invariants
 
-- **Grounding is enforced in Python**, not trusted to the LLM: `apply` rejects any citation absent from the recomputed hit set (`CITATION_NOT_RETRIEVED`); `prepare` refuses `NO_CONTEXT` below `--min-hits`. The comparison key is the full **`project/slug`** tuple (a bare slug is unique only per `(vault_id, project)`).
+- **Grounding is enforced in Python** as a TRIPLE, not trusted to the LLM: `NO_CONTEXT` (exit 2, `prepare` — nothing was retrieved, below `--min-hits`); **`NO_CITATIONS`** (exit 4, `apply` — grounding was not claimed: the citations array is well-formed but EMPTY); `CITATION_NOT_RETRIEVED` (exit 4, `apply` — grounding was claimed OUTSIDE the recomputed hit set). ★ The third alone was insufficient, and TASK 072 records why: the shape gate bounded citations ABOVE only, so `[]` satisfied every check *vacuously* — including `any(c not in retrieved_keys for c in citations)`, which is `False` over an empty list — and a `cites: []` page was filed and self-indexed at exit 0. The anti-hallucination gate passed **because it examined nothing**. The comparison key is the full **`project/slug`** tuple (a bare slug is unique only per `(vault_id, project)`).
 - **Self-index via direct DAL**, never the manifest/`main(argv)` per-row path (H-PERF-3 / P-8) — `upsert_page` + `replace_refs` on one connection.
 - **A query page never creates `entities`** (C-10) and is **not** alias-expandable as a search term — it cites existing entities/pages; it does not pollute the entity graph.
 - **Untrusted retrieval**: the synthesis workflow treats retrieved snippets/bodies as data, not directives (H-6); `_sanitize_markdown_text` is the egress backstop on the answer body.

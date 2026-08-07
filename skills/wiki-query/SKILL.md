@@ -133,9 +133,10 @@ Grounding-checked write-back + self-index. No LLM call.
 - `--answer-stdin | --answer-file` (mutex) — the synthesised markdown answer
   (≤256 KiB; file form vault-inside + `O_NOFOLLOW`).
 - `--citations-stdin | --citations-file` (mutex) — a JSON array of
-  `"project/slug"` strings; **every entry must be a retrieved hit** (grounding
-  gate) → else `CITATION_NOT_RETRIEVED` (exit 4). (Both payloads can't share
-  stdin — pipe one, file the other.)
+  `"project/slug"` strings; **at least one entry** (an empty array → `NO_CITATIONS`,
+  exit 4) and **every entry must be a retrieved hit** (grounding gate) → else
+  `CITATION_NOT_RETRIEVED` (exit 4). (Both payloads can't share stdin — pipe one,
+  file the other → else `INVALID_ARGS`, exit 2.)
 - `--orchestrator-id` — regex `^[a-z0-9._:@-]{1,64}$`; default `"orchestrator"`.
 - `--force` — re-file even when the rendered page is byte-identical (else a
   content-hash skip returns `action:"unchanged"`).
@@ -152,19 +153,57 @@ from the `cites:` frontmatter (R-6.5e — the §D8 durability spine).
 
 ## Exit codes
 
+This table is the **normative roster** for this CLI — every reachable code is listed,
+including the ones this CLI inherits rather than raises itself.
+
 | Code | `error` | Cause |
 |---|---|---|
 | 0 | — (envelope / manifest / `is_unchanged` / `unchanged`) | success / short-circuit |
-| 1 | — (argparse) | missing flag / no subcommand |
+| **1** | — (**no envelope at all**) | an **unhandled exception**: corrupt `--db-path`, unwritable `_queries/`, … stdout is EMPTY and a raw traceback goes to stderr. **Not a contract error** — treat as a bug/environment fault, never as "bad flag". |
+| **2** | — (argparse, **no envelope** unless the flag parsed) | missing flag / no subcommand / unrecognized argument. argparse's own exit status is **2**, always. |
 | 2 | `INVALID_QUESTION` / `INVALID_SLUG` / `INVALID_QUERY` | bad question / slug / FTS expression |
-| 2 | `NO_CONTEXT` | retrieved hits `< --min-hits` (prepare) |
+| 2 | `NO_CONTEXT` | **prepare only** — retrieved hits `< --min-hits` |
 | 2 | `QUESTION_CHANGED` / `INVALID_QUESTION_HASH` / `INVALID_VAULT_ROOT` | apply hash mismatch / malformed hash / bad vault root |
-| 4 | `ANSWER_TOO_LARGE` / `INVALID_ANSWER_PATH` | answer payload too large / not a vault-inside regular file |
-| 4 | `INVALID_CITATIONS` / `CITATION_NOT_RETRIEVED` | citations payload malformed / a citation not in the retrieved set |
+| 2 | `INVALID_AUDIENCE` / `INVALID_POLICY` | `--audience` is not one of the vault's policy levels / the `policy:` block is malformed |
+| 2 | `INVALID_ARGS` | both payloads asked for stdin (`--answer-stdin` **and** `--citations-stdin`) |
+| 2 | `SKILL_INTEGRITY_DRIFT` | **prepare only**, and only under `WIKI_STRICT_SKILL_INTEGRITY=1`: the pinned REASON contract's integrity status is not `ok` — that is `drift` (bytes changed) **or** `unpinned` (absent from the manifest) **or** `manifest_unavailable` (no manifest on disk). The last two do **not** imply changed bytes. ⚠️ envelope shape exception — see below. |
+| 4 | `ANSWER_TOO_LARGE` | answer payload over the size cap |
+| 4 | `INVALID_ANSWER_PATH` | `--answer-file` is not a vault-inside regular file |
+| 4 | **`NO_CITATIONS`** | the citations array is well-formed but **EMPTY** — an answer must cite ≥1 retrieved source |
+| 4 | `INVALID_CITATIONS` | citations payload malformed **or** `--citations-file` is not a vault-inside regular file |
+| 4 | `CITATION_NOT_RETRIEVED` | a citation is not in the recomputed hit set |
 | 4 | `INVALID_QUERY_PAGE` | target `_queries/<slug>.md` is a symlink (refused) |
+| **6** | `INVALID_INDEX_DB` | **inherited from `build_repo_config`**, raised by *both* subcommands before any work: the vault's `index_db:` escapes the vault / is a symlink / is an unsafe absolute path. ⚠️ envelope carries an extra `hint` key. |
 
-**Universal envelope invariant** (CWE-117/209): error envelopes carry `{error,
-field?, reason}` only — never the offending question/answer/citation value.
+**Grounding is a TRIPLE, and all three are Python, not prompt discipline:**
+`NO_CONTEXT` (exit 2, **prepare** — *nothing was retrieved*) · `NO_CITATIONS` (exit 4,
+**apply** — *grounding was not claimed*) · `CITATION_NOT_RETRIEVED` (exit 4, **apply** —
+*grounding was claimed OUTSIDE the recomputed hit set*; this is the only one of the three
+keyed on the `project/slug` tuple). No flag permits an uncited answer: `--force` is
+consumed downstream at the content-hash skip.
+
+> `--min-hits 0` is **prepare-only** (`apply` declares no such flag) and merely disables
+> the `NO_CONTEXT` refusal — it does **not** empty the retrieval. With a question that
+> matches, `prepare --min-hits 0` retrieves normally and `apply` files normally. What it
+> cannot do is turn an *empty* retrieval into a filed page: then `[]` fails `NO_CITATIONS`
+> and any non-empty array fails `CITATION_NOT_RETRIEVED`.
+
+**What the orchestrator should DO — read the CODE, not the exit number.** The exit
+number alone does not tell you, because exit 4 mixes two classes:
+- **RE-SYNTHESISE and re-apply** — the synthesis violated its *output contract*:
+  `NO_CITATIONS`, `CITATION_NOT_RETRIEVED`, `ANSWER_TOO_LARGE`, and `INVALID_CITATIONS`
+  *when the payload is malformed*.
+- **STOP and forward** — everything else, including the exit-4 codes that are
+  **invocation or filesystem faults**: `INVALID_ANSWER_PATH`, `INVALID_QUERY_PAGE`
+  (a symlink on disk — re-synthesising is non-terminating, the error never clears), and
+  `INVALID_CITATIONS` *when it names `citations-file`* (check `field`). Plus every exit 2
+  (you called it wrong or the world changed), exit 6 (vault config), and exit 1 (a bug).
+
+**Universal envelope invariant** (CWE-117/209): an error envelope carries `{error,
+field?, reason}` and **never** the offending question/answer/citation value. Two envelopes
+carry additional keys, and neither leaks a value: `SKILL_INTEGRITY_DRIFT` carries
+`{error, integrity}` (**no `field`/`reason`** — the block is value-free hashes/status) and
+`INVALID_INDEX_DB` adds a `hint`. The no-echo guarantee holds for all of them.
 
 ## Related
 

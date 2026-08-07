@@ -41,8 +41,13 @@ Capture the stdout envelope (`query_slug`, `question_hash`, `is_unchanged`,
 **Error handling**: exit 2 →
 - `NO_CONTEXT` — retrieval is empty / below `--min-hits`. **STOP** and tell the
   operator the vault has no grounding for this question. Do **not** synthesise
-  from outside the vault (anti-hallucination, R-6.7). (Operator may retry with
-  `--min-hits 0` to explicitly request a "no sources found" answer.)
+  from outside the vault (anti-hallucination, R-6.7).
+  ⚠️ Retrying with `--min-hits 0` does NOT open a path to a filed "no sources
+  found" page. That flag only disables THIS refusal; it does not populate the
+  retrieval. **Here the retrieval is empty**, so `apply` then refuses both ways — an
+  empty citations array fails `NO_CITATIONS` and any non-empty one fails
+  `CITATION_NOT_RETRIEVED`. "The vault cannot answer this" is a **result to
+  report**, not a page to file.
 - `INVALID_QUESTION` / `INVALID_QUERY` / `INVALID_SLUG` — forward envelope, STOP.
 
 ### Step 3 — Short-circuit on `is_unchanged`
@@ -128,7 +133,10 @@ forward it to the operator.
 | 2 | `QUESTION_CHANGED` | corpus changed mid-pipeline → re-run `/wiki-query` (no auto-retry). |
 | 2 | `INVALID_QUESTION_HASH` / `INVALID_VAULT_ROOT` | forward + STOP (fix the call). |
 | 4 | `CITATION_NOT_RETRIEVED` | a synthesised citation is not in the retrieved set → re-synthesise citing only `hits` (do NOT silently retry). |
-| 4 | `INVALID_CITATIONS` / `ANSWER_TOO_LARGE` / `INVALID_ANSWER_PATH` | the synthesis violated the contract → fix + re-apply. |
+| 4 | `NO_CITATIONS` | the citations array is EMPTY → the answer claims no grounding. **Do NOT pad the array to get past this.** Either re-synthesise citing real `hits`, or STOP and report that the vault cannot ground this question. |
+| 4 | `INVALID_CITATIONS` (payload malformed) / `ANSWER_TOO_LARGE` | the synthesis violated its output contract → fix + re-apply. |
+| 4 | `INVALID_ANSWER_PATH` · `INVALID_QUERY_PAGE` · `INVALID_CITATIONS` **when `field` names `citations-file`** | ⚠️ NOT a synthesis defect — an invocation or filesystem fault (a path outside the vault, a symlink at the target). **STOP and forward**; re-synthesising cannot clear it and would loop forever. Branch on the `error`/`field`, not on the exit number. |
+| 6 | `INVALID_INDEX_DB` | the vault's `index_db:` is unsafe/malformed — raised by **both** subcommands before any work. STOP and forward. |
 
 The filed `_queries/<slug>.md` is FTS-searchable immediately (`wiki-search` finds
 it) and its `cited` backlinks survive `wiki-reindex --full` (R-6.5e).

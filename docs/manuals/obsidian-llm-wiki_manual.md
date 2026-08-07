@@ -1687,8 +1687,11 @@ Step by step:
 1. **`wiki-query prepare "<question>" --vault <vid> --vault-root <path> [scope…]`**
    → envelope with `query_slug`, `question_hash`, `is_unchanged`, `hits[]`.
    - Exit 2 `NO_CONTEXT` → the vault has no grounding. **Stop; do not synthesise
-     from outside the vault** (anti-hallucination). Retry with `--min-hits 0` only
-     to explicitly request a "no sources found" answer.
+     from outside the vault** (anti-hallucination). ⚠️ Retrying with `--min-hits 0`
+     does not help: it only disables THIS refusal and does not populate the retrieval.
+     **Here the retrieval is empty**, so `apply` refuses an empty citations array
+     (`NO_CITATIONS`) and a non-empty one (`CITATION_NOT_RETRIEVED`) alike. "No sources
+     found" is reported to the operator, never filed.
    - `is_unchanged: true` → the same question over the same retrieval is already
      filed; skip synthesis.
 2. **Agent synthesises** per the `wiki-query-synthesis` contract: a markdown answer
@@ -1698,7 +1701,9 @@ Step by step:
    --citations-file <tmp>`** — pass the **same scope flags** as `prepare` (or the
    re-run retrieval diverges and the hash mismatches → exit 2 `QUESTION_CHANGED`).
    A synthesised citation not in the retrieved set → exit 4 `CITATION_NOT_RETRIEVED`
-   (re-synthesise; do **not** silently retry).
+   (re-synthesise; do **not** silently retry). An **empty** citations array → exit 4
+   `NO_CITATIONS` — an answer must cite ≥1 retrieved source; do not pad the array to
+   get past it, either cite real hits or stop and report the gap.
 
 The `--question-hash` round-trip is the integrity mechanism: it guarantees the
 answer was synthesised against the *same corpus state* it is filed against. For a
