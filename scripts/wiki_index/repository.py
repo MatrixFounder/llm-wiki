@@ -402,7 +402,12 @@ class IndexRepository(abc.ABC):
         the page (e.g. a ``requirement`` with no ``implemented-by``); ``requires_field``
         → the frontmatter scalar ``$.<field>`` is absent/empty (e.g. a ``fact`` with an
         empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
-        coverage`` (a gap is data, not a failure → always exit 0)."""
+        coverage`` (a gap is data, not a failure → always exit 0).
+
+        ⚠️ **STUB STATE (bead 072-08).** ``CoverageRule.forbid_values`` parses and is
+        load-gated, but **this finder still ignores it** — a rule declaring it behaves
+        exactly like the same rule without it. Bead 072-09 widens the predicate; until
+        then this docstring is the whole contract."""
         ...
 
     @abc.abstractmethod

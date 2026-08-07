@@ -173,6 +173,19 @@ $defs:
   # CoverageRule (TASK 036 / R-15, Slice A2) — one coverage-gap rule: a page of
   # `class` MISSING an expected relation. STRICT. `oneOf` enforces exactly one of
   # requires_edge / requires_field.
+  #
+  # TASK 072 / P2 — `forbid_values` WIDENS what `requires_field` means: the gap
+  # condition becomes *absent/empty* OR *value ∈ forbid_values* ("present, and a
+  # non-answer"). It is an OPTIONAL MODIFIER of requires_field, never a third
+  # branch — `dependentRequired` binds it, and that binding is airtight ONLY
+  # because the block uses `oneOf` (under `anyOf`, `requires_edge` +
+  # `requires_field` + `forbid_values` would validate). Absent key ⇒ the emitted
+  # SQL and every envelope are byte-identical to pre-072 (off-equivalence golden:
+  # tests/test_coverage_forbid_values.py).
+  #
+  # The sentinel STRINGS are an authoring convention and stay OUT of every
+  # built-in layout — they belong in <vault>/.wiki/layout.yaml. Mechanically
+  # enforced (test_no_builtin_layout_ships_forbid_values), not review-gated.
   # ----------------------------------------------------------------------------
   CoverageRule:
     type: object
@@ -185,10 +198,22 @@ $defs:
         description: 'gap when the page has NO typed edge of this ref_type (e.g. implemented-by)'
       requires_field:
         type: string
-        description: 'gap when frontmatter scalar $.<field> is absent/empty (allow-listed name)'
+        description: >
+          gap when frontmatter scalar $.<field> is absent/empty (allow-listed name) —
+          OR, when forbid_values is also set, when its value is one of those sentinels
+      forbid_values:
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: >
+          extra gap condition for requires_field: the scalar is PRESENT but carries a
+          value meaning "no answer" (e.g. verified_on: "not verified"). An empty list is
+          a dead rule → rejected here; a blank member is rejected in _validate_health_rules
     oneOf:
       - {required: [requires_edge]}
       - {required: [requires_field]}
+    dependentRequired:
+      forbid_values: [requires_field]
 
   # ----------------------------------------------------------------------------
   # Ontology (TASK 054 / R-19) — the OPTIONAL declared type/edge/property contract.

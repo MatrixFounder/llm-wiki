@@ -66,15 +66,25 @@ def build_health_vault(tmp_path: Path) -> tuple[SQLiteRepository, Path]:
 
 def build_cybos_vault(
     tmp_path: Path, files: dict[str, str], *, vault_id: str = "mini",
+    layout_override: str | None = None,
 ) -> tuple[SQLiteRepository, Path]:
     """Build + reindex an arbitrary cybos vault from ``{rel_path: content}`` — for
     focused edge-case tests that must not perturb the shared `build_health_vault`
-    counts. DB lives at ``tmp_path/<vault_id>.db``."""
+    counts. DB lives at ``tmp_path/<vault_id>.db``.
+
+    ``layout_override`` (TASK 072 / P2) writes ``<root>/.wiki/layout.yaml`` — the
+    OPERATOR'S home for rules that must not ship in a built-in layout (the
+    `forbid_values` sentinel strings). ⚠️ Merge semantics are the real ones: a list
+    key REPLACES the built-in list, `type_mapping` deep-merges, `ignore` unions. A
+    keyword with a default, so every existing call site is unchanged by construction."""
     root = tmp_path / vault_id
     root.mkdir()
     (root / "WIKI_SCHEMA.md").write_text(
         f'---\nvault_id: {vault_id}\nschema_version: "2.0"\nlanguage: en\nlayout: cybos\n---\n',
         encoding="utf-8")
+    if layout_override is not None:
+        (root / ".wiki").mkdir(exist_ok=True)
+        (root / ".wiki" / "layout.yaml").write_text(layout_override, encoding="utf-8")
     for rel, content in files.items():
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)

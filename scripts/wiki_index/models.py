@@ -412,11 +412,20 @@ class CoverageRule:
         (e.g. a ``requirement`` with no ``implemented-by`` = nothing implements it).
       - ``requires_field`` — gap when the page's frontmatter scalar ``$.<field>`` is
         absent OR empty (e.g. a ``fact`` with an empty ``source:``). The field name
-        is allow-listed (``validate_filter_field``)."""
+        is allow-listed (``validate_filter_field``).
+
+    ``forbid_values`` (TASK 072 / P2) is an OPTIONAL MODIFIER of ``requires_field``,
+    never a third branch: it WIDENS that rule's gap condition to also cover *present
+    but a non-answer* (``verified_on: "not verified"`` — a value the shipped
+    vocabulary could express neither as absent/empty nor as a missing edge). Empty
+    tuple ⇒ OFF ⇒ byte-identical SQL and envelopes. Bound to ``requires_field`` by the
+    schema's ``dependentRequired`` and re-checked in ``_validate_health_rules`` for
+    hand-built rules."""
 
     page_class: str
     requires_edge: str | None = None
     requires_field: str | None = None
+    forbid_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

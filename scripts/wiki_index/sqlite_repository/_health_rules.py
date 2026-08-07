@@ -38,6 +38,11 @@ further in — a number that is reported without the population it was measured 
     while its class still counted in `property_pages_examined` — a declared rule missing
     from `by_rule`. It now emits its stat first, in verbatim parity with drift.
 
+**TASK 072 / P2 — `forbid_values`.** `CoverageRule` gained an optional `forbid_values`
+modifier on `requires_field` (gap = absent/empty **OR** value ∈ the sentinel list).
+⚠️ **STUB STATE (bead 072-08): `find_coverage_gaps_report` below still IGNORES it** —
+the key parses and is load-gated, nothing more. Bead 072-09 adds the third disjunct.
+
 dialect: SQLite-leaning — heavy `json_extract`/`json_type` over
 `frontmatter_json` (Postgres: `jsonb` `->`/`->>`/`jsonb_typeof`); the
 NOT-EXISTS / LEFT-JOIN shapes themselves are portable.

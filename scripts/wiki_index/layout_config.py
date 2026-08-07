@@ -537,6 +537,7 @@ def _build(
             page_class=r["class"],
             requires_edge=r.get("requires_edge"),
             requires_field=r.get("requires_field"),
+            forbid_values=tuple(r.get("forbid_values") or ()),   # TASK 072 / P2
         )
         for r in (merged.get("coverage_rules") or ())
     )
@@ -769,7 +770,10 @@ def _validate_health_rules(config: LayoutConfig) -> None:
         a layout rule can never name an edge the graph does not derive → no silent
         never-fires drift / always-gap coverage from a typo);
       - each coverage `requires_field` is an allow-listed frontmatter field name
-        (`validate_filter_field`) — it is interpolated into a `$.<field>` JSON path.
+        (`validate_filter_field`) — it is interpolated into a `$.<field>` JSON path;
+      - each coverage `forbid_values` (TASK 072 / P2) actually attaches to a
+        `requires_field` and carries no blank member — the two ways that modifier can
+        be INERT (see the comment at the check).
 
     Imports are LAZY: `reindex` imports THIS module (a top-level import would cycle);
     `validate_filter_field` is pulled at call-time for symmetry. Early-returns for the
@@ -818,6 +822,28 @@ def _validate_health_rules(config: LayoutConfig) -> None:
             except ValueError as exc:
                 raise LayoutConfigError(
                     f"coverage_rule for class {cr.page_class!r}: {exc}") from exc
+        # TASK 072 / P2 — `forbid_values` is a MODIFIER of `requires_field`, so the two
+        # ways it can be inert are both exit 6, never a silently never-firing rule:
+        #   • attached to a `requires_edge` rule — there is no scalar to compare, so the
+        #     key would be read, stored and ignored. The schema's `dependentRequired`
+        #     already rejects it (airtight only under `oneOf`, K-2); this is the
+        #     hand-built-LayoutConfig half, the same belt-and-braces the exactly-one-of
+        #     check above gets.
+        #   • carrying a blank member — `''` is ALREADY a gap via the empty-value
+        #     branch, so a blank sentinel adds nothing and silently reads as coverage.
+        #     Verbatim parity with `forbid_status` (drift's sibling list).
+        # An EMPTY list is rejected by the schema (`minItems: 1`); an empty TUPLE on a
+        # hand-built rule is indistinguishable from the key being absent, which is the
+        # OFF state and legitimately not an error.
+        if cr.forbid_values and cr.requires_field is None:
+            raise LayoutConfigError(
+                f"coverage_rule for class {cr.page_class!r}: forbid_values requires "
+                f"requires_field (it widens the field predicate; it is not a rule on "
+                f"its own)")
+        if any(not s.strip() for s in cr.forbid_values):
+            raise LayoutConfigError(
+                f"coverage_rule for class {cr.page_class!r}: forbid_values must not "
+                f"contain an empty value")
 
 
 def _redos_budget_check(config: LayoutConfig) -> None:
