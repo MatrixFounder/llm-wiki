@@ -282,7 +282,14 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   codes, but it self-declares as illustrative (:499); `skills/wiki-query/SKILL.md` is the single
   **normative** roster and is where the four-omission fix lands. Write that sentence into the bead.
 
-- [ ] **072-03d · ★ [GATE] The machine census — end the class, don't patch its fourth instance.**
+- [x] **072-03d · ★ [GATE] The machine census — end the class, don't patch its fourth instance.**
+  ✅ **SHIPPED `f0e926e`** (gate + all 6 findings + 4 the machine found that three adversarial
+  rounds did not) **+ `f54f0fe`** (DF-072-2…5, the repo-wide falsehoods filed per the operator
+  ruling of 2026-08-07: *file, do not fix* — three of them touch an Accepted ADR or the
+  Decision-17 paragraph, which is an architecture call, not a doc pass).
+  Executed RED (5 failed) and executed mutation (2 shapes) are pasted in `f0e926e`'s message.
+  Gates at that commit: **3049 passed / 22 skipped** (was 3026/14), `mypy --strict` clean,
+  H-5 25/25 with **no pinned contract in the diff**, `git diff sql/` empty.
   **Why this bead exists.** 072-03c ran a doc-currency pass and declared the class closed. Three
   adversarial roast rounds then found the **same two falsehoods on one more file each time**, and the
   loop bound (3) was **exhausted and escalated 2026-08-07**. The mechanism of the non-convergence is the
