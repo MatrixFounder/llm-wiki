@@ -14,7 +14,10 @@ reads them into a global SQLite DB (FTS5 + WAL, partitioned by `vault_id`) behin
 `IndexRepository` DAL and serves fast structured search, an entity graph, a typed
 event graph, cited RAG answers, and a verification layer.
 
-**19 `wiki-*` CLIs** (each also a `/wiki-*` slash command), by purpose:
+**19 `wiki-*` CLIs**, by purpose (⚠️ *"each also a `/wiki-*` slash command"* was **false** and
+was corrected 2026-08-07 / TASK 072 — `wiki-graph` and `wiki-health` are read-only reporters
+with **no** command wrapper, so they are not reachable as `/…`; the full, measured
+command↔CLI↔skill relationship is the table in `commands/.AGENTS.md`, now test-gated):
 
 - *Construct* — `wiki-import` (the unified external-source on-ramp **and per-source
   engine** — URL/HTML/PDF/office (docx/pptx/xlsx)/`.vtt`-`.srt`/thread/transcript →

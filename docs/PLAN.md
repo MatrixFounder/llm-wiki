@@ -78,7 +78,7 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | 072-09 | ✅ **[LOGIC]** the SQL OFF/ON split + per-row `field-value` kind + off-equivalence goldens | P2 | 072-08 |
 | 072-10 | ✅ P2 docs + the `cybos.yaml` **comment-only** `forbid_values` note + `wiki-config validate` finding | P2 | 072-09 |
 | 072-10b | ✅ ★ **[BUG]** `cybos.yaml` **+ `dev-project.yaml`** half-support: repo glob fix + two-conjunct regression test + operator override | OQ-4 | — |
-| 072-11 | ★ **The doc census** (entirely ungated) + final gates | all | all |
+| 072-11 | ✅ ★ **The doc census** (now GATED) + final gates — 2 gates failed on execution → DF-072-8 | all | all |
 
 **16 beads.** ★ 072-03d was **added 2026-08-07**, after 072-03c shipped and three adversarial roast rounds
 each found the same doc falsehood on one *more* file — the loop bound was exhausted and escalated, and the
@@ -649,7 +649,19 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 
 ### Phase 4 — acceptance
 
-- [ ] **072-11 · ★ The doc census (entirely ungated) + final gates.**
+- [x] **072-11 · ★ The doc census (entirely ungated) + final gates.**
+  ✅ **SHIPPED**. Every item RUN, output pasted. ★ Two gates FAILED when actually executed:
+  (1) `PRAGMA user_version == 7` — the schema FILE is 7, but **both live DBs are at 5**, with a
+  v5 `ref_type` CHECK that makes all 14 event-graph edges UNWRITABLE (proved on a copy), and
+  **zero** code anywhere reads `user_version` → **DF-072-8** (SEV-2, open; rebuild is the
+  operator's call — two registered vault roots no longer exist). (2) the in-repo symlink
+  census — the plan named 3 drifts, the real count was **7 links missing across 5 directories**
+  plus the dangling one. The `.AGENTS.md` "names must match `bin/wiki-*` and `skills/wiki-*/`"
+  claim was false in **four** directions, and `CLAUDE.md`'s "each also a `/wiki-*` slash
+  command" is false for `wiki-graph`/`wiki-health`. All now gated by
+  `tests/test_install_scripts_cover_every_skill.py` (mirrors + dangling links + the two counts).
+  `NO_CITATIONS` census done as a RULE-BASED enumeration diff (a file naming ≥2 of the triple
+  must name all 3), not a presence grep: every LIVE site is complete.
   This is the weakest link **by construction** — commit `bc0875a` had to repair both manual appendices,
   stuck at 17 rows with two shipped CLIs never added. One slice (R-7/R-8 currency) is now a real test
   (072-01); the rest are checklist items a hurried developer can tick without running.
