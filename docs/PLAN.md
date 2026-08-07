@@ -95,7 +95,16 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 
 ### Phase 0 — P0 · re-scope and correct (no code; one new gate)
 
-- [ ] **072-00 · Re-scope R-7 in place (OQ-1) and correct the false architecture claims.**
+- [x] **072-00 · Re-scope R-7 in place (OQ-1) and correct the false architecture claims.**
+  ✅ **SHIPPED `74b00d2`.** ★ Scope honestly widened: the bead named **2** `wiki-source-light`
+  sites, a naive grep found **8**, and a semantic sweep across **four wordings** (full name · the
+  abbreviated `-light` in a slash-list · the COMMAND name `wiki-light-summary` · mermaid node
+  labels) found **14** across 7 files — two of which my own `| head` had truncated out of the
+  first census. All annotated. ⚠️ `summary-light` deliberately NOT touched: it looks like the
+  same family and is a **live** type-mapping (`karpathy.yaml:77`, `normalization.py:91`).
+  ★ A census error made and caught en route: `pages.type='hypothesis'` returns **0** on all five
+  live DBs because zero-DDL puts the authored class in `frontmatter_json` and `cybos` maps it
+  onto the schema enum. The warning is written into the ROADMAP entry.
   **Files**: `docs/ROADMAP.md` — addressed BY ANCHOR, never by line number (see (g) below for why):
   the `### R-7. \`wiki-research\` (R-20)` heading's body · the Epic-6 table row whose first cell is
   `\`wiki-source-web\`` · the two-line paragraph ending in the bare token `\`wiki-research\`.`
@@ -159,7 +168,14 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   numbering space.
   **Acceptance**: the census command returns only the re-scoped sites; suite/mypy unchanged.
 
-- [ ] **072-01 · The two skill promise sites + H-5 re-pin #1 + the gate that keeps them current.**
+- [x] **072-01 · The two skill promise sites + H-5 re-pin #1 + the gate that keeps them current.**
+  ✅ **SHIPPED `c3e499f`.** Both executed REDs pasted in the commit message. ⚠️ **G-3's predicted
+  RED set was INCOMPLETE** — it enumerated 4 H-5 tests by line; the real set is **5**
+  (`test_verify_skill_integrity_ok_on_clean_tree` was missing). Recorded, not quietly matched: a
+  hand-listed expected-failure set is itself an unenumerated surface.
+  ★ The gate carries a **STATED LIMITATION** — it matches co-occurrence, not polarity, so
+  *"R-7 is NOT deferred"* trips it (as the new R-7 closure did). Resolved at the WRITING end,
+  never by negation heuristics and never by exempting ROADMAP.
   **Files**: `skills/wiki-query/SKILL.md:175` (**NOT pinned — free edit**),
   `skills/wiki-query-synthesis/SKILL.md:159-161` (**PINNED**), `config/skill-integrity.sha256`
   (generated), **new** `tests/test_r7_promise_sites_are_current.py`.
