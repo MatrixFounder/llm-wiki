@@ -53,7 +53,7 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | **K-3** | baseline "3019 passed, 19 skipped" | **3024 passed, 14 skipped** | The recon measured in a `.venv`-less tree. Use 3024/14. |
 | **K-4** | a per-line `R-8.*deferred` regex catches the stale claims | It **misses** `skills/wiki-query-synthesis/SKILL.md:160-161` (the sentence wraps) | A per-line gate is **vacuous on the pinned file it most needs to cover** — but see **G-2**: the proposed whole-file fix overshoots. |
 | ★ **G-1** | the promise-site gate fires on exactly 2 files | It fires on **THREE** — `docs/architectures/verification-map.md:105` ("Scope = R-6 only (R-7/R-8 deferred + gated)") is inside `docs/**/*.md` and matches on **both** R-7 and R-8 | **072-01 could not reach green as originally specified.** Resolved by an explicit, reason-carrying exemption (§3, 072-01). |
-| ★ **G-2** | "normalise whitespace over the WHOLE FILE" | `docs/ROADMAP.md` carries `R-7` at :293, `R-8` at :299 and `deferred` on **12** separate lines | A whole-file match is **RED forever on the one file the closure lives in**. Gate must be **paragraph-scoped with a bounded window** (§3, 072-01). |
+| ★ **G-2** | "normalise whitespace over the WHOLE FILE" | `docs/ROADMAP.md` carries the `### R-7.` and `### R-8.` headings and `deferred` on **12** separate lines (`grep -c deferred docs/ROADMAP.md`) | A whole-file match is **RED forever on the one file the closure lives in**. Gate must be **paragraph-scoped with a bounded window** (§3, 072-01). |
 | ★ **G-3** | H-5 RED set = `:66, :105, :126, :300` | `:105` compares **PATH SETS**, so a content-only edit cannot make it red; `:224` (the **runtime** gate) *will* go red and was mislabelled as a post-re-pin check | Corrected RED set: **`:66`, `:126`, `:224`, `:300`**. |
 | ★ **G-4** | `build_cybos_vault` has "five call sites" | **27 call sites across 5 files** | Drop the enumeration; the parameter is keyword-with-default, so all 27 are unchanged **by construction** — a structural claim needs no census. |
 
@@ -69,6 +69,7 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | 072-03a | **[LOGIC]** the 3-line floor + xfail removal + the executed delete-the-block mutation | P1a | 072-02 |
 | 072-03b | The **pinned** synthesis-contract citations table + **H-5 re-pin #2** (one commit, two files) | P1a | 072-03a |
 | 072-03c | Doc currency: every exit-code enumeration, the 3-site `--min-hits 0` correction, the phantom code | P1a | 072-03a |
+| 072-03d | ★ **[GATE]** the **machine** exit-code census (roster discovered at runtime, static **+** executed, both directions) + the 6 findings that exhausted the roast loop | P1a | 072-03c |
 | 072-04 | ★ **[CROSS-REPO]** add the raw-bytes verb to `Universal-skills/skills/html` + record Q-072-1/Q-072-2 | P1b | — |
 | 072-05 | **[RED]** hostile-URL tests through **both** actual call sites + the non-skippable resolve test | P1b | — |
 | 072-06 | **[LOGIC]** `_download_raw_html` → the guarded ladder (+ the launcher key + the 8 seams) | P1b | 072-05 |
@@ -79,7 +80,10 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | 072-10b | ★ **[BUG]** `cybos.yaml` half-support: repo glob fix + two-conjunct regression test + operator override | OQ-4 | — |
 | 072-11 | ★ **The doc census** (entirely ungated) + final gates | all | all |
 
-**15 beads.** P1a is 4 (not 1) because the review showed the original 072-03 fused a 3-line production
+**16 beads.** ★ 072-03d was **added 2026-08-07**, after 072-03c shipped and three adversarial roast rounds
+each found the same doc falsehood on one *more* file — the loop bound was exhausted and escalated, and the
+operator ruled: re-scope, do not grant a fourth round. Its lesson is written into the bead: *a census
+predicate derived from the instances you already found is not a census*. P1a is 4 (not 1) because the review showed the original 072-03 fused a 3-line production
 patch, a pinned-file re-pin and an 11-file doc sweep into one commit — which makes the "diff is exactly
 line 12" check unverifiable at a glance. P1b is 4 because it is **not homogeneous**: a mechanical
 subprocess rewire (HTML) *plus* a **cross-repo prerequisite** (the PDF verb). 072-10b was added by the
@@ -98,16 +102,18 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   — plus `docs/architectures/verification-map.md`
   (:105), `docs/architectures/security.md` (:17, :18, :54), `docs/architectures/system-architecture.md`
   (:275-285).
-  **What**: (a) `ROADMAP:293` heading → `### R-7. \`wiki-research\` (R-20) — ★ RE-SCOPED 2026-08-06
+  **What**: (a) the heading line beginning `### R-7. \`wiki-research\` (R-20)` → `### R-7. \`wiki-research\` (R-20) — ★ RE-SCOPED 2026-08-06
   (TASK 072): external corroboration of OPEN TYPED QUESTIONS`; body = the new scope + a blockquoted
   **non-reopenable** sub-section carrying TASK §2.1 (`CONCEPT_PAGE_EXISTS`, `_pages.py:219`; a
   BEGIN-AUTO block must be a pure function of Class-A/DB state ⇒ web prose breaks §D8), §2.2 **with
   its numbers** (747 entities / 310 = 41.5 % / mean 164.9 / **0** empty; family CLOSED at
-  `ROADMAP:1006-1008`; reopening bar ≥30 per class **including short-but-good**), §2.4 (6512 orphan
+  the paragraph beginning `**Phase B is CLOSED as REFUTED.**`; reopening bar ≥30 per class
+  **including short-but-good**), §2.4 (6512 orphan
   targets, ~90 % media), §2.5 (`type='query'` and `ref_type='cited'` both **0** on every live DB),
   **both halves** of the discrimination control (SIGNAL 20/20 · CONTROL 0/54), the **OQ-2 named rail
   trigger**, and the **D-9 standing rule** (a web-origin page may never mint `verifies`; use
-  `related`). Mirror the R-23 Phase B closure format at `ROADMAP:924-1008`.
+  `related`). Mirror the R-23 Phase B closure format — the block from the heading
+  `### ★ Phase B — RE-SCOPED` down to the `**Phase B is CLOSED as REFUTED.**` paragraph.
   ★ Per TASK §2.3 **name each corpus by ROOT PATH, never `vault_id`**, and ship every census as a
   **re-runnable command**, not a figure in prose.
   (b) `verification-map.md:105` → `Scope = R-6 only (R-8 shipped 2026-05-29, TASK 008; R-7 re-scoped
@@ -158,7 +164,8 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   `skills/wiki-query-synthesis/SKILL.md:159-161` (**PINNED**), `config/skill-integrity.sha256`
   (generated), **new** `tests/test_r7_promise_sites_are_current.py`.
   **What**: both lines point at the **re-scoped** R-7 instead of "deferred", and both stop calling
-  **R-8 `wiki-verify-multi` "deferred"** (shipped 2026-05-29, `ROADMAP:299`).
+  **R-8 `wiki-verify-multi` "deferred"** (shipped 2026-05-29; anchor: the heading line beginning
+  `### R-8. \`wiki-verify-multi\` (R-21) ✅ DONE 2026-05-29`).
   ★ **Do NOT touch the banners** in the pinned file: the HTML comment at :13-20 and the prose banner at
   :24-30 must keep the literal `SECURITY-SENSITIVE` (`tests/test_h5_skill_integrity.py:325`) and the
   literals `config/skill-integrity.sha256` + `pin_skill_integrity.py` (:331).
@@ -174,8 +181,11 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   ★ **G-2 — match PARAGRAPH-scoped, not per line and not whole-file**: split on blank lines, normalise
   whitespace *within* a paragraph, and require `R-7`/`R-8` and `deferred` to co-occur in the same
   paragraph **within a ≤200-char window**. It **must MATCH** the pinned file's wrapped :160-161
-  sentence and **must NOT match** `docs/ROADMAP.md` (`R-7` at :293, nearest `deferred` at :517;
-  `deferred` occurs on 12 lines there).
+  sentence and **must NOT match** `docs/ROADMAP.md` — where the `### R-7.` heading and the nearest
+  `deferred` are **hundreds of lines apart** (`deferred` occurs on 12 lines there). ★ Re-derive both
+  positions at edit time with `grep -n '^### R-7\.' docs/ROADMAP.md` and `grep -n deferred
+  docs/ROADMAP.md`; do **not** transcribe them into this plan as numbers — this very sentence used to,
+  and a `+2` insertion elsewhere in the same commit falsified it (finding 5, bead 072-03d).
   ★ **G-1 — one reason-carrying exemption**: `docs/architectures/verification-map.md` is a per-task
   requirement-coverage record scoped to TASK 007 by its own heading (:100) — HISTORY, not a forward
   promise. Exempt it in a **named constant whose comment states that ruling verbatim**, and — mirroring
@@ -198,7 +208,12 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 
 ### Phase 1 — P1a · the `NO_CITATIONS` floor *(independent of P1b and P2)*
 
-- [ ] **072-02 · [RED] Both tests, written and executed RED against unmodified `main`.**
+- [x] **072-02 · [RED] Both tests, written and executed RED against unmodified `main`.**
+  ✅ **SHIPPED `f0f6b71`** — fused with 072-03a, deliberately and on the record: the repo has **zero**
+  `xfail` precedent (`grep -rn 'xfail' tests/` → 0), so introducing that convention for a two-commit
+  split was rejected. The RED was **executed and pasted into the commit message** instead, which
+  preserves both invariants the split existed to protect (the RED is recorded; the tree is green at
+  every boundary). Stated here so the deviation is a decision, not a drift.
   **Files**: `tests/test_wiki_query_apply.py` (append; the `_seed`/`_run`/`_prepare`/`_apply` helpers
   at :20-71 already support the shape).
   **Test 1 `test_empty_citations_refused`**: prepare a real question; **assert
@@ -217,7 +232,8 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   `xfail(strict=True)` in this bead so the tree stays green at the boundary.
   **Acceptance**: both xfail; suite 3026 passed.
 
-- [ ] **072-03a · [LOGIC] The floor.** **Files**: `scripts/wiki_skills/wiki_query.py`,
+- [x] **072-03a · [LOGIC] The floor.** ✅ **SHIPPED `f0f6b71`** (with 072-02, see above).
+  **Files**: `scripts/wiki_skills/wiki_query.py`,
   `tests/test_wiki_query_apply.py` (drop the two xfails).
   **Insertion point**: between the shape gate's closing `emit(...)` and the per-entry `"/" in c`
   grammar check — i.e. **after** `citations` is proven `list[str]` (so a non-list still yields the more
@@ -233,13 +249,16 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   **EXECUTED mutation**: delete the block ⇒ both tests RED; restore ⇒ green. Paste both runs.
   **Acceptance**: suite 3026, mypy clean, `git diff sql/` empty.
 
-- [ ] **072-03b · The pinned synthesis contract + H-5 re-pin #2 — ONE commit, exactly two files.**
+- [x] **072-03b · The pinned synthesis contract + H-5 re-pin #2 — ONE commit, exactly two files.**
+  ✅ **SHIPPED `2173902`** (`git show 2173902 -- config/skill-integrity.sha256` = exactly line 12).
   **Files**: `skills/wiki-query-synthesis/SKILL.md` (the citations output-contract table :125-130 gains
   a `≥1 entry → NO_CITATIONS` row), `config/skill-integrity.sha256` (generated).
   Kept separate from 072-03c precisely so `git diff config/skill-integrity.sha256` being exactly line
   12 is verifiable at a glance. Same RED-then-re-pin protocol as 072-01.
 
-- [ ] **072-03c · Doc currency for the new code — every enumeration, not the remembered ones.**
+- [x] **072-03c · Doc currency for the new code — every enumeration, not the remembered ones.**
+  ✅ **SHIPPED `d6f2702`** + roast fix-ups `fd16627`. ⚠️ **Its eradication claim did not hold** — see
+  **072-03d**, which owns the residue and the check that terminates the class.
   **Files**: `skills/wiki-query/SKILL.md` (exit table **:155-164** + the `--citations-*` bullet
   :135-138 + the "universal envelope invariant" line :166-167), `workflows/wiki-query.md` (apply error
   table :127-131 **and the `--min-hits 0` advice at :45**),
@@ -262,6 +281,84 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   **Ruling, recorded so it is a decision not an omission**: `components.md:485-497` is missing **seven**
   codes, but it self-declares as illustrative (:499); `skills/wiki-query/SKILL.md` is the single
   **normative** roster and is where the four-omission fix lands. Write that sentence into the bead.
+
+- [ ] **072-03d · ★ [GATE] The machine census — end the class, don't patch its fourth instance.**
+  **Why this bead exists.** 072-03c ran a doc-currency pass and declared the class closed. Three
+  adversarial roast rounds then found the **same two falsehoods on one more file each time**, and the
+  loop bound (3) was **exhausted and escalated 2026-08-07**. The mechanism of the non-convergence is the
+  finding, and it is new:
+
+  > Each round proved eradication with **`grep -F` for the literal string the previous round had
+  > found**. That grep returns 0 *precisely because* the auditor already fixed every place that string
+  > occurs. `skills/wiki-extract-concepts/SKILL.md:139` carries the identical falsehood worded as
+  > `| 1 | argparse / usage error | — |` and is **invisible** to it.
+  >
+  > ★ **A census predicate derived from the instances you already found is not a census.** It is the
+  > unenumerated-surface lens with extra steps: the search was defined by the answer. The predicate must
+  > be derived from the **POPULATION** — walk `skills/*/SKILL.md` and `bin/` and discover the roster at
+  > runtime — so a CLI or contract added tomorrow is in scope **without editing the test**.
+
+  **(A) The six confirmed findings** (each reproduced by execution in round 3, then re-confirmed by an
+  independent verify agent; 3 further findings were **refuted** and are deliberately not here):
+  1. `skills/wiki-verify-multi/SKILL.md:116` — the exit-6 row asserts `VERDICT_FAIL`, "**the verdict page
+     IS still filed**", "a SUCCESS envelope (no `error` key)". **All three false**: `build_repo_config`
+     raises `SystemExit(6)` with an `INVALID_INDEX_DB` **error** envelope, from **both** subcommands,
+     before any work, filing nothing. Exit 6 is **ambiguous in this CLI** — strictly worse than the
+     `wiki-query` case, because a caller doing `[ $? -eq 6 ] && treat_as_fail_verdict` reports
+     "verification FAILED" when nothing was examined. Same table also omits `SKILL_INTEGRITY_DRIFT`
+     (exit 2, prepare-only) — the omission round 1 forced into `wiki-query`'s roster.
+  2. `skills/wiki-verify-multi/SKILL.md:118-119` — the `{error, field?, reason}` **only** invariant,
+     falsified for this CLI by two captured envelopes (`+hint`; and `{error, integrity}` with neither
+     `field` nor `reason`). Port the corrected wording from `skills/wiki-query/SKILL.md:207-211` verbatim.
+  3. `docs/architectures/functional/components.md:632` **and** `:634` — the same two falsehoods, in the
+     **same file** `fd16627` edited, 9 and 11 lines below its own hunk. `:634` is the identical sentence
+     already corrected 133 lines earlier at `:501`.
+  4. `skills/wiki-extract-concepts/SKILL.md:139` — `| 1 | argparse / usage error | — |`. **False on both
+     axes** (RUN: bare invocation and `prepare --bogus` both exit **2**); the package's single `return 1`
+     at `wiki_extract_concepts/__init__.py:1505` carries its own comment saying argparse makes it
+     *unreachable*, while the real exit-1 cause — an unhandled traceback with **no envelope** — is
+     undocumented. ⚠️ Out of the previous bead's stated `wiki-query` scope; that scope was the defect.
+  5. `docs/PLAN.md:101, :106, :110, :161` — **4 of 6** `ROADMAP:NNN` references still stale by exactly the
+     `+2` that `d6f2702` itself inserted; `fd16627`'s message claims "both places that referenced it".
+     `:101` is the **operative instruction of the unshipped bead 072-00**. Convert all four to anchors
+     per this plan's own rule at :141, and correct the claim in the fix-up commit body (it was 2 of 6).
+  6. `skills/wiki-query/SKILL.md:161` (MINOR) — the exit-0 row of the table `d6f2702` **promoted to
+     "normative"** lists `manifest`; `wiki-query` has no manifest mode (the only two hits in
+     `wiki_query.py:556,558` are comments saying the manifest machinery is deliberately bypassed).
+     Promoting a table to normative means auditing **every cell**, not the ones a roast named.
+
+  **(B) The gate** — **new** `tests/test_exit_code_doc_truth.py`. Two assertions, both over a roster
+  **discovered at runtime**:
+  - **Static**: for each enrolled CLI, the set of `(exit_code, error_token)` pairs its `SKILL.md` table
+    documents == the set reachable in its module — including **inherited** pairs the CLI does not raise
+    itself (`build_repo_config` → `(6, INVALID_INDEX_DB)`, the integrity gate → `(2,
+    SKILL_INTEGRITY_DRIFT)`). Those two are what rounds 1 **and** 3 both missed; a census that cannot see
+    them is the same vacuous green in a new costume.
+  - **Executed**: run each enrolled `bin/` CLI with no args and with a bogus flag, and assert the
+    **observed** status matches what its table claims for the usage/argparse row. This is the assertion
+    finding 4 fails, and it is derived from the population, not from the string.
+  ★ **Both directions** — documented ⊄ reachable is a phantom (finding 6's `manifest`,
+  072-03c's `ANSWER_PARSE_ERROR`); reachable ⊄ documented is a blind spot (findings 1, 3). Round 1
+  already got burnt asserting one direction of a "must AGREE"; see [[the-unenumerated-surface-lens]] §067.
+
+  **(C) Controls — the test must be able to FAIL** (rule 4: no gate satisfiable by examining nothing):
+  - **non-vacuity**: the discovered roster is non-empty, every enrolled member yields ≥1 documented and
+    ≥1 reachable pair, and a parser returning `[]` is an ERROR, never a pass;
+  - **mutation, EXECUTED and pasted**: inject one false row into one table ⇒ RED; revert ⇒ green;
+  - **enrolment completeness**: every `skills/*/SKILL.md` that *has* an exit table is automatically
+    enrolled (cross-checked against a walk of `bin/`), and **every exclusion is listed with a reason in
+    the test file**. The 3-way partition (CLI with table · CLI with SKILL.md but no table · CLI with no
+    SKILL.md) must be asserted, so a new CLI cannot join the silent third bucket.
+  ⚠️ Do **not** hardcode `19`. Derive the count; assert the partition sums to the walk.
+
+  **(D) Honest scope.** Free-prose semantic claims ("one JSON envelope per CLI", the no-echo guarantee)
+  are **NOT** mechanically assertable by this gate. Say so in the test's module docstring and name the
+  fallback — an overclaiming gate is precisely the failure this bead exists to remove.
+  **RED-first**: write the gate, watch it go RED on findings 1/3/4/6 **before** fixing them; paste the run.
+  **Acceptance**: gate RED pre-fix (pasted) → all six fixed → gate green; suite ≥3026 + the new tests;
+  `mypy --strict scripts/` clean; `git diff sql/` empty; H-5 25/25 (this bead touches **no** pinned file —
+  if that changes, it takes the re-pin protocol and the two-re-pin count in §0 rule 2 is amended, not
+  silently exceeded).
 
 ### Phase 2 — P1b · SSRF *(independent of P1a and P2 — do NOT serialise behind them)*
 
@@ -515,6 +612,7 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 | P0 · false `security.md` / `system-architecture.md` claims | 072-00 (interim), 072-07 (final A10) |
 | P1a · the `NO_CITATIONS` floor | 072-02 (RED), 072-03a (logic) |
 | P1a · doc currency + the pinned contract | 072-03b, 072-03c |
+| ★ P1a · **doc-truth made MECHANICAL** (the class 072-03c could not close by hand) | 072-03d |
 | P1b · SSRF-guard both call sites | 072-04 (decision), 072-05 (RED), 072-06, 072-07 |
 | P1b · the issue record | 072-07 |
 | P2 · `forbid_values` mechanism | 072-08 (stub), 072-09 (logic) |
@@ -529,7 +627,7 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 072-00 ──► 072-01                                        (P0 chain)
 
 072-02 ──► 072-03a ──► 072-03b
-                   └─► 072-03c                           (P1a chain)
+                   └─► 072-03c ──► 072-03d               (P1a chain)
 
 072-04 (CROSS-REPO: Universal-skills) ──┐
 072-05 ──► 072-06 ─────────────────────►┴──► 072-07      (P1b chain)

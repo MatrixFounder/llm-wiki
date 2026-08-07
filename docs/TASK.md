@@ -6,11 +6,11 @@
 |---|---|
 | **Task ID** | 072 |
 | **Slug** | r7-wiki-research-refutation-and-split |
-| **Origin** | Operator request (2026-08-06): *«проработай эту задачу»* against `docs/ROADMAP.md:293-297` — the R-7 entry, five lines, marked *UNBLOCKED (gated on R-6, now shipped)*, carrying no design. |
+| **Origin** | Operator request (2026-08-06): *«проработай эту задачу»* against the `### R-7. \`wiki-research\` (R-20)` entry in `docs/ROADMAP.md` — then five lines long, marked *UNBLOCKED (gated on R-6, now shipped)*, carrying no design. (The selection was `:293-297` **on that date**; the anchor is cited instead because a later commit in this very task shifted it by +2 — bead 072-03d finding 5.) |
 | **Type** | Analysis → refutation + re-scope (P0-P2 are code/doc; P4-P5 conditional) |
 | **Effort** | P0-P3 ≈ **4.5-5 d** (15 beads — see [PLAN.md](PLAN.md); P1b re-estimated **1.5-2.0 d** at plan-review, plus **072-04 in a second repository** and **072-10b** added by the OQ-4 ruling) · P4-P5 ≈ **2 d, CONDITIONAL** on the P3 dogfood |
 | **Schema** | **zero DDL** (`user_version` stays 7). No new `pages.type`, no new `ref_type`, no new `event_type`. **No `import anthropic`** (Decision-17). |
-| **Predecessor** | TASK 071 (`docs/tasks/task-071-context-export-channel.md`). Directly continues the R-23 Phase B refutation (`docs/ROADMAP.md:924-1008`) and TASK 066's measurement doctrine. |
+| **Predecessor** | TASK 071 (`docs/tasks/task-071-context-export-channel.md`). Directly continues the R-23 Phase B refutation (anchor: `### ★ Phase B — RE-SCOPED` → `**Phase B is CLOSED as REFUTED.**` in `docs/ROADMAP.md`) and TASK 066's measurement doctrine. |
 | **Method** | 15-agent adversarial work-up: 6 grounding readers → a kill-attempt + a steelman run in parallel → 3 rival designs from different first principles → 3 judges (invariants / epistemic honesty / cost-value) → synthesis. Every number below was **re-run read-only** by the orchestrator against the live DBs, not taken from an agent. |
 
 ---
@@ -62,9 +62,10 @@ Re-measured **read-only** against the LIVE personal vault
 | **the conjunction R-7 specifies** | **310 / 747 = 41.5 %** |
 
 The 200-char cut sits **below the corpus mean by construction**, so it measures **LENGTH** — precisely
-the artifact that killed the IDF sum at `docs/ROADMAP.md:988-1000`. A predicate that flags 41.5 % of a
-corpus containing **zero** measured garbage is a constant, not a filter. The family is CLOSED at
-`ROADMAP:1006-1008`, and its reopening bar (**≥30 measured examples per class, INCLUDING
+the artifact that killed the IDF sum in `docs/ROADMAP.md` (anchor: the blockquote headed
+`### The IDF-SUM FAMILY is refuted.`). A predicate that flags 41.5 % of a
+corpus containing **zero** measured garbage is a constant, not a filter. The family is CLOSED by the
+paragraph beginning `**Phase B is CLOSED as REFUTED.**`, and its reopening bar (**≥30 measured examples per class, INCLUDING
 short-but-good definitions**) is untouched by a raw length cut.
 
 > ### ★ 2.3 A CORPUS ERROR, CAUGHT AND CORRECTED — record it, it is the most transferable lesson here
@@ -314,7 +315,7 @@ increment, 9; cost/value → the workflow, 8.5). That is not indecision: each le
 
 | ID | Decision | Consequence |
 |---|---|---|
-| **OQ-1** | ★ **RE-SCOPE R-7 IN PLACE.** Keep the number; rewrite the body to *external corroboration of open typed questions*; record the refuted original scope **and its numbers** as a **non-reopenable sub-section**. | P0 rewrites `ROADMAP:293-297` rather than deleting it. The **five** promise sites keep pointing at a **live** entry — the fifth, `docs/architectures/verification-map.md:105`, was found by the plan-review gate and calls **both** R-7 and R-8 deferred (R-8 shipped 2026-05-29). **Risk this decision accepts:** keeping the number risks the old *"web enrichment of concept pages"* framing leaking back — mitigated by writing §2.1/§2.2 verbatim into the entry as a non-reopenable sub-section with the reopening bar stated. |
+| **OQ-1** | ★ **RE-SCOPE R-7 IN PLACE.** Keep the number; rewrite the body to *external corroboration of open typed questions*; record the refuted original scope **and its numbers** as a **non-reopenable sub-section**. | P0 rewrites the `### R-7. \`wiki-research\` (R-20)` entry in place rather than deleting it. The **five** promise sites keep pointing at a **live** entry — the fifth, `docs/architectures/verification-map.md:105`, was found by the plan-review gate and calls **both** R-7 and R-8 deferred (R-8 shipped 2026-05-29). **Risk this decision accepts:** keeping the number risks the old *"web enrichment of concept pages"* framing leaking back — mitigated by writing §2.1/§2.2 verbatim into the entry as a non-reopenable sub-section with the reopening bar stated. |
 | **OQ-2** | ★ **WORKFLOW NOW, RAIL LATER ON A NAMED TRIGGER.** Ship the composition as 3 markdown files, zero new Python. Build the rail **only if** the workflow is used ≥N times **AND** an actual egress mistake is observed in the recorded `query:` history. | P4 is the workflow shape. The rail's stronger mechanism (Python refuses before the subprocess; fetched bytes persisted so a quote is re-verifiable) is **deferred, not discarded** — and the trigger is written into the ROADMAP entry so it is a decision, not an omission. **Stated limit:** the workflow's egress control is a durable greppable `query:` receipt, **not a gate** — under Decision-17 Python cannot observe the outbound string. Do not let a reviewer read it as stronger than it is. |
 
 ### 8.2 ALSO DECIDED by the operator (2026-08-06) — nothing remains open
