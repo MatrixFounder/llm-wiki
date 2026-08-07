@@ -33,13 +33,38 @@ wiki-health ontology --vault <id> [--class decision]
 Every invocation prints a one-line JSON envelope. **coverage**: `{action, vault, rules,
 total_gaps, pages_examined, by_rule, by_class, vacuous_populations, vacuous_kinds,
 gaps:[{slug, project, class, kind,
-missing}]}`. **ontology**: `{action, vault, total_violations, edges_examined,
+missing}]}` where `kind ∈ {edge, field, field-value}` (see below).
+**ontology**: `{action, vault, total_violations, edges_examined,
 property_pages_examined, by_rule, by_kind, by_class, vacuous_populations, vacuous_kinds,
 violations:[{slug, project, class, kind, ref, detail, target}]}` where
 `kind ∈ {domain, range, property}`. Pipe to
 `python3 -m json.tool`. `--class` restricts to one page class (an unknown class →
 `INVALID_CLASS`, exit 2, without echoing the value); an unknown vault →
 `VAULT_NOT_FOUND`, exit 6. `--db-path` / `--vault-root` resolve the index DB (TASK 022).
+
+### A gap has THREE shapes — read `kind`, not just the count (TASK 072 / P2)
+`gaps[].kind` says **why THIS page is a gap**:
+
+| `kind` | meaning | rule shape |
+|---|---|---|
+| `edge` | the page carries no typed edge of that ref_type | `requires_edge: implemented-by` |
+| `field` | the frontmatter scalar is **absent or empty** (`''`/`[]`/`{}`) | `requires_field: source` |
+| `field-value` | the scalar is **PRESENT and a non-answer** | `requires_field: … ` + `forbid_values: […]` |
+
+`field-value` exists because a page can satisfy every *absence* check and still say
+nothing: `verified_on: "not verified"` is present, non-empty, and worthless. Without the
+modifier such a page reports as **covered** — not a vacuous green (the denominator is
+honest) but a blind spot no reading of the numbers reveals. ADR-006 D-036-3a.
+
+⚠️ **The offending VALUE is deliberately NOT in the envelope.** `missing` carries the FIELD
+NAME for all three kinds — the value is untrusted frontmatter (H-6), and `kind` plus the
+rule's own declared vocabulary already say everything actionable. Open the page.
+
+⚠️ **`forbid_values` sentinels ship in NO built-in layout** — they are an authoring
+convention and live in the operator's `<vault>/.wiki/layout.yaml`. If you expected
+`field-value` findings and got none, check that the vault actually declares the rule.
+`by_rule[].kind` is `field-value` for a forbid-carrying rule, so the envelope tells you
+which rules can produce that kind without re-reading the layout.
 
 ### Read the DENOMINATOR, not just the count (TASK 061 / R-061-1)
 `{"total_gaps": 0}` alone is **ambiguous**: it means either "healthy" or "**nothing was

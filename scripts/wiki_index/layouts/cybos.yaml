@@ -159,6 +159,28 @@ drift_rules:
 # not a failure — `wiki-health` always exits 0. Edge semantics from templates/page-types/*:
 # requirement/capability are covered by an inbound `implements` (stored as `implemented-by`
 # on the page); a fact's evidence is its `source:` scalar (NOT an edge).
+#
+# TASK 072 / P2 — a `requires_field` rule may also carry `forbid_values: [str]`, which
+# widens its gap condition to "PRESENT, and a non-answer" (e.g. `verified_on: "не
+# проверено"` — non-empty, so invisible to the absent/empty branch, which is how 20 live
+# `hypothesis` pages read as covered). Reported as gap kind `field-value`.
+#
+# ⚠️ DELIBERATELY NOT DECLARED HERE, and this is not an oversight. The sentinel STRINGS
+# are one operator's authoring convention (Russian, in that vault's case); shipping them
+# in a built-in layout would impose them on every cybos vault. Their home is the
+# operator's own override:
+#
+#     # <vault>/.wiki/layout.yaml   — NOTE: `coverage_rules` REPLACES this list entirely
+#     coverage_rules:
+#       - {class: requirement, requires_edge: implemented-by}
+#       - {class: capability,  requires_edge: implemented-by}
+#       - {class: fact,        requires_field: source}
+#       - {class: hypothesis, requires_field: verified_on,
+#          forbid_values: ["не проверено", "n/a", "-"]}
+#
+# `tests/test_coverage_forbid_values.py::test_no_builtin_layout_ships_forbid_values`
+# enforces this over the glob-discovered layout population — a layout added tomorrow is
+# covered without editing the test. See ADR-006 D-036-3a.
 coverage_rules:
   - {class: requirement, requires_edge: implemented-by}   # nothing implements this requirement
   - {class: capability,  requires_edge: implemented-by}   # no agent/tool provides this capability

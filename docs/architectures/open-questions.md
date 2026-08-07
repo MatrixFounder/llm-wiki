@@ -1015,7 +1015,11 @@
   config-load against `reindex._INVERSE_REF_TYPE` (edges) + the metadata-filter field allow-list.
 - **Q-036-3 (TASK 036 — `/vdd-multi` + dogfood hardening).** Security ✓ bikeshedding-only (all
   rule values bound; the only string-built fragment is a `?`-placeholder count; `requires_field`
-  double-gated by the `fullmatch` allow-list; INVALID_CLASS never echoes the value). Logic — 3
+  double-gated by the `fullmatch` allow-list; INVALID_CLASS never echoes the value). *(Still
+  true after TASK 072 / P2 widened the vocabulary — `forbid_values` sentinels are BOUND exactly
+  like `forbid_status`, the composed fragment is still only the placeholder count, and the
+  offending VALUE is deliberately never echoed into the envelope: `detail` stays the field name,
+  H-6.)* Logic — 3
   fixed: a non-scalar `status: [x]` phantom-drift → a `json_type='text'` guard; `source: []`
   (empty container) → treated as a gap (`IN ('', '[]', '{}')`); empty/whitespace status values →
   rejected at config-load. Perf — 2 fixed: the per-vault double `resolve_layout_config` collapsed
@@ -1785,3 +1789,49 @@
   is **kept** (it is correct, just unreachable through the normal index path) for direct
   `wiki-index-upsert` calls and custom layouts. **No predicate or SQL change** — a docs-only
   correction, which is the point: the code was right and every description of it was wrong.
+
+- **Q-072-1 (RESOLVED) — the SSRF guard is IMPORTED at its owner, not ported here: add a
+  raw-bytes verb to `Universal-skills/skills/html`.** The deadlock: the `html` skill's guarded
+  ladder (resolve → pin → assert-public → bounded read, every hop) **deliberately refuses PDF
+  bytes** (`%PDF-` magic), and the `pdf` skill makes **zero** network calls — so a correct guard
+  existed with no door for the file type `wiki-import` needs. **Chosen: B**, open that door where
+  the guard lives. Rejected, each on record: **A2** (import the ladder's private API — relative
+  imports break the `spec_from_file_location` precedent, and `httpx` is absent from this repo's
+  `requirements.txt`); **C** (harden the local `urlopen` — it re-resolves DNS unpinned and still
+  follows redirects: *porting trust, not importing a guard*, the recorded `obsidian-context`
+  failure mode); **D** (drop the feature — removes three live dispatch branches). ⚠️ **Cross-repo**:
+  the verb lives outside this repo's pytest / mypy / H-5 gates, which is why the consumer side
+  **fails CLOSED** — see OQ-5.
+- **Q-072-2 (RESOLVED) — reach the verb through a second `_SKILL_BIN_SPEC` key
+  (`html_launcher` → `scripts/html`), option (a).** `scripts/html2md.py` is a 27-line shim with
+  **no verb routing**; the verbs live on the extensionless launcher, so the existing `html` key
+  cannot address them. Bonus, and the reason this beats A2 outright: the launcher **re-execs into
+  the skill's own venv**, where `httpx` already lives — the dependency problem that sank A2 does
+  not exist on this path. The new `WIKI_HTML_LAUNCHER_BIN` landed in `config/skills.env.example`
+  in the same commit (else `test_env_example_documents_every_var` goes RED) plus a
+  `deployment.md` line. ⚠️ **The capability probe greps for the literal `html get URL`, not for
+  `get`** — a bare `grep -q -- get` matches `--target-selector` and would turn the fail-CLOSED
+  probe into fail-OPEN.
+- **Q-072-3 (RESOLVED) — "present, and a non-answer" is a FIELD-predicate modifier, not a new
+  edge and not a new rule branch.** Three candidate shapes for P2's blind spot (20 live
+  `hypothesis` pages whose `verified_on` is present and means *unverified*):
+  1. `{class: hypothesis, requires_edge: verifies}` — **impossible, and provably so**:
+     `valid_edges = set(_INVERSE_REF_TYPE)`, and those 15 keys contain **neither `verifies` nor
+     `cited`** even though both are legal `ref_type` values in the DB CHECK. The graph derives no
+     inverse for them, so the rule is **exit 6** at load. Recorded because a future reader will
+     re-derive this design and should stop at the gate, not at a never-firing rule.
+  2. A third top-level branch alongside `requires_edge`/`requires_field` — rejected: it duplicates
+     the whole field predicate (absent/empty would have to be restated) and doubles the shapes a
+     reader must hold.
+  3. ★ **Chosen: an optional `forbid_values` MODIFIER of `requires_field`**, bound by
+     `dependentRequired` — airtight **only** because the block uses `oneOf` (under `anyOf`,
+     `requires_edge` + `requires_field` + `forbid_values` would validate and the modifier would
+     sit on a rule that can never consult it). Gap = *absent/empty* **OR** *value ∈ sentinels*,
+     reported as per-ROW kind `field-value`.
+  Two sub-rulings worth their own line: **(i)** the sentinel STRINGS ship in **no** built-in
+  layout — an authoring convention imposed on every vault of that layout is the failure this bead
+  exists to avoid; enforced over the glob-discovered layout population, not review-gated.
+  **(ii)** the offending VALUE is **not** surfaced: `detail` stays the field name for all three
+  kinds, because it renders under the envelope key `missing` and the value is untrusted
+  frontmatter (H-6) — `kind` plus the rule's declared vocabulary already carry everything
+  actionable. ADR-006 **D-036-3a**.

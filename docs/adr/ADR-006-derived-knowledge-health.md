@@ -56,6 +56,50 @@ page_project = p.project` (the auto-derived inverse edge — unambiguous on the 
 no cross-project COUNT guard is needed). Only a SCALAR text status (`json_type='text'`) is a
 contradiction; NULL/list/object statuses are never drift.
 
+**D-036-3a — THE COVERAGE VOCABULARY: what a rule may EXPRESS.** *(Amendment — TASK 072 /
+P2, 2026-08-07. Widens D-036-3's rule grammar; changes nothing else.)*
+
+Shipped, a `coverage_rule` could express exactly two absences: *no typed edge of this
+ref_type* (`requires_edge`) and *the frontmatter scalar `$.<field>` is absent or empty*
+(`requires_field`). It could **not** express **"present, and a non-answer"** — and on the
+live vault that is not a hypothetical. All 20 `elma-kb` `hypothesis` pages carry
+`verified_on`, so every field rule reads them as covered; the value they carry *means
+unverified*. This was **not** a vacuous green (the denominator was honest, D-036-4 held) but
+a **blind spot the vocabulary could not describe** — a strictly worse failure, because no
+amount of reading the numbers reveals it.
+
+Therefore `requires_field` gains an optional `forbid_values: [str]` MODIFIER: the gap
+condition becomes *absent/empty* **OR** *value ∈ the declared sentinels*, reported as a
+per-ROW kind `field-value` (vs `field` for the pre-072 shape).
+
+- **Why a FIELD predicate and not an EDGE one.** The obvious alternative — a
+  `{class: hypothesis, requires_edge: verifies}` rule — is **rejected at load, exit 6**, and
+  provably so rather than by taste: `valid_edges = set(_INVERSE_REF_TYPE)`
+  (`layout_config.py`), and `_INVERSE_REF_TYPE`'s 15 keys contain **neither `verifies` nor
+  `cited`** — even though both are legal `ref_type` values in the DB CHECK. The event graph
+  derives no inverse for them, so `wiki-graph` cannot traverse them and a rule naming one
+  would never fire. A future reader WILL re-derive the edge design; this paragraph exists so
+  they stop at the load gate instead of at a silent never-firing rule.
+- **The sentinel STRINGS are an authoring convention and never ship.** They belong in the
+  operator's `<vault>/.wiki/layout.yaml`. Baking one importer's vocabulary into a built-in
+  layout would make every vault on that layout inherit it. Mechanically enforced over the
+  glob-discovered layout population, not review-gated.
+- **The modifier binds to `requires_field`, never stands alone.** Schema
+  `dependentRequired`, airtight only because the block uses `oneOf`; plus a Python half for
+  hand-built rules, because a single-point-of-failure gate is what D-036-4's M4 finding
+  punished in the ontology check. Every inert form — attached to an edge rule, empty list,
+  non-string member, blank member — is **exit 6**, never a rule that is read, stored and
+  unable to fire. That is the *"UNREPRESENTABLE rather than merely unreached"* doctrine
+  (`scripts/wiki_index/lint.py`, the M6 precedent) applied to config: the failure is made
+  impossible to express, not merely unlikely to be reached. Both gate halves surface to the
+  operator as a `LAYOUT_CONFIG_INVALID` finding from `wiki-config validate`
+  (`scripts/wiki_skills/wiki_config/_lint.py`), pinned with a clean-pass control.
+- **Off-equivalence is a CONTRACT, not an intention.** With the key absent the emitted SQL
+  and the `wiki-health coverage` envelope are byte-identical to pre-072, pinned by goldens
+  captured on the pre-change tree.
+- **The denominator contract below is untouched.** A forbid rule widens the NUMERATOR's
+  reach over the SAME population, so `gaps_r ≤ matched_r ≤ pages_examined` still holds.
+
 **D-036-4 — THE DENOMINATOR CONTRACT: a report states what it EXAMINED.** *(Amendment —
 TASK 061 / R-061-1, 2026-07-13. Does not change D-036-1..3; it closes a reporting hole in
 them.)*
@@ -82,6 +126,7 @@ count of **refs** — reproducing the very bug this amendment fixes, one layer d
 | Surface | Population examined | Noun |
 |---|---|---|
 | `wiki-health coverage` | pages whose authored `$.type` ∈ ⋃ `coverage_rules[].class` | `pages_examined` |
+| …the same call's finding KINDS | `edge` · `field` (absent/empty) · `field-value` (present, a non-answer — D-036-3a) | *(per-ROW on `gaps[]`; the population noun is unchanged)* |
 | `wiki-lint` `lifecycle-drift` | pages whose `$.type` ∈ ⋃ `drift_rules[].class` | `pages_examined` (its OWN population) |
 | `wiki-health ontology` / `wiki-lint` `ontology-violation` — edge rules | refs whose `ref_type` ∈ the declared edge vocabulary | `edges_examined` |
 | …the SAME call's property rules | pages whose `$.type` ∈ ⋃ `ontology.properties[].class` | `property_pages_examined` |

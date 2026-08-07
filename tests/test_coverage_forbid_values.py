@@ -263,6 +263,53 @@ def test_wiki_health_envelope_off_path_is_unchanged(tmp_path: Path) -> None:
 
 
 # =============================================================================
+# The operator-facing gate: `wiki-config validate` on a hand-written override.
+# =============================================================================
+
+
+def _validate_override(tmp_path: Path, override: str, name: str) -> tuple[int, dict[str, object]]:
+    root = tmp_path / name
+    (root / ".wiki").mkdir(parents=True)
+    (root / "WIKI_SCHEMA.md").write_text(
+        '---\nvault_id: cfgv\nschema_version: "2.0"\nlanguage: en\nlayout: cybos\n---\n',
+        encoding="utf-8")
+    (root / ".wiki" / "layout.yaml").write_text(override, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.wiki_skills.wiki_config", "validate",
+         "--vault-root", str(root)],
+        capture_output=True, text=True, cwd=REPO_ROOT, check=False)
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def test_wiki_config_validate_reports_a_bad_forbid_values_rule(tmp_path: Path) -> None:
+    """`forbid_values` is a NEW config key, and the surface an operator hits first is
+    `wiki-config validate` — not a stack trace at reindex time. It emits
+    `LAYOUT_CONFIG_INVALID` (exit 6) for BOTH gate halves: the schema's
+    (`minItems`/`dependentRequired`) and Python's (`_validate_health_rules`).
+
+    Sibling coverage of the same code lives in
+    `tests/test_wiki_config_validate.py::test_layout_and_identity_invalid`; this one is
+    P2-specific, so it lives with the feature it guards."""
+    base = "coverage_rules:\n  - {class: hypothesis, requires_field: verified_on"
+    cases = {
+        "empty": base + ", forbid_values: []}\n",                    # schema minItems
+        "blank": base + ', forbid_values: ["  "]}\n',                 # Python gate
+        "onedge": (base + "}\n  - {class: requirement, requires_edge: implemented-by, "
+                          'forbid_values: ["x"]}\n'),                 # dependentRequired
+    }
+    for name, override in cases.items():
+        code, env = _validate_override(tmp_path, override, name)
+        assert code == 6, (name, env)
+        assert env["by_code"] == {"LAYOUT_CONFIG_INVALID": 1}, (name, env)
+
+    # ★ The other half of the control: a VALID rule must pass CLEAN. A validator that
+    # rejects every override would satisfy all three assertions above.
+    code, env = _validate_override(
+        tmp_path, base + ', forbid_values: ["не проверено"]}\n', "ok")
+    assert code == 0 and env["ok"] is True and env["by_code"] == {}, env
+
+
+# =============================================================================
 # The sentinel strings are an authoring convention — they never ship.
 # =============================================================================
 

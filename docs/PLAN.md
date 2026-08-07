@@ -74,9 +74,9 @@ Recorded because a fix whose reason is not recorded is a fix that gets reverted.
 | 072-05 | **[RED]** hostile-URL tests through **both** actual call sites + the non-skippable resolve test | P1b | — |
 | 072-06 | **[LOGIC]** `_download_raw_html` → the guarded ladder (+ the launcher key + the 8 seams) | P1b | 072-05 |
 | 072-07 | **[LOGIC]** `_download_pdf` → the new verb + capability probe + `noqa` removal + **file the issue** | P1b | 072-04, 072-05, 072-06 |
-| 072-08 | **[STUB]** `forbid_values`: schema + dataclass + build + load gate (finder still ignores it) | P2 | — |
-| 072-09 | **[LOGIC]** the SQL OFF/ON split + per-row `field-value` kind + off-equivalence goldens | P2 | 072-08 |
-| 072-10 | P2 docs + the `cybos.yaml` **comment-only** `forbid_values` note + `wiki-config validate` finding | P2 | 072-09 |
+| 072-08 | ✅ **[STUB]** `forbid_values`: schema + dataclass + build + load gate (finder still ignores it) | P2 | — |
+| 072-09 | ✅ **[LOGIC]** the SQL OFF/ON split + per-row `field-value` kind + off-equivalence goldens | P2 | 072-08 |
+| 072-10 | ✅ P2 docs + the `cybos.yaml` **comment-only** `forbid_values` note + `wiki-config validate` finding | P2 | 072-09 |
 | 072-10b | ★ **[BUG]** `cybos.yaml` half-support: repo glob fix + two-conjunct regression test + operator override | OQ-4 | — |
 | 072-11 | ★ **The doc census** (entirely ungated) + final gates | all | all |
 
@@ -558,7 +558,10 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 
 ### Phase 3 — P2 · `forbid_values` on `CoverageRule` *(independent of P1a and P1b)*
 
-- [ ] **072-08 · [STUB] Schema + dataclass + build + load gate; the finder still ignores the key.**
+- [x] **072-08 · [STUB] Schema + dataclass + build + load gate; the finder still ignores the key.**
+  ✅ **SHIPPED** `a469ee3`. Executed RED 9F/15P (source stashed, tests kept). Gate rejects all four
+  inert forms; the three OFF-equivalence goldens were captured on the PRE-change tree and passed
+  there, so they anchor the OFF path rather than agreeing with the change. G-4 held.
   **Files**: `config/layout-config.schema.yaml` (:177-191 properties · **and the block comment at
   :174-175 + the `requires_field` description at :187**, both of which become false the moment the key
   lands), `scripts/wiki_index/models.py` (the frozen `CoverageRule` + its exactly-one-of docstring),
@@ -572,7 +575,12 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   ★ **G-4**: `build_cybos_vault` gains a keyword-with-default parameter, so **all 27 existing call
   sites across 5 files are unchanged by construction** — a structural claim; do not enumerate them.
 
-- [ ] **072-09 · [LOGIC] The SQL third disjunct + the `field-value` gap kind + off-equivalence.**
+- [x] **072-09 · [LOGIC] The SQL third disjunct + the `field-value` gap kind + off-equivalence.**
+  ✅ **SHIPPED** `ab5ed14`. 3089 passed / 22 skipped, mypy strict clean. Discrimination control both
+  halves (fires on `hypothesis`, silent on `fact` — and the `fact` rule proved alive by
+  `fact-absent`); `matched > 0` per Rule 4. Mutation-verified both directions (5 RED / 3 RED); the
+  mutation also found a real weakness in the implementation (branch condition and per-row column
+  guard were two expressions → now one local). Statement count unchanged.
   The predicate joins the SAME parenthesised gap condition as a third disjunct —
   `OR CAST(json_extract(frontmatter_json, ?) AS TEXT) IN (?,?,…)` — every sentinel **BOUND** via
   `params`, only the placeholder **count** string-composed; the `$.<field>` path is
@@ -582,7 +590,12 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   **byte-identical** to today. Ship that as a golden.
   ★ **Rule 4**: the control rule asserts `matched > 0`, not merely `gaps == 0`.
 
-- [ ] **072-10 · P2 docs + the merge gate.**
+- [x] **072-10 · P2 docs + the merge gate.**
+  ✅ **SHIPPED**. Every plan-cited ref VERIFIED before use (`_lint.py:766`, `lint.py:660`,
+  `test_wiki_config_validate.py`); `skills/wiki-health/SKILL.md` is NOT H-5-pinned, so no re-pin.
+  `wiki-config validate` behaviour was MEASURED (all 4 cases incl. a clean-pass control), then
+  pinned as a test rather than asserted in prose. Added Q-072-1/2/3 to open-questions.md (Q-072-1/2
+  were resolved in P1b but never recorded) + 2 live ROADMAP sites the plan did not list.
   **Files**: `docs/adr/ADR-006-derived-knowledge-health.md` (**D-036-3 at :45** — the ADR is the
   authority on what a rule may EXPRESS — **and the denominator table row at :84**),
   `docs/architectures/open-questions.md` (Q-036-3's security sentence; + the Q-072-1/Q-072-2 rulings),

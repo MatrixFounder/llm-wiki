@@ -360,6 +360,10 @@ writing this entry — recorded because it will be made again.)*
 > to the IDF sum measuring length. **Discarded.** Prefer a **structural** selector (authored type +
 > status + a frontmatter value in a forbidden set + absence of a corroborating ref) over any scalar
 > threshold: a structural selector cannot repeat the IDF failure by construction.
+> ✅ **The "frontmatter value in a forbidden set" limb is now EXPRESSIBLE** — TASK 072 / P2 shipped
+> `coverage_rules[].forbid_values` (gap kind `field-value`; ADR-006 **D-036-3a**). The sentinel
+> STRINGS ship in no built-in layout, so declaring them is an operator step in
+> `<vault>/.wiki/layout.yaml`, not something a cybos vault inherits.
 
 > **★ D-9 — STANDING RULE, wherever this is documented: a web-origin page may NEVER mint a
 > `verifies` ref.** Such a page derives `trust_tier = external` for free; if it minted `verifies`
@@ -710,6 +714,10 @@ reporting pages missing an expected edge/field. Rules are layout-config-driven (
 walk (all values bound). `/vdd-multi` converged (3 logic + 2 perf fixes folded in); live cybos
 dogfood green; **1524 pytest, mypy strict**. Design: **ADR-006** (D-036: drift→lint/`--strict`
 because it is a *contradiction*; coverage→always-exit-0 report because a gap is *expected*).
+**Amended TASK 072 / P2** (ADR-006 D-036-3a): a coverage gap now has **three** kinds, not two —
+`edge`, `field` (absent/empty), and `field-value` (the scalar is PRESENT and carries a declared
+non-answer, via an optional `forbid_values` modifier on `requires_field`). Absent key ⇒
+byte-identical SQL and envelope.
 **Deferred:** Track B (RFC-011 subgraph polish), RFC-008-lite (`trust_level`), RFC-009
 pattern-mining, body-section coverage. See `docs/tasks/task-036-*`, `docs/adr/ADR-006-*`.
 
