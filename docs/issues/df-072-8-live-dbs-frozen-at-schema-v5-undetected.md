@@ -1,14 +1,36 @@
 ---
 id: DF-072-8
 type: known-issue
-status: open
+status: partially-fixed
 opened_at: 2026-08-07
+resolved_at: 2026-08-07
 category: correctness
 severity: SEV-2
 slug: df-072-8-live-dbs-frozen-at-schema-v5-undetected
 ---
 
-# Both live index DBs are frozen at **schema v5** while the repo ships v7 — every event-graph typed edge is UNWRITABLE there, and **nothing in `scripts/` reads `PRAGMA user_version`**, so nothing detects it
+# The global index DB was frozen at **schema v5** while the repo ships v7 — every event-graph typed edge was UNWRITABLE there, and **nothing in `scripts/` reads `PRAGMA user_version`**, so nothing detected it
+
+> ## ✅ REBUILT 2026-08-07 (operator-authorised) — and one claim of this issue CORRECTED
+>
+> `global.db` was rebuilt per the documented Class-B procedure. **The rebuild is exact**:
+> `user_version` 5 → **7**, pages **613 → 613**, refs **3933 → 3933**, `PRAGMA
+> integrity_check` ok. Nothing was lost, because nothing was ever DB-only — ADR-002 §D8
+> proving itself on a real 613-page vault rather than in a test. The reproducer below now
+> INVERTS: all **7/7** forward typed edges insert cleanly on a copy of the rebuilt DB.
+> The two dead registrations (`audit-scaffold-personal`, `karptest` — both
+> `/private/tmp/...` roots long gone) were dropped, as intended.
+>
+> ⚠️ **CORRECTION to this issue's own headline.** It said "*both live index DBs*", which
+> over-generalised from the two DBs that were checked. The vault-local DB at
+> `Downloads/TestVault/ObsidianNotes-Test/.wiki/index.db` was **already v7** with the full
+> 14-edge CHECK. The real pattern is AGE, not "DBs in general": `global.db` was created
+> 2026-06 and never rebuilt across two schema bumps; DBs created later are correct.
+>
+> **STILL OPEN — the part that actually matters.** The absence of detection is unchanged:
+> `grep -rn user_version scripts/` still returns comments only. A DB left behind by the
+> next schema bump will fail exactly the same way, silently. This issue stays
+> `partially-fixed` for that reason: the instance is repaired, the class is not.
 
 Found by running TASK 072's own final gate (`PRAGMA user_version == 7`) instead of ticking
 it. The schema FILE is correct — `sql/wiki-index-v2.sql:481` is `PRAGMA user_version = 7;`.
