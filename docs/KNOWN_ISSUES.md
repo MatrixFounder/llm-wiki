@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-07T01:01:13.235500 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-07T13:35:57.678597 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -17,9 +17,15 @@
 - **DF-049-1** [[df-049-1-queries-dir-not-walked-off-karpathy|filed \`_queries/\`/\`_verifications/\` pages don't survive reindex on non-karpathy layouts]] — severity `SEV-2`, status `fixed`, opened 2026-07-07
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **DF-072-1** [[df-072-1-verify-multi-apply-files-a-vacuous-pass|\`wiki-verify-multi apply\` files a **PASS verdict over ZERO examined sources** — the two floors its own \`prepare\` carries are absent from \`apply\`]] — severity `SEV-2`, status `open`, opened 2026-08-07
+- **DF-072-4** [[df-072-4-wiki-lint-strict-exit-1-success-envelope|\`wiki-lint --strict\` returns **exit 1 with a SUCCESS envelope** — the second instance of a divergence the repo documents as unique to \`wiki-verify-multi\`, and this one is warned about nowhere]] — severity `SEV-2`, status `open`, opened 2026-08-07
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 - **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
 - **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `fixed`, opened 2026-07-14
+
+## documentation
+
+- **DF-072-2** [[df-072-2-wiki-health-always-exits-0-is-false|«\`wiki-health\` **always exits 0**» is FALSE — and it is asserted in an **Accepted ADR**, \`CLAUDE.md\`, \`README.md\`, \`ARCHITECTURE.md\`, the manual and the ROADMAP]] — severity `SEV-2`, status `open`, opened 2026-08-07
+- **DF-072-3** [[df-072-3-one-json-envelope-per-cli-is-false|«Every CLI emits **one JSON envelope** + a stable exit code» is FALSE on the usage path — and it is the Decision-17 paragraph in \`CLAUDE.md\`]] — severity `SEV-3`, status `open`, opened 2026-08-07
 
 ## dogfood
 
@@ -105,6 +111,7 @@
 - **DF-9** [[df-9-note-file-lacks-vault-containment-check|\`wiki-import apply --note-file\` accepts an absolute path outside \`--vault-root\`; the sibling \`wiki-extract-concepts apply --candidates-file\` refuses one]] — status `fixed`, opened 2026-07-08
 - **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
+- **DF-072-5** [[df-072-5-wiki-init-echoes-the-offending-value|\`wiki-init\` emits a **\`received\`** key echoing the offending value — the one key \`components.md\` names as forbidden — and it is the one CLI excluded from every envelope-safety suite]] — severity `SEV-3`, status `open`, opened 2026-08-07
 
 ## uncategorized
 
