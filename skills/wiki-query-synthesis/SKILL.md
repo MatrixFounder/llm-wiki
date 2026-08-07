@@ -126,6 +126,7 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
 |---|---|
 | A JSON **array of strings** | `INVALID_CITATIONS` |
 | Each is a `"<project>/<slug>"` (non-empty project AND slug) | `INVALID_CITATIONS` |
+| **≥ 1** entry — an empty array is refused | `NO_CITATIONS` |
 | ≤ **50** entries | `INVALID_CITATIONS` |
 | **Every entry is a `project/slug` present in `prepare`'s `hits`** (the grounding gate, keyed on the full `project/slug` tuple) | `CITATION_NOT_RETRIEVED` |
 
@@ -133,6 +134,21 @@ The orchestrator produces **two** payloads, passed to `apply` separately:
 > same retrieval, recomputes `question_hash` (mismatch → `QUESTION_CHANGED`,
 > exit 2 — the corpus changed mid-pipeline; re-run `/wiki-query`), and rejects
 > any citation not in the retrieved set. Cite only what you were given.
+
+> ### An answer you cannot cite is not filed — and that is the correct outcome
+> The floor above is **not** a formality you satisfy by padding the array. If the
+> retrieved context does not support an answer, the honest response is to **STOP and
+> report that to the operator** — not to file an uncited page. There is no flag that
+> permits an uncited answer: `--force` does not override this, and `--min-hits 0` on
+> `prepare` cannot reach a filed page either (it produces an empty retrieval, after
+> which an empty array fails `NO_CITATIONS` and any non-empty one fails
+> `CITATION_NOT_RETRIEVED`).
+>
+> **Why the floor exists**: without it an empty array satisfied every check in the
+> block *vacuously* — including the grounding gate itself, whose `any(…)` over `[]` is
+> `False` — so a `cites: []` page was filed and indexed at exit 0. The anti-hallucination
+> mechanism passed **because it examined nothing**. Never treat "I found no grounding"
+> as something to route around; it is a result, and reporting it is the contract.
 
 ---
 
