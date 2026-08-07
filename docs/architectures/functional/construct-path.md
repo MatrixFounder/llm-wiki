@@ -216,15 +216,33 @@ video embeds found in the raw HTML. The flag is **off by default** and is a **NO
 `unambiguous_video` and `ambiguous_x_status` URLs (those are `--video`'s domain). Passing both
 `--video` and `--embedded-videos` on the same URL is a usage error (exit 2).
 
-**Why raw-HTML scan, not html-skill output.** The html skill (`preprocess.py`) strips `<iframe>`
-and `<video>` elements before emitting Markdown, and its `meta.json` sidecar carries no embed
-URLs. Composing with the html skill's output is therefore impossible for embed discovery — the
-raw page HTML must be read directly. Discovery uses a **single SIZE-CAPPED raw-HTML GET** (reuses
-the `urllib` + browser-UA + byte-cap pattern of `_download_pdf`; cap constant
-`_EMBED_FETCH_MAX_BYTES`, default 2 MB) followed by a bounded, anchored, ReDoS-safe regex scan
-for video-embed URL patterns. The raw-HTML GET is the only additional network call; the html
-skill's own fetch (which already ran for the article prose) is separate and unchanged. Design
-rationale: Q-044-9 / Q-044-10.
+**Why raw-HTML scan, not html-skill MARKDOWN output.** ⚠️ **Corrected 2026-08-06 (TASK 072) — the
+previous wording was too strong and argued against the design that now ships.** The html skill
+strips `<iframe>`/`<video>` before emitting **Markdown**, and its `meta.json` carries no embed
+URLs; that much is true, so the *Markdown* path cannot serve discovery. But
+`serialize.sanitize_untrusted_html` writes the **HTML artifact without stripping tags**, so
+iframes survive there — "composing with the html skill's output is impossible" was false as
+stated. What is required is the **raw, untransformed** bytes.
+
+Discovery therefore uses the skill's **`get` verb** (`html get URL --stdout`, TASK 072 / 072-06),
+which returns bytes verbatim through the **SSRF-guarded ladder** (resolve → pin → assert-public →
+bounded read, every hop). It replaced a bare `urllib.request.urlopen`.
+
+★ **Deliberately `get`, not `fetch --stdout`** — three verified reasons: `fetch` emits sanitized +
+absolutized HTML (the regex would scan a **transformed** document); it runs the full tier ladder,
+whose `auto` engine can escalate to Chrome and then to the **remote reader tier, which sends the
+URL to a third party** — an egress a best-effort embed scan must not silently acquire; and it can
+return markdown. `get` is byte-verbatim, local-only, single-tier.
+
+★ **Over-cap REFUSES, it does not truncate** (`_EMBED_FETCH_MAX_BYTES`, 2 MiB, unchanged). The old
+code read the cap and scanned the prefix — but discovery is a **regex**, and a truncation can
+split an `<iframe` tag across the boundary, silently losing or mangling an embed while reporting a
+complete result. The caller now logs `page-too-large` instead. A reported skip beats a wrong
+answer presented as a whole one.
+
+The guarded GET is the only additional network call; the html skill's own fetch (which already ran
+for the article prose) is separate and unchanged. Design rationale: Q-044-9 / Q-044-10; the guard
+decision is Q-072-1 = B.
 
 **Filter chain — order is fixed and always applied in full when `--embedded-videos` is set.**
 
@@ -235,8 +253,12 @@ allowlist → ad-network denylist → ad-context → ad-param → dedup → cap 
 1. **Allowlist (H-6 / SSRF).** Only known video-host embed patterns pass:
    `youtube.com/embed`, `youtube-nocookie.com/embed`, `youtu.be`, `player.vimeo.com/video`,
    `vimeo.com`. Any `<iframe src>` not matching is silently dropped — the page cannot trigger a
-   fetch to an arbitrary host. Residual SSRF surface (operator-trusted, allowlisted hosts only)
-   is documented in `skills/wiki-import/SKILL.md` alongside the pdf residual.
+   fetch to an arbitrary host. ⚠️ **"operator-trusted" removed 2026-08-06 (TASK 072): it was
+   false.** `/wiki-reload` re-fetches a URL out of a note's OWN frontmatter — H-6 **data**, not
+   operator input — and the pre-072 fetch followed 30x silently, so every hop after hop 0 was
+   attacker-chosen regardless of who typed hop 0. The allowlist is a *destination* bound on the
+   embed fetch; the *transport* bound is now the `html` skill's guarded ladder, applied at every
+   hop of both call sites.
 
 2. **Ad-network host denylist (always-on belt-and-braces).** Drop any embed whose host matches
    a known ad-network domain: `doubleclick.net` (incl. `*.doubleclick.net`,

@@ -19,7 +19,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +45,12 @@ _OFFICE_TIMEOUT = 240  # TASK 046: LibreOffice headless convert
 # key → (env var, candidate skill-dir names [first = canonical], entry path inside the skill)
 _SKILL_BIN_SPEC: dict[str, tuple[str, tuple[str, ...], str]] = {
     "html":            ("WIKI_HTML_BIN",        ("html", "html2md"),      "scripts/html2md.py"),
+    # TASK 072 / Q-072-2 = (a): a SECOND entry for the same skill. `scripts/html2md.py` above is a
+    # 27-line shim calling `combined_main()` with NO verb routing; the verbs (`fetch`/`md`/`get`)
+    # live on the extensionless launcher — which additionally re-execs into the skill's own
+    # `scripts/.venv`, where `httpx` lives. That is what lets us reach the SSRF-guarded ladder
+    # without adding a runtime dependency here.
+    "html_launcher":   ("WIKI_HTML_LAUNCHER_BIN", ("html", "html2md"),    "scripts/html"),
     "pdf_extract":     ("WIKI_PDF_EXTRACT_BIN", ("pdf",),                 "scripts/pdf_extract.py"),
     "soffice_wrapper": ("WIKI_SOFFICE_WRAPPER", ("pptx",),               "scripts/_soffice.py"),
     "transcript":      ("WIKI_TRANSCRIPT_BIN",  ("transcript-fetcher",), "scripts/fetch.py"),
@@ -135,11 +140,10 @@ _load_skills_env()  # populate os.environ from skills.env BEFORE the _DEFAULT_* 
 # TASK 048: both now resolve vendor-agnostically via resolve_skill_bin (single source — no dup).
 _DEFAULT_VTT_CLEANER = resolve_skill_bin("vtt_cleaner")
 _DEFAULT_SOFFICE_WRAPPER = resolve_skill_bin("soffice_wrapper")
-# Browser-like UA: many PDF hosts (CDNs, hubfs, journal sites) reject non-browser
-# agents with 403. Operator-supplied URL — this fetches a document the operator asked
-# for (not detection-evasion); mirrors what the html skill's fetch already sends.
-_PDF_FETCH_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# TASK 072 / P1b: `_PDF_FETCH_UA` was deleted with the `urlopen` sites it served. The UA is now the
+# `html` skill's own — honest by default, escalating to a browser UA only on a 403, which the two
+# call sites request via `--browser-ua` when they need it. Keeping a second hardcoded UA here would
+# be a copy of a policy that already has an owner.
 # X/Twitter served logged-out: the html skill's lite fetch returns only the login chrome (no post
 # text). Detect it (scoped to these hosts) so we surface a needs-manual signal instead of
 # writing a junk _raw. Conservative threshold — a captured first tweet (~300+ prose chars)
@@ -306,6 +310,104 @@ def require_bin(path_or_name: str, label: str) -> str:
             exit_code=EXIT_DEP_MISSING,
             details={"binary": path_or_name, "label": label})
     return found
+
+
+# ---- TASK 072 / P1b: the ONE guarded egress helper both call sites go through ----
+
+#: Probe result, cached for the process. ``None`` = not probed yet.
+_HTML_GET_VERB_OK: bool | None = None
+
+#: The probe string, VERBATIM. ★ Never `grep -q -- get`: a bare `get` matches `--target-selector`
+#: in the same help text, so a fail-CLOSED probe would silently be fail-OPEN. And
+#: `html get --help` is no good either — on a build without the verb, argparse reads `get` as
+#: INPUT, prints the top-level help and exits 0. The verb roster exists in `--help` for this.
+_HTML_GET_PROBE = "html get URL"
+
+#: Total wall-clock budget handed to the child. ★ Size the subprocess timeout against
+#: ``--deadline``, NOT ``--timeout``: `--timeout` is PER OPERATION and bounds nothing in total —
+#: a redirect chain multiplies it by ``max_redirects + 1`` inside every retry pass, so at the
+#: skill's defaults the redirect case alone is 60 x 6 x 4 = 1440 s. `--deadline` is enforced
+#: inside the ladder at every hop and every chunk, so it is a real bound.
+_GUARDED_GET_DEADLINE_SEC = 120
+
+
+def _require_html_get_verb(launcher: str) -> None:
+    """Fail CLOSED if the installed `html` skill predates the raw-bytes verb (OQ-5).
+
+    ``resolve_skill_bin`` proves the entry FILE exists, never that it supports a verb — and this
+    verb is new (Q-072-1 = B), so every not-yet-updated install would otherwise surface as a
+    generic FETCH_FAILED, the confusing failure a weak model cannot recover from. Refuse with a
+    DEPENDENCY_MISSING envelope naming the remediations. **Never fall back to `urlopen`** — that
+    would reinstate exactly the unguarded egress this bead removes.
+    """
+    global _HTML_GET_VERB_OK
+    if _HTML_GET_VERB_OK is None:
+        try:
+            proc = subprocess.run([launcher, "--help"], capture_output=True, text=True,
+                                  timeout=60, env=_skill_env())
+            _HTML_GET_VERB_OK = _HTML_GET_PROBE in (proc.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            _HTML_GET_VERB_OK = False
+    if not _HTML_GET_VERB_OK:
+        raise ImportArticleError(
+            "DEPENDENCY_MISSING",
+            "the installed `html` skill has no raw-bytes `get` verb, which this import path "
+            "requires for its SSRF guard. Remediate by ONE of: (1) update the `html` skill to a "
+            "build whose `--help` lists `html get URL`; (2) point $WIKI_HTML_LAUNCHER_BIN at an "
+            "updated launcher; (3) re-run without the URL-fetch path (a local file input needs "
+            "no egress). Refusing rather than falling back to an unguarded fetch.",
+            exit_code=EXIT_DEP_MISSING,
+            details={"binary": launcher, "label": "html_launcher", "probe": _HTML_GET_PROBE})
+
+
+def _guarded_get(url: str, *, max_bytes: int, headers: tuple[str, ...] = (),
+                 browser_ua: bool = False, out_path: Path | None = None) -> bytes:
+    """Fetch `url` through the `html` skill's SSRF-guarded ladder. Returns the bytes.
+
+    With ``out_path`` the child writes the file itself (atomic replace) and ``b""`` is returned;
+    otherwise the body comes back on stdout.
+
+    ★ Branches on ``details.kind``, never on the bare exit code — every FetchFailed maps to 10, so
+    a security refusal, a deadline and a plain transport error are indistinguishable by code
+    alone. That exact gap once made the skill's OWN refusal tests vacuous (with the blocklist
+    disabled they still passed, having egressed to RFC-1918 and received a real HTTP 404).
+    """
+    launcher = require_bin(resolve_skill_bin("html_launcher"), "html_launcher")
+    _require_html_get_verb(launcher)
+    argv = [launcher, "get", url]
+    argv += [str(out_path)] if out_path is not None else ["--stdout"]
+    argv += ["--json-errors", "--max-bytes", str(max_bytes),
+             "--deadline", str(_GUARDED_GET_DEADLINE_SEC)]
+    for h in headers:
+        argv += ["--header", h]
+    if browser_ua:
+        argv.append("--browser-ua")
+    try:
+        proc = subprocess.run(argv, capture_output=True, timeout=_GUARDED_GET_DEADLINE_SEC + 30,
+                              env=_skill_env())
+    except subprocess.TimeoutExpired as e:
+        raise ImportArticleError("FETCH_FAILED", f"guarded fetch timed out for {url}",
+                                 details={"url": url, "kind": "timeout"}) from e
+    if proc.returncode == 0:
+        return proc.stdout
+    err: dict[str, Any] = {}
+    try:
+        err = json.loads((proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        pass
+    details = err.get("details") or {}
+    kind = details.get("kind")
+    if kind is None and details.get("max_bytes") is not None:
+        kind = "too-large"
+    if kind is None:
+        # exit 2 = Usage (e.g. a non-http(s) scheme — a caller typo, not a security refusal);
+        # anything else with no parseable envelope is a transport fault.
+        kind = "usage" if proc.returncode == 2 else "transport"
+    msg = err.get("error") or (proc.stderr or b"")[:300].decode("utf-8", "replace")
+    raise ImportArticleError(
+        "FETCH_FAILED", f"guarded fetch refused or failed for {url}: {msg}",
+        details={"url": url, "kind": kind, "exit_code": proc.returncode,
+                 **({"max_bytes": details["max_bytes"]} if "max_bytes" in details else {})})
 
 
 def _pdf_python(script_path: str) -> str:
@@ -477,29 +579,31 @@ def _parse_skill_error(stderr: str, returncode: int) -> dict[str, Any]:
 
 
 def _download_pdf(url: str) -> Path:
-    """Download a PDF URL to a temp file, size-capped. (Operator-supplied URL; the
-    SSRF surface is the operator's — documented residual. NOTE: urllib follows 30x
-    redirects, so the residual includes a redirect to a private/link-local host; run
-    untrusted imports in an egress-restricted sandbox.)"""
-    req = urllib.request.Request(
-        url, headers={"User-Agent": _PDF_FETCH_UA, "Accept": "application/pdf,*/*"})
+    """Download a PDF URL to a temp file, size-capped, through the SSRF-guarded ladder.
+
+    TASK 072 / 072-07. Was a bare ``urlopen`` carrying an ``S310 (operator URL)`` suppression — a
+    justification falsified twice over: ``/wiki-reload`` re-fetches a URL out of a note's OWN
+    frontmatter (H-6 **data**, not operator input), and urllib follows 30x silently, so every hop
+    after hop 0 is attacker-chosen regardless of who typed hop 0. The guard now runs
+    resolve → pin → assert-public on every hop.
+
+    **Request shape is PRESERVED, deliberately.** ``Accept: application/pdf,*/*`` and a browser UA
+    both still go out — P2-4 exists because real PDF hosts (CDNs, hubfs, journal sites) 403 a bare
+    agent, and the skill's default only escalates *after* a 403. ``--browser-ua`` sends it from the
+    first request, which is what the old code did.
+
+    ⚠️ **One real behaviour change**: the body is BUFFERED by the child, so ``_MAX_PDF_BYTES`` is
+    now a memory bound too (~2x at the join). The old loop streamed at constant memory. The cap
+    value itself is unchanged.
+    """
     fd, name = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)            # close the mkstemp fd — we re-open by path below (no fd leak)
+    os.close(fd)            # close the mkstemp fd — the child writes the path (no fd leak)
     tmp = Path(name)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
-            total = 0
-            with tmp.open("wb") as fh:
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > _MAX_PDF_BYTES:
-                        raise ImportArticleError(
-                            "FETCH_FAILED", f"PDF exceeds {_MAX_PDF_BYTES}-byte cap",
-                            exit_code=EXIT_FETCH_FAILED, details={"url": url})
-                    fh.write(chunk)
+        # ★ The child leaves a pre-existing OUTPUT_PATH UNTOUCHED on failure, so success must be
+        # keyed on the exit code — never on `tmp.exists()`, which mkstemp already made true.
+        _guarded_get(url, max_bytes=_MAX_PDF_BYTES,
+                     headers=("Accept: application/pdf,*/*",), browser_ua=True, out_path=tmp)
     except BaseException:   # never leak the temp file on any error/abort path
         tmp.unlink(missing_ok=True)
         raise
@@ -889,22 +993,31 @@ def _fetch_x_status_with_video(html_bin: str, transcript_bin: str, url: str, *, 
 # ---- TASK 044 / R-13: embedded-video discovery (opt-in --embedded-videos) ----
 
 def _download_raw_html(url: str) -> str:
-    """Size-capped raw-HTML GET for embed discovery (mirrors `_download_pdf`; R-13b). The network
-    call lives HERE so `_discover_embedded_videos` stays a pure string→list function (Decision-17)."""
-    req = urllib.request.Request(
-        url, headers={"User-Agent": _PDF_FETCH_UA, "Accept": "text/html,*/*"})
-    chunks: list[bytes] = []
-    total = 0
-    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator URL)
-        while True:
-            chunk = resp.read(65536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > _EMBED_FETCH_MAX_BYTES:
-                break
-            chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8", errors="replace")
+    """Size-capped raw-HTML GET for embed discovery (R-13b), through the SSRF-guarded ladder.
+
+    TASK 072 / 072-06. Was a bare ``urllib.request.urlopen``; now a subprocess call to the `html`
+    skill's ``get`` verb, which runs resolve → pin → assert-public → bounded read on EVERY hop.
+
+    ★ ``get --stdout``, deliberately NOT ``fetch --stdout``: `fetch` emits sanitized + absolutized
+    HTML (a regex over ``<iframe src>`` would scan a TRANSFORMED document), runs the full tier
+    ladder — whose `auto` engine can escalate to Chrome and then to the REMOTE READER TIER, which
+    sends the URL to a third party — and can return markdown. `get` is byte-verbatim, local-only,
+    single-tier.
+
+    ★ **Over-cap now REFUSES instead of truncating.** The old code read 2 MiB and scanned the
+    prefix. `_discover_embedded_videos` is a regex, and a truncation can split an ``<iframe`` tag
+    across the boundary — silently losing or mangling an embed and reporting the result as
+    complete. A wrong answer presented as a whole one is worse than a reported skip, so the caller
+    logs ``page-too-large`` rather than scanning a fragment. (The cap itself is unchanged, so the
+    memory characteristic does not move.)
+    """
+    body = _guarded_get(
+        url,
+        max_bytes=_EMBED_FETCH_MAX_BYTES,
+        headers=("Accept: text/html,*/*",),
+        browser_ua=True,
+    )
+    return body.decode("utf-8", errors="replace")
 
 
 def _embed_allowlisted(url: str) -> bool:
@@ -955,6 +1068,18 @@ def _append_embedded_videos(res: FetchResult, page_url: str, *, transcript_bin: 
     `res.embed_log` (R-13f). Cap-dropped keeps are logged `cap`; nothing is silently truncated."""
     try:
         raw_html = _download_raw_html(page_url)
+    except ImportArticleError as e:
+        # TASK 072 / 072-06: keep the DISTINGUISHABLE outcomes distinguishable. A guard refusal, a
+        # missing dependency and an over-cap page are three different operator actions; collapsing
+        # them into one `discovery-failed` is what made the old failure unreadable.
+        kind = (e.details or {}).get("kind")
+        reason = {"too-large": "page-too-large", "refused": "discovery-refused-ssrf",
+                  "deadline": "discovery-timeout", "timeout": "discovery-timeout",
+                  "usage": "discovery-bad-url"}.get(str(kind), "discovery-failed")
+        if e.code == "DEPENDENCY_MISSING":
+            reason = "discovery-dependency-missing"
+        res.embed_log = [{"reason": reason, "detail": str(e)[:200]}]
+        return
     except Exception as e:  # noqa: BLE001 — the page import already succeeded; embeds are best-effort
         res.embed_log = [{"reason": "discovery-failed", "detail": str(e)[:200]}]
         return

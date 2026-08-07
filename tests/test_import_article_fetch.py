@@ -120,21 +120,35 @@ def test_url_serving_pdf_without_suffix_routes_to_pdf(monkeypatch):
 
 
 def test_pdf_download_uses_browser_ua(monkeypatch):
-    # P2-4: _download_pdf must send a browser-like UA + Accept (hosts 403 a bare UA)
-    captured = {}
+    """P2-4: `_download_pdf` must still send a browser UA + a PDF Accept — real hosts (CDNs,
+    hubfs, journal sites) 403 a bare agent.
 
-    class _Resp:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def read(self, n=-1): return b""  # empty body → UA/headers are the point
+    ⚠️ Rewritten for TASK 072 / 072-07: the request no longer goes through `urlopen` (that was
+    the unguarded egress site), so the assertion moved from urllib's Request headers to the argv
+    handed to the `html get` verb. The REQUIREMENT is unchanged and deliberately preserved — the
+    skill's own default escalates to a browser UA only AFTER a 403, so `--browser-ua` is what
+    reproduces "send it from the first request".
+    """
+    seen = {}
 
-    def _fake_urlopen(req, **kw):
-        captured["ua"] = req.get_header("User-agent")
-        captured["accept"] = req.get_header("Accept")
-        return _Resp()
-    monkeypatch.setattr(_fetch.urllib.request, "urlopen", _fake_urlopen)
-    _fetch._download_pdf("https://host/x")
-    assert "Mozilla/5.0" in (captured["ua"] or "") and "pdf" in (captured["accept"] or "")
+    def _fake_run(argv, **kw):
+        seen["argv"] = argv
+        Path(argv[argv.index("get") + 2]).write_bytes(b"%PDF-1.4\n")
+        return _cp(argv, 0, b"", b"")
+
+    monkeypatch.setattr(_fetch, "resolve_skill_bin", lambda k: "/fake/html")
+    monkeypatch.setattr(_fetch, "_require_html_get_verb", lambda launcher: None)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    out = _fetch._download_pdf("https://host/x")
+    try:
+        argv = seen["argv"]
+        assert argv[1] == "get" and argv[2] == "https://host/x"
+        assert "--browser-ua" in argv, "the P2-4 browser-UA requirement was dropped"
+        assert "Accept: application/pdf,*/*" in argv, "PDF content negotiation was dropped"
+        # ★ the guard's own knobs must be forwarded, or the call is guarded in name only
+        assert "--max-bytes" in argv and "--deadline" in argv and "--json-errors" in argv
+    finally:
+        out.unlink(missing_ok=True)
 
 
 # --- P2-5: x.com logged-out login wall is surfaced as needs-manual, not a junk raw ----

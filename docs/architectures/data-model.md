@@ -54,7 +54,7 @@
 - **Relationships**: FK к `pages` и `entities` с `ON DELETE CASCADE`.
 - **Business Rules**:
   - `wiki-source-manual` ставит `trust_level='high'` (user-curated).
-  - `wiki-source-transcript` — `'medium'` (LLM-generated). ⚠️ ~~`wiki-source-light`~~ — **никогда не отгружался** (2026-08-06, TASK 072); никакой `trust_level` им не ставится, потому что его нет.
+  - `wiki-source-transcript` — `'medium'` (LLM-generated). ⚠️ ~~`wiki-source-light`~~ — **never shipped** (2026-08-06, TASK 072); it sets no `trust_level`, because it does not exist.
   - `replace_refs(...)` атомарно delete + insert (для re-ingest без drift'а).
   - **Merge re-pointing (R-4.7):** `merge_entities` rewrites `entity_slug from→into`. There is **no FK on `entity_slug`** (schema note: refs may target unresolved wiki-link slugs), so the re-point is free; the only conflict is the composite PK `(vault_id, page_slug, page_project, entity_slug, ref_type)` when the page already refs `into` with the same `ref_type` — dedup keeps the higher `trust_level`. Covered by the existing `idx_refs_entity (vault_id, entity_slug)` index (no new index needed).
   - **Canonical-slug invariant (AM-3):** a `page_entity_refs` row names the **canonical** entity whenever its raw `[[surface]]` target is a known alias. `reindex_full` enforces this by resolving each ref target through the alias table at build time (phase order entities → aliases → refs → recompute_mentions), so `recompute_mentions`/`get_backlinks` (`WHERE entity_slug = entities.slug`) stay correct after a full rebuild — the merge §D8 round-trip (UC-15) depends on this. Between reindexes the immediate `merge_entities` UPDATE holds the same invariant; `find_orphan_links` query-time alias resolution (R-4.5d) covers partially-indexed gaps.

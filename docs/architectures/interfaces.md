@@ -6,7 +6,7 @@
 ### 5.1. External APIs
 
 **No exposed APIs.** Вся система — local CLI (Claude Code skills). Внешние API только потребляются:
-- ~~**Anthropic API** (Claude Haiku/Sonnet) — для `wiki-source-light`~~ ⚠️ **НЕТ ТАКОЙ ЗАВИСИМОСТИ (исправлено 2026-08-06, TASK 072).** Под **Decision-17** `scripts/` не делает ни одного вызова LLM-провайдера (`grep -rnE '^\s*(import anthropic|from anthropic)' scripts/` → **0**, загейчено по всей популяции), а `wiki-source-light` **никогда не отгружался** (см. `system-architecture.md` §«DESIGNED PHASE-1, NEVER SHIPPED»). Реально потребляемые внешние процессы — `html` / `pdf` / `transcript-fetcher` (ходят в сеть сами) плюс два прямых `urllib` egress-сайта в `_fetch.py` (`security.md` A10).
+- ~~**Anthropic API** (Claude Haiku/Sonnet) — for `wiki-source-light`~~ ⚠️ **NO SUCH DEPENDENCY (corrected 2026-08-06, TASK 072).** Under **Decision-17** `scripts/` makes no LLM-provider call (`grep -rnE '^\s*(import anthropic|from anthropic)' scripts/` → **0**, gated over the whole population), and `wiki-source-light` was **never shipped** (see `system-architecture.md` §"DESIGNED PHASE-1, NEVER SHIPPED"). The external processes actually consumed are `html` / `pdf` / `transcript-fetcher` (they reach the network themselves) plus the two egress call sites in `_fetch.py`, now guarded — see `security.md` A10.
 - **Future** (Epic 6): Gmail-MCP (OAuth), Telegram MTProto (session keys via GramJS), Exa/Perplexity/Firecrawl MCPs.
 
 ### 5.2. Internal Interfaces
@@ -48,7 +48,7 @@
 | System | Purpose | Protocol | Error Handling |
 |---|---|---|---|
 | `summarizing-meetings` skill | Generate full pyramid transcript summary | Subprocess, JSON via stdout | Exit code != 0 → fail-fast с user-friendly message |
-| ~~Anthropic API (Claude)~~ | ⚠️ **НЕТ ТАКОЙ ИНТЕГРАЦИИ (2026-08-06, TASK 072)** — `wiki-light-summary` не существует (нет ни `commands/`, ни `bin/`-launcher'а), а под Decision-17 `scripts/` не вызывает LLM-провайдера. Описанного backoff'а тоже нет. | — | — |
+| ~~Anthropic API (Claude)~~ | ⚠️ **NO SUCH INTEGRATION (2026-08-06, TASK 072)** — `wiki-light-summary` does not exist (no `commands/` entry, no `bin/` launcher), and under Decision-17 `scripts/` makes no LLM-provider call. The backoff described here does not exist either. | — | — |
 | Filesystem (markdown vault) | Source-of-truth для контента | POSIX | Atomic writes (`tempfile + os.replace`); read-only on `_raw/` |
 | SQLite | Index storage | Library API | WAL retry on `database is locked`; corruption → `PRAGMA integrity_check` + restore from markdown |
 

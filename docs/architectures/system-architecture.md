@@ -232,7 +232,7 @@ with non-zero exit code. Common codes (defined в `scripts/wiki_source/base.py`)
 - `INVALID_FRONTMATTER` — YAML parse error.
 - `MISSING_REQUIRED_FIELD` — config-driven required field missing.
 - `PATH_OUTSIDE_VAULT` — path-traversal attempt detected (R-26.2).
-- ~~`INPUT_TOO_LARGE`~~ / ~~`EMPTY_INPUT`~~ / ~~`LLM_RATE_LIMIT`~~ — ⚠️ **НЕ СУЩЕСТВУЮТ (аннотировано 2026-08-06, TASK 072).** Все три принадлежали `wiki-source-light` / Anthropic-пути, который никогда не отгружался; `grep -rn 'INPUT_TOO_LARGE\|LLM_RATE_LIMIT' scripts/` → **0**. Оставлены как проектная запись, но ни один CLI их не эмитит — не пишите обработчик под них. Нормативные роестры кодов — в `skills/*/SKILL.md`, и с 2026-08-07 они машинно сверяются с реально достижимыми (`tests/test_exit_code_doc_truth.py`).
+- ~~`INPUT_TOO_LARGE`~~ / ~~`EMPTY_INPUT`~~ / ~~`LLM_RATE_LIMIT`~~ — ⚠️ **DO NOT EXIST (annotated 2026-08-06, TASK 072).** All three belonged to the `wiki-source-light` / Anthropic path, which was never shipped; `grep -rn 'INPUT_TOO_LARGE\|LLM_RATE_LIMIT' scripts/` → **0**. Retained as a design record, but no CLI emits them — do not write a handler against them. The normative code rosters live in `skills/*/SKILL.md`, and since 2026-08-07 they are machine-checked against what is actually reachable (`tests/test_exit_code_doc_truth.py`).
 - `LLM_AUTH_FAILED` — invalid API key.
 - `WORKFLOW_NOT_FOUND` — `/generate-detailed-meeting-summary` workflow или `claude` CLI отсутствует (TASK I-3.3 step a). Error JSON: `{missing: [...], expected_paths: [...]}`.
 - `WORKFLOW_TIMEOUT` — subprocess exceeded `wiki.transcript.timeout_seconds` (default 600s). Partial output moved to `_raw/failed/` (TASK I-3.3 step c.1).

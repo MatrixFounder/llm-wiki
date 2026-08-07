@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-07T14:20:33.790327 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-07T16:25:52.286603 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -112,6 +112,7 @@
 - **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
 - **DF-072-5** [[df-072-5-wiki-init-echoes-the-offending-value|\`wiki-init\` emits a **\`received\`** key echoing the offending value — the one key \`components.md\` names as forbidden — and it is the one CLI excluded from every envelope-safety suite]] — severity `SEV-3`, status `open`, opened 2026-08-07
+- **DF-072-6** [[df-072-6-ssrf-guard-residuals-proxy-and-fake-ip|The SSRF guard shipped in P1b has **two residuals that re-open address pinning** — an ambient proxy and a fake-IP resolver. Neither is a defect in the guard; both mean *"rebinding is closed"* must never be claimed unqualified]] — severity `SEV-3`, status `open`, opened 2026-08-07
 
 ## uncategorized
 
