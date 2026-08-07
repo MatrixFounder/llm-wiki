@@ -385,7 +385,9 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
 
 ### Phase 2 — P1b · SSRF *(independent of P1a and P2 — do NOT serialise behind them)*
 
-- [ ] **072-04 · ★ [CROSS-REPO PREREQUISITE] The raw-bytes verb in `Universal-skills`.**
+- [x] **072-04 · ★ [CROSS-REPO PREREQUISITE] The raw-bytes verb in `Universal-skills`.**
+  ✅ **SHIPPED + INSTALLED** (`7f6d20d` in `Universal-skills`; reachable here through
+  `~/.claude/skills/html` → that repo, verified by `html --help | grep 'html get URL'`).
   **⚠️ This bead does not touch this repository.** Its work lands in
   `~/dev-projects/Universal-skills/skills/html` (`github.com/MatrixFounder/Universal-skills`) — the
   operator's own repo, symlinked into every harness skills dir. It is therefore **outside this repo's
@@ -482,7 +484,10 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
     default) the pin binds the *synthetic* address, with the synthetic→real mapping owned by the
     proxy tool. Both residuals are in the skill's SKILL.md §5.
 
-- [ ] **072-05 · [RED] Hostile-URL tests through BOTH actual call sites.**
+- [x] **072-05 · [RED] Hostile-URL tests through BOTH actual call sites.**
+  ✅ **SHIPPED `1002f51`** (with 072-06/07 — the tests cover BOTH call sites in one file, so a
+  tests-only commit would leave the tree red; same precedent as the 072-02/03a fusion). RED
+  **executed and pasted**: 15 failed / 3 passed, every hostile class accepted on both sites.
   **Population that matters is provider-returned URLs**, not operator-typed ones: private IP
   (`10.0.0.1`, `127.0.0.1`, `169.254.169.254`), **redirect-to-private**, non-http scheme (`file://`),
   IPv4-mapped/translated forms. Feed each through the **ACTUAL** call site.
@@ -493,7 +498,13 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   **Executed RED**: on today's tree `grep -n '_assert_public_http\|is_private\|ssrf' _fetch.py` → **0
   hits**; both call sites accept every hostile case.
 
-- [ ] **072-06 · [LOGIC] `_download_raw_html` → the guarded ladder, via a new launcher key.**
+- [x] **072-06 · [LOGIC] `_download_raw_html` → the guarded ladder, via a new launcher key.**
+  ✅ **SHIPPED `1002f51`.** Over-cap regression ruled **(b)**: cap stays 2 MiB and over-cap
+  **refuses** with a distinct `page-too-large` log line — because discovery is a REGEX and a
+  truncation can split an `<iframe` tag, silently mangling a result reported as complete.
+  K-1 done: the 8 doubles keep working (the `(url:str)->str` signature is unchanged), and
+  `test_embedded_off_by_default_no_discovery` gained a positive half — mutation-verified that
+  it now goes RED on a total breakage where before it passed.
   **RULED — Q-072-2 = (a)** (operator, 2026-08-06). The problem: `_SKILL_BIN_SPEC['html']`
   (`_fetch.py:48`) resolves `scripts/html2md.py`, a 27-line shim that calls `combined_main()` and has
   **no verb routing**; the `fetch` / `md` verbs live on the extensionless `scripts/html` launcher
@@ -512,7 +523,14 @@ OQ-4 ruling and is a standalone bug fix that depends on nothing.
   (`_append_embedded_videos` swallows the `TypeError` into `embed_log=[{"reason":"discovery-failed"}]`
   at `_fetch.py:958-960`). Fixing that is part of the bead, not a follow-up.
 
-- [ ] **072-07 · [LOGIC] `_download_pdf` → the new verb + the capability probe + docs + the issue.**
+- [x] **072-07 · [LOGIC] `_download_pdf` → the new verb + the capability probe + docs + the issue.**
+  ✅ **SHIPPED `1002f51`.** Issue filed as **DF-072-6** (the two pinning residuals: an ambient
+  proxy, and this machine's fake-IP resolver) so *"rebinding is closed"* can never be written
+  unqualified. ⚠️ **Deviation, stated**: the capability probe landed in **072-06**, not 072-07 —
+  072-06 is the first caller of the new verb, so deferring the probe would have shipped one
+  unprobed call site. ★ **A requirement nearly dropped**: the first pass omitted `--browser-ua`
+  on the PDF path; `test_pdf_download_uses_browser_ua` went red and was RIGHT (P2-4 exists
+  because hosts 403 a bare agent from the FIRST request). Restored, test rewritten not removed.
   Blocked on **072-04** (the verb must exist and be installed) and 072-06 (the launcher key).
   **What**: replace the `urlopen` at `_fetch.py:490` with a subprocess call to the raw-bytes verb
   through `html_launcher`, and remove the now-false `# noqa: S310 (operator URL)` from **both** sites.
