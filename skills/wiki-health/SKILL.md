@@ -4,8 +4,10 @@ description: >-
   Read-only DERIVED knowledge-health report over the event graph + frontmatter
   (R-15 / TASK 036, ADR-006). `wiki-health coverage` lists pages MISSING an
   expected relation — a requirement nothing implements, a capability no agent
-  provides, a fact with no source. A gap is data, not a failure, so it ALWAYS
-  exits 0. Its sibling lifecycle-drift (authored `status` contradicting the
+  provides, a fact with no source. A gap is data, not a failure, so it exits 0 on
+  success — but a look-up or argument error still uses the family codes (6
+  VAULT_NOT_FOUND, 2 INVALID_CLASS), so a typo'd vault is NOT a clean report.
+  Its sibling lifecycle-drift (authored `status` contradicting the
   graph) rides `wiki-lint` and gates `--strict`. `wiki-health ontology` (R-19)
   reports pages that contradict the declared ontology contract (edge domain/range,
   property enums). Triggers: "coverage gaps", "what requirements have no implementer",
@@ -24,9 +26,9 @@ no DDL. Rules are layout-config-driven (`coverage_rules` / `drift_rules` in
 `layouts/*.yaml`; the **cybos** layout ships them, other layouts → an empty report).
 
 ```bash
-# pages missing an expected edge/field (always exit 0 — a gap is data)
+# pages missing an expected edge/field (always exit 0 on success — a gap is data)
 wiki-health coverage --vault <id> [--class requirement]
-# pages CONTRADICTING the declared ontology contract (R-19; always exit 0 — report view)
+# pages CONTRADICTING the declared ontology contract (R-19; always exit 0 on success — report view)
 wiki-health ontology --vault <id> [--class decision]
 ```
 
@@ -118,7 +120,7 @@ a page can gap twice and the total can exceed the population.
 > `{total_violations: 0, edges_examined: 500}` under `--class decision` as "500 decision edges were judged".
 
 ## Ontology contract (R-19 / TASK 054)
-`wiki-health ontology` is the **always-exit-0 report** over the layout's declared
+`wiki-health ontology` is the **non-gating report** (exit 0 on success) over the layout's declared
 `ontology:` block (cybos only): `closed_types`, `edges` (per-ref_type domain→range),
 `properties` (per-class value enums). An **edge domain/range or property** contradiction
 is *also* surfaced by `wiki-lint` as `ontology-violation` (advisory; **gates `--strict`**)
@@ -129,7 +131,7 @@ still indexes (markdown canonical, ADR-002 §D8).
 
 ## Two surfaces, one machinery (D-036)
 - **Coverage = an *absence*** (expected on a young vault) → `wiki-health coverage`,
-  **always exit 0**. cybos rules: requirement/capability with no `implemented-by`;
+  **always exit 0 on success**. cybos rules: requirement/capability with no `implemented-by`;
   fact with an empty/absent `source:`.
 - **Lifecycle-drift = a *contradiction*** (authored `status` vs the graph — e.g. a
   decision carrying a `superseded-by` edge but still `status: accepted`) → it rides

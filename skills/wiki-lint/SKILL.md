@@ -38,7 +38,7 @@ Read-only consistency check between the SQLite index and the filesystem.
   `from`/`to` (`kind: domain`/`range`), or a `status`-style property value outside its
   enum (`kind: property`). Config-driven (the `ontology:` block; cybos only → other
   layouts no-op). Advisory; **gates `--strict`** (a contradiction, ADR-006 D-036).
-  The always-exit-0 report view is `wiki-health ontology`.
+  The non-gating report view is `wiki-health ontology` (exit 0 on success).
 - **cross-vault-duplicate** — same concept slug exists in 2+ vaults
   (R-29; informational, suggests promotion).
 

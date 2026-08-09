@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-08T01:33:05.385993 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-09T17:46:12.755907 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -26,7 +26,7 @@
 
 ## documentation
 
-- **DF-072-2** [[df-072-2-wiki-health-always-exits-0-is-false|«\`wiki-health\` **always exits 0**» is FALSE — and it is asserted in an **Accepted ADR**, \`CLAUDE.md\`, \`README.md\`, \`ARCHITECTURE.md\`, the manual and the ROADMAP]] — severity `SEV-2`, status `open`, opened 2026-08-07
+- **DF-072-2** [[df-072-2-wiki-health-always-exits-0-is-false|«\`wiki-health\` **always exits 0**» is FALSE — and it is asserted in an **Accepted ADR**, \`CLAUDE.md\`, \`README.md\`, \`ARCHITECTURE.md\`, the manual and the ROADMAP]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
 - **DF-072-3** [[df-072-3-one-json-envelope-per-cli-is-false|«Every CLI emits **one JSON envelope** + a stable exit code» is FALSE on the usage path — and it is the Decision-17 paragraph in \`CLAUDE.md\`]] — severity `SEV-3`, status `open`, opened 2026-08-07
 
 ## dogfood

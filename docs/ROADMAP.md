@@ -708,12 +708,12 @@ built (compose `wiki-graph`/`wiki-search`, Decision-17).
 **✅ SHIPPED (TASK 036, 2026-06-16) — Track A (A1 lifecycle-drift + A2 coverage).** Zero DDL
 (`user_version` stays 7); read-side only. **A1** = a `lifecycle-drift` `wiki-lint` category
 (advisory; gates `--strict`) flagging a page whose authored `status` contradicts its graph
-state. **A2** = a new read-only **`wiki-health coverage`** CLI (17th `wiki-*`; always exit 0)
+state. **A2** = a new read-only **`wiki-health coverage`** CLI (17th `wiki-*`; always exit 0 on success)
 reporting pages missing an expected edge/field. Rules are layout-config-driven (`drift_rules`/
 `coverage_rules`; cybos ships 3+3), validated at load; the DAL mirrors the `--as-of` `NOT EXISTS`
 walk (all values bound). `/vdd-multi` converged (3 logic + 2 perf fixes folded in); live cybos
 dogfood green; **1524 pytest, mypy strict**. Design: **ADR-006** (D-036: drift→lint/`--strict`
-because it is a *contradiction*; coverage→always-exit-0 report because a gap is *expected*).
+because it is a *contradiction*; coverage→a non-gating report, exit 0 on success, because a gap is *expected*).
 **Amended TASK 072 / P2** (ADR-006 D-036-3a): a coverage gap now has **three** kinds, not two —
 `edge`, `field` (absent/empty), and `field-value` (the scalar is PRESENT and carries a declared
 non-answer, via an optional `forbid_values` modifier on `requires_field`). Absent key ⇒
@@ -962,7 +962,7 @@ load-gate `_validate_ontology` (edges ∈ `reindex._INVERSE_REF_TYPE`; every fro
 `type_mapping` keys; property field via `validate_filter_field` — a typo is exit 6); read-side DAL
 `find_ontology_violations` (edge domain/range via the `find_classification_leaks` target-JOIN +
 COUNT=1 orphan guard; property enum; all bound params) → `wiki-lint` `ontology-violation`
-(advisory, gates `--strict`, ADR-006 D-036) + `wiki-health ontology` (always exit 0). **Design
+(advisory, gates `--strict`, ADR-006 D-036) + `wiki-health ontology` (always exit 0 on success). **Design
 correction (Q-054):** `closed_types` produces NO read-side violation — reindex resolves a typed
 page's class from frontmatter `$.type` and SKIPS an out-of-roster type (reported in `--full`'s
 `skipped[]`), so the closed-world stance is enforced at INDEX time, not re-swept; `closed_types`
@@ -991,7 +991,7 @@ DAL `find_ontology_violations` (clone of `find_lifecycle_drift`; forward
 ref_types only; orphan/entity targets skipped via the COUNT=1 guard). Surfaced
 as `wiki-lint` category `ontology-violation` — a violation is a
 *contradiction* ⇒ advisory, gates `--strict` (ADR-006 D-036-2); optional
-`wiki-health ontology` subcommand (always exit 0). Reference block ships in
+`wiki-health ontology` subcommand (always exit 0 on success). Reference block ships in
 `cybos.yaml` only; other layouts ship none ⇒ zero behavior change.
 **Deliberately NOT a write gate**: reindex keeps indexing violating pages —
 markdown is canonical, Class B must never be lossy vs Class A (this is
@@ -1565,7 +1565,7 @@ python3 .agent/skills/documentation-standards/scripts/check_positional_refs.py \
   layout-aware (PARA `_concepts/` support), no longer Karpathy-only.
 - **TASK 036 (derived-knowledge-health, R-15) — 2026-06-16.** Track A (ADR-006): the
   `lifecycle-drift` `wiki-lint` category (advisory, gates `--strict`) + a new read-only
-  `wiki-health coverage` CLI (**17th**; always exit 0), layout-config-driven rules; zero DDL.
+  `wiki-health coverage` CLI (**17th**; always exit 0 on success), layout-config-driven rules; zero DDL.
   See the R-15 entry above.
 - **TASK 035 (fts-narrowed-tag-membership) — 2026-06-16.** FTS-narrowed tag-membership search
   (closes R-X3-MF-SCAN, the membership branch) — the metadata-membership filter rides the

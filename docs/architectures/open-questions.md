@@ -1010,7 +1010,7 @@
   graph) → a new `lifecycle-drift` `wiki-lint` category that inherits the existing exit policy
   (advisory; non-zero only under `--strict`) — the one SEMANTIC check that belongs on lint's
   gate. **Coverage** is an *absence* (expected, high base-rate) → a separate read-only
-  `wiki-health coverage` CLI that **always exits 0** (gating it would cry wolf). Rules are layout
+  `wiki-health coverage` CLI that **always exits 0 on success** (gating it would cry wolf). Rules are layout
   grammar (`drift_rules`/`coverage_rules` in `layouts/*.yaml`; cybos ships 3+3), validated at
   config-load against `reindex._INVERSE_REF_TYPE` (edges) + the metadata-filter field allow-list.
 - **Q-036-3 (TASK 036 — `/vdd-multi` + dogfood hardening).** Security ✓ bikeshedding-only (all
@@ -1579,7 +1579,7 @@
 - **Q-054-3 (RESOLVED) — a contradiction rides `wiki-lint --strict`; the report view is
   `wiki-health ontology`.** Per ADR-006 D-036-2: an ontology violation is a *contradiction*
   (like lifecycle-drift), so its `--strict`-gating rail is `wiki-lint` (`ontology-violation`,
-  `warning`→`error` under `--strict`). The sibling `wiki-health ontology` is the always-exit-0
+  `warning`→`error` under `--strict`). The sibling `wiki-health ontology` is the non-gating (exit 0 on success)
   report (like `coverage`) for surfacing without gating. Both read the same DAL. Edge/property
   values that flow into the report `detail` originate from possibly-untrusted frontmatter, but
   the surface is an operator-facing JSON/markdown report (same posture as the coverage/drift

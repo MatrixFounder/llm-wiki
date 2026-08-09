@@ -1,4 +1,4 @@
-"""TASK 036 / R-15 (Slice A2) — `wiki-health coverage` CLI (read-only, always exit 0).
+"""TASK 036 / R-15 (Slice A2) — `wiki-health coverage` CLI (read-only, always exit 0 on success).
 
 TASK 061 / R-061-1 (bead 061-02) — the envelope now carries the DENOMINATORS, so
 `{"total_gaps": 0}` can no longer be mistaken for a clean bill of health (TC-02-*).
@@ -173,7 +173,8 @@ def _untyped_db(tmp_path: Path) -> str:
 def test_tc_02_1_coverage_denominators_typed(tmp_path: Path, capsys) -> None:
     db = _db(tmp_path)
     rc, env = _run(capsys, ["coverage", "--vault", "hvault", "--db-path", db])
-    assert rc == 0                                    # ADR-006: always exit 0
+    assert rc == 0                          # ADR-006: exit 0 on SUCCESS (DF-072-2 —
+    # the non-zero paths are pinned in tests/test_wiki_health_exit_contract.py)
     # 2 requirements + 1 capability + 3 facts (the classes cybos's coverage_rules bind to)
     assert env["pages_examined"] == 6
     assert {s["class"] for s in env["by_rule"]} == {"requirement", "capability", "fact"}
@@ -421,7 +422,7 @@ def test_m2_partial_vacuity_is_not_silent_the_task_062_trigger(
     (TASK 062) — and the state becomes `{edges_examined: 0, property_pages_examined: 1}`:
     the `and` SHORT-CIRCUITS, no note is emitted at all, and the envelope reads
     `total_violations: 0` while all SEVEN edge rules examined nothing. The original false
-    green, restored, on the always-exit-0 CLI whose entire purpose is reporting — while
+    green, restored, on the non-gating CLI (exit 0 on success) whose entire purpose is reporting — while
     `wiki-lint`, over the SAME two denominators, correctly refused to print the green.
 
     MUTATION BAR: restore the `and` and this test fails on the missing `note`."""
@@ -433,7 +434,7 @@ def test_m2_partial_vacuity_is_not_silent_the_task_062_trigger(
     repo.close()
     rc, env = _run(capsys, ["ontology", "--vault", "partial",
                             "--db-path", str(tmp_path / "partial.db")])
-    assert rc == 0                                   # always-exit-0 CLI, unchanged
+    assert rc == 0                          # exit 0 on success, unchanged
     # THE STATE: partially vacuous — one population empty, the other not.
     assert env["edges_examined"] == 0                # ...so the 7 edge rules judged NOTHING
     assert env["property_pages_examined"] == 1       # ...while the property half DID run

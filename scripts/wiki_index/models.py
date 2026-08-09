@@ -523,7 +523,7 @@ class OntologyViolation:
     field name (property); ``detail`` is the offending value / target class; ``target_slug``
     is the resolved edge target (may be ``None`` for a ``domain`` hit on a dangling edge).
     Surfaced by ``wiki-lint`` (``ontology-violation``; gates ``--strict``) and
-    ``wiki-health ontology`` (always exit 0)."""
+    ``wiki-health ontology`` (always exit 0 on success)."""
 
     vault_id: str
     page_slug: str

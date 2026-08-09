@@ -281,7 +281,7 @@ wiki-reindex --full --vault obsidian-llm-wiki
   broadcast URL or pass `--video`.
   Lifecycle/health: `wiki-init`, `wiki-reindex`, `wiki-lint` (+ lifecycle-drift &
   ontology-violation, both gate `--strict`), `wiki-health` (`coverage` R-15 + `ontology`
-  R-19; always exit 0), `wiki-index-render`. Install per its `README.md`; ensure its
+  R-19; always exit 0 on success), `wiki-index-render`. Install per its `README.md`; ensure its
   `bin/` is on `PATH`.
 - **`/html`** — the web-clipper / HTML→Markdown step behind the **full-text clip** path
   (URL or saved `.html`/`.mhtml`/`.webarchive` → clean Markdown + `_attachments/`, SSRF-guarded,

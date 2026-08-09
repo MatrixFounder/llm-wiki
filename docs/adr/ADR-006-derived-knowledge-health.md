@@ -38,9 +38,11 @@ semantics).** Drift is a *contradiction* (almost always a real defect) → it ri
 **`wiki-lint`** as a new `lifecycle-drift` issue category and inherits the existing exit
 policy: advisory by default, non-zero only under **`--strict`** (the one SEMANTIC check that
 belongs on lint's CI gate). Coverage is an *absence* (expected, high base-rate on a young
-vault) → a separate read-only **`wiki-health coverage`** CLI that **always exits 0** (a gap
-is data, not a failure). Gating coverage would cry wolf; reporting drift only-on-`--strict`
-would hide a contradiction. The discriminator is actionability, not "semantic vs structural".
+vault) → a separate read-only **`wiki-health coverage`** CLI that **exits 0 on success** (a gap
+is data, not a failure) — *corrected 2026-08-09, see **D-036-5**; as originally written this
+sentence said "always exits 0", without qualification, and that is false.* Gating coverage
+would cry wolf; reporting drift only-on-`--strict` would hide a contradiction. The
+discriminator is actionability, not "semantic vs structural".
 
 **D-036-3 — Rules are layout grammar, validated at load.** `drift_rules` / `coverage_rules`
 live in `layouts/*.yaml` (cybos is the only **built-in** that ships them; the other built-ins
@@ -104,7 +106,7 @@ per-ROW kind `field-value` (vs `field` for the pre-072 shape).
 TASK 061 / R-061-1, 2026-07-13. Does not change D-036-1..3; it closes a reporting hole in
 them.)*
 
-D-036-2 makes a coverage gap "data, not a failure" and always exits 0. That is right — but
+D-036-2 makes a coverage gap "data, not a failure" and always exits 0 on success. That is right — but
 it left `{"total_gaps": 0}` **indistinguishable from a real green**. On the live vault every
 health surface reported `0` because **nothing typed existed to examine**, not because
 anything was healthy. A check that examined nothing reported green, and so every "0
@@ -115,7 +117,7 @@ actually examined — and says so explicitly (an honest `note`) when that denomi
 Denominators are read-side `COUNT(*)` over existing columns: **zero DDL**, `user_version`
 stays 7; the keys are **additive only** (every pre-061 consumer still parses). They are
 **reporting, never gating** — `wiki-lint --strict`'s exit code still rides the issues alone,
-and `wiki-health` still always exits 0.
+and `wiki-health` still always exits 0 on success.
 
 **One noun per POPULATION — and the populations are not interchangeable.** The count of
 populations is a **grep result, not an intuition**: `find_ontology_violations` iterates
@@ -157,6 +159,37 @@ precondition is `$.type = class` **AND** the edge already exists, so a bare `mat
 cannot tell **"no `decision` pages at all"** (today) from **"50 decisions, none carrying a
 `superseded-by` edge"** (the state right after adoption). Only the denominator separates
 them.
+
+**D-036-5 — CORRECTION: "always exits 0" was false as written.** *(Correction — DF-072-2,
+2026-08-09. Does NOT change D-036-1..4; it corrects a claim their prose stated too
+strongly.)*
+
+D-036-2 above said `wiki-health` **always exits 0**, unqualified, and D-036-4 restated it.
+That is false on two reachable paths, both measured:
+
+```console
+$ wiki-health coverage --vault definitely-no-such-vault
+{"error": "VAULT_NOT_FOUND", "vault": "definitely-no-such-vault"}     # EXIT=6
+$ wiki-health coverage --vault <vid> --vault-root <p> --class bogus
+{"error": "INVALID_CLASS", "valid": [...]}                            # EXIT=2
+```
+
+**The decision is unchanged and was never wrong**: a coverage gap or an ontology violation
+is *data*, so the REPORT never gates. What was wrong is the scope of the word *always* — a
+look-up or argument error is not a report, and it keeps the CLI family's codes (6
+`VAULT_NOT_FOUND`, 2 `INVALID_CLASS`). The accurate statement is **"exits 0 on success"**.
+Three sentences in this ADR were corrected in place on 2026-08-09 rather than left
+standing-and-false; this note exists so the edit is recorded, not silent.
+
+**The transferable finding is about paraphrase, not about exit codes.** The one correct
+wording in the repository was the source docstring — `wiki_health.py:9`, "ALWAYS exits 0 **on
+success**". Every derived copy dropped the two words that made it true, across ~30 live
+surfaces (this ADR three times, `CLAUDE.md`, `README.md`, `ARCHITECTURE.md`, both manuals,
+the ROADMAP, the skill, the DAL docstrings, and the skill `description:` an agent loads every
+session). No copy was a wrong *measurement*; each looked like faithful restatement. A claim
+propagated by paraphrase decays toward the stronger, cleaner form, so a doctrine sentence
+needs its qualifier welded on — `tests/test_wiki_health_exit_contract.py` now enforces that
+mechanically, and runs the two refusal paths so the claim can go RED.
 
 ## Consequences
 

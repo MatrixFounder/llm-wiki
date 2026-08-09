@@ -408,7 +408,8 @@ def check_lifecycle_drift_report(
     (warning → error under `--strict`): drift surfaces in the report by default and gates
     ONLY `wiki-lint --strict` (D-036 — drift is a genuine contradiction, so it is the one
     SEMANTIC check that belongs on lint's `--strict` rail; coverage GAPS, which are
-    expected, live in the always-exit-0 `wiki-health` CLI instead).
+    expected, live in the non-gating `wiki-health` CLI instead — which exits 0 on
+    success, but still 6 `VAULT_NOT_FOUND` / 2 `INVALID_CLASS`).
 
     CAVEAT (vdd-multi): drift reads the auto-derived INVERSE edges, which a
     `wiki-reindex --delta` can leave transiently stale on one side of a bidirectionally-
@@ -465,7 +466,8 @@ def check_ontology_violations_report(
     `cybos` layout ships one, other layouts none → no-op, no DAL call). An ontology violation
     is a genuine CONTRADICTION (like lifecycle-drift), so it rides `wiki-lint` and gates ONLY
     `--strict` (ADR-006 D-036-2, the same rail); the sibling `wiki-health ontology` is the
-    always-exit-0 report view. (`closed_types` is enforced at index time — an out-of-roster
+    non-gating report view (`wiki-health` exits 0 on success; a look-up/argument error
+    still uses the family codes). (`closed_types` is enforced at index time — an out-of-roster
     `$.type` is a reindex SKIP — so it produces no read-side finding here; see Q-054.)
     `config` is reused from `run_all_checks` when provided (else resolved here).
 

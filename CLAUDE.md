@@ -58,7 +58,7 @@ command↔CLI↔skill relationship is the table in `commands/.AGENTS.md`, now te
   self-contained HTML `report`; local token-auth `serve` web editor — all
   schema-driven via `x-wiki-*` annotations, zero UI code per new field; no DB access),
   `wiki-lint` (SQL health + R-15 lifecycle-drift, gates `--strict`),
-  `wiki-health` (R-15 coverage gaps — read-only, always exit 0), `wiki-reindex`
+  `wiki-health` (R-15 coverage gaps — read-only, always exit 0 on success), `wiki-reindex`
   (`--full`/`--delta`), `wiki-init`.
 
 ### Durable invariants (what a change must not break)

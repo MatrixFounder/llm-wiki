@@ -177,7 +177,7 @@ drift_rules:
 # Coverage gaps (Slice A2, surfaced by `wiki-health coverage`): a page MISSING an expected
 # relation. `requires_edge` = the page should carry this ref_type (gap if not); `requires_field`
 # = the page should have a non-empty frontmatter scalar (gap if empty/absent). A gap is DATA,
-# not a failure — `wiki-health` always exits 0. Edge semantics from templates/page-types/*:
+# not a failure — `wiki-health` always exits 0 on success. Edge semantics from templates/page-types/*:
 # requirement/capability are covered by an inbound `implements` (stored as `implemented-by`
 # on the page); a fact's evidence is its `source:` scalar (NOT an edge).
 #

@@ -402,7 +402,7 @@ class IndexRepository(abc.ABC):
         the page (e.g. a ``requirement`` with no ``implemented-by``); ``requires_field``
         → the frontmatter scalar ``$.<field>`` is absent/empty (e.g. a ``fact`` with an
         empty ``source:``). Read-only; **zero DDL**. Surfaced by ``wiki-health
-        coverage`` (a gap is data, not a failure → always exit 0).
+        coverage`` (a gap is data, not a failure → always exit 0 on success).
 
         TASK 072 / P2 — a ``requires_field`` rule may also carry ``forbid_values``,
         which WIDENS its gap condition to *present, and a non-answer*
@@ -432,7 +432,7 @@ class IndexRepository(abc.ABC):
         read-side (Q-054). Read-only over ``pages.frontmatter_json`` + ``page_entity_refs``;
         **zero DDL**. NOT a write gate — reindex still indexes an edge/property-violating
         page. Surfaced by ``wiki-lint`` (``ontology-violation``; gates ``--strict``) +
-        ``wiki-health ontology`` (always exit 0)."""
+        ``wiki-health ontology`` (always exit 0 on success)."""
         ...
 
     # =========================================================================

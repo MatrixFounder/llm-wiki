@@ -147,7 +147,7 @@ def _add_vacuity_keys(envelope: dict[str, Any]) -> dict[str, Any]:
     `vacuous_populations` reads the envelope's OWN `*_examined` keys — the same suffix
     contract `lint._denominator_rows` uses — so a future population is covered here with
     zero edits. `vacuous_kinds` is `models.vacuous_rule_kinds`, the same function `wiki-lint`
-    calls. Neither gates; `wiki-health` always exits 0."""
+    calls. Neither gates; `wiki-health` always exits 0 on success."""
     envelope["vacuous_populations"] = sorted(
         key for key, val in envelope.items()
         if key.endswith("_examined") and isinstance(val, int)
@@ -240,7 +240,8 @@ def _run_coverage(repo: Any, args: argparse.Namespace, layout: Any) -> int:
 def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
     # TASK 054 / R-19 — read-only ontology-contract report. A violation is a CONTRADICTION,
     # but THIS surface is the report view (the `--strict`-gating rail is `wiki-lint`), so it
-    # ALWAYS exits 0 (like `coverage`). No ontology block ⇒ empty report + a note.
+    # ALWAYS exits 0 on success (like `coverage`; a look-up/argument error still uses the
+    # family codes). No ontology block ⇒ empty report + a note.
     if layout.ontology is None:
         # TASK 061: this early return is one of the module's THREE report exit paths — it
         # emits the SAME key set as the report below (all zero). A consumer must never see
@@ -322,10 +323,10 @@ def _run_ontology(repo: Any, args: argparse.Namespace, layout: Any) -> int:
     # original bug: TASK 062 files a single typed `decision` with a `status:` and the state
     # becomes `{edges_examined: 0, property_pages_examined: 1}` — the conjunction
     # short-circuits, NO note is emitted, and the envelope reads `total_violations: 0` while
-    # all SEVEN edge rules examined nothing. On the always-exit-0 CLI whose entire purpose
-    # is reporting. Meanwhile `wiki-lint`, over the SAME two denominators, correctly refused
-    # to print the green — two sibling surfaces of one task disagreeing, with the weaker
-    # semantics on the reporting surface.
+    # all SEVEN edge rules examined nothing. On the non-gating CLI (exit 0 on success)
+    # whose entire purpose is reporting. Meanwhile `wiki-lint`, over the SAME two
+    # denominators, correctly refused to print the green — two sibling surfaces of one
+    # task disagreeing, with the weaker semantics on the reporting surface.
     #
     # Both verdicts are now PER-POPULATION and PER-KIND, derived off the same suffix
     # contract (`*_examined`) and the same `vacuous_rule_kinds` helper `wiki-lint` uses, so

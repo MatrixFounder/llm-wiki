@@ -97,7 +97,7 @@ wiki-lint --vault personal                   # SQL health + lifecycle-drift + on
 wiki-lint --vault personal --strict           # exit non-zero if any issue (CI gate — incl. both contradictions)
 ```
 
-**Derived knowledge health** (typed-class vaults, e.g. `cybos`) — what's MISSING or CONTRADICTORY (always exit 0)
+**Derived knowledge health** (typed-class vaults, e.g. `cybos`) — what's MISSING or CONTRADICTORY (always exit 0 on success)
 ```bash
 wiki-health coverage --vault cybos                       # pages with no expected edge/field
 wiki-health coverage --vault cybos --class requirement   # e.g. requirements nothing implements
