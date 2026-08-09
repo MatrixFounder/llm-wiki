@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-09T18:39:13.891044 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-09T19:03:52.049173 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -20,6 +20,7 @@
 - **DF-072-4** [[df-072-4-wiki-lint-strict-exit-1-success-envelope|\`wiki-lint --strict\` returns **exit 1 with a SUCCESS envelope** — the second instance of a divergence the repo documents as unique to \`wiki-verify-multi\`, and this one is warned about nowhere]] — severity `SEV-2`, status `open`, opened 2026-08-07
 - **DF-072-7** [[df-072-7-cybos-and-dev-project-half-support-imported-sources|\`cybos\` **and** \`dev-project\` declared the imported-source classes in \`type_mapping\` with **no read glob that could see them** — an imported note was written, exited 0, and was never indexed, with \`skipped\[\]\` EMPTY]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
 - **DF-072-8** [[df-072-8-live-dbs-frozen-at-schema-v5-undetected|The global index DB was frozen at **schema v5** while the repo ships v7 — every event-graph typed edge was UNWRITABLE there, and **nothing in \`scripts/\` reads \`PRAGMA user_version\`**, so nothing detected it]] — severity `SEV-2`, status `partially-fixed`, opened 2026-08-07
+- **DF-072-10** [[df-072-10-sync-upserts-raw-captures-the-layout-ignores|\`wiki-sync\` upserts \`_raw/\` captures that the LAYOUT ignores — 31 index rows a \`wiki-reindex --full\` silently DROPS, reported by \`wiki-lint\` as \`missing-on-disk\` for files that exist]] — severity `SEV-2`, status `open`, opened 2026-08-09
 - **TASK-044-X-SLUG** [[task-044-x-status-slug-instability|x.com import: nondeterministic og:title → slug drift / duplicate \`_raw\`]] — severity `SEV-3`, status `open`, opened 2026-06-29
 - **WI-1** [[wi-1-tldr-truncated-mid-word-in-summary-body|wiki-import: tldr \`\[:300\]\` cap truncates the rendered body section mid-word]] — severity `SEV-3`, status `fixed`, opened 2026-07-09
 - **DF-064-3** [[df-064-3-derive-candidates-misreads-the-identity-sentinel|\`derive_candidates\` reads \`derive_concept_slug\`'s \`identity\` sentinel as "invalid slug" — a future caller would file **zero** concepts on every karpathy vault]] — severity `SEV-3`, status `fixed`, opened 2026-07-14
