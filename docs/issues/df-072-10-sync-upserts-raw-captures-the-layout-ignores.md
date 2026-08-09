@@ -85,6 +85,15 @@ slug: df-072-10-sync-upserts-raw-captures-the-layout-ignores
   halves of one unenumerated surface: **nothing cross-checks the writer's path against the walker's
   globs**, in either direction. Closing this without closing that symmetry buys one of two.
 
+- **Recurrence, measured — the commit markers contain it, but do not fix it.** After
+  remediation a re-scan re-plans the same 31 as `('upsert', is_unchanged=True)`, which Step 4
+  treats as a no-op, so a normal run will not re-create the phantom rows. `--force` does **not**
+  re-open it either (`is_unchanged` still `True`; `--force` re-opens the *summarise* gate, not the
+  upsert marker). So the live blast radius is bounded to **a vault whose markers are absent** — a
+  first sync, a new zone, or a marker reset. That is exactly the state this vault was in, and it is
+  the state every new adopter starts in. ⚠️ The markers now assert "done" for 31 files that should
+  never have been indexed at all — the containment works by recording the wrong thing correctly.
+
 - **Found by**: the live `wiki-sync` dogfood of 2026-08-09 (`03 - Learning`, 1192 entries). Vault
   remediated in the same session — `wiki-reindex --full` → 3359 pages, `wiki-lint`
   `missing-on-disk` 31 → 0 and `hash-mismatch` 3 → 0 (the 3 were unrelated, genuinely stale rows
