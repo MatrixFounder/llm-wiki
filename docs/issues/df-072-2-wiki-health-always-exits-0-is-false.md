@@ -125,6 +125,26 @@ the mutated bytecode while `inspect.getsource` showed the correct text. ⚠️ *
 mutations need `find . -name __pycache__ -exec rm -rf {} +` between runs**, or the harness
 will manufacture a defect that does not exist.
 
+### Dogfooded live (2026-08-09) — `TestVault/ObsidianNotes-Test`, `vault_id: personal`
+
+All four paths RUN against the real 3054-page vault, on a **non-vacuous** corpus (the report
+half actually examined something — 2 pages / 1 real gap for `coverage`, 4 edges + 6 property
+pages for `ontology`), so none of these is a green over an empty population:
+
+| probe | exit | envelope |
+|---|---|---|
+| `coverage --vault personal` | **0** | `{"rules":3,"total_gaps":1,"pages_examined":2,…}` |
+| `ontology --vault personal` | **0** | `{"total_violations":0,"edges_examined":4,"property_pages_examined":6,…}` |
+| `coverage --vault personal-typo` | **6** | `{"error":"VAULT_NOT_FOUND"}` |
+| `coverage --class definitely-not-a-class` | **2** | `{"error":"INVALID_CLASS","valid":[…]}` |
+
+The corrected wording holds exactly as written, and the CI-wrapper trap is real in the field: a
+one-character vault typo returns 6, which the old unqualified doctrine said could not happen.
+Re-run after the vault was restored — both success paths still 0.
+
+Note `INVALID_CLASS` echoes the VALID roster but never the offending value (CWE-209 posture
+intact — the roster is the operator's remedy, the input is the untrusted half).
+
 ### Related
 
 - [[df-072-1-verify-multi-apply-files-a-vacuous-pass]] — the sibling TASK 072 finding.

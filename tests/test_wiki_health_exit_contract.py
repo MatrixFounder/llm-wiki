@@ -129,11 +129,21 @@ _ARCHIVED = ("docs/tasks/", "docs/plans/", "docs/reviews/", "docs/issues/",
 
 def _live_files() -> list[Path]:
     """Tracked .md/.py/.yaml, minus the archived record trees. `git ls-files` rather
-    than a glob so an untracked scratch file cannot fail the gate."""
+    than a glob so an untracked scratch file cannot fail the gate.
+
+    THIS FILE is excluded, and the exclusion is narrow on purpose. A scanner that hunts a
+    phrase necessarily CONTAINS the phrase — five times, in comments explaining what it
+    hunts — so it is the one file that quotes the claim without asserting it. The sibling
+    `tests/test_wiki_health.py` is NOT excluded: it does assert the claim in its docstring,
+    and it stays gated. (This only surfaced when the file was first COMMITTED: `git
+    ls-files` cannot see an untracked file, so the gate could not scan itself until then.)
+    """
     out = subprocess.run(["git", "ls-files", "*.md", "*.py", "*.yaml", "*.yml"],
                          cwd=REPO_ROOT, capture_output=True, text=True, check=True)
-    return [REPO_ROOT / rel for rel in out.stdout.split()
-            if not rel.startswith(_ARCHIVED)]
+    here = Path(__file__).resolve()
+    return [p for rel in out.stdout.split()
+            if not rel.startswith(_ARCHIVED)
+            and (p := (REPO_ROOT / rel)).resolve() != here]
 
 
 def _flatten(text: str) -> str:

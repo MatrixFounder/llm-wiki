@@ -115,6 +115,38 @@ self-computed `answer_hash`, no `prepare` run): the three scenarios from the tab
 exit 0, so the floors refuse zero sources, not all sources. Each asserts the envelope and that
 no `_verifications/` page exists (scenario 1 also asserts no `pages` row), never a bare exit code.
 
+### Dogfooded live (2026-08-09) — `TestVault/ObsidianNotes-Test`, `vault_id: personal`
+
+3054 pages, `obsidian-personal` layout (**not** karpathy), vault-local `.wiki/index.db` at
+`user_version 7`, Cyrillic slugs and nested projects (`CybOS Demo/wiki-dogfood/…`) — none of
+which the repo tests cover. Before/after with **identical invocations**, the "before" run
+executed from a `git worktree` at `d53e35f^`:
+
+| | `apply` on `cites: []` | on `cites:` where none resolve |
+|---|---|---|
+| **before** (`d53e35f^`) | `exit 0` · `{"verdict":"pass","page_indexed":true,"action":"filed"}` · a real Class-A `_verifications/*.md` on disk, indexed, with a `verifies` ref | — |
+| **after** (`52371cd`) | `exit 2 NO_SOURCES` · "cites nothing" · nothing written | `exit 2 NO_SOURCES` · "cites 2 source(s) but none are indexed/readable" · nothing written |
+
+The defect was **live-reachable on a real vault**, not a lab artifact: the pre-fix run filed a
+`verdict: pass` page certifying an answer against zero sources, and `_verifications/` did not
+even exist before it. The two floors' `reason` strings discriminated correctly in the field.
+
+**Non-vacuity control, zero writes.** On the REAL 7-cite query page, control flows *past* both
+floors and lands on the next gate (`VERIFY_CONTEXT_CHANGED` with a bad `--verify-hash`;
+`ANSWER_CHANGED` with a bad answer hash — confirming the ordering too). Had the floors
+over-refused, these would have said `NO_SOURCES`.
+
+⚠️ **Ordering note found en route**: `--verdict-file` must be vault-inside, and post-fix the
+floors fire BEFORE the payload is read — so a `/tmp` verdict yields `NO_SOURCES` (floor) after
+the fix but `INVALID_VERDICT` (payload) before it. A before/after comparison must put the
+verdict file inside the vault or it compares two different gates.
+
+**Vault restored**: probe pages deleted → `wiki-reindex --full` (3054 pages, 0 skipped, 0
+collisions, 3.9 s) → identical type distribution to the start snapshot, real query page
+byte-identical. One Class-C `log_events` row survived by design (ADR-002 §D8 — Class C is not
+rebuilt from markdown); `wiki-lint` does not see it and **no CLI removes it**, so it took
+direct SQL.
+
 ### Related
 
 - [[df-072-9-query-answer-markdown-escaped-into-literal-text]] — the other TASK 072 dogfood finding.
