@@ -23,6 +23,7 @@ from scripts.wiki_skills.wiki_config._edit import (
     rewrite_text,
 )
 from scripts.wiki_skills.wiki_config._lint import lint_vault
+from scripts.wiki_index.sync_config import SyncConfigError
 
 
 def _folder_yaml(d: Path, text: str) -> None:
@@ -209,12 +210,150 @@ def test_rewrite_oversized_list_falls_back_to_assignment() -> None:
 
 def test_rewrite_list_set_over_a_non_list_still_replaces() -> None:
     """TASK 073 — the element-wise branch is reached only when BOTH sides are
-    lists; every other `set` keeps plain-assignment semantics."""
+    lists; every other `set` keeps plain-assignment semantics.
+
+    `exclude: []` is NOT the non-list case — ruamel yields a `CommentedSeq`,
+    which IS a `list`, so that input takes the element-wise branch. The
+    list-over-scalar case below is the one that pins the predicate."""
     new = rewrite_text("exclude: []\n", [PointerEdit("set", "/exclude", ["a/**"])])
-    assert yaml.safe_load(new)["exclude"] == ["a/**"]
+    assert yaml.safe_load(new)["exclude"] == ["a/**"]          # element-wise
+    with pytest.raises(SyncConfigError):                        # list over scalar
+        rewrite_text("exclude: notalist\n",
+                     [PointerEdit("set", "/exclude", ["a/**"])])
     new = rewrite_text("summarize:\n  profile: meeting\n",
                        [PointerEdit("set", "/summarize/profile", "lesson")])
     assert yaml.safe_load(new)["summarize"]["profile"] == "lesson"
+
+
+# --------------------------------------------------------------------------- #
+# TASK 073 — shapes the reconcile must DECLINE (found by /vdd-multi critics).
+# Each one wrote silently with HTTP 200 before: the survival check censuses
+# comment TEXT, so it cannot see a comment that merely moved to another entry.
+# --------------------------------------------------------------------------- #
+
+_THREE = ('exclude:\n'
+          '  - "a/**"\n'
+          "  # about b\n"
+          '  - "b/**"\n'
+          "  # about c\n"
+          '  - "c/**"\n')
+
+
+def test_rewrite_list_reorder_is_refused_not_silently_stripped() -> None:
+    """critic-logic HIGH — difflib expresses a REORDER as delete+insert of the
+    same key. Forgiving that deletion forgave the comment of an entry that was
+    never removed: `# about c` vanished and the write returned ok."""
+    with pytest.raises(EditDowngrade):
+        rewrite_text(_THREE, [PointerEdit("set", "/exclude",
+                                          ["a/**", "c/**", "b/**"])])
+
+
+def test_rewrite_list_multi_item_replace_is_refused() -> None:
+    """critic-logic MED — one entry rewritten in place is a typo fix and keeps
+    its comment. TWO swapped at once is a wholesale replacement, and assigning
+    over them leaves every comment describing an entry that no longer exists —
+    no text is lost, so the survival check cannot see it."""
+    with pytest.raises(EditDowngrade):
+        rewrite_text(_THREE, [PointerEdit("set", "/exclude",
+                                          ["a/**", "x/**", "y/**"])])
+
+
+def test_rewrite_list_with_end_of_line_comments_is_refused() -> None:
+    """critic-security A1/A2 + critic-logic — a ruamel token packs an entry's
+    OWN end-of-line comment together with the block above the NEXT entry, so
+    re-keying drags it onto a different entry. `_comment_lines` counts only
+    lines that START with `#`, so neither the loss nor the mis-attribution is
+    visible to the survival check — and assignment would destroy them just as
+    quietly. Refused outright."""
+    text = ('exclude:\n'
+            '  - "a/**"   # a is the inbox glob\n'
+            '  - "b/**"   # b is deprecated\n')
+    with pytest.raises(EditDowngrade) as excinfo:
+        rewrite_text(text, [PointerEdit("set", "/exclude", ["a/**"])])
+    assert "end-of-line" in excinfo.value.detail
+    assert "inbox" not in excinfo.value.detail        # CWE-209: value-free
+    # an UNCHANGED list still saves — the early-out never reaches the refusal
+    same = rewrite_text(text, [PointerEdit("set", "/exclude", ["a/**", "b/**"])])
+    assert "# a is the inbox glob" in same
+
+
+def test_rewrite_list_edits_at_index_0_that_are_safe_still_apply() -> None:
+    """TASK 073 — index 0 needs no special clause: ruamel shifts the comment
+    keys with the items. An earlier revision guarded it anyway and refused these
+    three, all of which preserve every comment. The one index-0 case that CANNOT
+    be done losslessly is covered by ..._removal_of_first_item_refuses..., and
+    it is the forgiveness accounting — not a guard — that makes it loud."""
+    prepend = rewrite_text(_THREE, [PointerEdit("set", "/exclude",
+                                                ["z/**", "a/**", "b/**", "c/**"])])
+    lines = [line.strip() for line in prepend.splitlines()]
+    assert lines.index("# about b") < lines.index('- "b/**"')
+    assert lines.index("# about c") < lines.index('- "c/**"')
+    assert lines.index("- z/**") < lines.index('- "a/**"')
+
+    # rewriting the FIRST entry in place — a typo fix on line one
+    retyped = rewrite_text(_THREE, [PointerEdit("set", "/exclude",
+                                                ["aa/**", "b/**", "c/**"])])
+    assert "# about b" in retyped and "# about c" in retyped
+    assert yaml.safe_load(retyped)["exclude"] == ["aa/**", "b/**", "c/**"]
+
+    # deleting the first entry when NO comment describes it
+    text = 'exclude:\n  - "a/**"\n  - "b/**"\n  # about c\n  - "c/**"\n'
+    dropped = rewrite_text(text, [PointerEdit("set", "/exclude", ["b/**", "c/**"])])
+    lines = [line.strip() for line in dropped.splitlines()]
+    assert lines.index("# about c") < lines.index('- "c/**"')
+
+
+def test_rewrite_duplicate_keys_downgrade_instead_of_escaping() -> None:
+    """critic-security B1 — PyYAML resolves duplicate mapping keys last-wins, so
+    the gate accepts them; ruamel REFUSES them. The `DuplicateKeyError` escaped
+    every caller, breaking the one-JSON-envelope contract, and its message
+    quotes the offending value (CWE-209)."""
+    with pytest.raises(EditDowngrade) as excinfo:
+        rewrite_text('zones: ["a/**"]\nzones: ["b/**"]\n',
+                     [PointerEdit("set", "/tag_namespace", "wiki")])
+    assert "b/**" not in excinfo.value.detail and "zones" not in excinfo.value.detail
+
+
+def test_rewrite_deeply_nested_value_downgrades_instead_of_escaping() -> None:
+    """critic-security A4 — `edit.value` is attacker-supplied JSON on the serve
+    path; the identity walk recurses over it and `RecursionError` escaped as a
+    traceback with no envelope."""
+    deep: list[Any] = []
+    cursor = deep
+    for _ in range(950):
+        nxt: list[Any] = []
+        cursor.append(nxt)
+        cursor = nxt
+    with pytest.raises(EditDowngrade):
+        rewrite_text('exclude: ["a/**"]\n',
+                     [PointerEdit("set", "/exclude", [deep])])
+
+
+def test_rewrite_reconcile_budget_is_per_call_not_per_edit() -> None:
+    """critic-performance + critic-security A3 — the per-list bound left the
+    per-REQUEST cost unbounded: the schema has 9 array properties and `edits` is
+    unbounded, so a batch multiplied it (measured 1.68s for six lists at the
+    bound). The budget is denominated in n·m and sized at one worst-case list.
+
+    Asserted on the observable consequence, not a clock: both lists are under
+    the per-list bound, but together they exceed the per-call budget, so the
+    SECOND falls back to assignment — which loses its comment and is therefore
+    refused. Remove the budget and both reconcile and the edit succeeds, which
+    is what makes this pin the budget rather than the value."""
+    n = 1500
+    items = [f"i{i}/**" for i in range(n)]
+    text = ("zones:\n" + "".join(f'  - "{i}"\n' for i in items)
+            + "exclude:\n" + "".join(f'  - "{i}"\n' for i in items[:-1])
+            + "  # the last exclude entry is explained here\n"
+            + f'  - "{items[-1]}"\n')
+    with pytest.raises(EditDowngrade):
+        rewrite_text(text, [
+            PointerEdit("set", "/zones", [*items, "z/**"]),
+            PointerEdit("set", "/exclude", [*items, "x/**"]),
+        ])
+    # the same second edit ALONE is inside the budget and reconciles cleanly
+    solo = rewrite_text(text, [PointerEdit("set", "/exclude", [*items, "x/**"])])
+    assert "# the last exclude entry is explained here" in solo
 
 
 def test_rewrite_refuses_result_failing_schema() -> None:
