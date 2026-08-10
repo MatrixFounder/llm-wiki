@@ -32,7 +32,9 @@ wiki-health coverage --vault <id> [--class requirement]
 wiki-health ontology --vault <id> [--class decision]
 ```
 
-Every invocation prints a one-line JSON envelope. **coverage**: `{action, vault, rules,
+Every **completed subcommand invocation** prints a one-line JSON envelope. ⚠️ Not *every*
+invocation: an argparse refusal writes usage to **stderr**, exits **2**, and prints **nothing**
+to stdout (DF-072-3). **coverage**: `{action, vault, rules,
 total_gaps, pages_examined, by_rule, by_class, vacuous_populations, vacuous_kinds,
 gaps:[{slug, project, class, kind,
 missing}]}` where `kind ∈ {edge, field, field-value}` (see below).

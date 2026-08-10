@@ -71,7 +71,13 @@ command↔CLI↔skill relationship is the table in `commands/.AGENTS.md`, now te
   `wiki-verify-multi`, `wiki-extract-concepts`, `wiki-extract-decisions`, `wiki-sync`,
   `wiki-import`) carry **no `import anthropic`** *and no `from anthropic`* — Python does
   retrieval/validation/filing in a `prepare`/`apply` contract; the calling orchestrator
-  owns the reasoning step. Every CLI emits one JSON envelope + a stable exit code.
+  owns the reasoning step. Every CLI emits one JSON envelope + a stable exit code **per
+  completed subcommand invocation** — the quantifier is load-bearing (DF-072-3): an argparse
+  refusal *precedes* the contract (usage → **stderr**, status 2, **empty stdout** — measured
+  22/22 CLIs and **gated** by `tests/test_cli_envelope_contract.py`), and three surfaces
+  deliberately print non-JSON on success (`wiki-search --format markdown`, `wiki-sync scan
+  --dry-run`, `wiki-config serve`'s stderr banner) — those three are **documented prose,
+  deliberately not gated**; that gate's docstring says so, so do not cite it for them.
   Config-driven auto-invocation is expressed as a **dispatch marker** in the envelope
   (`wiki-sync`/`wiki-import` → `wiki-extract-decisions`), never as an inline call — the
   marker is **omitted, not `false`**, when disabled. Gated over the whole population

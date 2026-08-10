@@ -52,7 +52,33 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 # a pure drop-in YAML (declaring optional `aliases`/`init_scaffold`) with zero edits.
 
 
-def _validate_vault_id(vault_id: str) -> bool:
+#: The two rules the advertised `pattern` cannot express. Emitted alongside it so an operator who
+#: satisfies the regex with `a--b` learns why they were still refused (DF-074-3 nit).
+_VAULT_ID_EXTRA_RULES = (
+    "must not contain a '--' sequence",
+    "'_global_' is accepted as the reserved cross-vault sentinel",
+)
+
+
+def _validate_vault_id(vault_id: object) -> bool:
+    # `object`, not `str`: the value reaches here from `WIKI_SCHEMA.md` frontmatter, where YAML
+    # will happily hand back an int (`vault_id: 2026`), a bool (`vault_id: yes`), a `date`
+    # (`vault_id: 2026-08-10`) or a list — all TRUTHY, so they sail past the `if not vault_id`
+    # guards and used to reach `.match()` as a TypeError: exit 1, empty stdout, raw traceback for
+    # what is plain user input. `factory.py:114` already guarded this; this one did not.
+    # (/vdd-multi on TASK 074, L-08.)
+    if not isinstance(vault_id, str):
+        return False
+    # ★ DF-074-3 — the `_global_` carve-out is DELIBERATE and load-bearing, not an oversight, and
+    # it is stated here because the review could not tell which it was from the code.
+    # `_global_` is `layout.GLOBAL_VAULT_SENTINEL`: the vault_id `wiki-search --log-access`
+    # attributes a MULTI-vault read to (it must not be charged to any one named vault), and the
+    # id `repository.list_vaults` / `_vaults.py` explicitly EXCLUDE from "all registered vaults".
+    # `wiki-init` is the only surface that calls `register_vault`, so refusing it here would make
+    # the `_global_` row unseedable and multi-vault read-audit permanently unattributable
+    # (`tests/test_read_access_logging.py:150` documents the fail-soft that results when the row
+    # is absent). It is intentionally NOT `_VAULT_ID_RE`-shaped: the leading underscore is what
+    # keeps it out of the namespace an operator can mint by accident.
     if vault_id == "_global_":
         return True
     return bool(_VAULT_ID_RE.match(vault_id)) and "--" not in vault_id
@@ -74,6 +100,28 @@ def _split_frontmatter(text: str) -> dict[str, Any]:
     except yaml.YAMLError:
         return {}
     return fm if isinstance(fm, dict) else {}
+
+
+def _frontmatter_defect(text: str) -> str | None:
+    """Why `_split_frontmatter` returned `{}` — a value-free reason, or None if it parsed.
+
+    `{}` collapses FOUR distinct conditions: no opening fence, an unterminated fence, a
+    `yaml.YAMLError`, and a genuinely empty block. Reporting all of them as "has no vault_id" is
+    actively misleading when the file plainly *does* carry a `vault_id:` line and the real fault
+    is an unquoted colon two lines below — which is a documented historical bug of this very file
+    (DF-3). Deliberately returns a CATEGORY, never a byte of the file (CWE-117 / H-6).
+    """
+    if not text.startswith("---\n"):
+        return "WIKI_SCHEMA.md has no opening `---` frontmatter fence"
+    if len(text.split("---\n", 2)) < 3:
+        return "WIKI_SCHEMA.md frontmatter fence is never closed"
+    try:
+        parsed = yaml.safe_load(text.split("---\n", 2)[1])
+    except yaml.YAMLError:
+        return "WIKI_SCHEMA.md frontmatter is not valid YAML"
+    if parsed is not None and not isinstance(parsed, dict):
+        return "WIKI_SCHEMA.md frontmatter is not a YAML mapping"
+    return None
 
 
 def _suggested_vault_id(vault_root: Path) -> str:
@@ -332,8 +380,16 @@ def scaffold_new(args: argparse.Namespace) -> int:
         }, exit_code=1)
     vault_id = args.vault_id or _suggested_vault_id(Path(args.vault))
     if not _validate_vault_id(vault_id):
-        return _emit({"error": "INVALID_VAULT_ID", "received": vault_id,
-                      "pattern": _VAULT_ID_RE.pattern}, exit_code=6)
+        # DF-072-5: NO `received` key. `field` names the offending input while `pattern` +
+        # `constraints` state the full expectation — so the caller loses nothing, and the
+        # operator-supplied bytes never reach whatever consumes this envelope (CWE-117).
+        # `source` distinguishes "your flag is bad" from "the id derived from your folder name
+        # is bad" — the discriminator `received` used to provide here (/vdd-multi, L-09).
+        return _emit({"error": "INVALID_VAULT_ID", "field": "vault_id",
+                      "reason": "does not match the vault_id pattern",
+                      "source": "--vault-id" if args.vault_id else "derived from the vault directory name",
+                      "pattern": _VAULT_ID_RE.pattern,
+                      "constraints": list(_VAULT_ID_EXTRA_RULES)}, exit_code=6)
     # Resolve --vendor FAIL-FAST — before any dir/schema write, so a typo'd
     # vendor leaves no partial scaffold (vdd-adversarial).
     _vendors, _default_vendors, _vendor_settings = _load_vendor_config()
@@ -453,8 +509,12 @@ def register_existing(args: argparse.Namespace) -> int:
     try:
         vault_root = Path(args.vault).resolve(strict=True)
     except FileNotFoundError:
-        return _emit({"error": "VAULT_NOT_FOUND", "vault": str(args.vault)},
-                     exit_code=6)
+        # DF-072-5's sibling, found by /vdd-multi (F1/L-04): this echoed the raw `--vault`
+        # argv string verbatim into an error envelope — the same CWE-117 practice the task
+        # removed 19 lines below, surviving under a key name the denylist happens not to
+        # cover. `field` names the input; the operator already knows what they typed.
+        return _emit({"error": "VAULT_NOT_FOUND", "field": "vault",
+                      "reason": "the --vault path does not exist"}, exit_code=6)
     schema_path = vault_root / SCHEMA_FILE
     if not schema_path.is_file():
         return _emit({
@@ -473,10 +533,16 @@ def register_existing(args: argparse.Namespace) -> int:
                     "(ADR-002 §D1.1, no hash fallback).",
         }, exit_code=6)
     if not _validate_vault_id(vault_id):
+        # DF-072-5 — see the scaffold-new site. The value here is read from Class-A
+        # `WIKI_SCHEMA.md` frontmatter, which makes echoing it *more* attractive and no
+        # more permitted: `wiki_schema_path` already tells the operator where to look.
         return _emit({
             "error": "INVALID_VAULT_ID",
-            "received": vault_id,
+            "field": "vault_id",
+            "reason": "WIKI_SCHEMA.md frontmatter vault_id does not match the pattern",
+            "wiki_schema_path": str(schema_path),
             "pattern": _VAULT_ID_RE.pattern,
+            "constraints": list(_VAULT_ID_EXTRA_RULES),
         }, exit_code=6)
     # Resolve --vendor FAIL-FAST — before registering, so a typo'd vendor never
     # leaves a registered-but-errored state (vdd-adversarial).
@@ -578,15 +644,37 @@ def register_existing(args: argparse.Namespace) -> int:
 def reconcile(args: argparse.Namespace) -> int:
     if not args.vault:
         return _emit({"error": "MISSING_VAULT_ARG"}, exit_code=1)
-    vault_root = Path(args.vault).resolve(strict=True)
+    try:
+        vault_root = Path(args.vault).resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        # `register_existing` has guarded this since forever; `reconcile` did not, so a typo'd
+        # --vault produced a raw traceback + exit 1 + empty stdout for plain user input — which
+        # the family convention reads as "a bug in the CLI". (/vdd-multi on TASK 074, L-19.)
+        return _emit({"error": "VAULT_NOT_FOUND", "field": "vault",
+                      "reason": "the --vault path does not exist"}, exit_code=6)
     schema_path = vault_root / SCHEMA_FILE
     if not schema_path.is_file():
         return _emit({"error": "MISSING_WIKI_SCHEMA"}, exit_code=6)
-    fm = _split_frontmatter(schema_path.read_text(encoding="utf-8"))
+    raw_schema = schema_path.read_text(encoding="utf-8")
+    fm = _split_frontmatter(raw_schema)
     new_vault_id = fm.get("vault_id")
     if not new_vault_id or not _validate_vault_id(new_vault_id):
-        return _emit({"error": "INVALID_VAULT_ID", "received": new_vault_id},
-                     exit_code=6)
+        # DF-072-5 — no `received`. This site guarded SEVERAL conditions behind one envelope, so
+        # `reason` separates them: absent, unparseable, and malformed need different operator
+        # actions, and the echoed value was the only thing that hinted at which had happened.
+        # The first cut of this fix collapsed "unparseable YAML" into "has no vault_id", which is
+        # a lie to an operator staring at a `vault_id:` line. (/vdd-multi on TASK 074, L-07.)
+        defect = _frontmatter_defect(raw_schema)
+        return _emit({
+            "error": "INVALID_VAULT_ID",
+            "field": "vault_id",
+            "reason": (defect if defect is not None
+                       else "WIKI_SCHEMA.md frontmatter has no vault_id" if not new_vault_id
+                       else "WIKI_SCHEMA.md frontmatter vault_id does not match the pattern"),
+            "wiki_schema_path": str(schema_path),
+            "pattern": _VAULT_ID_RE.pattern,
+            "constraints": list(_VAULT_ID_EXTRA_RULES),
+        }, exit_code=6)
     config = build_repo_config(  # TASK 022: honour a declared index_db (no silent global)
         new_vault_id, vault_root=vault_root,
         db_path_flag=str(args.db_path) if args.db_path else None)

@@ -18,7 +18,12 @@ vault** — never run `wiki-init --scaffold-new --vault .` here.
   DB-only state. The DB never holds knowledge the markdown doesn't.
 - **Decision-17 (deterministic plumbing):** the LLM-shaped skills carry **no `import anthropic`** —
   Python does retrieval/validation/filing in a `prepare`/`apply` contract; the orchestrator owns
-  the reasoning step. Every CLI emits one JSON envelope + a stable exit code.
+  the reasoning step. Every CLI emits one JSON envelope + a stable exit code **per completed
+  subcommand invocation** (DF-072-3): an argparse refusal precedes the contract (usage → stderr,
+  status 2, **empty stdout** — gated by `tests/test_cli_envelope_contract.py`), and
+  `wiki-search --format markdown` / `wiki-sync scan --dry-run` / `wiki-config serve`
+  deliberately print non-JSON on success — **documented, not gated** (that file's docstring
+  states the boundary; citing it for these three would be the same overclaim DF-072-3 was).
 - **Schema = `user_version 7`** (`sql/wiki-index-v2.sql`). A bump is a Class-B rebuild, never an
   in-place ALTER. Default posture is **zero-DDL** (ride `frontmatter_json` + existing columns).
 - **Config-driven layouts:** per-vault *identity* (`config_loader.py`) is distinct from per-layout

@@ -34,7 +34,10 @@ wiki-graph neighbors <slug> --vault <id> [--direction both] [--kind causes]
 wiki-graph chain <slug> --vault <id> --kind supersedes [--direction out] [--depth 8]
 ```
 
-Every invocation prints a one-line JSON envelope (pipe to `python3 -m json.tool`).
+Every **completed subcommand invocation** prints a one-line JSON envelope (pipe to
+`python3 -m json.tool`). ⚠️ Not *every* invocation: an argparse refusal (unrecognised flag,
+missing subcommand) writes usage to **stderr**, exits **2**, and prints **nothing** to stdout —
+so `json.loads(stdout)` on that path fails. Branch on the exit code first (DF-072-3).
 `--kind` is validated against the edge ref_types (an invalid one → `INVALID_KIND`,
 exit 2, without echoing the value); `chain` requires `--kind`; `--depth` is capped
 (cycle-safe). `--db-path` / `--vault-root` resolve the index DB (TASK 022).

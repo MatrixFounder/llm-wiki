@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.wiki_skills import wiki_init
 from scripts.wiki_skills.wiki_init import main
 
 
@@ -476,3 +477,43 @@ def test_copied_page_types_are_never_indexed(tmp_path):
     assert all(".wiki" not in (r[2] or "") for r in rows)   # no scaffold indexed
     assert not any(r[1] == "decision" for r in rows)         # no junk decision page
     assert any(r[0] == "real" for r in rows)                 # the real note IS indexed
+
+
+# ── DF-074-3 · the `_global_` carve-out is DELIBERATE, and that is now pinned ─────────
+def test_global_sentinel_is_an_accepted_vault_id_on_purpose() -> None:
+    """★ DF-074-3. `_validate_vault_id` short-circuits `_global_` to True even though it matches
+    neither the advertised pattern nor the `--`-free rule. A `/vdd-multi` reviewer could not tell
+    from the code whether that was deliberate, and filed it. It IS deliberate and load-bearing:
+
+    `_global_` is `layout.GLOBAL_VAULT_SENTINEL`, the vault_id `wiki-search --log-access`
+    attributes a MULTI-vault read to (charging it to one named vault would be wrong), and the id
+    `repository.list_vaults` explicitly EXCLUDES from "all registered vaults". `wiki-init` is the
+    only surface that calls `register_vault`, so refusing it here would make the row unseedable
+    and multi-vault read-audit permanently unattributable.
+
+    Pinned so a future "tighten the validator" pass has to read the reason before removing it.
+    """
+    from scripts.wiki_index.layout import GLOBAL_VAULT_SENTINEL
+    assert GLOBAL_VAULT_SENTINEL == "_global_"
+    assert wiki_init._validate_vault_id(GLOBAL_VAULT_SENTINEL) is True
+    # ...and it really is an exception, not something the pattern would have allowed anyway.
+    assert wiki_init._VAULT_ID_RE.match(GLOBAL_VAULT_SENTINEL) is None
+
+
+def test_non_string_vault_id_is_refused_not_a_traceback() -> None:
+    """★ /vdd-multi L-08. YAML hands back an int for `vault_id: 2026`, a bool for `yes`, a date
+    for `2026-08-10`, a list for `[a]` — all TRUTHY, so they passed the `if not vault_id` guards
+    and reached `re.match()` as a TypeError: exit 1, EMPTY stdout, raw traceback, for plain user
+    input. `factory.py` had guarded this for years; this validator had not."""
+    import datetime as _dt
+    for bad in (2026, True, False, None, [], ["a"], {"a": 1}, _dt.date(2026, 8, 10), 1.5):
+        assert wiki_init._validate_vault_id(bad) is False, f"must refuse, not raise: {bad!r}"
+
+
+def test_invalid_vault_id_envelope_states_the_rules_the_pattern_cannot_express() -> None:
+    """The `--` rule and the `_global_` carve-out are invisible in the regex, so an operator who
+    satisfies `pattern` with `a--b` used to get an identical refusal carrying no new information
+    (the residual of dropping `received`). `constraints` closes that without echoing a value."""
+    assert wiki_init._validate_vault_id("a--b") is False
+    assert any("--" in rule for rule in wiki_init._VAULT_ID_EXTRA_RULES)
+    assert any("_global_" in rule for rule in wiki_init._VAULT_ID_EXTRA_RULES)

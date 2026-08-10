@@ -182,6 +182,10 @@ obsidian://open?vault=<vault_folder_basename>&file=<url_encoded_path>
 
 ### `--format markdown` behavior
 
+⚠️ **This is one of the family's three deliberate non-JSON output modes** (DF-072-3): stdout is
+**markdown, not an envelope**, and the exit is 0. A caller that parses stdout must use the
+default `--format json`. The other two are `wiki-sync scan --dry-run` and `wiki-config serve`.
+
 | Context | Suffix appended per hit |
 |---------|-------------------------|
 | TTY (iTerm2, VS Code terminal) | OSC 8 hyperlink: `\033]8;;<url>\033\\[↗]\033]8;;\033\\` — clickable |

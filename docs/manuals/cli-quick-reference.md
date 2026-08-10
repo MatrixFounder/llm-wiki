@@ -151,8 +151,11 @@ wiki-index-render --vault personal --auto-indexes                  # (re)generat
 wiki-init --register-existing --vault .                            # one-time: register this vault
 ```
 
-> Tip: every command prints a JSON envelope — pipe to `python3 -m json.tool` to read
-> it, or to `jq` if installed.
+> Tip: every command prints a JSON envelope **when the subcommand actually runs** — pipe to
+> `python3 -m json.tool` to read it, or to `jq` if installed. Two boundaries (DF-072-3): a
+> **usage refusal** (bad/unknown flag) writes to **stderr**, exits **2** and leaves stdout
+> **empty**, so the pipe gets nothing; and `wiki-search --format markdown`, `wiki-sync scan
+> --dry-run` and `wiki-config serve` deliberately print non-JSON on success.
 
 ---
 

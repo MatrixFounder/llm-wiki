@@ -1,8 +1,9 @@
 ---
 id: DF-072-4
 type: known-issue
-status: open
+status: fixed
 opened_at: 2026-08-07
+fixed_at: 2026-08-10
 category: correctness
 severity: SEV-2
 slug: df-072-4-wiki-lint-strict-exit-1-success-envelope
@@ -60,3 +61,40 @@ slug: df-072-4-wiki-lint-strict-exit-1-success-envelope
   `tests/test_exit_code_doc_truth.py` because `wiki-lint` is in partition B — it has a `SKILL.md`
   with **no exit table**, so there is nothing to check against. That gap is itself recorded in the
   test's partition assertion.
+
+---
+
+## Resolution — TASK 074, 2026-08-10 (option 1, and why option 2 was refused on evidence)
+
+**Fixed by option 1** — documented and fenced. `skills/wiki-lint/SKILL.md` gains a `## Exit codes`
+section declared **normative**, listing all four reachable codes (`0`, `1`×2 meanings, `2`
+argparse, `6` inherited `INVALID_INDEX_DB`), with a ⚠️ box modelled byte-for-byte on
+`skills/wiki-verify-multi/SKILL.md:130-136`. The "Always returns success exit `0`" line at `:62`
+is deleted. `wiki-lint` therefore moves from **partition B to partition A** of
+`tests/test_exit_code_doc_truth.py` — it is now held to usage-row truth, phantom-freedom **and**
+completeness, and it is deliberately absent from `_DOES_NOT_CLAIM_COMPLETENESS`.
+
+**★ Option 2 was refused because it does not do what it claims.** It proposed moving the gate
+signal «to the family's `6`». `wiki-lint` **already reaches 6**: `INVALID_INDEX_DB`, inherited
+from `build_repo_config` (`wiki_lint.py:73`). Putting the gate there would have **reproduced the
+exact `wiki-verify-multi` exit-6 ambiguity** — 6 = error envelope *or* 6 = success envelope —
+rather than removing any collision. Two further reasons, both secondary to that one:
+
+- exit-1-on-findings is the **universal linter convention** (ruff, eslint, shellcheck, flake8);
+  the family's «1 = crash» is the local outlier, and moving `wiki-lint` off 1 would surprise every
+  operator who has wired a linter before;
+- exit 1 is pinned by live tests (`tests/test_lint_near_duplicate.py:182`,
+  `tests/test_lint_denominators.py:191`) and by five doc surfaces that call it the CI gate.
+
+Recorded as **D-074-2** in `docs/tasks/task-074-*`.
+
+**★ The residual collision is now DISCRIMINABLE, not merely annotated** — which is what the
+issue's own ⚠️ demanded. The two meanings of 1 differ in envelope shape, and the discriminator is
+stronger than `"error" not in env`: a **crash emits no envelope at all** (stdout empty), a tripped
+gate emits a parseable success payload. Pinned by
+`tests/test_cli_envelope_contract.py::test_wiki_lint_strict_gate_is_a_success_envelope_at_exit_1`
+(rc **and** shape **and** `total_issues > 0`) plus its mirror at exit 0 without `--strict`.
+
+**Sub-finding resolved**: `wiki-lint` doing real work on a bare invocation is **intended**, not an
+accident — the SKILL.md already specified «omitting `--vault` runs across every registered vault»,
+and it now says so explicitly in the Contract section so the question is not re-opened.

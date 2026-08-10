@@ -724,9 +724,16 @@ def reindex_delta(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 _detect_slug_collision(
                     seen_keys, out.page_slug, out.project, rel, slug_collisions)
             except (UnmappedTypeError, BodyNormalizationError) as e:
+                # Purpose-built domain messages (the unmapped `type:` token, the normalization
+                # rule) — bounded, and the thing the operator must act on. Kept verbatim.
                 skipped.append({"path": str(path), "error": str(e)})
             except (PathTraversalError, OSError, ValueError) as e:
-                skipped.append({"path": str(path), "error": str(e)})
+                # TASK 074 / vdd-multi F3: `str(e)` here is UNBOUNDED — this arm catches YAML
+                # parse failures, whose message carries line/column coordinates into the
+                # operator's private frontmatter (and, for other exception types, could carry
+                # its bytes). `skipped[]` is emitted verbatim by `wiki-reindex`, so that is
+                # envelope egress. Mirrors the `sqlite:` discipline a few lines below.
+                skipped.append({"path": str(path), "error": type(e).__name__})
             except sqlite3.Error as e:
                 # R-030-1 / AC-1.6 (TASK-015 per-entry precedent): a stale row
                 # holding this path under another (slug, project) raises
@@ -972,7 +979,9 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                         # Q-030-5 A2: mid-flush DML error — partial per-file DML
                         # stays in the chunk; the file is reported. A COMMIT
                         # failure never lands here (outside this try).
-                        skipped.append({"path": abs_path, "error": str(e)})
+                        # TASK 074 / vdd-multi F3: class name only — a DML error message can
+                        # quote the offending row values, and this list is emitted verbatim.
+                        skipped.append({"path": abs_path, "error": type(e).__name__})
                 conn.execute("COMMIT")
             except Exception:
                 # Sarcasmotron 030-03 HIGH: SQLite auto-rolls-back on
@@ -1078,9 +1087,14 @@ def reindex_full(repo: "IndexRepository", vault_id: str) -> dict[str, Any]:
                 staged.append((str(path), out.page_slug, out.project, page,
                                entity_args, alias_list, all_refs))
             except (UnmappedTypeError, BodyNormalizationError) as e:
+                # Bounded, purpose-built — see the matching arm in the delta path.
                 skipped.append({"path": str(path), "error": str(e)})
             except Exception as e:
-                skipped.append({"path": str(path), "error": str(e)})
+                # TASK 074 / vdd-multi F3: a BARE `except Exception` whose `str(e)` was emitted
+                # verbatim in `wiki-reindex`'s envelope. Measured leak on this path: the vault
+                # path twice plus line/column coordinates into the operator's frontmatter; the
+                # message is unbounded in principle, so the class name is what egresses.
+                skipped.append({"path": str(path), "error": type(e).__name__})
             # Sarcasmotron 030-03 CRITICAL: the flush trigger lives OUTSIDE the
             # per-file try — a fatal flush failure (e.g. "database is locked"
             # BEGIN on a contended shared DB) must PROPAGATE to the batch

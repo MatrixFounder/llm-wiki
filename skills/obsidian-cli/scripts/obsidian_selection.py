@@ -358,6 +358,37 @@ _REASON_EXIT: dict[str, int] = {
 }
 
 
+def safe_reason(raw: object) -> str:
+    """Collapse a plugin-reported failure reason to a known ladder rung, else ``"unknown"``.
+
+    DF-074-1. ``agent-result.json`` is UNSIGNED — the same file this module's header already
+    models a hostile local writer for. The *exit code* was allow-listed through ``_REASON_EXIT``
+    (an unrecognised rung fails closed to ``EXIT_APP_NOT_RUNNING``); the *string* was passed
+    through verbatim into the stdout envelope, and therefore into an agent's context. Applying
+    the trust boundary to one half of a value and not the other is the whole defect: the sibling
+    wrapper argues at length that its success payload must be an allow-list rather than a
+    deny-list, and the failure branch one line earlier applied neither.
+
+    Returning ``"unknown"`` matches what the exit-code mapping already concludes about an
+    unrecognised rung, so the number and the string can no longer disagree.
+    """
+    reason = str(raw)
+    return reason if reason in _REASON_EXIT else "unknown"
+
+
+def tsv_field(value: object) -> str:
+    """Render one TSV cell with the field separators neutralised.
+
+    DF-074-2. ``--format tsv`` exists so a shell consumer can ``cut -f``; it has no structural
+    framing to fall back on, so a tab in an author-controlled ``path``/``heading``/``tag`` forges
+    a column and a newline forges a row (CWE-117). macOS filenames may legally contain both.
+    This lived as a local closure in ``obsidian_context.py`` — with the rationale already
+    written — while its two siblings emitted raw; it is hoisted here so all three IMPORT the
+    guard rather than re-port it (the TASK 071 rule, whose violation caused a 3-critic FAIL).
+    """
+    return str(value).replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     # default=SUPPRESS so an option absent before the subcommand is not re-defaulted
@@ -418,7 +449,7 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     assert root is not None  # set by _vault_root above; narrows for the cleanup/read below
 
     if not result.get("ok"):
-        reason = str(result.get("reason", "unknown"))
+        reason = safe_reason(result.get("reason", "unknown"))   # DF-074-1: allow-list the STRING too
         _cleanup_exchange(root)
         return {"ok": False, "mode": "read", "reason": reason}, _REASON_EXIT.get(reason, EXIT_APP_NOT_RUNNING)
 
@@ -591,7 +622,7 @@ def do_apply(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     _cleanup_exchange(root)
 
     if not result.get("ok"):
-        reason = str(result.get("reason", "unknown"))
+        reason = safe_reason(result.get("reason", "unknown"))   # DF-074-1: allow-list the STRING too
         return {"ok": False, "mode": "apply", "reason": reason}, _REASON_EXIT.get(reason, EXIT_APP_NOT_RUNNING)
 
     envelope: dict[str, Any] = {
@@ -622,7 +653,9 @@ def _emit(obj: dict[str, Any], fmt: str) -> None:
             cols = ("ok", "mode", "vault", "path", "newLen", "reason")
         else:
             cols = ("ok", "mode", "vault", "path", "fromOffset", "toOffset", "mtime", "reason")
-        print("\t".join(str(obj.get(k, "")) for k in cols))
+        # DF-074-2: `path` is author-controlled and may legally contain a tab or a newline —
+        # either forges the row structure for a `cut -f` consumer.
+        print("\t".join(tsv_field(obj.get(k, "")) for k in cols))
         return
     print(json.dumps(obj, ensure_ascii=False))
 

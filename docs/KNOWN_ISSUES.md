@@ -1,4 +1,4 @@
-<!-- GENERATED-AT: 2026-08-09T19:07:48.310089 by wiki-index-render --auto-indexes -->
+<!-- GENERATED-AT: 2026-08-10T17:23:12.714888 by wiki-index-render --auto-indexes -->
 # Known Issues — obsidian-llm-wiki
 
 ## capability-regression
@@ -17,7 +17,7 @@
 - **DF-049-1** [[df-049-1-queries-dir-not-walked-off-karpathy|filed \`_queries/\`/\`_verifications/\` pages don't survive reindex on non-karpathy layouts]] — severity `SEV-2`, status `fixed`, opened 2026-07-07
 - **DF-8** [[df-8-stale-entity-rows-block-concept-page-recreation|\`wiki-import apply --concepts\` classifies against ghost \`entities\` rows as "mentioned" instead of "created", with no signal that the target file doesn't exist]] — severity `SEV-2`, status `fixed`, opened 2026-07-08
 - **DF-072-1** [[df-072-1-verify-multi-apply-files-a-vacuous-pass|\`wiki-verify-multi apply\` files a **PASS verdict over ZERO examined sources** — the two floors its own \`prepare\` carries are absent from \`apply\`]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
-- **DF-072-4** [[df-072-4-wiki-lint-strict-exit-1-success-envelope|\`wiki-lint --strict\` returns **exit 1 with a SUCCESS envelope** — the second instance of a divergence the repo documents as unique to \`wiki-verify-multi\`, and this one is warned about nowhere]] — severity `SEV-2`, status `open`, opened 2026-08-07
+- **DF-072-4** [[df-072-4-wiki-lint-strict-exit-1-success-envelope|\`wiki-lint --strict\` returns **exit 1 with a SUCCESS envelope** — the second instance of a divergence the repo documents as unique to \`wiki-verify-multi\`, and this one is warned about nowhere]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
 - **DF-072-7** [[df-072-7-cybos-and-dev-project-half-support-imported-sources|\`cybos\` **and** \`dev-project\` declared the imported-source classes in \`type_mapping\` with **no read glob that could see them** — an imported note was written, exited 0, and was never indexed, with \`skipped\[\]\` EMPTY]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
 - **DF-072-8** [[df-072-8-live-dbs-frozen-at-schema-v5-undetected|The global index DB was frozen at **schema v5** while the repo ships v7 — every event-graph typed edge was UNWRITABLE there, and **nothing in \`scripts/\` reads \`PRAGMA user_version\`**, so nothing detected it]] — severity `SEV-2`, status `partially-fixed`, opened 2026-08-07
 - **DF-072-10** [[df-072-10-sync-upserts-raw-captures-the-layout-ignores|\`wiki-sync\` upserts \`_raw/\` captures that the LAYOUT ignores — 31 index rows a \`wiki-reindex --full\` silently DROPS, reported by \`wiki-lint\` as \`missing-on-disk\` for files that exist]] — severity `SEV-2`, status `open`, opened 2026-08-09
@@ -28,7 +28,7 @@
 ## documentation
 
 - **DF-072-2** [[df-072-2-wiki-health-always-exits-0-is-false|«\`wiki-health\` **always exits 0**» is FALSE — and it is asserted in an **Accepted ADR**, \`CLAUDE.md\`, \`README.md\`, \`ARCHITECTURE.md\`, the manual and the ROADMAP]] — severity `SEV-2`, status `fixed`, opened 2026-08-07
-- **DF-072-3** [[df-072-3-one-json-envelope-per-cli-is-false|«Every CLI emits **one JSON envelope** + a stable exit code» is FALSE on the usage path — and it is the Decision-17 paragraph in \`CLAUDE.md\`]] — severity `SEV-3`, status `open`, opened 2026-08-07
+- **DF-072-3** [[df-072-3-one-json-envelope-per-cli-is-false|«Every CLI emits **one JSON envelope** + a stable exit code» is FALSE on the usage path — and it is the Decision-17 paragraph in \`CLAUDE.md\`]] — severity `SEV-3`, status `fixed`, opened 2026-08-07
 
 ## dogfood
 
@@ -68,6 +68,7 @@
 - **L-9** [[l-9-entity-resolution-minor-logic-ux-nits-deferred|entity-resolution minor logic/UX nits (deferred)]] — severity `LOW`, status `open`, opened 2026-05-29
 - **R-X1-REF-SLUGIFY** [[r-x1-ref-target-not-slugified|wiki-link ref targets are not run through \`slug_strategy\` → links to existing pages flagged orphan under non-identity slug layouts]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
 - **DF-029-1** [[df-029-1-reindex-delta-misses-mtime-preserved-rename|wiki-reindex --delta misses an mtime-preserved rename → orphans its inbound links]] — severity `SEV-2`, status `fixed`, opened 2026-06-12
+- **DF-074-3** [[df-074-3-validate-vault-id-accepts-the-global-sentinel|\`wiki-init\` accepts \`_global_\` as a real \`vault_id\` — the value \`layout.py\` reserves to mean "no specific vault"]] — severity `SEV-4`, status `fixed`, opened 2026-08-10
 
 ## performance
 
@@ -115,8 +116,10 @@
 - **DF-9** [[df-9-note-file-lacks-vault-containment-check|\`wiki-import apply --note-file\` accepts an absolute path outside \`--vault-root\`; the sibling \`wiki-extract-concepts apply --candidates-file\` refuses one]] — status `fixed`, opened 2026-07-08
 - **H-PERF-3** [[h-perf-3-index-from-manifest-argparse-in-loop|index_from_manifest argparse-in-loop]] — severity `SEV-2`, status `fixed`, opened 2026-05-28
 - **R-X1-REDOS-RT** [[r-x1-redos-runtime-deadline-residual|ReDoS load-gate residual — no per-file runtime regex deadline]] — severity `SEV-2`, status `fixed`, opened 2026-06-01
-- **DF-072-5** [[df-072-5-wiki-init-echoes-the-offending-value|\`wiki-init\` emits a **\`received\`** key echoing the offending value — the one key \`components.md\` names as forbidden — and it is the one CLI excluded from every envelope-safety suite]] — severity `SEV-3`, status `open`, opened 2026-08-07
+- **DF-072-5** [[df-072-5-wiki-init-echoes-the-offending-value|\`wiki-init\` emits a **\`received\`** key echoing the offending value — the one key \`components.md\` names as forbidden — and it is the one CLI excluded from every envelope-safety suite]] — severity `SEV-3`, status `fixed`, opened 2026-08-07
 - **DF-072-6** [[df-072-6-ssrf-guard-residuals-proxy-and-fake-ip|The SSRF guard shipped in P1b has **two residuals that re-open address pinning** — an ambient proxy and a fake-IP resolver. Neither is a defect in the guard; both mean *"rebinding is closed"* must never be claimed unqualified]] — severity `SEV-3`, status `open`, opened 2026-08-07
+- **DF-074-1** [[df-074-1-obsidian-wrappers-echo-an-unallowlisted-plugin-reason|The \`obsidian-*\` wrappers allow-list the plugin's failure *exit code* and pass its failure *string* straight through — the trust boundary is applied to one half of the same value]] — severity `SEV-3`, status `fixed`, opened 2026-08-10
+- **DF-074-2** [[df-074-2-tsv-emitters-do-not-escape-tabs-and-newlines|Two of the three \`--format tsv\` emitters don't escape tabs/newlines — the third added \`_clean()\` for exactly that reason and the fix was never carried across]] — severity `SEV-3`, status `fixed`, opened 2026-08-10
 
 ## uncategorized
 

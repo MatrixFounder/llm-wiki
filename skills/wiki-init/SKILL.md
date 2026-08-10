@@ -48,6 +48,29 @@ Or `/wiki-init <args>`.
 | 6 | `error: INVALID_VAULT_ID` / `MISSING_WIKI_SCHEMA` / `MISSING_VAULT_ID` / `VAULT_NOT_FOUND` / `VAULT_ID_COLLISION` / `VAULT_NOT_REGISTERED` |
 | 7 | `warning: VAULT_RENAMED` (reconcile needs --confirm) |
 
+⚠️ **Exit `1` here carries a normal ERROR envelope** (`MISSING_VAULT_ARG`), which diverges from
+the family convention that `1` = an unhandled exception with **no** envelope. Read the envelope,
+not `$?` (DF-072-3).
+
+## `vault_id` validity — the two rules the `pattern` cannot express
+
+`INVALID_VAULT_ID` envelopes carry `{field, reason, source, pattern, constraints}` and **never**
+the offending value (DF-072-5, CWE-117). `pattern` is `^[a-z][a-z0-9-]{1,30}[a-z0-9]$`; two rules
+sit outside it and are emitted in `constraints`:
+
+- **No `--` sequence.** `a--b` matches the regex and is still refused.
+- **`_global_` is ACCEPTED** — deliberately, and it is not an oversight (DF-074-3). It is
+  `layout.GLOBAL_VAULT_SENTINEL`: the vault_id `wiki-search --log-access` attributes a
+  **multi-vault** read to (charging it to one named vault would be wrong), and the one
+  `repository.list_vaults` excludes from "all registered vaults". `wiki-init` is the only surface
+  that calls `register_vault`, so refusing it would make that row unseedable and multi-vault
+  read-audit permanently unattributable. The leading underscore — which the pattern forbids — is
+  what keeps it out of the namespace an operator can mint by accident. Pinned by
+  `tests/test_wiki_init_flows.py::test_global_sentinel_is_an_accepted_vault_id_on_purpose`.
+
+`source` names where the id came from (`--vault-id` vs *derived from the vault directory name*),
+so a refusal of a **derived** id doesn't send the operator hunting for a flag they never passed.
+
 ## Related
 
 - `scripts/wiki_skills/wiki_init.py`

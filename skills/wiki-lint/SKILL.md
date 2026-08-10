@@ -57,10 +57,48 @@ Or `/wiki-lint [...]`.
 ## Contract
 
 - Omitting `--vault` runs across every registered vault (cross-vault
-  duplicates section enabled).
-- `--strict` upgrades warning-level issues to error severity.
-- Always returns success exit `0`; the envelope's `total_issues` count is
-  the signal (use `--strict` + grep to fail CI on issues).
+  duplicates section enabled). **A bare `wiki-lint` therefore does real work** — it opens
+  the global DB and lints every registered vault. That is intended (this is the one CLI
+  with no argparse-required argument), not an accident of the parser.
+- `--strict` upgrades warning-level issues to error severity **and turns the run into a
+  gate**: a gating issue makes the process exit **1**. Without `--strict` the exit is
+  always `0` and `total_issues` is the signal.
+- ⚠️ **Exit `1` means two different things in this CLI — read the envelope, not just `$?`.**
+  See [Exit codes](#exit-codes) below. This is a **deliberate divergence** from the family
+  convention (`1` = unhandled exception), kept because exit-1-on-findings is the universal
+  linter convention (ruff / eslint / shellcheck) and because moving the signal to the
+  family's `6` would collide with this CLI's inherited `INVALID_INDEX_DB` (DF-072-4).
+
+## Exit codes
+
+This table is the **normative roster** for this CLI — every reachable code is listed,
+including the one it inherits rather than raises itself.
+
+| Code | `error` | Cause |
+|---|---|---|
+| 0 | — (success envelope) | the run completed. Either no gating issue was found, or `--strict` was not passed. **Findings can be present at 0** — read `total_issues`. |
+| **1** | — (a **SUCCESS** envelope: `action:"linted"`, **no `error` key**) | **`--strict` gate tripped** — at least one gating issue. `wiki_lint.py:99`. **Deliberate divergence** from the family's `1 = crash` convention. ⚠️ see the box below. |
+| **1** | — (**no envelope at all**) | an **uncaught exception**: stdout is EMPTY and a raw traceback goes to stderr. Mostly bug/environment faults (corrupt `--db-path`, unwritable `--report` path) — but ⚠️ **two plain user-input paths land here too**: a malformed `--vault` raises `ConfigValidationError` and an iCloud `--db-path` raises `ICloudRejectionError`, both from `factory.py`, neither caught in `wiki_lint.main`. So "1 with no envelope" does **not** reliably mean "file a bug"; check your `--vault`/`--db-path` first. (Closing this properly = catching both and emitting at 6; tracked, not done here.) |
+| **2** | — (argparse, **no envelope**) | unrecognised argument / bad flag value. argparse writes usage to **stderr** and its own status is **2**, always. This CLI has no required argument, so there is no "missing flag" path. |
+| **6** | `INVALID_INDEX_DB` | **inherited from `build_repo_config`** (`wiki_lint.py:73`), raised before any check runs: the vault's `index_db:` escapes the vault / is a symlink / is an unsafe absolute path. **Nothing is linted.** Envelope carries an extra `hint` key. |
+
+> ⚠️ **EXIT 1 IS AMBIGUOUS IN THIS CLI — never treat `$? == 1` as a crash.** It means *either*
+> a tripped `--strict` gate (success envelope, findings in `by_category`) *or* an unhandled
+> exception (no envelope). **Branch on stdout:** empty ⇒ crash, re-run and read stderr;
+> parseable JSON without an `error` key ⇒ the gate did its job, read `total_issues` /
+> `by_category`. A caller applying the family's «`1` = unhandled exception, raw traceback»
+> convention (see `skills/wiki-query/SKILL.md`) reads a perfectly successful gate run as a
+> crash — that was DF-072-4, and this table is its fix.
+>
+> Pinned by `tests/test_cli_envelope_contract.py::test_wiki_lint_strict_gate_is_a_success_envelope_at_exit_1`,
+> which asserts the **envelope shape** alongside the code — an `rc == 1`-only assertion
+> structurally cannot tell the two apart.
+
+> **Why not move the gate signal off `1`?** Because the obvious target is already taken. The
+> family's `6` is this CLI's inherited `INVALID_INDEX_DB` (an *error* envelope, nothing linted),
+> so putting the gate there would reproduce `wiki-verify-multi`'s exit-6 ambiguity rather than
+> remove it. Exit 1 also *is* the linter convention everywhere else (ruff, eslint, shellcheck,
+> flake8). Recorded as TASK 074 D-074-2.
 
 ## Output
 

@@ -156,7 +156,11 @@ wiki-index-render --vault personal --auto-indexes                  # (re)generat
 wiki-init --register-existing --vault .                            # one-time: register this vault
 ```
 
-> Совет: каждая команда печатает JSON-конверт — направьте его в `python3 -m json.tool`
+> Совет: команда печатает JSON-конверт, **когда подкоманда действительно отработала** — две
+> границы (DF-072-3): **отказ по использованию** (плохой/неизвестный флаг) пишет в **stderr**,
+> выходит с кодом **2** и оставляет stdout **пустым**, так что в пайп ничего не придёт; а
+> `wiki-search --format markdown`, `wiki-sync scan --dry-run` и `wiki-config serve` намеренно
+> печатают не-JSON при успехе. Сам конверт направьте в `python3 -m json.tool`
 > для чтения, или в `jq`, если установлен.
 
 ---

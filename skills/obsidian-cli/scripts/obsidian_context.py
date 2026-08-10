@@ -164,7 +164,11 @@ def do_read(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     assert root is not None  # set by _vault_root above
 
     if not result.get("ok"):
-        reason = str(result.get("reason", "unknown"))
+        # DF-074-1 — allow-list the reason STRING against the same ladder its exit code is
+        # mapped through. `agent-context.json`/`agent-result.json` are unsigned; the payload
+        # allow-list below already says the wrapper is the trust boundary, and this branch used
+        # to pass arbitrary attacker-chosen text straight into the agent's context.
+        reason = _sel.safe_reason(result.get("reason", "unknown"))
         _cleanup(root)
         return {"ok": False, "mode": "context", "reason": reason}, _REASON_EXIT.get(
             reason, EXIT_APP_NOT_RUNNING
@@ -208,8 +212,9 @@ def _emit(obj: dict[str, Any], fmt: str) -> None:
         # One field per row (values may themselves contain no tab because we join with \n rows,
         # not a single \t row). Escape embedded tabs/newlines in untrusted author-controlled
         # fields so a crafted heading/tag cannot break the row structure of a downstream parser.
-        def _clean(v: Any) -> str:
-            return str(v).replace("\t", " ").replace("\n", " ")
+        # DF-074-2: this WAS a local closure here while both siblings emitted raw — hoisted to
+        # `_sel.tsv_field` so the guard is imported, not re-ported (the TASK 071 rule).
+        _clean = _sel.tsv_field
 
         rows = [
             f"ok\t{_clean(obj.get('ok', ''))}",

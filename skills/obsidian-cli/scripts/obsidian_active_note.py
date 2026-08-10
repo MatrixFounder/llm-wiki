@@ -60,6 +60,17 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# ── the sibling's shared output guard (DF-074-2) ──────────────────────────────
+# Same directory, same pattern `obsidian_context.py` already uses: put it on sys.path so a
+# plain `import` resolves at runtime AND statically (mypy follows the module). `tsv_field` is
+# a guard, and the project rule is that guards are IMPORTED from `obsidian_selection`, never
+# re-ported — a re-port that silently dropped one is what caused TASK 071's 3-critic FAIL.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+import obsidian_selection as _sel  # noqa: E402  (path insert must precede the import)
+
 # ── exit codes ────────────────────────────────────────────────────────────────
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -445,7 +456,10 @@ def _emit(obj: object, fmt: str) -> None:
             # never silently emit a bare title as if it were a path (a tab entry has no path)
             print(item.get("abs") or item.get("path") or "")
         else:  # tsv
-            print("\t".join(str(item.get(k, "")) for k in ("path", "abs", "vault", "title", "view_type")))
+            # DF-074-2: `path`/`abs`/`title` are author-controlled; a tab forges a column and a
+            # newline forges a row for the `cut -f` consumer this format exists for.
+            print("\t".join(_sel.tsv_field(item.get(k, ""))
+                            for k in ("path", "abs", "vault", "title", "view_type")))
 
 
 def build_parser() -> argparse.ArgumentParser:

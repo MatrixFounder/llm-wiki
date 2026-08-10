@@ -68,7 +68,15 @@ Or `/wiki-config …` from any harness.
 
 ## Contract
 
-- One JSON envelope on stdout, always; human output via `--report` sidecars.
+- One JSON envelope on stdout per **completed subcommand invocation**; human output via
+  `--report` sidecars. ⚠️ **Two stated exceptions** (DF-072-3): an argparse refusal writes usage
+  to **stderr**, exits **2** and prints **nothing** to stdout; and **`serve`** prints its tokened
+  URL banner to **stderr** and returns 0 with **no stdout envelope at all**
+  (`wiki_config/_server.py:564-572` — deliberate: it keeps the token out of the machine-readable
+  stdout envelope). ⚠️ **stderr is not a confidentiality boundary** — `capture_output=True`,
+  `2>&1`, CI logs and most agent harnesses capture it, and many surface it to a model. The real
+  protections are that the token lives in the URL **fragment** (never sent to the server, never
+  logged by it), the 127.0.0.1 bind, the Host-header allowlist and `hmac.compare_digest`.
 - Every mutation of an existing file: hardened-gate sandwich (the write is
   verified semantically + comment-survival before it happens; an unverifiable
   fix downgrades to MANUAL and writes NOTHING) + `.wiki/backups/` copy +
