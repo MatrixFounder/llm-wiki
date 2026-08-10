@@ -59,9 +59,10 @@ class PointerEdit:
     editor saves an array field whole and a replaced sequence loses every
     comment between its items; `rename-key` moves value+position+attached
     comments; `dedupe-list` keeps first occurrences. `destructive` ops (unset,
-    rename-key of commented nodes, a list `set` that removed items) exempt the
-    comment-survival check for the comments attached to the removed node — the
-    pre-write backup is the record."""
+    rename-key of commented nodes) exempt the comment-survival check wholesale —
+    the pre-write backup is the record. A list `set` does NOT: it forgives
+    exactly the lines that left with a removed item, so one removed entry cannot
+    disarm the check for the other edits saved in the same batch."""
 
     op: str
     pointer: str
@@ -185,7 +186,21 @@ def _seq_key(item: Any) -> str:
     return repr(_plain(item))
 
 
-def _drop_seq_item(seq: Any, index: int) -> None:
+def _token_comment_lines(entry: Any) -> list[str]:
+    """The comment lines carried by one ruamel `ca.items` entry, in the shape
+    `_comment_lines` produces — so the survival check can subtract exactly the
+    lines that left with a removed item, and nothing else."""
+    lines: list[str] = []
+    for slot in entry or []:
+        for token in slot if isinstance(slot, list) else [slot]:
+            value = getattr(token, "value", None)
+            if isinstance(value, str):
+                lines += [line.strip() for line in value.splitlines()
+                          if line.lstrip().startswith("#")]
+    return lines
+
+
+def _drop_seq_item(seq: Any, index: int) -> list[str]:
     """Delete one item, keeping the comment block that annotates the item BELOW
     it. ruamel keys a comment by the item it FOLLOWS, so the block preceding
     item N is stored on N-1: dropping N must discard the block on N-1 (it
@@ -193,14 +208,19 @@ def _drop_seq_item(seq: Any, index: int) -> None:
     the survivor). Without the re-key ruamel keeps N-1 and discards N — the
     surviving item inherits a comment about a line that is no longer there.
 
-    Index 0 has no predecessor to re-key onto, so item 1's leading block goes
-    with it; the pre-write backup is the record, as for every destructive op."""
+    Returns the lines discarded WITH the item, which is the only comment loss
+    this edit is allowed. Index 0 has no predecessor to re-key onto, so ruamel
+    drops item 1's leading block and this function cannot report it — the
+    survival check then sees an unaccounted loss and refuses the edit, which is
+    the honest outcome for a case the mechanism cannot do losslessly."""
+    gone: list[str] = []
     ca_items = getattr(getattr(seq, "ca", None), "items", None)
     if isinstance(ca_items, dict) and index >= 1:
-        ca_items.pop(index - 1, None)
+        gone = _token_comment_lines(ca_items.pop(index - 1, None))
         if index in ca_items:
             ca_items[index - 1] = ca_items.pop(index)
     del seq[index]
+    return gone
 
 
 def _insert_seq_item(seq: Any, index: int, item: Any) -> None:
@@ -214,37 +234,51 @@ def _insert_seq_item(seq: Any, index: int, item: Any) -> None:
             ca_items[index] = ca_items.pop(index - 1)
 
 
-def _reconcile_seq(seq: Any, wanted: list[Any]) -> bool:
+def _reconcile_seq(seq: Any, wanted: list[Any]) -> list[str]:
     """Turn `seq` into `wanted` ELEMENT-WISE — an item present on both sides is
     left untouched, so the comment block attached to it survives. Assigning the
     list instead renders a fresh sequence and every interleaved comment is gone.
-    Returns True when an item was removed (its own comments go with it)."""
+    Returns the comment lines that left with a removed item."""
     matcher = difflib.SequenceMatcher(
         a=[_seq_key(item) for item in seq],
         b=[_seq_key(item) for item in wanted],
         autojunk=False,
     )
-    removed = False
+    removed: list[str] = []
     # reversed: an opcode's indices address the sequence as it was BEFORE any
     # later opcode was applied, so editing from the tail keeps them valid.
     for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
         if tag == "equal":
             continue
+        # An item REWRITTEN in place — the typo fix, the commonest edit of all —
+        # is assigned over, never delete+inserted. Both keep the value, but only
+        # this keeps the comment describing the entry the operator was editing.
+        if tag == "replace" and (i2 - i1) == (j2 - j1):
+            for offset, item in enumerate(wanted[j1:j2]):
+                seq[i1 + offset] = item
+            continue
         if tag in ("delete", "replace"):
             for index in range(i2 - 1, i1 - 1, -1):
-                _drop_seq_item(seq, index)
-                removed = True
+                removed += _drop_seq_item(seq, index)
         if tag in ("insert", "replace"):
             for offset, item in enumerate(wanted[j1:j2]):
                 _insert_seq_item(seq, i1 + offset, item)
     return removed
 
 
-def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> bool:
-    """Apply the edits to the round-trip tree. Returns True when a node was
-    REMOVED, so the caller exempts the removed node's comments from the
-    survival check (`rewrite_text`) — they describe a line that is gone."""
-    dropped = False
+# A whole-list `set` diffs the two sides, which costs O(n·m) in the degenerate
+# case (thousands of IDENTICAL items). Measured inside the 256 KiB cap: 2000
+# items 0.32s, 20000 items 23s — a visible hang of the single-threaded `serve`.
+# Past the guard the edit falls back to plain assignment, so a commented list
+# that large is REFUSED by the survival check rather than silently reflowed.
+_MAX_RECONCILE_ITEMS = 2000
+
+
+def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> list[str]:
+    """Apply the edits to the round-trip tree. Returns the comment lines that
+    left with a REMOVED list item — the only loss `rewrite_text`'s survival
+    check forgives, because they describe a line that is gone."""
+    dropped: list[str] = []
     for edit in edits:
         parts = _pointer_parts(edit.pointer)
         parent = data
@@ -259,8 +293,10 @@ def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> bool:
         leaf = parts[-1]
         if edit.op == "set":
             current = parent.get(leaf)
-            if isinstance(edit.value, list) and isinstance(current, list):
-                dropped |= _reconcile_seq(current, edit.value)
+            if (isinstance(edit.value, list) and isinstance(current, list)
+                    and max(len(current), len(edit.value))
+                    <= _MAX_RECONCILE_ITEMS):
+                dropped += _reconcile_seq(current, edit.value)
             else:
                 parent[leaf] = edit.value
         elif edit.op == "unset":
@@ -333,11 +369,12 @@ def rewrite_text(
         raise EditDowngrade("rendered result differs from the planned edit")
 
     # Comment survival (checked, not assumed) for non-destructive edits. A list
-    # `set` that removed items is destructive for the same reason `unset` is —
-    # the comments annotating a removed item describe a line that is gone.
-    destructive = bool({e.op for e in edits} & {"unset", "rename-key"}) or dropped
+    # `set` that removed an item forgives EXACTLY the lines that left with that
+    # item — never the whole batch, or one removed list entry would disarm the
+    # check for every other edit saved alongside it.
+    destructive = {e.op for e in edits} & {"unset", "rename-key"}
     if not destructive:
-        lost = _comment_lines(text) - _comment_lines(new_text)
+        lost = _comment_lines(text) - _comment_lines(new_text) - Counter(dropped)
         if lost:
             raise EditDowngrade("a comment line would be lost by this edit")
     return new_text

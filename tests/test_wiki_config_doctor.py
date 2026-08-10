@@ -17,6 +17,7 @@ import yaml
 from scripts.wiki_skills.wiki_config import main
 from scripts.wiki_skills.wiki_config._backups import list_backups
 from scripts.wiki_skills.wiki_config._edit import (
+    _MAX_RECONCILE_ITEMS,
     EditDowngrade,
     PointerEdit,
     rewrite_text,
@@ -133,6 +134,77 @@ def test_rewrite_list_removal_keeps_the_survivors_comments() -> None:
     assert yaml.safe_load(new)["exclude"] == wanted
     assert "# slide decks already summarised from their transcripts" in new
     assert "# worksheets dropped beside summaries are attachments," not in new
+
+
+def test_rewrite_list_entry_rewritten_in_place_keeps_its_comment() -> None:
+    """TASK 073 adversarial F1 — fixing a typo in ONE entry is the commonest
+    edit of all. Implemented as delete+insert it silently deleted the comment
+    describing the very entry being corrected, and the removal exemption meant
+    nothing complained; an equal-length rewrite is assigned over instead."""
+    wanted = ["_inbox/**", "**/_summary/*.xlsx", "**/Docs (PDF)/**"]
+    typo = _COMMENTED_LIST.replace("_summary", "_summry")
+    new = rewrite_text(typo, [PointerEdit("set", "/exclude", wanted)])
+    assert yaml.safe_load(new)["exclude"] == wanted
+    for comment in _LIST_COMMENTS:
+        assert comment in new
+
+
+def test_rewrite_list_removal_does_not_disarm_the_check_for_the_batch() -> None:
+    """TASK 073 adversarial F2 — the editor saves every pending edit in ONE
+    batch. A removal forgives exactly the lines that left with the removed
+    item; it must not license an unrelated comment loss elsewhere in the save.
+
+    The removed entry MUST carry a comment of its own, or forgiveness never
+    comes into play and the test would pass under batch-wide forgiveness too."""
+    text = ("exclude:\n"
+            '  - "a/**"\n'
+            "  # about b, and it leaves with b\n"
+            '  - "b/**"\n'
+            "resummarize:\n"
+            "  detect:\n"
+            "    mirror:\n"
+            "      enabled: true\n"
+            "      # unrelated to the list, and load-bearing\n"
+            "      raw_dirs: [T]\n")
+    with pytest.raises(EditDowngrade):
+        rewrite_text(text, [
+            PointerEdit("set", "/exclude", ["a/**"]),
+            PointerEdit("set", "/resummarize/detect/mirror",
+                        {"enabled": True, "raw_dirs": ["T"]}),
+        ])
+
+
+def test_rewrite_list_removal_of_first_item_refuses_rather_than_losing() -> None:
+    """TASK 073 adversarial F2c — ruamel stores the block describing item 1 on
+    item 0, and dropping item 0 leaves nowhere to re-key it. The mechanism
+    cannot do this losslessly, so it refuses and writes nothing instead of
+    deleting a comment that describes a SURVIVING entry."""
+    text = 'exclude:\n  - "a/**"\n  # about b\n  - "b/**"\n'
+    with pytest.raises(EditDowngrade):
+        rewrite_text(text, [PointerEdit("set", "/exclude", ["b/**"])])
+
+
+def test_rewrite_oversized_list_falls_back_to_assignment() -> None:
+    """TASK 073 adversarial F3 — the diff costs O(n·m) on thousands of
+    IDENTICAL items (measured: 2000 → 0.32s, 20000 → 23s, a visible hang of the
+    single-threaded `serve`). Past the guard the edit is a plain assignment.
+
+    Asserted on the OBSERVABLE consequence, not on a clock: assignment renders a
+    fresh sequence, so an oversized COMMENTED list can no longer be reconciled
+    and the survival check refuses it. Raise the bound and the element-wise path
+    preserves the comment and the edit succeeds — which is what makes this test
+    pin the guard rather than merely the value."""
+    assert _MAX_RECONCILE_ITEMS == 2000, "the fixture size below tracks this bound"
+    items = ["x/**"] * 2001
+    body = "".join(f'  - "{i}"\n' for i in items)
+    uncommented = "exclude:\n" + body
+    new = rewrite_text(uncommented,
+                       [PointerEdit("set", "/exclude", [*items, "y/**"])])
+    assert yaml.safe_load(new)["exclude"] == [*items, "y/**"]
+
+    commented = "exclude:\n" + body + "  # a note on the last entry\n"
+    with pytest.raises(EditDowngrade):
+        rewrite_text(commented, [PointerEdit("set", "/exclude", [*items, "y/**"])])
 
 
 def test_rewrite_list_set_over_a_non_list_still_replaces() -> None:
