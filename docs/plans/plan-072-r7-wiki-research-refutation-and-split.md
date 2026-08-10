@@ -1,6 +1,6 @@
 # PLAN 072 — R-7 re-scoped in place, and the three fixes it uncovered
 
-**Spec**: [TASK.md](TASK.md) (TASK 072). **Scope of THIS plan: P0 · P1a · P1b · P2 only.**
+**Spec**: [TASK.md](../tasks/task-072-r7-wiki-research-refutation-and-split.md) (TASK 072). **Scope of THIS plan: P0 · P1a · P1b · P2 only.**
 P3/P4/P5 are **CONDITIONAL and out of this plan** — named as follow-on in §7.
 
 **Strategy**: Stub-First per `tdd-stub-first`. Each code phase lands its **failing test first**, and
