@@ -50,7 +50,17 @@ Or `/wiki-reindex --full --vault <vid>`.
   mutually exclusive. One of each required.
 - `--all-vaults` is only supported with `--full`.
 - Per-file errors are collected into `skipped[]` (never silently dropped
-  per critic-logic fix).
+  per critic-logic fix). ⚠️ Each entry's `error` is a **bounded class name**
+  (`FrontmatterParseError`, `PermissionError`, `sqlite:OperationalError`), never the
+  exception's message: `skipped[]` is emitted verbatim in the stdout envelope, and a YAML
+  parse message carries line/column coordinates into the operator's private frontmatter
+  (TASK 074 / F3). The two typed domain errors — `UnmappedTypeError`,
+  `BodyNormalizationError` — keep their purpose-built message, which is what you act on.
+- **`--vault <id>` must name a registered vault** → otherwise `{"error": "VAULT_NOT_FOUND",
+  "field": "vault"}` at **exit 6**. ⚠️ Until DF-074-4 the DAL's `ValueError` escaped
+  uncaught: exit **1, no envelope, raw traceback echoing the vault_id** — i.e. the family's
+  "this is a bug in the CLI" signal, for a plain typo. `--all-vaults` iterates the registry
+  and cannot be unknown.
 
 ## Output
 

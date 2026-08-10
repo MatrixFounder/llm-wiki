@@ -261,15 +261,30 @@ def test_h1_sink_census_is_complete(tmp_path: Path) -> None:
 
     This pins the census itself: if a FOURTH sink is ever added to `wiki_lint.main`, this
     test fails and forces the author to decide whether it, too, must carry the
-    denominators — rather than letting the next false green ship silently."""
+    denominators — rather than letting the next false green ship silently.
+
+    ★ IT FIRED, and here is the decision it forced. DF-074-4 added a fourth sink: the
+    `VAULT_NOT_FOUND` refusal (`--vault <typo>` used to report `{"total_issues": 0}` at exit 0
+    — a clean bill of health for a vault that does not exist, on the CI-gate surface).
+    **It deliberately carries NO denominators**, and that is the opposite of a false green:
+    nothing was examined *and the envelope says so with an `error` key*, which is precisely
+    what a denominator exists to prevent you from having to infer. Same stance `wiki-health`
+    documents for its three error envelopes. So the census now has two classes, asserted
+    separately — REPORT sinks must carry the payload, refusal sinks must not pretend to."""
     src = Path("scripts/wiki_skills/wiki_lint.py").read_text(encoding="utf-8")
     sinks = [ln.strip() for ln in src.splitlines()
              if ".write_text(" in ln or ln.strip().startswith("return emit(")]
-    assert len(sinks) == 3, sinks       # stdout envelope · --report · --json-sidecar
-    # ...and all three are fed the REPORT (or its `.denominators`), never the bare list.
+    refusals = [s for s in sinks if '"error"' in s]
+    reports = [s for s in sinks if s not in refusals]
+    assert len(sinks) == 4, sinks       # 3 report sinks + 1 refusal
+    assert len(reports) == 3, reports   # stdout envelope · --report · --json-sidecar
+    assert len(refusals) == 1, refusals  # VAULT_NOT_FOUND (DF-074-4)
+    # ...and all three REPORT sinks are fed the REPORT (or its `.denominators`), never the bare list.
     assert "render_markdown_report(report)" in src
     assert "render_json_sidecar(report)" in src
     assert '"denominators": report.denominators' in src
+    # The refusal must NOT fake a report shape — no denominators, no total_issues.
+    assert "VAULT_NOT_FOUND" in refusals[0] and "denominators" not in refusals[0]
 
 
 def test_h1_the_sidecar_READER_contract_is_not_stale() -> None:

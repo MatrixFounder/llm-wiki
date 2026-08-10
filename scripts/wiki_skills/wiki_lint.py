@@ -75,6 +75,19 @@ def main(argv: list[str] | None = None) -> int:
         db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
+        # DF-074-4 — a named vault must EXIST before its emptiness can mean anything.
+        # Without this, `--vault <typo> --strict` returned `{"total_issues": 0}` at exit 0: a
+        # clean bill of health for a vault that is not there, on the surface the project
+        # documents as its CI gate. The checks filter `WHERE vault_id = ?`, match nothing, and
+        # report nothing — and TASK 061's vacuity machinery cannot see it, because
+        # `denominators: {}` legitimately means "these config-driven checks do not apply to this
+        # layout", NOT "examined 0". So the one signal built to catch a vacuous green is silent
+        # on the most vacuous input possible. `wiki-health` and `wiki-graph` have always guarded
+        # this; the CLI that actually GATES did not. Omitting `--vault` (all-vaults mode) is
+        # unaffected — that is a deliberate scope, not an unknown one.
+        if args.vault is not None and repo.get_vault(args.vault) is None:
+            return emit({"error": "VAULT_NOT_FOUND", "field": "vault",
+                         "reason": "no such vault is registered in this index"}, 6)
         report = run_all_checks_report(repo, vaults=vaults_list, strict=args.strict,
                                        mtime_skip=args.mtime_skip)
         issues = report.issues

@@ -94,16 +94,14 @@ _EMIT_SWEEP_ROOTS = ("scripts",)
 #: CLIs with **zero** error-bearing dict literals — the scan finds nothing to check in them.
 #: Distinct from `_NON_LITERAL_EMIT_SITES` below: this is "nothing to see", that is "something
 #: we cannot see". Both are pinned; conflating them is what made the first cut overclaim.
+#: ★ It SHRANK, which is the direction that matters. `wiki-lint` and `wiki-reindex` left this
+#: set when DF-074-4 gave each an explicit `VAULT_NOT_FOUND` literal — the pin's failure message
+#: says "FIRST consider restoring a dict-literal payload (that is coverage)", and that is what
+#: happened: the fix for a silent-green defect also moved two CLIs out of the blind spot.
 _NO_LITERAL_ERROR_ENVELOPE = {
     "obsidian-active-note": "`_emit(res, fmt)` — every payload is a variable built by the resolver",
     "obsidian-context": "`_emit(envelope, fmt)` — payload is a variable",
     "obsidian-selection": "`_emit(envelope, fmt)` — payload is a variable",
-    "wiki-lint": (
-        "its only literal payload is a SUCCESS envelope; its one error envelope "
-        "(6/`INVALID_INDEX_DB`, per skills/wiki-lint/SKILL.md) is emitted by the shared helper "
-        "`_common.build_repo_config` — covered by the shared-emitter gate, not by this CLI's set"
-    ),
-    "wiki-reindex": "`emit(reindex_full(...))` / `emit(envelope)` — payload is a call or a variable",
 }
 
 #: Emit sites whose payload is NOT a dict literal, per CLI — the real blind spot, counted.
@@ -551,3 +549,91 @@ def test_wiki_lint_without_strict_reports_the_same_issues_at_exit_0(tmp_path: Pa
         f"--strict changed WHAT is reported, not just the exit code: "
         f"{plain['by_category']} vs {strict['by_category']}")
     assert plain["total_issues"] == strict["total_issues"], (plain, strict)
+
+
+# --------------------------------------------------------------------------------------------
+# DF-074-4 — a NAMED vault must exist before its emptiness can mean anything.
+# --------------------------------------------------------------------------------------------
+
+def _empty_registered_vault(tmp_path: Path) -> tuple[Path, Path]:
+    """A real, registered, CLEAN vault — so "0 issues" is earned rather than vacuous."""
+    root = tmp_path / "vault"
+    (root / "_concepts").mkdir(parents=True)
+    (root / "WIKI_SCHEMA.md").write_text(
+        '---\nvault_id: realv\nschema_version: "2.0"\nlanguage: en\nlayout: karpathy\n---\n',
+        encoding="utf-8")
+    db = tmp_path / "d.db"
+    repo = SQLiteRepository(db)
+    repo.apply_schema()
+    repo.register_vault(Vault(vault_id="realv", name="realv", root_path=root,
+                              schema_version="2.0", registered_at=datetime(2026, 8, 10)))
+    repo.close()
+    return root, db
+
+
+@pytest.mark.parametrize("extra", [[], ["--strict"]])
+def test_wiki_lint_refuses_an_unregistered_vault_instead_of_reporting_it_clean(
+    tmp_path: Path, extra: list[str],
+) -> None:
+    """★ DF-074-4. `--vault <typo>` used to return `{"total_issues": 0}` at exit 0 — a clean
+    bill of health for a vault that does not exist, on the surface this project documents as
+    its **CI gate**. A typo in a CI config turned the gate permanently green.
+
+    ★★ And TASK 061's vacuity machinery structurally could not catch it: `denominators: {}`
+    legitimately means "these config-driven checks do not apply to this layout", NOT
+    "examined 0", so `vacuous_checks` stayed `[]` and the zero read as earned. The one signal
+    built to detect a vacuous green was silent on the most vacuous input possible.
+
+    Asserted on the ENVELOPE, not the code alone: `rc == 6` cannot tell `VAULT_NOT_FOUND` from
+    the inherited `INVALID_INDEX_DB`, which is the exact trap this file exists for.
+    """
+    root, db = _empty_registered_vault(tmp_path)
+    proc = subprocess.run(
+        [str(_REPO_ROOT / "bin" / "wiki-lint"), "--vault", "no-such-vault-xyz",
+         "--vault-root", str(root), "--db-path", str(db), *extra],
+        capture_output=True, cwd=_REPO_ROOT, timeout=45,
+    )
+    assert proc.returncode == 6, f"expected VAULT_NOT_FOUND at 6; stderr={proc.stderr[-300:]!r}"
+    env = json.loads(proc.stdout.decode("utf-8").strip())
+    assert env["error"] == "VAULT_NOT_FOUND" and env["field"] == "vault", env
+    assert "total_issues" not in env, f"a refusal must not look like a lint report: {env}"
+
+
+def test_wiki_lint_still_reports_a_registered_but_clean_vault_as_clean(tmp_path: Path) -> None:
+    """The other side of DF-074-4 — the fix must not turn an EARNED zero into a refusal.
+    A registered vault with nothing wrong still exits 0 with a real report."""
+    root, db = _empty_registered_vault(tmp_path)
+    proc = subprocess.run(
+        [str(_REPO_ROOT / "bin" / "wiki-lint"), "--vault", "realv",
+         "--vault-root", str(root), "--db-path", str(db), "--strict"],
+        capture_output=True, cwd=_REPO_ROOT, timeout=45,
+    )
+    assert proc.returncode == 0, f"a clean registered vault must pass: {proc.stdout!r}"
+    env2 = json.loads(proc.stdout.decode("utf-8").strip())
+    assert "error" not in env2 and env2["total_issues"] == 0, env2
+
+
+@pytest.mark.parametrize("mode", ["--full", "--delta"])
+def test_wiki_reindex_refuses_an_unregistered_vault_instead_of_crashing(
+    tmp_path: Path, mode: str,
+) -> None:
+    """★ DF-074-4 family sweep. `reindex_full`/`reindex_delta` raise
+    `ValueError("vault_id=… not registered")` and nothing caught it, so a typo'd `--vault`
+    exited **1 with no envelope and a raw traceback that echoed the vault_id** — the family's
+    "this is a bug in the CLI" signal, for plain user input.
+
+    Found because DF-074-4's fix shape said to sweep the family rather than fix the one
+    instance found. It was the second defect in a roster of eight.
+    """
+    root, db = _empty_registered_vault(tmp_path)
+    proc = subprocess.run(
+        [str(_REPO_ROOT / "bin" / "wiki-reindex"), mode, "--vault", "no-such-vault-xyz",
+         "--vault-root", str(root), "--db-path", str(db)],
+        capture_output=True, cwd=_REPO_ROOT, timeout=45,
+    )
+    assert proc.returncode == 6, f"expected VAULT_NOT_FOUND at 6, got {proc.returncode}"
+    env = json.loads(proc.stdout.decode("utf-8").strip())
+    assert env["error"] == "VAULT_NOT_FOUND" and env["field"] == "vault", env
+    assert "no-such-vault-xyz" not in proc.stdout.decode("utf-8"), \
+        "the refusal must not echo the operator's value (CWE-117)"
+    assert b"Traceback" not in proc.stderr, "a typo must not produce a traceback"

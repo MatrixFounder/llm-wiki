@@ -36,6 +36,17 @@ def main(argv: list[str] | None = None) -> int:
         db_path_flag=args.db_path)
     repo = make_repo(config)
     try:
+        # DF-074-4 (family sweep) — the DAL raises `ValueError("vault_id=… not registered")`
+        # from `reindex_full`/`reindex_delta`, and nothing caught it: a typo'd `--vault` exited
+        # **1 with NO envelope and a raw traceback that echoed the vault_id**, for plain user
+        # input. Under the family convention that this repo just made normative, `1` means "a
+        # bug in the CLI" — so the operator was told to file a bug about their own typo.
+        # Guard here rather than catching the ValueError, so the refusal is deliberate and the
+        # DAL keeps its invariant. `--all-vaults` iterates the registry and cannot be unknown.
+        if not args.all_vaults and args.vault is not None \
+                and repo.get_vault(args.vault) is None:
+            return emit({"error": "VAULT_NOT_FOUND", "field": "vault",
+                         "reason": "no such vault is registered in this index"}, 6)
         if args.all_vaults:
             # TASK 021 (MED): honour --delta across all vaults (was silently --full).
             run = reindex_delta if args.delta else reindex_full
