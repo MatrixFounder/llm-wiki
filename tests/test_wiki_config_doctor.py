@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from scripts.wiki_skills.wiki_config import main
 from scripts.wiki_skills.wiki_config._backups import list_backups
@@ -52,6 +53,24 @@ _COMMENTED = (
     "      summary_ext: md\n"
 )
 
+# TASK 073 — the live-vault shape: comment blocks BETWEEN list items, each
+# annotating the item below it.
+_COMMENTED_LIST = (
+    "exclude:\n"
+    '  - "_inbox/**"\n'
+    "  # worksheets dropped beside summaries are attachments,\n"
+    "  # not knowledge sources\n"
+    '  - "**/_summary/*.xlsx"\n'
+    "  # slide decks already summarised from their transcripts\n"
+    '  - "**/Docs (PDF)/**"\n'
+    "tag_namespace: wiki\n"
+)
+_LIST_COMMENTS = (
+    "# worksheets dropped beside summaries are attachments,",
+    "# not knowledge sources",
+    "# slide decks already summarised from their transcripts",
+)
+
 
 # --------------------------------------------------------------------------- #
 # the edit sandwich
@@ -65,6 +84,65 @@ def test_rewrite_preserves_comments_and_layout() -> None:
     assert "mode: always" in new
     # untouched value keeps its exact quoting
     assert "'^(\\d{8})'" in new
+
+
+def test_rewrite_list_set_same_value_keeps_every_comment() -> None:
+    """TASK 073 / AC-1 — the web editor saves an `array` field WHOLE, so an
+    untouched list arrives as a `set` of its own current value. That must be a
+    no-op on the rendered comments, not a sequence rewrite that deletes them."""
+    current = ["_inbox/**", "**/_summary/*.xlsx", "**/Docs (PDF)/**"]
+    new = rewrite_text(_COMMENTED_LIST, [PointerEdit("set", "/exclude", current)])
+    for comment in _LIST_COMMENTS:
+        assert comment in new
+    assert yaml.safe_load(new)["exclude"] == current
+
+
+def test_rewrite_list_append_keeps_every_comment() -> None:
+    """TASK 073 / AC-2 — adding one entry keeps the comments annotating the
+    entries that survived, and appends the new entry last."""
+    wanted = ["_inbox/**", "**/_summary/*.xlsx", "**/Docs (PDF)/**", "**/Drafts/**"]
+    new = rewrite_text(_COMMENTED_LIST, [PointerEdit("set", "/exclude", wanted)])
+    for comment in _LIST_COMMENTS:
+        assert comment in new
+    assert yaml.safe_load(new)["exclude"] == wanted
+
+
+def test_rewrite_list_insert_in_the_middle_keeps_comments_on_their_entry() -> None:
+    """TASK 073 / AC-2 — an entry inserted BETWEEN two commented entries must
+    not take over the comment block describing the entry below it. Presence is
+    not the property: a comment re-pointed at the wrong entry is worse than a
+    lost one, so this asserts ORDER."""
+    wanted = ["_inbox/**", "**/Notes/**", "**/_summary/*.xlsx", "**/Docs (PDF)/**"]
+    new = rewrite_text(_COMMENTED_LIST, [PointerEdit("set", "/exclude", wanted)])
+    for comment in _LIST_COMMENTS:
+        assert comment in new
+    assert yaml.safe_load(new)["exclude"] == wanted
+    lines = [line.strip() for line in new.splitlines()]
+    assert lines.index("# worksheets dropped beside summaries are attachments,") \
+        > lines.index("- '**/Notes/**'")
+    assert lines.index("# not knowledge sources") \
+        < lines.index('- "**/_summary/*.xlsx"')
+
+
+def test_rewrite_list_removal_keeps_the_survivors_comments() -> None:
+    """TASK 073 / AC-3 + Q-073-1 — removing an entry removes the comment block
+    that annotates it, and LEAVES the block annotating the entry below it. A
+    comment must never be re-pointed at an entry it does not describe."""
+    wanted = ["_inbox/**", "**/Docs (PDF)/**"]
+    new = rewrite_text(_COMMENTED_LIST, [PointerEdit("set", "/exclude", wanted)])
+    assert yaml.safe_load(new)["exclude"] == wanted
+    assert "# slide decks already summarised from their transcripts" in new
+    assert "# worksheets dropped beside summaries are attachments," not in new
+
+
+def test_rewrite_list_set_over_a_non_list_still_replaces() -> None:
+    """TASK 073 — the element-wise branch is reached only when BOTH sides are
+    lists; every other `set` keeps plain-assignment semantics."""
+    new = rewrite_text("exclude: []\n", [PointerEdit("set", "/exclude", ["a/**"])])
+    assert yaml.safe_load(new)["exclude"] == ["a/**"]
+    new = rewrite_text("summarize:\n  profile: meeting\n",
+                       [PointerEdit("set", "/summarize/profile", "lesson")])
+    assert yaml.safe_load(new)["summarize"]["profile"] == "lesson"
 
 
 def test_rewrite_refuses_result_failing_schema() -> None:

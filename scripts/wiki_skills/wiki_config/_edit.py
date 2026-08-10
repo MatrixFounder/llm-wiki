@@ -22,6 +22,7 @@ text → text.
 
 from __future__ import annotations
 
+import difflib
 import io
 from collections import Counter
 from dataclasses import dataclass
@@ -53,10 +54,14 @@ class PointerEdit:
     """One mechanical edit addressed by JSON pointer.
 
     op ∈ {set, unset, rename-key, dedupe-list}. `set` creates missing
-    intermediate mappings; `rename-key` moves value+position+attached comments;
-    `dedupe-list` keeps first occurrences. `destructive` ops (unset,
-    rename-key of commented nodes) exempt the comment-survival check for the
-    comments attached to the removed node — the pre-write backup is the record."""
+    intermediate mappings, and a `set` of a LIST over a list reconciles it
+    element-wise (`_reconcile_seq`) rather than replacing it, because the web
+    editor saves an array field whole and a replaced sequence loses every
+    comment between its items; `rename-key` moves value+position+attached
+    comments; `dedupe-list` keeps first occurrences. `destructive` ops (unset,
+    rename-key of commented nodes, a list `set` that removed items) exempt the
+    comment-survival check for the comments attached to the removed node — the
+    pre-write backup is the record."""
 
     op: str
     pointer: str
@@ -162,7 +167,84 @@ def _rt() -> YAML:
     return rt
 
 
-def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> Any:
+def _plain(node: Any) -> Any:
+    """A ruamel node reduced to its plain-Python value, so an item's identity
+    does not depend on how it happened to be quoted."""
+    if isinstance(node, str):  # incl. ruamel's quoted-scalar subclasses
+        return str(node)
+    if isinstance(node, dict):
+        return {str(k): _plain(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_plain(v) for v in node]
+    return node
+
+
+def _seq_key(item: Any) -> str:
+    """Identity of a list element for the element-wise diff. `repr` keeps the
+    type distinct, so the string "1" never matches the integer 1."""
+    return repr(_plain(item))
+
+
+def _drop_seq_item(seq: Any, index: int) -> None:
+    """Delete one item, keeping the comment block that annotates the item BELOW
+    it. ruamel keys a comment by the item it FOLLOWS, so the block preceding
+    item N is stored on N-1: dropping N must discard the block on N-1 (it
+    describes the item being removed) and re-key the block on N (it describes
+    the survivor). Without the re-key ruamel keeps N-1 and discards N — the
+    surviving item inherits a comment about a line that is no longer there.
+
+    Index 0 has no predecessor to re-key onto, so item 1's leading block goes
+    with it; the pre-write backup is the record, as for every destructive op."""
+    ca_items = getattr(getattr(seq, "ca", None), "items", None)
+    if isinstance(ca_items, dict) and index >= 1:
+        ca_items.pop(index - 1, None)
+        if index in ca_items:
+            ca_items[index - 1] = ca_items.pop(index)
+    del seq[index]
+
+
+def _insert_seq_item(seq: Any, index: int, item: Any) -> None:
+    """Insert one item, keeping the comment block above the item it annotates.
+    That block is stored on `index - 1` and ruamel shifts only the keys at or
+    after `index`, so it would stay put and end up describing the NEW item."""
+    seq.insert(index, item)
+    ca_items = getattr(getattr(seq, "ca", None), "items", None)
+    if isinstance(ca_items, dict) and index >= 1:
+        if index - 1 in ca_items and index not in ca_items:
+            ca_items[index] = ca_items.pop(index - 1)
+
+
+def _reconcile_seq(seq: Any, wanted: list[Any]) -> bool:
+    """Turn `seq` into `wanted` ELEMENT-WISE — an item present on both sides is
+    left untouched, so the comment block attached to it survives. Assigning the
+    list instead renders a fresh sequence and every interleaved comment is gone.
+    Returns True when an item was removed (its own comments go with it)."""
+    matcher = difflib.SequenceMatcher(
+        a=[_seq_key(item) for item in seq],
+        b=[_seq_key(item) for item in wanted],
+        autojunk=False,
+    )
+    removed = False
+    # reversed: an opcode's indices address the sequence as it was BEFORE any
+    # later opcode was applied, so editing from the tail keeps them valid.
+    for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
+        if tag == "equal":
+            continue
+        if tag in ("delete", "replace"):
+            for index in range(i2 - 1, i1 - 1, -1):
+                _drop_seq_item(seq, index)
+                removed = True
+        if tag in ("insert", "replace"):
+            for offset, item in enumerate(wanted[j1:j2]):
+                _insert_seq_item(seq, i1 + offset, item)
+    return removed
+
+
+def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> bool:
+    """Apply the edits to the round-trip tree. Returns True when a node was
+    REMOVED, so the caller exempts the removed node's comments from the
+    survival check (`rewrite_text`) — they describe a line that is gone."""
+    dropped = False
     for edit in edits:
         parts = _pointer_parts(edit.pointer)
         parent = data
@@ -176,7 +258,11 @@ def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> Any:
             parent = nxt
         leaf = parts[-1]
         if edit.op == "set":
-            parent[leaf] = edit.value
+            current = parent.get(leaf)
+            if isinstance(edit.value, list) and isinstance(current, list):
+                dropped |= _reconcile_seq(current, edit.value)
+            else:
+                parent[leaf] = edit.value
         elif edit.op == "unset":
             if leaf not in parent:
                 raise EditDowngrade("pointer not present")
@@ -208,7 +294,7 @@ def _apply_edits_ruamel(data: Any, edits: list[PointerEdit]) -> Any:
                 del seq[i]
         else:
             raise EditDowngrade("unknown edit op")
-    return data
+    return dropped
 
 
 def _comment_lines(text: str) -> Counter[str]:
@@ -233,7 +319,7 @@ def rewrite_text(
     data = rt.load(io.StringIO(text))
     if data is None:
         data = CommentedMap()
-    _apply_edits_ruamel(data, edits)
+    dropped = _apply_edits_ruamel(data, edits)
     buf = io.StringIO()
     rt.dump(data, buf)
     new_text = buf.getvalue()
@@ -246,8 +332,10 @@ def rewrite_text(
     if parsed_after != planned:
         raise EditDowngrade("rendered result differs from the planned edit")
 
-    # Comment survival (checked, not assumed) for non-destructive edits.
-    destructive = {e.op for e in edits} & {"unset", "rename-key"}
+    # Comment survival (checked, not assumed) for non-destructive edits. A list
+    # `set` that removed items is destructive for the same reason `unset` is —
+    # the comments annotating a removed item describe a line that is gone.
+    destructive = bool({e.op for e in edits} & {"unset", "rename-key"}) or dropped
     if not destructive:
         lost = _comment_lines(text) - _comment_lines(new_text)
         if lost:

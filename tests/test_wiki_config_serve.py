@@ -185,6 +185,32 @@ def test_write_edits_preserves_comments_and_backs_up(
     assert (root / ".wiki" / "backups").is_dir()
 
 
+def test_write_whole_list_field_keeps_interleaved_comments(
+    client: tuple[Client, Path]
+) -> None:
+    """TASK 073 — the reported failure, over HTTP. The editor renders an
+    `array` field as one textarea and saves it WHOLE, so adding one entry
+    arrives as a `set` of the entire list. Before the element-wise reconcile
+    that rendered a fresh sequence, dropped the comments between the items and
+    came back `422 EDIT_REFUSED` with nothing written."""
+    c, root = client
+    _folder_yaml(root, "exclude:\n"
+                       '  - "_inbox/**"\n'
+                       "  # worksheets are attachments, not sources\n"
+                       '  - "**/_summary/*.xlsx"\n')
+    _status, folder = c.request("GET", "/api/folder?rel=.")
+    status, body = c.request("POST", "/api/write", {
+        "rel": ".",
+        "edits": [{"op": "set", "pointer": "/exclude",
+                   "value": ["_inbox/**", "**/_summary/*.xlsx", "**/Drafts/**"]}],
+        "expected_hash": folder["hash"],
+    })
+    assert status == 200 and body["ok"] is True
+    text = (root / ".wiki" / "sync.yaml").read_text(encoding="utf-8")
+    assert "# worksheets are attachments, not sources" in text
+    assert "**/Drafts/**" in text
+
+
 def test_write_rejects_invalid_result_nothing_written(
     client: tuple[Client, Path]
 ) -> None:
