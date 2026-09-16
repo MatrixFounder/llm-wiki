@@ -522,6 +522,7 @@ def prepare(args: argparse.Namespace) -> int:
 # -----------------------------------------------------------------------------
 def _render_query_page(
     question: str, today: str, citations: list[str], answer: str,
+    link_targets: dict[str, str] | None = None,
 ) -> str:
     """Build the Class A `_queries/<slug>.md` content: frontmatter
     (`type: query`, question, date, cites, tags) + the sanitised answer body +
@@ -537,12 +538,16 @@ def _render_query_page(
     )
     body = frontmatter.dumps(post)
     if citations:
-        # Obsidian-native `[[slug]]` (resolves by note name, not folder path);
-        # the `cites:` frontmatter keeps the disambiguated `project/slug`. The
-        # bare slug also makes the body `mentioned` ref (from extract_wiki_links
-        # on reindex) share the cited ref's entity_slug — a clean dual-ref to the
-        # same target (Q-A9), byte-identical to the reindex rebuild.
-        sources = "\n".join(f"- [[{c.rpartition('/')[2]}]]" for c in citations)
+        # The link must resolve in the APP, so it carries the cited page's FILENAME
+        # (`link_targets`, from `repo.page_link_targets`) — a bare slug only resolves
+        # where filename == slug (karpathy), and under `obsidian-personal` it pointed at
+        # nothing. `cites:` frontmatter keeps the disambiguated `project/slug`. Reindex
+        # slugifies the body target back to the same entity_slug (the layout's
+        # slug_strategy), so the `mentioned` ref still pairs with the `cited` one (Q-A9).
+        _t = link_targets or {}
+        sources = "\n".join(
+            f"- [[{_t.get(c.rpartition('/')[2], c.rpartition('/')[2])}]]"
+            for c in citations)
         body = f"{body}\n\n## Sources\n\n{sources}\n"
     return body
 
@@ -721,7 +726,10 @@ def apply(args: argparse.Namespace) -> int:
         # every FIELD-level value built from untrusted extracted text.
         today = _date.today().isoformat()
         content = _render_query_page(
-            question, today, citations, sanitize_answer_markdown(answer))
+            question, today, citations, sanitize_answer_markdown(answer),
+            link_targets=repo.page_link_targets(
+                args.vault, [c.rpartition("/")[2] for c in citations]),
+        )
 
         # 6. Atomic write to _queries/<slug>.md (symlink-refuse + content-hash
         # skip). The slug is kebab-validated (no '/' or '..'), so the filename

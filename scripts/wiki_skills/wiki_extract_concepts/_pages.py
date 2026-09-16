@@ -52,6 +52,7 @@ def write_concept_page(
     today: date,
     vault_id: str | None = None,
     concepts_dir: Path | None = None,
+    source_link: str | None = None,
 ) -> tuple[Path, str]:
     """Write ``<concepts_dir>/<slug>.md`` atomically with frontmatter + body.
 
@@ -159,8 +160,14 @@ def write_concept_page(
     # by `wiki-index-render --concept-mentions`); seed it here with the create source so a
     # freshly-filed concept already carries the well-formed block (a later render reconciles
     # the full set). Seeded via the SHARED formatter → byte-identical to what render produces.
+    # `source_link` is the APP-resolvable target for the source note (its filename —
+    # `repo.page_link_targets`); `source_slug` is the DB identity and is the right value
+    # for `source_page:` frontmatter but the WRONG one for a link a human clicks: under a
+    # layout that files notes under their human title, `[[<slug>]]` resolves index-side
+    # only and the app offers to create an empty note. Absent → slug (karpathy, where
+    # filename == slug, and any caller that cannot resolve one).
     mentions_block = wrap_auto_block(
-        AUTO_MENTIONS_NAME, format_concept_mentions_body([source_slug]))
+        AUTO_MENTIONS_NAME, format_concept_mentions_body([source_link or source_slug]))
     body = (
         f"# {safe_name}\n\n"
         f"{safe_definition}\n\n"

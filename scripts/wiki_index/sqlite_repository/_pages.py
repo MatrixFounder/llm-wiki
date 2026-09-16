@@ -13,10 +13,20 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from scripts.wiki_index.models import Page
 from scripts.wiki_index.sqlite_repository._base import SQLiteRepositoryBase
+
+
+def _drop_md_suffix(file_path: str) -> str:
+    """`a/b/Note.md` → `a/b/Note` (any other suffix is left alone)."""
+    return file_path[:-3] if file_path.endswith(".md") else file_path
+
+
+def _path_stem(file_path: str) -> str:
+    """`a/b/Note.md` → `Note` — the basename an app matches a bare `[[target]]` against."""
+    return _drop_md_suffix(file_path).rsplit("/", 1)[-1]
 
 
 class _PagesMixin(SQLiteRepositoryBase):
@@ -116,6 +126,69 @@ class _PagesMixin(SQLiteRepositoryBase):
         if row is None:
             return None
         return self._row_to_page(row)
+
+    # =========================================================================
+    # Wikilink targets — slug (DB identity) → what an Obsidian-style app RESOLVES.
+    #
+    # THE BUG THIS EXISTS TO PREVENT: every generated `[[…]]` used to carry the page
+    # SLUG. That is correct only where filename == slug — true for `_concepts/<slug>.md`
+    # under every layout, and for SOURCE notes only under a layout whose slug_strategy is
+    # `identity` (karpathy). Under `obsidian-personal` a note is filed under its HUMAN
+    # TITLE (`wiki_import_article/_authoring.py` — "PARA files under the human title"),
+    # so `[[<slug>]]` pointed at nothing: the INDEX resolved it (slug is the primary key)
+    # and `wiki-lint` stayed green, while the app showed every such link as unresolved
+    # and created an empty note on click. Index-side resolution is NOT app-side
+    # resolution — anything a human clicks must be addressed by FILENAME.
+    # =========================================================================
+
+    # Characters Obsidian cannot carry inside a `[[target]]`.
+    _WIKILINK_UNSAFE = set('[]|#^')
+
+    def page_link_targets(
+        self, vault_id: str, slugs: "Sequence[str]",
+    ) -> dict[str, str]:
+        """Map page slug → a wikilink target the APP can resolve.
+
+        The file's basename without extension, or — when that basename is ambiguous
+        within the vault — the extension-less vault-relative path (Obsidian resolves
+        both; the path form disambiguates). Falls back to the slug itself for a slug
+        with no `pages` row, or a filename carrying a character a wikilink cannot hold.
+
+        Under `slug_strategy: identity` (karpathy) filename == slug, so this is the
+        identity map and every rendered link stays BYTE-IDENTICAL to the pre-fix output.
+        """
+        wanted = [s for s in dict.fromkeys(slugs) if s]
+        if not wanted:
+            return {}
+        conn = self._connect()
+        placeholders = ",".join("?" * len(wanted))
+        rows = conn.execute(
+            f"SELECT slug, file_path FROM pages WHERE vault_id=? AND slug IN ({placeholders})",
+            (vault_id, *wanted),
+        ).fetchall()
+        if not rows:
+            return {s: s for s in wanted}
+        # Basename collisions are resolved with the path form, so the ambiguity census
+        # is over the WHOLE vault, not just the requested slugs.
+        stem_counts: dict[str, int] = {}
+        for (fp,) in conn.execute(
+            "SELECT file_path FROM pages WHERE vault_id=?", (vault_id,)
+        ).fetchall():
+            stem = _path_stem(str(fp))
+            stem_counts[stem] = stem_counts.get(stem, 0) + 1
+        out: dict[str, str] = {s: s for s in wanted}
+        for row in rows:
+            slug = str(row["slug"])
+            file_path = str(row["file_path"])
+            stem = _path_stem(file_path)
+            target = stem if stem_counts.get(stem, 0) <= 1 else _drop_md_suffix(file_path)
+            if target and not (self._WIKILINK_UNSAFE & set(target)):
+                out[slug] = target
+        return out
+
+    def page_link_target(self, vault_id: str, slug: str) -> str:
+        """Single-slug convenience over `page_link_targets` (same fallbacks)."""
+        return self.page_link_targets(vault_id, [slug]).get(slug, slug)
 
     def delete_page(self, vault_id: str, slug: str, project: str) -> None:
         conn = self._connect()

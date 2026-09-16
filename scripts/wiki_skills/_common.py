@@ -510,12 +510,20 @@ def wrap_auto_block(name: str, body: str) -> str:
     return f"<!-- BEGIN-AUTO:{name} -->\n{body}\n<!-- END-AUTO:{name} -->"
 
 
-def format_concept_mentions_body(source_slugs: list[str]) -> str:
-    """The AUTO-block BODY for a concept's mentions: the heading + one `- [[slug]]` per
+def format_concept_mentions_body(source_links: list[str]) -> str:
+    """The AUTO-block BODY for a concept's mentions: the heading + one `- [[target]]` per
     source (caller dedups+sorts; sanitized on egress). Heading-only when empty — the block
-    is always present, never absent."""
+    is always present, never absent.
+
+    ★ `source_links` are **wikilink targets an app can resolve** (`page_link_targets`:
+    the source file's basename, or its extension-less path when that basename is
+    ambiguous) — NOT raw page slugs. Passing a slug here is the bug this parameter was
+    renamed to prevent: under `obsidian-personal` a source note is filed under its human
+    TITLE, so `[[<slug>]]` resolves in the INDEX but not in the app, which then offers to
+    create an empty note. Under karpathy filename == slug → the target IS the slug and
+    the output is unchanged."""
     lines = [_MENTIONS_HEADING, ""]
-    lines += [f"- [[{sanitize_markdown_text(s)}]]" for s in source_slugs]
+    lines += [f"- [[{sanitize_markdown_text(s)}]]" for s in source_links]
     return "\n".join(lines).rstrip()
 
 

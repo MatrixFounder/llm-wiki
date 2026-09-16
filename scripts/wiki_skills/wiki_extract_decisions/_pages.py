@@ -52,6 +52,7 @@ def render_page(
     today: date,
     classification: str | None = None,
     source_indexable: bool = True,
+    link_targets: dict[str, str] | None = None,
 ) -> str:
     """One typed page, rendered — frontmatter + body.
 
@@ -98,12 +99,19 @@ def render_page(
     }
     if classification:
         fm["classification"] = classification
+    # Slug → the target an app resolves (the file's name). Reindex slugifies the target
+    # back through the layout's slug_strategy, so the EDGE still lands on the same
+    # entity_slug; an unknown target (a forward edge to a page that does not exist yet)
+    # falls back to the slug, and under karpathy the two are equal. Without this the
+    # Properties panel renders every edge as an unresolved link.
+    _t = link_targets or {}
     for edge, targets in (candidate.get("edges") or {}).items():
         # FORWARD ONLY. Rendered as wikilinks so the layout's own ref_extraction sees
         # them — the frontmatter is part of the page G2 scans.
-        fm[str(edge)] = [f"[[{t}]]" for t in targets]
+        fm[str(edge)] = [f"[[{_t.get(str(t), t)}]]" for t in targets]
 
-    cite = f"[[{source_slug}]]" if source_indexable else f"`{source_slug}`"
+    _cite_target = _t.get(source_slug, source_slug)
+    cite = f"[[{_cite_target}]]" if source_indexable else f"`{source_slug}`"
     body = (
         f"# {sanitize_markdown_text(str(candidate['title']))}\n\n"
         f"{sanitize_markdown_text(str(candidate['body']))}\n\n"

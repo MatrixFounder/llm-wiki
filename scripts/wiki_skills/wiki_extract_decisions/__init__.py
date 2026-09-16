@@ -632,11 +632,15 @@ def apply(args: argparse.Namespace) -> int:
             t for c in kept for targets in (c.get("edges") or {}).values()
             for t in targets})
         db_classes = resolve_target_classes(repo, args.vault, edge_targets)
+        # One lookup for every slug the batch will link (source + edge targets).
+        link_targets = repo.page_link_targets(
+            args.vault, [ctx.source_slug, *edge_targets])
         rendered = [
             render_page(cand, slug=slug, vault_id=args.vault,
                         source_slug=ctx.source_slug, today=date.today(),
                         classification=_source_classification(ctx),
-                        source_indexable=ctx.source_indexable)
+                        source_indexable=ctx.source_indexable,
+                        link_targets=link_targets)
             for cand, slug in zip(kept, kept_slugs)
         ]
         try:

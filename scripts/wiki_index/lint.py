@@ -177,6 +177,8 @@ def run_all_checks_report(
         # resolve the layout grammar ONCE and share it.
         config = resolve_layout_config(v.root_path)
         issues.extend(check_auto_generated_unchanged(repo, vid, v.root_path, config=config))
+        # App-side link health — the one check that compares a link against FILENAMES.
+        issues.extend(check_slug_only_wikilinks(repo, vid, v.root_path, strict=strict))
         # TASK 061 (R-061-2): BOTH config-driven semantic checks report what they examined
         # — they are the two that gate `--strict` (the CI rail), and giving a denominator
         # to only one would leave the other printing `0` with no way to tell an inert check
@@ -380,6 +382,75 @@ def check_auto_generated_unchanged(
                     "hint": (f"manual edit detected at {output_rel!r}; run "
                              "`wiki-index-render --auto-indexes` to regenerate, or "
                              "move your edit into the per-issue file"),
+                },
+            ))
+    return out
+
+
+
+def check_slug_only_wikilinks(
+    repo: "IndexRepository", vault_id: str, vault_root: "Path", *, strict: bool = False,
+) -> list["LintIssue"]:
+    """A link the INDEX resolves but an app does NOT: `[[<page-slug>]]` where no file is
+    NAMED after that slug.
+
+    THE BUG THIS CATCHES (it shipped for months, invisible): generated wikilinks carried
+    the page SLUG. Where a note is filed under its human title (`obsidian-personal`), the
+    index still resolved the link — slug is its primary key, so `orphan-link` stayed at
+    zero — while Obsidian showed every one as unresolved and created an EMPTY note on
+    click. Index-side resolution is not app-side resolution, and no other check compares
+    a link against FILENAMES.
+
+    Deliberately narrow, so it stays actionable: it fires ONLY when the target is a known
+    page slug whose own file is named otherwise. A link to a page that was never filed
+    (`orphan-link` territory) or to a missing attachment is NOT this category.
+    """
+    from scripts.wiki_index.sqlite_repository import SQLiteRepository
+    from scripts.wiki_source.parsing import extract_wiki_links
+
+    if not isinstance(repo, SQLiteRepository):
+        return []
+    rows = repo._connect().execute(
+        "SELECT slug, project, file_path FROM pages WHERE vault_id=?", (vault_id,)
+    ).fetchall()
+    if not rows:
+        return []
+    # What a bare `[[target]]` can legally match on disk, case-folded like the app does.
+    names: set[str] = set()
+    paths: set[str] = set()
+    slug_of_file: dict[str, str] = {}
+    for r in rows:
+        fp = str(r["file_path"])
+        stem = fp[:-3] if fp.endswith(".md") else fp
+        names.add(stem.rsplit("/", 1)[-1].lower())
+        paths.add(stem.lower())
+        slug_of_file[str(r["slug"])] = fp
+    out: list[LintIssue] = []
+    for r in rows:
+        page_file = vault_root / str(r["file_path"])
+        try:
+            body = page_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue                     # missing/unreadable → `missing-on-disk` owns that
+        for target, line, _quote in extract_wiki_links(body):
+            tl = target.lower()
+            if tl in names or tl in paths or tl.rsplit("/", 1)[-1] in names:
+                continue                 # the app can resolve it
+            if target not in slug_of_file:
+                continue                 # not a known page → `orphan-link`, not this check
+            out.append(LintIssue(
+                category="slug-only-wikilink",
+                severity="error" if strict else "warning",
+                vault_id=vault_id,
+                page_slug=str(r["slug"]),
+                details={
+                    "target": _safe_surface(target),
+                    "project": str(r["project"]),
+                    "line": line,
+                    # The fix is mechanical, so name it.
+                    "hint": ("the target is a page SLUG; no file is named after it — link "
+                             "the FILENAME instead (see `page_link_targets`): "
+                             f"{_safe_surface(slug_of_file[target].rsplit('/', 1)[-1])}"),
                 },
             ))
     return out

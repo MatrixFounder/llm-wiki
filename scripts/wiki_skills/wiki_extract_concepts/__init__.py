@@ -937,6 +937,17 @@ def _apply_validate(
     }
 
 
+
+def _page_link_target(repo: Any, vault_id: str, slug: str) -> str:
+    """The app-resolvable wikilink target for `slug`, or the slug itself when the repo
+    cannot answer (a stub repo in tests, or a page with no `pages` row yet)."""
+    getter = getattr(repo, "page_link_target", None)
+    if getter is None:
+        return slug
+    target = getter(vault_id, slug)
+    return str(target) if target else slug
+
+
 def _apply_write(
     validated: dict[str, Any],
     vault_id: str,
@@ -1207,10 +1218,15 @@ def _apply_write(
                 )
                 known_slugs.add(str(cand["slug"]))
 
+        # The source note is indexed BEFORE concepts are filed (wiki_import_article apply:
+        # "the source note must be indexed BEFORE concept refs can attach to it"), so its
+        # `pages` row is here and the seeded back-link can carry the FILENAME rather than
+        # the slug. Resolved once for the whole create batch.
+        source_link = _page_link_target(repo, vault_id, source_slug)
         for cand in create_list:
             _target, file_action = write_concept_page(
                 vault_root, cand, source_slug, today, vault_id=vault_id,
-                concepts_dir=target_concepts_dir,
+                concepts_dir=target_concepts_dir, source_link=source_link,
             )
             cand["file_write_action"] = file_action
             cand["entity_action"] = upsert_extracted_entity(

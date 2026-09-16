@@ -112,7 +112,12 @@ def render_concept_mentions_body(repo: "IndexRepository", vault_id: str, entity_
     from scripts.wiki_index.sqlite_repository import SQLiteRepository
     if not isinstance(repo, SQLiteRepository):
         raise NotImplementedError("render_concept_mentions supports SQLiteRepository only")
-    return format_concept_mentions_body(repo.mentioning_source_pages(vault_id, entity_slug))
+    slugs = repo.mentioning_source_pages(vault_id, entity_slug)
+    # Slug → app-resolvable target (filename). The DB slug is the wrong thing to put in a
+    # link a human clicks: under a layout that files notes under their human title it
+    # resolves index-side only. Identity map under karpathy → output byte-identical.
+    targets = repo.page_link_targets(vault_id, slugs)
+    return format_concept_mentions_body([targets.get(s, s) for s in slugs])
 
 
 def render_index(
@@ -155,6 +160,13 @@ def render_index(
             (r["slug"], r["title"], r["tldr"])
         )
 
+    # Slug → app-resolvable target (filename); identity under karpathy. A slug with no
+    # `pages` row (an entity-tier row of the index_meta VIEW) falls back to itself, which
+    # is correct: `_concepts/`/`_entities/` files ARE named by slug.
+    link_targets = repo.page_link_targets(
+        vault_id, [r["slug"] for r in rows]
+    ) if hasattr(repo, "page_link_targets") else {}
+
     for proj in sorted(by_project):
         lines.append(f"## Project: `{proj}`")
         lines.append("")
@@ -166,7 +178,9 @@ def render_index(
                 # MED-1 (security-critic): title/tldr are untrusted frontmatter —
                 # sanitise on egress (the dev/obsidian layouts index arbitrary trees).
                 tldr_part = f" — {sanitize_markdown_text(tldr)}" if tldr else ""
-                lines.append(f"- [[{slug}|{sanitize_markdown_text(title)}]]{tldr_part}")
+                target = link_targets.get(slug, slug)
+                lines.append(
+                    f"- [[{target}|{sanitize_markdown_text(title)}]]{tldr_part}")
             lines.append("")
 
     if preserve_custom:

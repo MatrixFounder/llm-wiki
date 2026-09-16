@@ -347,6 +347,7 @@ def _is_fail(findings: list[Any], fail_on: str) -> bool:
 def _render_verdict_page(
     query_project: str, query_slug: str, verdict: str, critics: list[Any],
     answer_hash: str, today: str, cites: list[str], findings: list[Any],
+    link_targets: dict[str, str] | None = None,
 ) -> str:
     """Build the Class A `_verifications/<slug>.md`: frontmatter (`type`,
     `verifies`, `verdict`, `critics`, `answer_hash`, `date`, optional `cites`,
@@ -383,7 +384,11 @@ def _render_verdict_page(
     md["tags"] = ["verification"]
     out = frontmatter.dumps(frontmatter.Post("\n".join(lines), **md))
     if cites:
-        sources = "\n".join(f"- [[{c.rpartition('/')[2]}]]" for c in cites)
+        # FILENAME, not slug — see `page_link_targets`: a slug link resolves index-side
+        # only wherever notes are filed under their human title.
+        _t = link_targets or {}
+        sources = "\n".join(
+            f"- [[{_t.get(c.rpartition('/')[2], c.rpartition('/')[2])}]]" for c in cites)
         out = f"{out}\n\n## Sources\n\n{sources}\n"
     return out
 
@@ -565,7 +570,9 @@ def apply(args: argparse.Namespace) -> int:
         today = _date.today().isoformat()
         content = _render_verdict_page(
             VAULT_TIER_PROJECT, args.query_slug, derived, critics,
-            args.answer_hash, today, cite_set, findings)
+            args.answer_hash, today, cite_set, findings,
+            link_targets=repo.page_link_targets(
+                args.vault, [c.rpartition("/")[2] for c in cite_set]))
 
         # 7. Write Class A `_verifications/<slug>.md` (mkdir — a migrated v4 vault
         # has no dir yet, CMP-4; symlink-refuse; content-hash skip; --force).
